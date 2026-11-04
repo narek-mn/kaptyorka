@@ -21,6 +21,7 @@ class Session:
     tool: str
     project: str
     activity: str = ""
+    label: str = ""  # the session name Claude Code shows, if any
 
 
 class DeliveryError(Exception):

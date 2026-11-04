@@ -237,3 +237,13 @@ def test_brief_stop_and_tool_are_unread_only(hub, event):
     hub_send(hub, PC, DGX_NAME, "hi")
     assert brief(hub, DGX, event) == "Kaptyorka message from pc/claude-code/murmur:\n\nhi"
     assert brief(hub, DGX, event) == ""
+
+
+def test_label_in_feed_brief_and_cli_rows(hub):
+    assert heartbeat(hub, "dgx", [{"key": "claude:2", "tool": "claude-code",
+                                   "project": "backend", "label": "api-dev"},
+                                  {"key": "codex:3", "tool": "codex", "project": "backend"}]) == 204
+    labels = {a["name"]: a["label"] for a in feed(hub)["agents"]}
+    assert labels == {"dgx/claude-code/backend": "api-dev", "dgx/codex/backend": ""}
+    ident = {"key": "codex:3", "machine": "dgx", "tool": "codex", "project": "backend"}
+    assert "api-dev (dgx/claude-code/backend)" in brief(hub, ident, "start")

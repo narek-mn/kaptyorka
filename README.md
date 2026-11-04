@@ -71,6 +71,8 @@ Push means a running session gets a message without anyone typing. Pull only mea
 | `notes_read` | Read a note |
 | `notes_write` | Write a note. Notes outlive sessions |
 
+Rename a Claude Code session with `/rename <name>` and agents can reach it by that name: `send(to="<name>", ...)`.
+
 ## Files
 
 Everything is in `~/.kaptyorka`:
@@ -80,6 +82,8 @@ Everything is in `~/.kaptyorka`:
 - `bridge.log`
 
 ## Remove
+
+`kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot; `kaptyorka join` or `kaptyorka serve` starts them again. To remove everything:
 
 ```bash
 systemctl --user disable --now kaptyorka-bridge                  # Linux

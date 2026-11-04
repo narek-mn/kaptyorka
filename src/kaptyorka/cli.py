@@ -63,12 +63,24 @@ def _who(args) -> int:
     if status != 200:
         print(f"kaptyorka hub at {cfg['hub']} answered {status}")
         return 1
-    rows = [("NAME", "STATUS", "ACTIVITY", "LAST SEEN")] + [
-        (a["name"], a["status"], a.get("activity") or "", f"{a['last_seen_s']}s ago")
+    rows = [("NAME", "LABEL", "STATUS", "ACTIVITY", "LAST SEEN")] + [
+        (a["name"], a.get("label") or "", a["status"], a.get("activity") or "",
+         f"{a['last_seen_s']}s ago")
         for a in feed["agents"]]
-    w = [max(len(r[i]) for r in rows) for i in range(3)]
+    w = [max(len(r[i]) for r in rows) for i in range(4)]
     for r in rows:
-        print("  ".join(c.ljust(n) for c, n in zip(r, w)) + "  " + r[3])
+        print("  ".join(c.ljust(n) for c, n in zip(r, w)) + "  " + r[4])
+    return 0
+
+
+def _stop(args) -> int:
+    try:
+        for unit in ("kaptyorka-bridge", "kaptyorka-hub"):
+            for line in service.stop(unit):
+                print(line)
+    except service.ServiceError as e:
+        print(e, file=sys.stderr)
+        return 1
     return 0
 
 
@@ -124,6 +136,8 @@ def entry() -> None:
     s.add_argument("--foreground", action="store_true")
     s.set_defaults(run=_serve)
     sub.add_parser("who", help="list agents online").set_defaults(run=_who)
+    sub.add_parser("stop", help="stop the bridge (and hub) and keep them off after a reboot; "
+                   "kaptyorka join / serve start them again").set_defaults(run=_stop)
     m = sub.add_parser("mcp", help="MCP server for one agent session (started by the tool)")
     m.add_argument("--workspace", help="project folder, for tools that do not set the cwd")
     m.set_defaults(run=_mcp)

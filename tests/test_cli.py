@@ -42,7 +42,7 @@ def test_subcommands_listed(capsys):
     with pytest.raises(SystemExit):
         entry_with(["--help"])
     out = capsys.readouterr().out
-    for cmd in ["serve", "join", "who", "mcp", "hook", "bridge"]:
+    for cmd in ["serve", "join", "who", "mcp", "hook", "bridge", "stop"]:
         assert cmd in out
 
 

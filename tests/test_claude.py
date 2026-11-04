@@ -217,3 +217,13 @@ def test_configure_quotes_exe_and_replaces_old_unquoted_hook(home, fake_claude_c
     assert [h["hooks"][0]["command"] for h in ups] == ["'/my dir/k' hook claude-code prompt"]
     assert ["claude", "mcp", "add", "--scope", "user", "kaptyorka", "--", "/my dir/k", "mcp"] \
         in fake_claude_cli.calls
+
+
+def test_label_is_session_name_user_or_derived(home, tmp_path):
+    sock = live_sock(tmp_path)
+    write_session_file(home, pid=os.getpid(), sock=sock, name="kaptyorka-narek", name_source="user")
+    assert [s.label for s in ClaudeAdapter(home).sessions()] == ["kaptyorka-narek"]
+    write_session_file(home, pid=os.getpid(), sock=sock, name="fix-the-bug", name_source="derived")
+    assert [s.label for s in ClaudeAdapter(home).sessions()] == ["fix-the-bug"]
+    write_session_file(home, pid=os.getpid(), sock=sock)  # no name at all
+    assert [s.label for s in ClaudeAdapter(home).sessions()] == [""]

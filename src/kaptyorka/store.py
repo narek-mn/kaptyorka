@@ -15,7 +15,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
     key TEXT PRIMARY KEY, name TEXT NOT NULL, machine TEXT NOT NULL,
     tool TEXT NOT NULL, project TEXT NOT NULL, status TEXT NOT NULL DEFAULT '',
-    activity TEXT NOT NULL DEFAULT '', last_seen REAL NOT NULL);
+    activity TEXT NOT NULL DEFAULT '', last_seen REAL NOT NULL,
+    label TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT, sender_key TEXT NOT NULL,
     sender_name TEXT NOT NULL, to_key TEXT, to_name TEXT NOT NULL,
@@ -43,6 +44,7 @@ class Agent:
     activity: str
     last_seen: float
     online: bool
+    label: str = ""
 
 
 @dataclass
@@ -71,6 +73,8 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        if "label" not in {r["name"] for r in self.db.execute("PRAGMA table_info(agents)")}:
+            self.db.execute("ALTER TABLE agents ADD COLUMN label TEXT NOT NULL DEFAULT ''")
         self.sends: Dict[str, List[float]] = {}
 
     def close(self) -> None:
@@ -82,7 +86,7 @@ class Store:
     def _agent(self, row, now) -> Agent:
         return Agent(row["key"], row["name"], row["machine"], row["tool"], row["project"],
                      row["status"], row["activity"], row["last_seen"],
-                     now - row["last_seen"] < ONLINE_S)
+                     now - row["last_seen"] < ONLINE_S, row["label"])
 
     def _online_rows(self, now):
         return self.db.execute("SELECT * FROM agents WHERE last_seen > ? ORDER BY rowid",
@@ -96,14 +100,14 @@ class Store:
             name, n = f"{base}-{n}", n + 1
         return name
 
-    def _touch(self, key, machine, tool, project, now, activity=None):
+    def _touch(self, key, machine, tool, project, now, activity=None, label=None):
         row = self.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
         if row is None:
             name = self._free_name(key, machine, tool, project, now)
             self.db.execute(
-                "INSERT INTO agents (key, name, machine, tool, project, activity, last_seen)"
-                " VALUES (?,?,?,?,?,?,?)",
-                (key, name, machine, tool, project, activity or "", now))
+                "INSERT INTO agents (key, name, machine, tool, project, activity, last_seen, label)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (key, name, machine, tool, project, activity or "", now, label or ""))
             return
         name = row["name"]
         if now - row["last_seen"] >= ONLINE_S:  # was offline: its name may have been taken
@@ -113,6 +117,8 @@ class Store:
         else:
             self.db.execute("UPDATE agents SET name=?, last_seen=?, activity=? WHERE key=?",
                             (name, now, activity, key))
+        if label is not None:
+            self.db.execute("UPDATE agents SET label=? WHERE key=?", (label, key))
 
     def seen(self, key: str, machine: str, tool: str, project: str) -> Agent:
         with self.lock:
@@ -125,7 +131,8 @@ class Store:
         with self.lock:
             now = self.clock()
             for s in sessions:
-                self._touch(s["key"], machine, s["tool"], s["project"], now, s.get("activity"))
+                self._touch(s["key"], machine, s["tool"], s["project"], now, s.get("activity"),
+                            s.get("label", ""))
 
     def online(self) -> List[Agent]:
         with self.lock:
@@ -159,11 +166,19 @@ class Store:
             if to == "all":
                 targets = [r for r in online if r["key"] != sender_key]
             else:
-                match = [r for r in online if r["name"] == to] or self.db.execute(
+                match = [r for r in online if r["name"] == to]
+                if not match:
+                    labeled = [r for r in online if r["label"] and r["label"].lower() == to.lower()]
+                    if len(labeled) > 1:
+                        raise KaptyorkaError(f"several sessions are named {to}: "
+                                             + ", ".join(r["name"] for r in labeled))
+                    match = labeled
+                match = match or self.db.execute(
                     "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1",
                     (to,)).fetchall()
                 if not match:
-                    names = ", ".join(r["name"] for r in online) or "none"
+                    names = ", ".join(r["name"] + (f" ({r['label']})" if r["label"] else "")
+                                      for r in online) or "none"
                     raise KaptyorkaError(f"no session named {to}; online: {names}")
                 targets = match[:1]
             for t in targets:

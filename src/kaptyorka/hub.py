@@ -67,8 +67,12 @@ def _bad_request(fn):
 
 def _agent_row(a: Agent, now: float) -> dict:
     return {"name": a.name, "machine": a.machine, "tool": a.tool, "project": a.project,
-            "status": a.status, "activity": a.activity,
+            "status": a.status, "activity": a.activity, "label": a.label,
             "last_seen_s": round(now - a.last_seen)}
+
+
+def _titled(a: Agent) -> str:
+    return f"{a.label} ({a.name})" if a.label else a.name
 
 
 def _tool_errors(fn):
@@ -107,7 +111,7 @@ def build_app(store: Store, token: str) -> Starlette:
     @server.tool()
     @_tool_errors
     def who(ctx: Context) -> List[dict]:
-        """Online sessions: name, machine, tool, project, status, activity, last seen."""
+        """Online sessions: name, label, machine, tool, project, status, activity, last seen."""
         key = me(ctx).key
         now = store.clock()
         return [{**_agent_row(a, now), "you": a.key == key} for a in store.online()]
@@ -115,7 +119,7 @@ def build_app(store: Store, token: str) -> Starlette:
     @server.tool()
     @_tool_errors
     async def send(to: str, text: str, ctx: Context) -> str:
-        """Send text to one session by name, or to 'all'."""
+        """Send text to one session by name or label, or to 'all'."""
         n = store.send(me(ctx).key, to, text)
         sent["event"].set()
         sent["event"] = asyncio.Event()
@@ -199,9 +203,9 @@ def build_app(store: Store, token: str) -> Starlette:
         parts = [f"Kaptyorka message from {m.sender}:\n\n{m.text}" for m in unread]
         if request.query_params.get("event") == "start":
             others = [a for a in store.online() if a.key != agent.key]
-            line = f"Kaptyorka: you are `{agent.name}`. "
+            line = f"Kaptyorka: you are `{_titled(agent)}`. "
             if others:
-                names = ", ".join(a.name + (f" ({a.activity})" if a.activity else "")
+                names = ", ".join(_titled(a) + (f" ({a.activity})" if a.activity else "")
                                   for a in others)
                 line += f"{_plural(len(others), 'other')} online: {names}. "
             else:

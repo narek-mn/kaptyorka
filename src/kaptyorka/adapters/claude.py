@@ -51,8 +51,10 @@ class ClaudeAdapter:
                 self._warned = True
                 self.log(f"claude-code {version} is newer than tested {CLAUDE_CODE_TESTED}; "
                          "push may break, pull still works")
+            name = data.get("name")
+            label = name if isinstance(name, str) else ""
             out.append(Session(f"claude:{pid}", self.tool, os.path.basename(cwd.rstrip("/")),
-                               data.get("status", "")))
+                               data.get("status", ""), label))
         return out
 
     def deliver(self, key: str, text: str) -> None:

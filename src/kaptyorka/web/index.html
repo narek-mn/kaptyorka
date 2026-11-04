@@ -89,6 +89,7 @@ tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover td { background: rgba(204, 204, 220, .035); }
 .c-dot { width: 36px; padding-right: 0; }
 .name { font-weight: 600; color: #e8e8f0; white-space: nowrap; }
+.name .label-name { font-weight: 700; color: #fff; }
 .name .sep { color: var(--faint); font-weight: 400; padding: 0 1px; }
 .tag {
   display: inline-block; padding: 1px 7px; border-radius: 3px; border: 1px solid var(--line-strong);
@@ -317,8 +318,14 @@ th.seen { text-align: right; }
     return { machine: p[0], project: p.slice(2).join("/").replace(/-\d+$/, "") };
   }
 
-  function nameEl(name) {
+  function labelOf(name) {
+    var a = (feed.agents || []).filter(function (x) { return x.name === name; })[0];
+    return a && a.label ? a.label : "";
+  }
+
+  function nameEl(name, label) {
     var b = el("span", { "class": "name", title: name });
+    if (label) b.appendChild(el("b", { "class": "label-name", text: label + " " }));
     name.split("/").forEach(function (part, i) {
       if (i) b.appendChild(el("span", { "class": "sep", text: "/" }));
       b.appendChild(document.createTextNode(part));
@@ -335,7 +342,7 @@ th.seen { text-align: right; }
   function renderTeam() {
     var body = document.getElementById("agents");
     var agents = feed.agents;
-    var shape = agents.map(function (a) { return [a.name, a.machine, a.tool, a.project, a.status, a.activity]; });
+    var shape = agents.map(function (a) { return [a.name, a.machine, a.tool, a.project, a.status, a.activity, a.label]; });
     if (!changed("team", shape)) {
       body.querySelectorAll("td.seen").forEach(function (td, i) { seenCell(td, agents[i]); });
       return;
@@ -345,7 +352,7 @@ th.seen { text-align: right; }
       var act = a.activity || "";
       body.appendChild(el("tr", null, [
         el("td", { "class": "c-dot" }, [el("div", { "class": "dot " + act, title: act || "unknown" })]),
-        el("td", null, [nameEl(a.name)]),
+        el("td", null, [nameEl(a.name, a.label)]),
         el("td", { "class": "c-tag" }, [el("span", { "class": "tag", title: "Machine", text: a.machine })]),
         el("td", { "class": "c-tag" }, [el("span", { "class": "tag", title: "Tool", text: a.tool })]),
         el("td", { "class": "c-tag" }, [el("span", { "class": "tag", title: "Project", text: a.project })]),
@@ -421,10 +428,10 @@ th.seen { text-align: right; }
     shown.forEach(function (m) {
       var to = m.to.length > 1
         ? el("span", { "class": "all", title: m.to.join("\n") }, [icon("i-all", 14), document.createTextNode("all")])
-        : el("span", { title: m.to[0], text: m.to[0] });
+        : el("span", { title: m.to[0], text: labelOf(m.to[0]) || m.to[0] });
       log.appendChild(el("div", { "class": "msg" }, [
         timeEl(m.created),
-        el("div", { "class": "route" }, [el("b", { title: m.sender, text: m.sender }), icon("i-arrow", 14), to]),
+        el("div", { "class": "route" }, [el("b", { title: m.sender, text: labelOf(m.sender) || m.sender }), icon("i-arrow", 14), to]),
         el("div", { "class": "text", text: m.text })
       ]));
     });

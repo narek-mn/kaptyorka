@@ -82,15 +82,15 @@ def test_serve_creates_token_once_and_prints_three_lines(home, capsys, monkeypat
 
 
 def test_who_prints_table(hub, home, capsys):
-    hub.store.seen("k1", "m1", "claude", "proj")
+    hub.store.heartbeat("m1", [{"key": "k1", "tool": "claude", "project": "proj", "label": "my-label"}])
     paths.save_config({"hub": hub.url, "token": hub.token})
     with pytest.raises(SystemExit) as e:
         run_cli(["who"])
     assert e.value.code == 0
     out = capsys.readouterr().out
-    assert out.splitlines()[0].split() == ["NAME", "STATUS", "ACTIVITY", "LAST", "SEEN"]
+    assert out.splitlines()[0].split() == ["NAME", "LABEL", "STATUS", "ACTIVITY", "LAST", "SEEN"]
     assert len(out.splitlines()) == 2
-    assert paths.load_config() and hub.store.online()[0].name in out
+    assert paths.load_config() and hub.store.online()[0].name in out and "my-label" in out
 
 
 def test_who_not_joined(home, capsys):
@@ -170,3 +170,30 @@ def test_launchd_plist_sets_environment(home):
     assert "<key>EnvironmentVariables</key>" in text
     assert "<key>PATH</key><string>/a&amp;b:/c</string>" in text
     assert "EnvironmentVariables" not in unit_text("n", ["/k"], "darwin")
+
+
+def test_stop_linux_disables_unit():
+    calls = []
+    assert service.stop("kaptyorka-bridge", run=fake_run(calls), platform="linux") == [
+        "kaptyorka-bridge: stopped"]
+    assert calls == [["systemctl", "--user", "disable", "--now", "kaptyorka-bridge"]]
+
+
+def test_stop_darwin_boots_out_unit():
+    calls = []
+    service.stop("kaptyorka-hub", run=fake_run(calls), platform="darwin")
+    assert calls == [["launchctl", "bootout", f"gui/{os.getuid()}/io.kaptyorka.kaptyorka-hub"]]
+
+
+def test_stop_not_installed_is_fine():
+    assert service.stop("kaptyorka-hub", run=fake_run([], fail=("systemctl",)),
+                        platform="linux") == ["kaptyorka-hub: not running"]
+
+
+def test_stop_command_prints_both_and_exits_0(capsys, monkeypatch):
+    seen = []
+    monkeypatch.setattr(service, "stop", lambda name, **k: seen.append(name) or [f"{name}: stopped"])
+    with pytest.raises(SystemExit) as e:
+        run_cli(["stop"])
+    assert e.value.code == 0 and seen == ["kaptyorka-bridge", "kaptyorka-hub"]
+    assert "kaptyorka-hub: stopped" in capsys.readouterr().out

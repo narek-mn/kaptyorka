@@ -142,3 +142,57 @@ def test_returning_agent_gets_suffix_if_name_taken(store, clock):
     assert store.seen("A", "dgx", "codex", "m").name == "dgx/codex/m-2"
     store.send("s", "dgx/codex/m", "hi")
     assert store.inbox("A") == [] and [m.text for m in store.inbox("B")] == ["hi"]
+
+
+def beat(store, key, project, label=""):
+    store.heartbeat("pc", [{"key": key, "tool": "claude-code", "project": project, "label": label}])
+
+
+def test_send_by_label_case_insensitive(store):
+    beat(store, "a", "x", "Backend-Dev")
+    store.seen("b", "pc", "codex", "y")
+    assert store.send("b", "backend-dev", "hi") == 1
+    assert store.messages()[0].to == "pc/claude-code/x"
+
+
+def test_same_label_refused_with_both_names(store):
+    beat(store, "a", "x", "dup")
+    beat(store, "b", "y", "dup")
+    store.seen("c", "pc", "codex", "z")
+    with pytest.raises(KaptyorkaError) as e:
+        store.send("c", "dup", "hi")
+    assert str(e.value) == "several sessions are named dup: pc/claude-code/x, pc/claude-code/y"
+
+
+def test_unknown_name_lists_labels(store):
+    beat(store, "a", "x", "nice")
+    store.seen("c", "pc", "codex", "z")
+    with pytest.raises(KaptyorkaError, match=r"pc/claude-code/x \(nice\)"):
+        store.send("c", "nobody", "hi")
+
+
+def test_rename_updates_label_on_next_heartbeat(store):
+    beat(store, "a", "x", "old")
+    assert store.agent("a").label == "old"
+    beat(store, "a", "x", "new")
+    assert store.agent("a").label == "new"
+    beat(store, "a", "x", "")
+    assert store.agent("a").label == ""
+
+
+def test_old_db_without_label_column_opens(tmp_path):
+    import sqlite3
+    path = tmp_path / "hub.db"
+    db = sqlite3.connect(str(path))
+    db.executescript("""CREATE TABLE agents (
+        key TEXT PRIMARY KEY, name TEXT NOT NULL, machine TEXT NOT NULL,
+        tool TEXT NOT NULL, project TEXT NOT NULL, status TEXT NOT NULL DEFAULT '',
+        activity TEXT NOT NULL DEFAULT '', last_seen REAL NOT NULL);
+        INSERT INTO agents VALUES ('a','pc/codex/x','pc','codex','x','','',1000.0);""")
+    db.commit(); db.close()
+    s = Store(path, clock=lambda: 1001.0)
+    assert s.agent("a").label == ""
+    beat(s, "a", "x", "named")
+    assert s.agent("a").label == "named"
+    s.close()
+    Store(path).close()  # reopening with the column present is fine

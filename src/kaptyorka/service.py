@@ -58,9 +58,7 @@ WantedBy=default.target
 """
 
 
-def install(name: str, argv: List[str], run: Callable = subprocess.run,
-            platform: str = sys.platform, sleep: Callable = time.sleep,
-            env: Optional[Dict[str, str]] = None) -> List[str]:
+def _runner(run: Callable) -> Callable:
     def sh(*cmd: str, must: bool = False) -> bool:
         try:
             r = run(list(cmd), capture_output=True, text=True)
@@ -69,6 +67,23 @@ def install(name: str, argv: List[str], run: Callable = subprocess.run,
         if r.returncode != 0 and must:
             raise ServiceError((r.stderr or "").strip() or f"{' '.join(cmd)} failed")
         return r.returncode == 0
+    return sh
+
+
+def stop(name: str, run: Callable = subprocess.run, platform: str = sys.platform) -> List[str]:
+    """Stop the service and keep it off after a reboot. Not installed counts as fine."""
+    sh = _runner(run)
+    if platform == "darwin":
+        ok = sh("launchctl", "bootout", f"gui/{os.getuid()}/io.kaptyorka.{name}")
+    else:
+        ok = sh("systemctl", "--user", "disable", "--now", name)
+    return [f"{name}: stopped" if ok else f"{name}: not running"]
+
+
+def install(name: str, argv: List[str], run: Callable = subprocess.run,
+            platform: str = sys.platform, sleep: Callable = time.sleep,
+            env: Optional[Dict[str, str]] = None) -> List[str]:
+    sh = _runner(run)
 
     if platform == "darwin":
         plist = Path.home() / "Library/LaunchAgents" / f"io.kaptyorka.{name}.plist"
