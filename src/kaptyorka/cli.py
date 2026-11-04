@@ -117,10 +117,17 @@ def _stop(args) -> int:
     return 0
 
 
-def _restart(args) -> int:
-    for unit in ("kaptyorka-bridge", "kaptyorka-hub"):
+def _restart(was_active: dict, run) -> int:
+    """Restart the units that ran before the update; leave stopped ones off."""
+    for unit, active in was_active.items():
+        if active is None:
+            print(f"{unit}: not installed")
+            continue
+        if not active:
+            print(f"{unit}: stopped, left off")
+            continue
         try:
-            for line in service.restart(unit):
+            for line in service.restart(unit, run=run):
                 print(line)
         except service.ServiceError as e:
             print(f"{unit}: {e}", file=sys.stderr)
@@ -139,6 +146,7 @@ def _update(args, run=subprocess.run) -> int:
     if not (venv / "pipx_metadata.json").exists():  # pipx writes this into every venv it makes
         print("kaptyorka was not installed with pipx; update it the way you installed it", file=sys.stderr)
         return 1
+    was_active = {unit: service.is_active(unit, run=run) for unit in ("kaptyorka-bridge", "kaptyorka-hub")}
     try:
         r = run(["pipx", "reinstall", "kaptyorka"], capture_output=True, text=True)
         new = run([str(venv / "bin/kaptyorka"), "--version"], capture_output=True, text=True) if r.returncode == 0 else r
@@ -149,7 +157,7 @@ def _update(args, run=subprocess.run) -> int:
         print((r.stderr or r.stdout).strip() or "pipx reinstall failed", file=sys.stderr)
         return 1
     print(f"kaptyorka {__version__} -> {new.stdout.strip().removeprefix('kaptyorka ')}")
-    return _restart(args)
+    return _restart(was_active, run)
 
 
 def _mcp(args) -> int:
@@ -191,11 +199,12 @@ def _hook(args) -> int:
 def _join(args) -> int:
     from kaptyorka import join
 
-    if not args.hub and not args.token:  # again, from the saved settings: just the bridge
-        if not paths.load_config().get("hub"):
+    if not args.hub and not args.token:  # no flags: the previous arguments, saved by the last join
+        cfg = paths.load_config()
+        if not cfg.get("hub") or not cfg.get("token"):
             print("not joined yet: run kaptyorka join --hub <address> --token <token>", file=sys.stderr)
             return 1
-        return 0 if join.install_bridge(str(Path(sys.argv[0]).resolve())) else 1
+        return join.main(cfg["hub"], cfg["token"], cfg.get("machine") or args.name, only=cfg.get("tools"))
     if not (args.hub and args.token):
         print("join needs both --hub and --token", file=sys.stderr)
         return 2

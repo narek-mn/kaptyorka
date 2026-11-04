@@ -85,6 +85,22 @@ def stop(name: str, run: Callable = subprocess.run, platform: str = sys.platform
     return [f"{name}: stopped" if ok else f"{name}: not running"]
 
 
+def is_active(name: str, run: Callable = subprocess.run, platform: str = sys.platform) -> Optional[bool]:
+    """Whether the service runs now; None if it is not installed."""
+    sh = _runner(run)
+    try:
+        if platform == "darwin":
+            label = f"io.kaptyorka.{name}"
+            if not (Path.home() / "Library/LaunchAgents" / f"{label}.plist").exists():
+                return None
+            return sh("launchctl", "print", f"gui/{os.getuid()}/{label}")
+        if not (Path.home() / ".config/systemd/user" / f"{name}.service").exists():
+            return None
+        return sh("systemctl", "--user", "is-active", "--quiet", name)
+    except ServiceError:  # no systemctl or launchctl
+        return False
+
+
 def restart(name: str, run: Callable = subprocess.run, platform: str = sys.platform) -> List[str]:
     """Restart the service; start it if `stop` turned it off. Raises ServiceError on failure."""
     sh = _runner(run)

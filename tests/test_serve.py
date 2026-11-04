@@ -343,18 +343,34 @@ def _pipx_prefix(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "prefix", str(venv))
 
 
-def test_update_reinstalls_then_restarts(tmp_path, monkeypatch, capsys):
+def test_update_reinstalls_then_restarts_only_running_units(tmp_path, monkeypatch, capsys):
     _pipx_prefix(tmp_path, monkeypatch)
     calls = []
 
     def run(cmd, **kw):
         calls.append(cmd[:2])
         return subprocess.CompletedProcess(cmd, 0, "kaptyorka 9.9.9\n", "")
+    state = {"kaptyorka-bridge": True, "kaptyorka-hub": False}
+    monkeypatch.setattr(service, "is_active", lambda name, **k: (calls.append(["active?", name]), state[name])[1])
     monkeypatch.setattr(service, "restart", lambda name, **k: [f"{name}: restarted"])
     assert cli._update(None, run=run) == 0
-    assert calls[0] == ["pipx", "reinstall"]
+    assert calls[:3] == [["active?", "kaptyorka-bridge"], ["active?", "kaptyorka-hub"], ["pipx", "reinstall"]]
     out = capsys.readouterr().out.splitlines()
-    assert out[0].endswith("-> 9.9.9") and out[1:] == ["kaptyorka-bridge: restarted", "kaptyorka-hub: restarted"]
+    assert out[0].endswith("-> 9.9.9")
+    assert out[1:] == ["kaptyorka-bridge: restarted", "kaptyorka-hub: stopped, left off"]
+
+
+@pytest.mark.parametrize("platform,unit,cmd", [
+    ("linux", ".config/systemd/user/kaptyorka-hub.service", ["systemctl", "--user", "is-active"]),
+    ("darwin", "Library/LaunchAgents/io.kaptyorka.kaptyorka-hub.plist", ["launchctl", "print"])])
+def test_is_active(home, platform, unit, cmd):
+    calls = []
+    assert service.is_active("kaptyorka-hub", run=fake_run(calls), platform=platform) is None
+    (home / unit).parent.mkdir(parents=True)
+    (home / unit).write_text("x")
+    assert service.is_active("kaptyorka-hub", run=fake_run(calls), platform=platform) is True
+    assert service.is_active("kaptyorka-hub", run=fake_run(calls, fail=(cmd[0],)), platform=platform) is False
+    assert calls[0][:len(cmd)] == cmd
 
 
 def test_update_failed_reinstall_does_not_restart(tmp_path, monkeypatch, capsys):
@@ -389,15 +405,14 @@ def test_join_without_flags_when_never_joined(home, capsys):
     assert "not joined yet: run kaptyorka join --hub <address> --token <token>" in capsys.readouterr().err
 
 
-def test_join_without_flags_only_restarts_the_bridge(home, capsys, monkeypatch):
-    paths.save_config({"hub": "http://h:1", "token": "T", "machine": "pc"})
-    seen = []
-    monkeypatch.setattr(service, "install", lambda name, argv, **k: seen.append((name, argv[1:])) or ["ok"])
+def test_join_without_flags_reruns_join_with_saved_arguments(home, monkeypatch):
+    paths.save_config({"hub": "http://h:1", "token": "T", "machine": "pc", "tools": ["codex"]})
     from kaptyorka import join
-    monkeypatch.setattr(join, "main", lambda *a, **k: pytest.fail("reconfigured"))
+    seen = []
+    monkeypatch.setattr(join, "main", lambda *a, **k: seen.append((a, k)) or 0)
     with pytest.raises(SystemExit) as e:
         run_cli(["join"])
-    assert e.value.code == 0 and seen == [("kaptyorka-bridge", ["bridge"])]
+    assert e.value.code == 0 and seen == [(("http://h:1", "T", "pc"), {"only": ["codex"]})]
 
 
 def test_join_with_flags_joins(home, monkeypatch):

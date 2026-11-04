@@ -34,7 +34,7 @@ pipx install kaptyorka
 kaptyorka join --hub <hub> --token <token> --name <machine>
 ```
 
-`join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart. `kaptyorka join` with no flags starts the bridge again from the saved settings.
+`join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart. `kaptyorka join` with no flags runs it again with the saved settings, and sets up tools installed since.
 
 ## For agents
 
@@ -82,7 +82,7 @@ Everything is in `~/.kaptyorka`:
 ## Stop, update, remove
 
 - `kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot. `kaptyorka join` or `kaptyorka start` starts them again.
-- `kaptyorka update` installs the latest version (pipx) and restarts the services.
+- `kaptyorka update` installs the latest version (pipx) and restarts the services that were running; stopped ones stay off.
 - `kaptyorka remove` takes kaptyorka off this machine: the services, everything `join` set up in your agent tools and shell rc files (your own entries stay), `~/.kaptyorka`, and the pipx install. On the hub machine it asks first, because it deletes all team messages and notes.
 
 ## License
