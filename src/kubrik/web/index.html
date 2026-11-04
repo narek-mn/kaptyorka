@@ -129,6 +129,8 @@ th.seen { text-align: right; }
 .route b { font-weight: 600; color: #e8e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .route span { color: var(--blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .route svg { color: var(--faint); }
+.route .all { display: flex; align-items: center; gap: 5px; color: var(--amber); }
+.route .all svg { color: var(--amber); }
 .text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
 
 /* notes */
@@ -167,6 +169,7 @@ th.seen { text-align: right; }
   .name { grid-column: 2; overflow: hidden; text-overflow: ellipsis; }
   .seen { grid-column: 3; grid-row: 1; }
   .c-tag { display: none; }
+  .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   td.c-tag-row { display: flex; grid-column: 2 / 4; gap: 6px; flex-wrap: wrap; }
   .status { grid-column: 2 / 4; max-width: none; white-space: normal; color: var(--dim); }
   .msg { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 10px 12px; }
@@ -187,6 +190,7 @@ th.seen { text-align: right; }
   <symbol id="i-cube" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="1.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v3"/></symbol>
   <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-all" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4h3l6 4V6L7 10z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
   <symbol id="i-machine" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></symbol>
   <symbol id="i-project" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></symbol>
   <symbol id="i-tool" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8 8-5 4 5 4M16 8l5 4-5 4"/></symbol>
@@ -322,10 +326,21 @@ th.seen { text-align: right; }
     return b;
   }
 
+  function seenCell(td, a) {
+    td.className = "seen" + (a.last_seen_s >= 20 ? " late" : "");
+    td.title = "Last seen " + full(Date.now() / 1000 - a.last_seen_s);
+    td.textContent = ago(a.last_seen_s);
+  }
+
   function renderTeam() {
     var body = document.getElementById("agents");
-    body.textContent = "";
     var agents = feed.agents;
+    var shape = agents.map(function (a) { return [a.name, a.machine, a.tool, a.project, a.status, a.activity]; });
+    if (!changed("team", shape)) {
+      body.querySelectorAll("td.seen").forEach(function (td, i) { seenCell(td, agents[i]); });
+      return;
+    }
+    body.textContent = "";
     agents.forEach(function (a) {
       var act = a.activity || "";
       body.appendChild(el("tr", null, [
@@ -339,7 +354,7 @@ th.seen { text-align: right; }
           el("span", { "class": "tag", title: "Tool", text: a.tool }),
           el("span", { "class": "tag", title: "Project", text: a.project })]),
         el("td", { "class": "status", title: a.status || "", text: a.status || "" }),
-        el("td", { "class": "seen" + (a.last_seen_s >= 20 ? " late" : ""), title: "Last seen " + full(Date.now() / 1000 - a.last_seen_s), text: ago(a.last_seen_s) })
+        (function () { var td = el("td"); seenCell(td, a); return td; })()
       ]));
     });
     document.getElementById("team-empty").hidden = agents.length > 0;
@@ -360,6 +375,7 @@ th.seen { text-align: right; }
     });
     [["machine", "i-machine", "Machine"], ["project", "i-project", "Project"]].forEach(function (g) {
       var keys = Object.keys(sets[g[0]]).sort();
+      if (keys.indexOf(filter[g[0]]) < 0) filter[g[0]] = null;
       if (!keys.length) return;
       var group = el("div", { "class": "group" }, [el("span", { "class": "gicon", title: g[2] }, [icon(g[1], 16)])]);
       keys.forEach(function (k) {
@@ -376,10 +392,24 @@ th.seen { text-align: right; }
     });
   }
 
+  /* a send to all is stored once per recipient: show it as one row */
+  function fold(messages) {
+    var rows = [];
+    messages.forEach(function (m) {
+      var last = rows[rows.length - 1];
+      if (last && last.sender === m.sender && last.text === m.text && Math.abs(m.created - last.created) <= 1) {
+        last.to.push(m.to);
+      } else {
+        rows.push({ sender: m.sender, to: [m.to], text: m.text, created: m.created });
+      }
+    });
+    return rows;
+  }
+
   function matches(m) {
-    var a = place(m.sender), b = place(m.to);
-    return (!filter.machine || a.machine === filter.machine || b.machine === filter.machine) &&
-           (!filter.project || a.project === filter.project || b.project === filter.project);
+    var ps = [m.sender].concat(m.to).map(place);
+    function any(k) { return !filter[k] || ps.some(function (p) { return p[k] === filter[k]; }); }
+    return any("machine") && any("project");
   }
 
   function renderMessages() {
@@ -387,9 +417,11 @@ th.seen { text-align: right; }
     var log = document.getElementById("log");
     var stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40, top = log.scrollTop;
     log.textContent = "";
-    var shown = feed.messages.filter(matches);
+    var shown = fold(feed.messages).filter(matches);
     shown.forEach(function (m) {
-      var to = el("span", { title: m.to, text: m.to });
+      var to = m.to.length > 1
+        ? el("span", { "class": "all", title: m.to.join("\n") }, [icon("i-all", 14), document.createTextNode("all")])
+        : el("span", { title: m.to[0], text: m.to[0] });
       log.appendChild(el("div", { "class": "msg" }, [
         timeEl(m.created),
         el("div", { "class": "route" }, [el("b", { title: m.sender, text: m.sender }), icon("i-arrow", 14), to]),
@@ -429,7 +461,7 @@ th.seen { text-align: right; }
         open && older.length ? el("div", { "class": "history" }, older.map(version)) : null
       ]);
       function toggle() { openNotes[n.topic] = !open; renderNotes(); }
-      card.addEventListener("click", toggle);
+      card.addEventListener("click", function () { if (!String(window.getSelection())) toggle(); });
       card.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
       board.appendChild(card);
     });
@@ -445,7 +477,7 @@ th.seen { text-align: right; }
   }
   function render() {
     document.getElementById("n-team").textContent = feed.agents.length;
-    document.getElementById("n-messages").textContent = feed.messages.length;
+    document.getElementById("n-messages").textContent = fold(feed.messages).length;
     document.getElementById("n-notes").textContent = feed.notes.length;
     renderTeam();
     var places = feed.agents.map(function (a) { return [a.name, a.machine, a.project]; });
@@ -460,20 +492,22 @@ th.seen { text-align: right; }
   }
 
   function poll() {
-    fetch("/api/feed", { headers: { Authorization: "Bearer " + token }, cache: "no-store" })
+    var ctl = new AbortController(), stop = setTimeout(function () { ctl.abort(); }, 5000);
+    fetch("/api/feed", { headers: { Authorization: "Bearer " + token }, cache: "no-store", signal: ctl.signal })
       .then(function (r) {
         if (r.status === 401) { lock(); return null; }
         if (!r.ok) throw new Error(r.status);
         return r.text();
       })
       .then(function (text) {
+        clearTimeout(stop);
         if (text == null) return;
         live(true);
         feed = JSON.parse(text);
         render();
         timer = setTimeout(poll, 2000);
       })
-      .catch(function () { live(false); timer = setTimeout(poll, 2000); });
+      .catch(function () { clearTimeout(stop); live(false); timer = setTimeout(poll, 2000); });
   }
 
   if (!token) return;

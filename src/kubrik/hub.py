@@ -18,6 +18,8 @@ from starlette.websockets import WebSocketClose
 from kubrik.store import Agent, KubrikError, Store
 
 MAX_WAIT_S = 25
+CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
+       "style-src 'unsafe-inline'; img-src 'self' data:")
 
 INSTRUCTIONS = (
     "kubrik connects you with the other coding agents on this team. "
@@ -223,7 +225,7 @@ def build_app(store: Store, token: str) -> Starlette:
     @server.custom_route("/", methods=["GET"])
     async def page(request: Request) -> Response:
         html = (importlib.resources.files("kubrik") / "web/index.html").read_text("utf-8")
-        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+        return HTMLResponse(html, headers={"Cache-Control": "no-store", "Content-Security-Policy": CSP})
 
     app = server.streamable_http_app(host="0.0.0.0")
     app.add_middleware(BearerAuth, token=token)
