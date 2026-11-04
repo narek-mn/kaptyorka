@@ -1,4 +1,5 @@
-"""The hub app: MCP tools over streamable HTTP behind a bearer token."""
+"""The hub app: MCP tools and plain routes over HTTP behind a bearer token."""
+import asyncio
 import functools
 import hmac
 import inspect
@@ -8,9 +9,13 @@ from typing import List, Union
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from starlette.applications import Starlette
-from starlette.responses import PlainTextResponse
+from starlette.requests import Request
+from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.websockets import WebSocketClose
 
 from kubrik.store import Agent, KubrikError, Store
+
+MAX_WAIT_S = 25
 
 INSTRUCTIONS = (
     "kubrik connects you with the other coding agents on this team. "
@@ -28,12 +33,26 @@ class BearerAuth:
         self.expected = f"Bearer {token}".encode()
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and not (scope["method"] == "GET" and scope["path"] == "/"):
+        kind = scope["type"]
+        if kind != "lifespan" and not (
+                kind == "http" and scope["method"] == "GET" and scope["path"] == "/"):
             auth = dict(scope["headers"]).get(b"authorization", b"")
             if not hmac.compare_digest(auth, self.expected):
-                await PlainTextResponse("unauthorized", status_code=401)(scope, receive, send)
+                deny = (PlainTextResponse("unauthorized", status_code=401) if kind == "http"
+                        else WebSocketClose(1008))
+                await deny(scope, receive, send)
                 return
         await self.app(scope, receive, send)
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+def _agent_row(a: Agent, now: float) -> dict:
+    return {"name": a.name, "machine": a.machine, "tool": a.tool, "project": a.project,
+            "status": a.status, "activity": a.activity,
+            "last_seen_s": round(now - a.last_seen)}
 
 
 def _tool_errors(fn):
@@ -57,13 +76,16 @@ def _tool_errors(fn):
 
 def build_app(store: Store, token: str) -> Starlette:
     server = MCPServer("kubrik", instructions=INSTRUCTIONS)
+    sent = {"event": asyncio.Event()}  # set and replaced after each send; wakes bridge polls
 
-    def me(ctx: Context) -> Agent:
-        h = ctx.headers or {}
+    def identify(h) -> Agent:
         ident = [h.get(f"x-kubrik-{k}") for k in ("key", "machine", "tool", "project")]
         if not all(ident):
             raise KubrikError("no kubrik identity; run kubrik join")
         return store.seen(*ident)
+
+    def me(ctx: Context) -> Agent:
+        return identify(ctx.headers or {})
 
     @server.tool()
     @_tool_errors
@@ -71,16 +93,15 @@ def build_app(store: Store, token: str) -> Starlette:
         """Online sessions: name, machine, tool, project, status, activity, last seen."""
         key = me(ctx).key
         now = store.clock()
-        return [{"name": a.name, "machine": a.machine, "tool": a.tool, "project": a.project,
-                 "status": a.status, "activity": a.activity,
-                 "last_seen_s": round(now - a.last_seen), "you": a.key == key}
-                for a in store.online()]
+        return [{**_agent_row(a, now), "you": a.key == key} for a in store.online()]
 
     @server.tool()
     @_tool_errors
     async def send(to: str, text: str, ctx: Context) -> str:
         """Send text to one session by name, or to 'all'."""
         n = store.send(me(ctx).key, to, text)
+        sent["event"].set()
+        sent["event"] = asyncio.Event()
         return f"sent to {n} session" + ("" if n == 1 else "s")
 
     @server.tool()
@@ -118,6 +139,67 @@ def build_app(store: Store, token: str) -> Starlette:
         """Write a new version of a note (older versions are kept)."""
         store.notes_write(me(ctx).key, topic, text)
         return f"saved note {topic}"
+
+    @server.custom_route("/bridge/heartbeat", methods=["POST"])
+    async def bridge_heartbeat(request: Request) -> Response:
+        body = await request.json()
+        store.heartbeat(body["machine"], body["sessions"])
+        return Response(status_code=204)
+
+    @server.custom_route("/bridge/poll", methods=["GET"])
+    async def bridge_poll(request: Request) -> Response:
+        machine = request.query_params["machine"]
+        wait = min(max(float(request.query_params.get("wait", 0)), 0), MAX_WAIT_S)
+        event = sent["event"]  # taken before offer, so a send after offer still wakes us
+        items = store.offer(machine)
+        if not items and wait:
+            try:
+                await asyncio.wait_for(event.wait(), wait)
+                items = store.offer(machine)
+            except asyncio.TimeoutError:
+                pass
+        return JSONResponse(items)
+
+    @server.custom_route("/bridge/ack", methods=["POST"])
+    async def bridge_ack(request: Request) -> Response:
+        body = await request.json()
+        store.ack(int(body["id"]), bool(body["ok"]))
+        return Response(status_code=204)
+
+    @server.custom_route("/api/brief", methods=["GET"])
+    async def api_brief(request: Request) -> Response:
+        try:
+            agent = identify(request.headers)
+        except KubrikError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        unread = store.inbox(agent.key)
+        parts = [f"Kubrik message from {m.sender}:\n\n{m.text}" for m in unread]
+        if request.query_params.get("event") == "start":
+            others = [a for a in store.online() if a.key != agent.key]
+            line = f"Kubrik: you are `{agent.name}`. "
+            if others:
+                names = ", ".join(a.name + (f" ({a.activity})" if a.activity else "")
+                                  for a in others)
+                line += f"{_plural(len(others), 'other')} online: {names}. "
+            else:
+                line += "No one else online. "
+            line += f"{_plural(len(unread), 'unread message')}."
+            topics = [n["topic"] for n in store.notes_list()]
+            if topics:
+                line += f" Board topics: {', '.join(topics)}."
+            parts.insert(0, line)
+        return PlainTextResponse("\n\n".join(parts))
+
+    @server.custom_route("/api/feed", methods=["GET"])
+    async def api_feed(request: Request) -> Response:
+        now = store.clock()
+        return JSONResponse({
+            "agents": [_agent_row(a, now) for a in store.online()],
+            "messages": [asdict(m) for m in store.messages(500)],
+            "notes": [{"topic": n["topic"],
+                       "history": [asdict(h) for h in store.note_history(n["topic"])]}
+                      for n in store.notes_list()],
+        })
 
     app = server.streamable_http_app(host="0.0.0.0")
     app.add_middleware(BearerAuth, token=token)
