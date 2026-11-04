@@ -125,3 +125,23 @@ def test_join_hub_without_scheme_and_quoted_token(hub, home):
     bare = hub.url.split("://")[1]
     assert main(bare + "//", " 'T' ", "pc", adapters=[FakeAdapter("a")], install=no_service([])) == 0
     assert paths.load_config()["hub"] == hub.url and paths.load_config()["token"] == "T"
+
+
+def test_join_passes_path_to_the_service(hub, home, monkeypatch):
+    seen = {}
+
+    def install(name, argv, **kw):
+        seen.update(kw)
+        return []
+    monkeypatch.setenv("PATH", "/x/bin:/y/bin")
+    main(hub.url, "T", "pc", adapters=[FakeAdapter("a")], install=install)
+    assert seen["env"] == {"PATH": "/x/bin:/y/bin"}
+
+
+def test_join_only_adds_to_earlier_tools(hub, home):
+    a, b = FakeAdapter("claude-code"), FakeAdapter("codex")
+    main(hub.url, "T", "pc", adapters=[a, b], install=no_service([]), only=["claude-code"])
+    main(hub.url, "T", "pc", adapters=[a, b], install=no_service([]), only=["codex"])
+    assert paths.load_config()["tools"] == ["claude-code", "codex"]
+    main(hub.url, "T", "pc", adapters=[a, b], install=no_service([]))
+    assert "tools" not in paths.load_config()

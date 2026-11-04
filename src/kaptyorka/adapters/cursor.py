@@ -1,4 +1,5 @@
 """Cursor: pull only. Its hooks fetch the brief; there is no way to push into a chat."""
+import shlex
 import shutil
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -42,7 +43,7 @@ class CursorAdapter:
             hooks = data.setdefault("hooks", {})
             for event, name, extra in (("stop", "stop", {"loop_limit": 5}),
                                        ("postToolUse", "tool", {})):
-                entry = {"command": f"{kaptyorka} hook cursor {name}", **extra}
+                entry = {"command": f"{shlex.quote(kaptyorka)} hook cursor {name}", **extra}
                 entries = hooks.setdefault(event, [])
                 ours = [i for i, e in enumerate(entries) if str(e.get("command", ""))
                         .endswith(f" hook cursor {name}")]

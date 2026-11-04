@@ -20,7 +20,7 @@ jobs:
           version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
           tag="${GITHUB_REF_NAME#v}"
           if [ "$tag" != "$version" ]; then echo "tag $GITHUB_REF_NAME does not match version $version"; exit 1; fi
-      - run: pip install pytest "setuptools>=77" build twine
+      - run: pip install . pytest build twine
       - run: python -m pytest tests -q
       - run: python -m build
       - run: twine check --strict dist/*

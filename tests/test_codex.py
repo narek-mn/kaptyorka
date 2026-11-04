@@ -277,3 +277,11 @@ def test_hook_formatter_codex():
         "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "X"}}
     assert json.loads(hook.FORMATTERS["codex"]("prompt", "X")) == {
         "hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "X"}}
+
+
+def test_hook_commands_quote_the_exe(home, codex_home, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    configure(home, "/my dir/k")
+    data = json.loads((codex_home / "hooks.json").read_text())
+    assert data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] == \
+        "'/my dir/k' hook codex prompt"

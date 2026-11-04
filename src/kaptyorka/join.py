@@ -34,7 +34,8 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     done = [a for a in adapters if a.installed() and (not only or a.tool in only)]
     cfg = {"hub": hub, "token": token, "machine": name}
     if only:
-        cfg["tools"] = sorted(set(only))  # the bridge drives only these
+        # the bridge drives only these; a later --only adds to the earlier ones
+        cfg["tools"] = sorted(set(only) | set(paths.load_config().get("tools", [])))
     paths.save_config(cfg)
     rc = 0
     ok = []
@@ -50,7 +51,8 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
             print(f"{a.tool}: {line}")
     if os.environ.get("KAPTYORKA_SKIP_SERVICE") != "1":
         try:
-            for line in install("kaptyorka-bridge", [exe, "bridge"]):
+            for line in install("kaptyorka-bridge", [exe, "bridge"],
+                                env={"PATH": os.environ.get("PATH", "")}):
                 print(f"bridge: {line}")
         except service.ServiceError as e:
             print(f"bridge service failed: {e}", file=sys.stderr)

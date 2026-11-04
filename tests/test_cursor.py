@@ -88,3 +88,9 @@ def test_cursor_key_matches_shim_and_hook(home, monkeypatch, capsys):
 def test_hook_cursor_prints_empty_object_on_failure(home, capsys):
     assert hook.main("cursor", "stop", "") == 0  # not joined
     assert capsys.readouterr().out == "{}\n"
+
+
+def test_hook_commands_quote_the_exe(tmp_path):
+    CursorAdapter(tmp_path, log=print).configure("/my dir/kap")
+    hooks = json.loads((tmp_path / ".cursor/hooks.json").read_text())
+    assert hooks["hooks"]["postToolUse"] == [{"command": "'/my dir/kap' hook cursor tool"}]

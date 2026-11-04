@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable, Dict, List, Optional
 from xml.sax.saxutils import escape
 
 from kaptyorka import paths
@@ -15,8 +15,17 @@ class ServiceError(Exception):
     pass
 
 
-def unit_text(name: str, argv: List[str], platform: str) -> str:
+def _systemd_env(k: str, v: str) -> str:
+    v = v.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'Environment="{k}={v}"'
+
+
+def unit_text(name: str, argv: List[str], platform: str,
+              env: Optional[Dict[str, str]] = None) -> str:
     if platform == "darwin":
+        env_xml = "".join(f"\n    <key>{escape(k)}</key><string>{escape(v)}</string>"
+                          for k, v in (env or {}).items())
+        env_xml = f"\n  <key>EnvironmentVariables</key>\n  <dict>{env_xml}\n  </dict>" if env_xml else ""
         args = "".join(f"\n    <string>{escape(a)}</string>" for a in argv)
         log = escape(str(paths.home() / f"{name}.log"))
         return f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -28,18 +37,19 @@ def unit_text(name: str, argv: List[str], platform: str) -> str:
   <array>{args}
   </array>
   <key>KeepAlive</key><true/>
-  <key>RunAtLoad</key><true/>
+  <key>RunAtLoad</key><true/>{env_xml}
   <key>StandardOutPath</key><string>{log}</string>
   <key>StandardErrorPath</key><string>{log}</string>
 </dict>
 </plist>
 """
     exec_start = shlex.join(argv).replace("%", "%%")
+    env_lines = "".join(_systemd_env(k, v) + "\n" for k, v in (env or {}).items())
     return f"""[Unit]
 Description={name}
 
 [Service]
-ExecStart={exec_start}
+{env_lines}ExecStart={exec_start}
 Restart=always
 RestartSec=2
 
@@ -49,7 +59,8 @@ WantedBy=default.target
 
 
 def install(name: str, argv: List[str], run: Callable = subprocess.run,
-            platform: str = sys.platform, sleep: Callable = time.sleep) -> List[str]:
+            platform: str = sys.platform, sleep: Callable = time.sleep,
+            env: Optional[Dict[str, str]] = None) -> List[str]:
     def sh(*cmd: str, must: bool = False) -> bool:
         try:
             r = run(list(cmd), capture_output=True, text=True)
@@ -62,7 +73,7 @@ def install(name: str, argv: List[str], run: Callable = subprocess.run,
     if platform == "darwin":
         plist = Path.home() / "Library/LaunchAgents" / f"io.kaptyorka.{name}.plist"
         plist.parent.mkdir(parents=True, exist_ok=True)
-        plist.write_text(unit_text(name, argv, "darwin"))
+        plist.write_text(unit_text(name, argv, "darwin", env))
         domain = f"gui/{os.getuid()}"
         sh("launchctl", "bootout", domain, str(plist))
         for attempt in range(5):
@@ -76,7 +87,7 @@ def install(name: str, argv: List[str], run: Callable = subprocess.run,
         return [f"installed {plist}"]
     unit = Path.home() / ".config/systemd/user" / f"{name}.service"
     unit.parent.mkdir(parents=True, exist_ok=True)
-    unit.write_text(unit_text(name, argv, "linux"))
+    unit.write_text(unit_text(name, argv, "linux", env))
     lines = [f"installed {unit}"]
     sh("systemctl", "--user", "daemon-reload", must=True)
     active = sh("systemctl", "--user", "is-active", "--quiet", name)

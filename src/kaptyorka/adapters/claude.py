@@ -1,4 +1,5 @@
 """Claude Code: sessions from ~/.claude/sessions, push through each session's inbox socket."""
+import shlex
 import json
 import os
 import shutil
@@ -95,7 +96,7 @@ class ClaudeAdapter:
             hooks = data.setdefault("hooks", {})
             changed = False
             for event, name in (("SessionStart", "start"), ("UserPromptSubmit", "prompt")):
-                command = f"{kaptyorka} hook claude-code {name}"
+                command = f"{shlex.quote(kaptyorka)} hook claude-code {name}"
                 entry = {"hooks": [{"type": "command", "command": command, "timeout": 5}]}
                 entries = hooks.setdefault(event, [])
                 ours = [i for i, e in enumerate(entries) if any(

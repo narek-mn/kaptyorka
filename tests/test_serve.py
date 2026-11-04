@@ -156,3 +156,17 @@ def test_darwin_bootstrap_retries(home):
 def test_systemd_unit_quotes_and_escapes_percent():
     text = unit_text("x", ["/a b/k", "100%"], "linux")
     assert "ExecStart='/a b/k' 100%%" in text and "RestartSec=2" in text
+
+
+def test_systemd_unit_sets_environment(home):
+    text = unit_text("kaptyorka-bridge", ["/k", "bridge"], "linux",
+                     {"PATH": '/a b:/h/%u:"x"\\y'})
+    assert 'Environment="PATH=/a b:/h/%%u:\\"x\\"\\\\y"\n' in text
+    assert text.index("Environment=") < text.index("ExecStart=")
+
+
+def test_launchd_plist_sets_environment(home):
+    text = unit_text("kaptyorka-bridge", ["/k", "bridge"], "darwin", {"PATH": "/a&b:/c"})
+    assert "<key>EnvironmentVariables</key>" in text
+    assert "<key>PATH</key><string>/a&amp;b:/c</string>" in text
+    assert "EnvironmentVariables" not in unit_text("n", ["/k"], "darwin")

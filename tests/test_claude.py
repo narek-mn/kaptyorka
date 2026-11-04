@@ -205,3 +205,15 @@ def test_claude_key_matches_shim_and_bridge(home, monkeypatch, tmp_path):
     ident = identity.identify("pc", pid=1)
     s = ClaudeAdapter(home).sessions()[0]
     assert (ident.key, ident.tool, ident.project) == (s.key, s.tool, s.project)
+
+
+def test_configure_quotes_exe_and_replaces_old_unquoted_hook(home, fake_claude_cli):
+    settings = home / ".claude/settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({"hooks": {"UserPromptSubmit": [
+        {"hooks": [{"type": "command", "command": "/my dir/k hook claude-code prompt"}]}]}}))
+    ClaudeAdapter(home).configure("/my dir/k")
+    ups = json.loads(settings.read_text())["hooks"]["UserPromptSubmit"]
+    assert [h["hooks"][0]["command"] for h in ups] == ["'/my dir/k' hook claude-code prompt"]
+    assert ["claude", "mcp", "add", "--scope", "user", "kaptyorka", "--", "/my dir/k", "mcp"] \
+        in fake_claude_cli.calls

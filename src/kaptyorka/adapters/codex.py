@@ -3,6 +3,7 @@
 The socket speaks WebSocket over a Unix socket, one JSON-RPC message per text frame.
 The TUI uses the daemon only when started as `codex --remote unix://` (the alias `join` adds).
 """
+import shlex
 import base64
 import json
 import os
@@ -255,7 +256,7 @@ class CodexAdapter:
 
     def _trust(self, kaptyorka: str, outside: str) -> Optional[str]:
         """Trust entries for our hooks from the daemon's hooks/list; None if it cannot tell."""
-        ours = {f"{kaptyorka} hook codex {name}" for _, name in EVENTS}
+        ours = {f"{shlex.quote(kaptyorka)} hook codex {name}" for _, name in EVENTS}
         try:
             with Rpc(self.socket_path) as rpc:
                 listed = [h for entry in rpc.call("hooks/list", {})["data"]
@@ -285,7 +286,7 @@ class CodexAdapter:
             changed = False
             for event, name in EVENTS:
                 group: Dict = {"hooks": [{"type": "command",
-                                          "command": f"{kaptyorka} hook codex {name}"}]}
+                                          "command": f"{shlex.quote(kaptyorka)} hook codex {name}"}]}
                 if event == "SessionStart":
                     group = {"matcher": "startup|resume", **group}
                 groups = hooks.setdefault(event, [])
