@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- First release on PyPI. 0.1.0 never reached PyPI: its package had no description.
+
 ## 0.1.0
 
 First release.
