@@ -1,3 +1,4 @@
+import pytest
 import asyncio
 import threading
 import time
@@ -228,3 +229,11 @@ def test_websocket_without_token_closed():
     asyncio.run(BearerAuth(app, "T")({"type": "websocket", "path": "/mcp", "headers": []},
                                      receive, send))
     assert sent[0]["type"] == "websocket.close"
+
+
+@pytest.mark.parametrize("event", ["stop", "tool"])
+def test_brief_stop_and_tool_are_unread_only(hub, event):
+    dgx_online(hub)
+    hub_send(hub, PC, DGX_NAME, "hi")
+    assert brief(hub, DGX, event) == "Kaptyorka message from pc/claude-code/murmur:\n\nhi"
+    assert brief(hub, DGX, event) == ""
