@@ -83,7 +83,7 @@ Everything is in `~/.kaptyorka`:
 
 ## Remove
 
-`kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot; `kaptyorka join` or `kaptyorka serve` starts them again. To remove everything:
+`kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot; `kaptyorka join` or `kaptyorka serve` starts them again. `kaptyorka start` starts them again, and `kaptyorka restart` restarts them (`kaptyorka update` does the pipx update and then this). To remove everything:
 
 ```bash
 systemctl --user disable --now kaptyorka-bridge                  # Linux

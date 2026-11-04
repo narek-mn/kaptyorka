@@ -215,3 +215,209 @@ def test_stop_command_prints_both_and_exits_0(capsys, monkeypatch):
         run_cli(["stop"])
     assert e.value.code == 0 and seen == ["kaptyorka-bridge", "kaptyorka-hub"]
     assert "kaptyorka-hub: stopped" in capsys.readouterr().out
+
+
+def test_systemd_unit_has_short_stop_timeout():
+    assert "TimeoutStopSec=10" in unit_text("kaptyorka-hub", ["/k"], "linux")
+
+
+def _fake(calls, results):
+    def run(cmd, **kw):
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, results.get(" ".join(cmd[:3]), 0), "", "boom")
+    return run
+
+
+def _install_unit(home, name="kaptyorka-hub"):
+    u = home / ".config/systemd/user" / f"{name}.service"
+    u.parent.mkdir(parents=True, exist_ok=True)
+    u.write_text("x")
+
+
+def test_restart_linux_restarts_enabled_unit(home):
+    _install_unit(home)
+    calls = []
+    assert service.restart("kaptyorka-hub", run=_fake(calls, {}), platform="linux") == [
+        "kaptyorka-hub: restarted"]
+    assert calls[-1] == ["systemctl", "--user", "restart", "kaptyorka-hub"]
+
+
+def test_restart_linux_starts_disabled_unit(home):
+    _install_unit(home)
+    calls = []
+    service.restart("kaptyorka-hub", run=_fake(calls, {"systemctl --user is-enabled": 1}), platform="linux")
+    assert calls[-1] == ["systemctl", "--user", "enable", "--now", "kaptyorka-hub"]
+
+
+def test_restart_linux_not_installed(home):
+    calls = []
+    assert service.restart("kaptyorka-hub", run=_fake(calls, {}), platform="linux") == [
+        "kaptyorka-hub: not installed"]
+    assert calls == []
+
+
+def test_restart_linux_failure_raises(home):
+    _install_unit(home)
+    with pytest.raises(service.ServiceError, match="boom"):
+        service.restart("kaptyorka-hub", run=_fake([], {"systemctl --user restart": 1}), platform="linux")
+
+
+def _plist(home):
+    p = home / "Library/LaunchAgents/io.kaptyorka.kaptyorka-hub.plist"
+    p.parent.mkdir(parents=True)
+    p.write_text("x")
+    return p
+
+
+def test_restart_darwin_kickstarts_loaded_job(home):
+    _plist(home)
+    calls = []
+    assert service.restart("kaptyorka-hub", run=_fake(calls, {}), platform="darwin") == [
+        "kaptyorka-hub: restarted"]
+    assert calls[-1] == ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/io.kaptyorka.kaptyorka-hub"]
+
+
+def test_restart_darwin_bootstraps_job_that_stop_unloaded(home):
+    plist = _plist(home)
+    calls = []
+    service.restart("kaptyorka-hub", run=_fake(calls, {"launchctl print gui/%d/io.kaptyorka.kaptyorka-hub" % os.getuid(): 1}),
+                    platform="darwin")
+    assert [c[1] for c in calls] == ["print", "enable", "bootstrap"]
+    assert calls[-1] == ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)]
+
+
+def test_restart_darwin_not_installed(home):
+    assert service.restart("kaptyorka-hub", run=_fake([], {}), platform="darwin") == [
+        "kaptyorka-hub: not installed"]
+
+
+def test_start_linux_enables_unit(home):
+    _install_unit(home)
+    calls = []
+    assert service.start("kaptyorka-hub", run=_fake(calls, {}), platform="linux") == [
+        "kaptyorka-hub: started"]
+    assert calls == [["systemctl", "--user", "enable", "--now", "kaptyorka-hub"]]
+
+
+def test_start_not_installed(home):
+    assert service.start("kaptyorka-hub", run=_fake([], {}), platform="linux") == [
+        "kaptyorka-hub: not installed"]
+    assert service.start("kaptyorka-hub", run=_fake([], {}), platform="darwin") == [
+        "kaptyorka-hub: not installed"]
+
+
+def test_start_darwin_bootstraps_only_when_not_loaded(home):
+    plist = _plist(home)
+    calls = []
+    service.start("kaptyorka-hub", run=_fake(calls, {}), platform="darwin")
+    assert [c[1] for c in calls] == ["print"]
+    calls.clear()
+    key = "launchctl print gui/%d/io.kaptyorka.kaptyorka-hub" % os.getuid()
+    service.start("kaptyorka-hub", run=_fake(calls, {key: 1}), platform="darwin")
+    assert [c[1] for c in calls] == ["print", "enable", "bootstrap"]
+    assert calls[-1][-1] == str(plist)
+
+
+def test_start_command_prints_both(capsys, monkeypatch):
+    monkeypatch.setattr(service, "start", lambda name, **k: [f"{name}: started"])
+    with pytest.raises(SystemExit) as e:
+        run_cli(["start"])
+    assert e.value.code == 0
+    assert capsys.readouterr().out.splitlines() == ["kaptyorka-bridge: started", "kaptyorka-hub: started"]
+
+
+def test_restart_command_prints_both_and_exits_0(capsys, monkeypatch):
+    monkeypatch.setattr(service, "restart", lambda name, **k: [f"{name}: restarted"])
+    with pytest.raises(SystemExit) as e:
+        run_cli(["restart"])
+    assert e.value.code == 0
+    assert capsys.readouterr().out.splitlines() == ["kaptyorka-bridge: restarted", "kaptyorka-hub: restarted"]
+
+
+def test_restart_command_failure_goes_to_stderr_and_exits_1(capsys, monkeypatch):
+    def boom(name, **k):
+        raise service.ServiceError("boom")
+    monkeypatch.setattr(service, "restart", boom)
+    with pytest.raises(SystemExit) as e:
+        run_cli(["restart"])
+    assert e.value.code == 1 and "kaptyorka-bridge: boom" in capsys.readouterr().err
+
+
+def test_hub_exits_fast_on_sigterm_with_open_connection(home):
+    import signal
+    import socket as sk
+    import threading
+    import time
+    import urllib.request
+
+    with sk.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    (home / ".kaptyorka").mkdir()
+    (home / ".kaptyorka/hub-token").write_text("T\n")
+    exe = os.path.join(os.path.dirname(sys.executable), "kaptyorka")
+    proc = subprocess.Popen([exe, "serve", "--foreground", "--port", str(port)],
+                            stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                sk.create_connection(("127.0.0.1", port), timeout=1).close()
+                break
+            except OSError:
+                assert proc.poll() is None and time.monotonic() < deadline, "hub did not start"
+                time.sleep(0.05)
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/bridge/poll?machine=x&wait=25",
+                                     headers={"Authorization": "Bearer T"})
+        def poll():
+            try:
+                urllib.request.urlopen(req, timeout=30).read()
+            except OSError:  # the hub going away ends the poll
+                pass
+
+        threading.Thread(target=poll, daemon=True).start()
+        time.sleep(0.5)
+        t0 = time.monotonic()
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=6)
+        print(f"stop took {time.monotonic() - t0:.2f}s")
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        proc.stderr.close()
+
+
+def _pipx_prefix(tmp_path, monkeypatch):
+    pipx = tmp_path / "pipx"
+    (pipx / "venvs/kaptyorka").mkdir(parents=True)
+    monkeypatch.setenv("PIPX_HOME", str(pipx))
+    monkeypatch.setattr(sys, "prefix", str(pipx / "venvs/kaptyorka"))
+
+
+def test_update_reinstalls_then_restarts(tmp_path, monkeypatch, capsys):
+    _pipx_prefix(tmp_path, monkeypatch)
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd[:2])
+        return subprocess.CompletedProcess(cmd, 0, "kaptyorka 9.9.9\n", "")
+    monkeypatch.setattr(service, "restart", lambda name, **k: [f"{name}: restarted"])
+    assert cli._update(None, run=run) == 0
+    assert calls[0] == ["pipx", "reinstall"]
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].endswith("-> 9.9.9") and out[1:] == ["kaptyorka-bridge: restarted", "kaptyorka-hub: restarted"]
+
+
+def test_update_failed_reinstall_does_not_restart(tmp_path, monkeypatch, capsys):
+    _pipx_prefix(tmp_path, monkeypatch)
+    monkeypatch.setattr(service, "restart", lambda *a, **k: pytest.fail("restarted"))
+    run = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "no network")
+    assert cli._update(None, run=run) == 1
+    assert "no network" in capsys.readouterr().err
+
+
+def test_update_needs_pipx_install(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("PIPX_HOME", str(tmp_path))
+    assert cli._update(None, run=lambda *a, **k: pytest.fail("ran")) == 1
+    assert "not installed with pipx" in capsys.readouterr().err

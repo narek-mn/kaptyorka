@@ -3,6 +3,7 @@ import os
 import secrets
 import select
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -35,7 +36,8 @@ def _serve(args) -> int:
         from kaptyorka.store import Store
 
         store = Store(paths.home() / "hub.db")
-        uvicorn.run(build_app(store, token), host="0.0.0.0", port=args.port, log_level="warning")
+        uvicorn.run(build_app(store, token), host="0.0.0.0", port=args.port, log_level="warning",
+                    timeout_graceful_shutdown=3)  # open agent streams must not hold up a stop
         return 0
     exe = str(Path(sys.argv[0]).resolve())
     try:
@@ -82,6 +84,37 @@ def _stop(args) -> int:
         print(e, file=sys.stderr)
         return 1
     return 0
+
+
+def _change(verb: str):
+    def run(args) -> int:
+        for unit in ("kaptyorka-bridge", "kaptyorka-hub"):
+            try:
+                for line in getattr(service, verb)(unit):
+                    print(line)
+            except service.ServiceError as e:
+                print(f"{unit}: {e}", file=sys.stderr)
+                return 1
+        return 0
+    return run
+
+
+def _update(args, run=subprocess.run) -> int:
+    venvs = Path(os.environ.get("PIPX_HOME") or Path.home() / ".local/share/pipx") / "venvs" / "kaptyorka"
+    if Path(sys.prefix).resolve() != venvs.resolve():
+        print("kaptyorka was not installed with pipx; update it the way you installed it", file=sys.stderr)
+        return 1
+    try:
+        r = run(["pipx", "reinstall", "kaptyorka"], capture_output=True, text=True)
+        new = run([str(venvs / "bin/kaptyorka"), "--version"], capture_output=True, text=True) if r.returncode == 0 else r
+    except FileNotFoundError:
+        print("pipx not found", file=sys.stderr)
+        return 1
+    if r.returncode != 0:
+        print((r.stderr or r.stdout).strip() or "pipx reinstall failed", file=sys.stderr)
+        return 1
+    print(f"kaptyorka {__version__} -> {new.stdout.strip().removeprefix('kaptyorka ')}")
+    return _change("restart")(args)
 
 
 def _mcp(args) -> int:
@@ -138,6 +171,12 @@ def entry() -> None:
     sub.add_parser("who", help="list agents online").set_defaults(run=_who)
     sub.add_parser("stop", help="stop the bridge (and hub) and keep them off after a reboot; "
                    "kaptyorka join / serve start them again").set_defaults(run=_stop)
+    sub.add_parser("start", help="start the bridge (and hub) installed here, after kaptyorka stop"
+                   ).set_defaults(run=_change("start"))
+    sub.add_parser("restart", help="restart the bridge (and hub) installed here, so new code or "
+                   "settings take effect (use after updating)").set_defaults(run=_change("restart"))
+    sub.add_parser("update", help="update kaptyorka (pipx) to the latest version and restart "
+                   "the services").set_defaults(run=_update)
     m = sub.add_parser("mcp", help="MCP server for one agent session (started by the tool)")
     m.add_argument("--workspace", help="project folder, for tools that do not set the cwd")
     m.set_defaults(run=_mcp)

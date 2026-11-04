@@ -52,6 +52,7 @@ Description={name}
 {env_lines}ExecStart={exec_start}
 Restart=always
 RestartSec=2
+TimeoutStopSec=10
 
 [Install]
 WantedBy=default.target
@@ -82,6 +83,39 @@ def stop(name: str, run: Callable = subprocess.run, platform: str = sys.platform
     else:
         ok = sh("systemctl", "--user", "disable", "--now", name)
     return [f"{name}: stopped" if ok else f"{name}: not running"]
+
+
+def _change(name: str, verb: str, run: Callable, platform: str) -> List[str]:
+    """start: turn the service on. restart: restart it if it is on, else start it."""
+    sh = _runner(run)
+    if platform == "darwin":
+        label = f"io.kaptyorka.{name}"
+        target = f"gui/{os.getuid()}/{label}"
+        plist = Path.home() / "Library/LaunchAgents" / f"{label}.plist"
+        if not plist.exists():
+            return [f"{name}: not installed"]
+        if sh("launchctl", "print", target):
+            if verb == "restart":
+                sh("launchctl", "kickstart", "-k", target, must=True)
+        else:
+            sh("launchctl", "enable", target)
+            sh("launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist), must=True)
+    else:
+        if not (Path.home() / ".config/systemd/user" / f"{name}.service").exists():
+            return [f"{name}: not installed"]
+        if verb == "restart" and sh("systemctl", "--user", "is-enabled", "--quiet", name):
+            sh("systemctl", "--user", "restart", name, must=True)
+        else:
+            sh("systemctl", "--user", "enable", "--now", name, must=True)
+    return [f"{name}: {verb}ed"]
+
+
+def start(name: str, run: Callable = subprocess.run, platform: str = sys.platform) -> List[str]:
+    return _change(name, "start", run, platform)
+
+
+def restart(name: str, run: Callable = subprocess.run, platform: str = sys.platform) -> List[str]:
+    return _change(name, "restart", run, platform)
 
 
 def install(name: str, argv: List[str], run: Callable = subprocess.run,
