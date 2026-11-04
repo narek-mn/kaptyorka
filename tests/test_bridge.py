@@ -6,7 +6,7 @@ import time
 
 from kaptyorka import bridge as bridge_mod
 from kaptyorka.adapters.base import DeliveryError, Session, merge_json
-from kaptyorka.bridge import Bridge
+from kaptyorka.bridge import Bridge, joined_adapters
 from helpers import call, run
 
 PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
@@ -230,3 +230,9 @@ def test_merge_json_broken_file_untouched(tmp_path):
     p.write_text("{not json")
     assert merge_json(p, lambda d: True) == "broken"
     assert p.read_text() == "{not json"
+
+
+def test_bridge_drives_only_joined_tools():
+    a, b = FakeAdapter("claude-code", "claude"), FakeAdapter("codex", "codex")
+    assert joined_adapters({"tools": ["claude-code"]}, [a, b]) == [a]
+    assert joined_adapters({}, [a, b]) == [a, b]  # joined without --only

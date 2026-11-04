@@ -73,6 +73,7 @@ def test_join_only_limits_adapters(hub, home):
     a, b = FakeAdapter("claude-code"), FakeAdapter("codex")
     assert main(hub.url, "T", "pc", adapters=[a, b], install=no_service([]), only=["claude-code"]) == 0
     assert a.configured and not b.configured
+    assert paths.load_config()["tools"] == ["claude-code"]  # the bridge drives only these
 
 
 def test_join_skip_service_env(hub, home, monkeypatch):

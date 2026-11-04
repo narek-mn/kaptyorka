@@ -21,6 +21,12 @@ def log(line: str) -> None:
     print(line, file=sys.stderr)
 
 
+def joined_adapters(cfg: dict, adapters: List[Adapter]) -> List[Adapter]:
+    """The adapters for the tools join --only named; without --only, all of them."""
+    tools = cfg.get("tools")
+    return adapters if tools is None else [a for a in adapters if a.tool in tools]
+
+
 class Bridge:
     def __init__(self, cfg: dict, adapters: List[Adapter], log: Callable[[str], None]):
         self.cfg, self.adapters, self.log = cfg, adapters, log

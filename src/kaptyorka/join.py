@@ -30,9 +30,12 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     if status != 200:
         print(f"kaptyorka hub at {hub} answered {status}", file=sys.stderr)
         return 1
-    paths.save_config({"hub": hub, "token": token, "machine": name})
     exe = str(Path(sys.argv[0]).resolve())
     done = [a for a in adapters if a.installed() and (not only or a.tool in only)]
+    cfg = {"hub": hub, "token": token, "machine": name}
+    if only:
+        cfg["tools"] = sorted(set(only))  # the bridge drives only these
+    paths.save_config(cfg)
     rc = 0
     ok = []
     for a in done:
