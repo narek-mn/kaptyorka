@@ -389,10 +389,10 @@ def test_hub_exits_fast_on_sigterm_with_open_connection(home):
 
 
 def _pipx_prefix(tmp_path, monkeypatch):
-    pipx = tmp_path / "pipx"
-    (pipx / "venvs/kaptyorka").mkdir(parents=True)
-    monkeypatch.setenv("PIPX_HOME", str(pipx))
-    monkeypatch.setattr(sys, "prefix", str(pipx / "venvs/kaptyorka"))
+    venv = tmp_path / "venv"
+    venv.mkdir()
+    (venv / "pipx_metadata.json").write_text("{}")
+    monkeypatch.setattr(sys, "prefix", str(venv))
 
 
 def test_update_reinstalls_then_restarts(tmp_path, monkeypatch, capsys):
@@ -418,6 +418,6 @@ def test_update_failed_reinstall_does_not_restart(tmp_path, monkeypatch, capsys)
 
 
 def test_update_needs_pipx_install(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("PIPX_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
     assert cli._update(None, run=lambda *a, **k: pytest.fail("ran")) == 1
     assert "not installed with pipx" in capsys.readouterr().err

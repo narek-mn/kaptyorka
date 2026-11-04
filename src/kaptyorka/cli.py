@@ -100,13 +100,13 @@ def _change(verb: str):
 
 
 def _update(args, run=subprocess.run) -> int:
-    venvs = Path(os.environ.get("PIPX_HOME") or Path.home() / ".local/share/pipx") / "venvs" / "kaptyorka"
-    if Path(sys.prefix).resolve() != venvs.resolve():
+    venv = Path(sys.prefix)
+    if not (venv / "pipx_metadata.json").exists():  # pipx writes this into every venv it makes
         print("kaptyorka was not installed with pipx; update it the way you installed it", file=sys.stderr)
         return 1
     try:
         r = run(["pipx", "reinstall", "kaptyorka"], capture_output=True, text=True)
-        new = run([str(venvs / "bin/kaptyorka"), "--version"], capture_output=True, text=True) if r.returncode == 0 else r
+        new = run([str(venv / "bin/kaptyorka"), "--version"], capture_output=True, text=True) if r.returncode == 0 else r
     except FileNotFoundError:
         print("pipx not found", file=sys.stderr)
         return 1
