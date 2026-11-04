@@ -1,5 +1,6 @@
 """OpenCode: sessions and push through the TUI's local server (started with `--port 0`)."""
 import base64
+import http.client
 import json
 import os
 import shutil
@@ -17,21 +18,25 @@ TIMEOUT_S = 5
 ALIAS = "alias opencode='opencode --port 0'"
 PLUGIN = """\
 // kaptyorka: adds the team brief to every OpenCode chat. Written by `kaptyorka join`.
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+const exec = promisify(execFile);
 const KAPTYORKA = %s;
-const run = (event) => {
-  try {
-    return execFileSync(KAPTYORKA, ["hook", "opencode", event],
-      { encoding: "utf8", timeout: 4000, stdio: ["ignore", "pipe", "ignore"] }).trim();
-  } catch {
-    return "";
-  }
-};
-export const Kaptyorka = async () => {
+export const Kaptyorka = async ({ directory }) => {
   const brief = {};
+  const hook = async (sessionID, event) => {
+    try {
+      const run = exec(KAPTYORKA, ["hook", "opencode", event], { cwd: directory, timeout: 4000,
+        env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } });
+      run.child.stdin.end();
+      return (await run).stdout.trim();
+    } catch {
+      return "";
+    }
+  };
   return {
     "chat.message": async (input) => {
-      brief[input.sessionID] = run(input.sessionID in brief ? "prompt" : "start");
+      brief[input.sessionID] = await hook(input.sessionID, input.sessionID in brief ? "prompt" : "start");
     },
     "experimental.chat.system.transform": async (input, output) => {
       if (brief[input.sessionID]) output.system.push(brief[input.sessionID]);
@@ -62,10 +67,10 @@ def _listen_ports(pid: int) -> List[int]:
                             ports.add(int(c[1].rsplit(":", 1)[1], 16))
             return sorted(ports)
         r = subprocess.run(["lsof", "-a", "-p", str(pid), "-iTCP", "-sTCP:LISTEN", "-P", "-n", "-Fn"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=TIMEOUT_S)
         return sorted({int(line.rsplit(":", 1)[1]) for line in r.stdout.splitlines()
                        if line.startswith("n")})
-    except (OSError, ValueError, IndexError):
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
         return []
 
 
@@ -79,7 +84,11 @@ def _opencode_pids() -> List[int]:
             except OSError:
                 continue
         return pids
-    r = subprocess.run(["pgrep", "-x", "opencode"], capture_output=True, text=True)
+    try:
+        r = subprocess.run(["pgrep", "-x", "opencode"], capture_output=True, text=True,
+                           timeout=TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return []
     return [int(p) for p in r.stdout.split()]
 
 
@@ -126,14 +135,38 @@ def _call(pid: int, port: int, method: str, path: str, body: Optional[dict] = No
         return e.code, None
 
 
+def _started_ms(pid: int) -> int:
+    """When the process started, in ms since the epoch (rounded down to the second)."""
+    if sys.platform.startswith("linux"):
+        ticks = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19])  # field 22
+        with open("/proc/stat") as f:
+            btime = next(int(line.split()[1]) for line in f if line.startswith("btime "))
+        return (btime + ticks // os.sysconf("SC_CLK_TCK")) * 1000
+    r = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True,
+                       timeout=TIMEOUT_S, env={**os.environ, "LC_ALL": "C"})
+    return int(time.mktime(time.strptime(r.stdout.strip(), "%a %b %d %H:%M:%S %Y"))) * 1000
+
+
+class NeedsPassword(Exception):
+    """The TUI's server answered 401 and its password could not be read."""
+
+
 def _list(pid: int, port: int, timeout: float = TIMEOUT_S) -> list:
     status, data = _call(pid, port, "GET", "/session", timeout=timeout)
+    if status == 401:
+        raise NeedsPassword(f"opencode server on port {port} needs a password "
+                            "(not readable on this OS)")
     return data if status == 200 and isinstance(data, list) else []
 
 
-def _newest(sessions: list, cwd: str) -> Optional[str]:
-    """Most recently updated session in cwd; None before the TUI's first prompt."""
-    here = [s for s in sessions if s.get("directory") == cwd]
+def _newest(pid: int, port: int, cwd: str) -> Optional[str]:
+    """Most recently updated session in cwd since the TUI started; None before its first prompt.
+
+    Sessions from earlier runs in the same folder are stored too; nobody sees those.
+    """
+    since = _started_ms(pid)
+    here = [s for s in _list(pid, port) if s.get("directory") == cwd
+            and s.get("time", {}).get("updated", 0) >= since]
     if not here:
         return None
     return "opencode:" + max(here, key=lambda s: s.get("time", {}).get("updated", 0))["id"]
@@ -145,8 +178,9 @@ def session_key(pid: int, cwd: str) -> Optional[str]:
     if not ports:
         return None
     try:
-        return _newest(_list(pid, ports[0]), cwd)
-    except (OSError, ValueError, TypeError, KeyError):
+        return _newest(pid, ports[0], cwd)
+    except (OSError, ValueError, TypeError, KeyError, StopIteration, IndexError,
+            http.client.HTTPException, subprocess.SubprocessError, NeedsPassword):
         return None
 
 
@@ -161,6 +195,12 @@ class OpenCodeAdapter:
         self.home = home or Path.home()
         self.find_ports = find_ports
         self.log = log
+        self._locked: set = set()  # ports already logged as needing a password
+
+    def _skip(self, e: NeedsPassword, port: int) -> None:
+        if port not in self._locked:
+            self._locked.add(port)
+            self.log(str(e))
 
     def installed(self) -> bool:
         return shutil.which("opencode") is not None
@@ -172,15 +212,21 @@ class OpenCodeAdapter:
         for pid, port in self.find_ports().items():
             try:
                 cwd = proc_cwd(pid)
-                key = _newest(_list(pid, port), cwd)
-            except (OSError, ValueError, TypeError, KeyError, StopIteration):
+                key = _newest(pid, port, cwd)
+            except NeedsPassword as e:
+                self._skip(e, port)
+                continue
+            except (OSError, ValueError, TypeError, KeyError, StopIteration, IndexError,
+                    http.client.HTTPException, subprocess.SubprocessError):
                 continue  # TUI just exited
             if key:
                 out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), ""))
         return out
 
     def deliver(self, key: str, text: str) -> None:
-        sid = key.split(":", 1)[1]
+        sid = key.partition(":")[2]
+        if not sid:
+            raise DeliveryError(f"not an opencode session key: {key}")
         deadline = time.monotonic() + TIMEOUT_S
         for pid, port in self.find_ports().items():
             left = deadline - time.monotonic()
@@ -192,7 +238,10 @@ class OpenCodeAdapter:
                 status, _ = _call(pid, port, "POST", f"/session/{sid}/prompt_async",
                                   {"parts": [{"type": "text", "text": text}]},
                                   max(deadline - time.monotonic(), 0.1))
-            except (OSError, ValueError, AttributeError) as e:
+            except NeedsPassword as e:
+                self._skip(e, port)
+                continue
+            except (OSError, ValueError, AttributeError, http.client.HTTPException) as e:
                 raise DeliveryError(f"opencode session {key}: {e}") from e
             if not 200 <= status < 300:
                 raise DeliveryError(f"opencode session {key} refused: HTTP {status}")
@@ -225,7 +274,8 @@ class OpenCodeAdapter:
             lines.append(f"OpenCode: kaptyorka plugin written to {plugin}")
 
         shell = os.path.basename(os.environ.get("SHELL", ""))
-        rc = {"bash": ".bashrc", "zsh": ".zshrc"}.get(shell)
+        bash_rc = ".bash_profile" if sys.platform == "darwin" else ".bashrc"  # macOS: login shells
+        rc = {"bash": bash_rc, "zsh": ".zshrc"}.get(shell)
         if rc is None:
             self.log(f"OpenCode: add `{ALIAS}` to your shell startup file so kaptyorka can push")
         else:

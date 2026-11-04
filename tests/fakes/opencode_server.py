@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 class FakeOpenCode:
     def __init__(self, sessions):
         self.sessions = sessions
+        self.status = 200  # 401 to act as a password-protected server
         self.requests = []  # (method, path, body or None)
         fake = self
 
@@ -16,7 +17,7 @@ class FakeOpenCode:
 
             def do_GET(self):
                 fake.requests.append(("GET", self.path, None))
-                self._send(200, json.dumps(fake.sessions).encode())
+                self._send(fake.status, json.dumps(fake.sessions).encode())
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))

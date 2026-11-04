@@ -11,18 +11,21 @@ from kaptyorka.adapters.base import DeliveryError, Session
 from kaptyorka.adapters.opencode import OpenCodeAdapter
 
 CWD = os.getcwd()
-NEWEST, OLDER, ELSEWHERE = "ses_new", "ses_old", "ses_other"
+NEWEST, OLDER, ELSEWHERE, STALE = "ses_new", "ses_old", "ses_other", "ses_stale"
+STARTED = 50  # the fake TUI's start time; STALE is from an earlier run in the same folder
 
 
 @pytest.fixture
 def fake_opencode(monkeypatch):
     srv = FakeOpenCode([
+        {"id": STALE, "directory": CWD, "time": {"created": 0, "updated": 10}},
         {"id": OLDER, "directory": CWD, "time": {"created": 1, "updated": 100}},
         {"id": NEWEST, "directory": CWD, "time": {"created": 2, "updated": 200}},
         {"id": ELSEWHERE, "directory": "/elsewhere", "time": {"created": 3, "updated": 300}},
     ])
     monkeypatch.setattr(opencode, "_listen_ports",
                         lambda pid: [srv.port] if pid == os.getpid() else [])
+    monkeypatch.setattr(opencode, "_started_ms", lambda pid: STARTED)
     yield srv
     srv.stop()
 
@@ -52,7 +55,7 @@ def test_opencode_key_matches_shim_and_bridge(fake_opencode):
 
 
 def test_resolver_none_before_first_prompt(fake_opencode):
-    fake_opencode.sessions = []
+    fake_opencode.sessions = fake_opencode.sessions[:1]  # only a session from an earlier run
     assert identity.RESOLVERS["opencode"](os.getpid(), CWD) is None
     assert adapter(fake_opencode).sessions() == []
 
@@ -62,6 +65,36 @@ def test_identify_honours_opencode_pid_env(fake_opencode, monkeypatch):
     monkeypatch.setenv("OPENCODE_PID", str(os.getpid()))
     ident = identity.identify("pc", pid=1)
     assert (ident.key, ident.tool) == (f"opencode:{NEWEST}", "opencode")
+
+
+def test_identify_takes_session_from_plugin(monkeypatch):
+    monkeypatch.setenv("KAPTYORKA_OPENCODE_SESSION", "ses_p")
+    monkeypatch.setattr(identity, "ancestors", lambda pid: pytest.fail("no walk needed"))
+    ident = identity.identify("pc", pid=1)
+    assert (ident.key, ident.tool, ident.project) == ("opencode:ses_p", "opencode",
+                                                      os.path.basename(CWD))
+
+
+def test_password_server_logged_once_and_skipped(fake_opencode):
+    fake_opencode.status = 401
+    lines = []
+    a = adapter(fake_opencode, log=lines.append)
+    assert a.sessions() == [] and a.sessions() == []
+    with pytest.raises(DeliveryError):
+        a.deliver(f"opencode:{NEWEST}", "hi")
+    assert lines == [f"opencode server on port {fake_opencode.port} needs a password "
+                     "(not readable on this OS)"]
+    assert identity.RESOLVERS["opencode"](os.getpid(), CWD) is None
+
+
+def test_deliver_bad_key_raises():
+    with pytest.raises(DeliveryError):
+        OpenCodeAdapter(find_ports=lambda: {}).deliver("opencode", "hi")
+
+
+def test_started_ms_of_real_process():
+    import time
+    assert time.time() * 1000 - 3600_000 * 24 * 365 < opencode._started_ms(os.getpid()) <= time.time() * 1000
 
 
 def test_deliver_server_gone_raises():
@@ -96,6 +129,17 @@ def test_configure_merges_mcp_and_plugin(home, monkeypatch):
     assert len(first) == 3
     assert a.configure("/k") == []
     assert (home / ".bashrc").read_text().count("alias opencode=") == 1
+
+
+@pytest.mark.parametrize("shell,platform,rc", [("/bin/zsh", "linux", ".zshrc"),
+                                               ("/bin/zsh", "darwin", ".zshrc"),
+                                               ("/bin/bash", "darwin", ".bash_profile")])
+def test_configure_alias_file(home, monkeypatch, shell, platform, rc):
+    monkeypatch.setenv("SHELL", shell)
+    monkeypatch.setattr(opencode.sys, "platform", platform)
+    OpenCodeAdapter(home).configure("/k")
+    assert (home / rc).read_text() == "alias opencode='opencode --port 0'\n"
+    assert not (home / ".bashrc").exists()
 
 
 def test_configure_leaves_broken_config_alone(home, monkeypatch):
