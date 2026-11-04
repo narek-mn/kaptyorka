@@ -26,7 +26,8 @@ def dead_pid() -> int:
 class UnixServer:
     """Accepts one connection and records the lines it receives until EOF."""
 
-    def __init__(self, path):
+    def __init__(self, path, reply=b""):
+        self.reply = reply
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.bind(str(path))
         self.sock.listen(1)
@@ -39,6 +40,7 @@ class UnixServer:
         with conn:
             while chunk := conn.recv(65536):
                 self.data += chunk
+            conn.sendall(self.reply)
         self.sock.close()
 
     def lines(self):
@@ -65,9 +67,15 @@ def fake_claude_cli(tmp_path, monkeypatch):
     return Fake()
 
 
-def test_sessions_from_folder(home):
-    write_session_file(home, pid=os.getpid(), cwd="/w/murmur", status="idle")
-    write_session_file(home, pid=dead_pid(), cwd="/w/gone")
+def live_sock(tmp_path):
+    p = tmp_path / "live.sock"
+    p.touch()
+    return p
+
+
+def test_sessions_from_folder(home, tmp_path):
+    write_session_file(home, pid=os.getpid(), cwd="/w/murmur", status="idle", sock=live_sock(tmp_path))
+    write_session_file(home, pid=dead_pid(), cwd="/w/gone", sock=live_sock(tmp_path))
     assert ClaudeAdapter(home).sessions() == [
         Session(f"claude:{os.getpid()}", "claude-code", "murmur", "idle")]
 
@@ -79,6 +87,31 @@ def test_socket_push_multiline_text(home, tmp_path):
     a, u = [json.loads(line) for line in srv.lines()]
     assert a == {"type": "auth", "token": "P"}
     assert u == {"type": "user", "message": {"role": "user", "content": 'line1\nline2 "q" ✓'}}
+
+
+def test_sessions_skip_missing_socket(home, tmp_path):
+    write_session_file(home, pid=os.getpid(), sock=tmp_path / "gone.sock")  # pid reused
+    write_session_file(home, pid=os.getppid())  # no socket path at all
+    assert ClaudeAdapter(home).sessions() == []
+
+
+def test_socket_push_uses_newest_key_file(home, tmp_path):
+    srv = UnixServer(tmp_path / "s.sock")
+    write_session_file(home, pid=os.getpid(), sock=tmp_path / "s.sock")
+    d = home / ".claude" / "sessions"
+    (d / f"{os.getpid()}.ffff.key").write_text(json.dumps({"peerToken": "OLD"}))
+    os.utime(d / f"{os.getpid()}.ffff.key", (1, 1))
+    (d / f"{os.getpid()}.0000.key").write_text(json.dumps({"peerToken": "NEW"}))
+    ClaudeAdapter(home).deliver(f"claude:{os.getpid()}", "hi")
+    assert json.loads(srv.lines()[0]) == {"type": "auth", "token": "NEW"}
+
+
+def test_socket_push_error_reply_raises(home, tmp_path):
+    srv = UnixServer(tmp_path / "s.sock", reply=b'{"type":"error","message":"bad token"}\n')
+    write_session_file(home, pid=os.getpid(), sock=tmp_path / "s.sock", peer_token="P")
+    with pytest.raises(DeliveryError, match="bad token"):
+        ClaudeAdapter(home).deliver(f"claude:{os.getpid()}", "hi")
+    srv.lines()
 
 
 def test_socket_push_without_key_file_skips_auth(home, tmp_path):
@@ -96,9 +129,9 @@ def test_push_to_missing_socket_raises(home, tmp_path):
         ClaudeAdapter(home).deliver("claude:999999999", "no session file")
 
 
-def test_newer_version_warns_once(home):
-    write_session_file(home, pid=os.getpid(), version="2.2.0")
-    write_session_file(home, pid=os.getppid(), version="2.10.1")
+def test_newer_version_warns_once(home, tmp_path):
+    write_session_file(home, pid=os.getpid(), version="2.2.0", sock=live_sock(tmp_path))
+    write_session_file(home, pid=os.getppid(), version="2.10.1", sock=live_sock(tmp_path))
     lines = []
     a = ClaudeAdapter(home, log=lines.append)
     a.sessions()
@@ -108,8 +141,8 @@ def test_newer_version_warns_once(home):
                         "claude-code 2.10.1 is newer than tested 2.1.318; push may break, pull still works")
 
 
-def test_tested_version_does_not_warn(home):
-    write_session_file(home, pid=os.getpid(), version="2.1.318")
+def test_tested_version_does_not_warn(home, tmp_path):
+    write_session_file(home, pid=os.getpid(), version="2.1.318", sock=live_sock(tmp_path))
     lines = []
     ClaudeAdapter(home, log=lines.append).sessions()
     assert lines == []
@@ -134,6 +167,17 @@ def test_configure_keeps_existing_hooks_and_is_idempotent(home, fake_claude_cli)
     assert ["claude", "mcp", "add", "--scope", "user", "kaptyorka", "--", "/k", "mcp"] in fake_claude_cli.calls
 
 
+def test_configure_replaces_hook_from_moved_install(home, fake_claude_cli):
+    settings = home / ".claude/settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({"hooks": {"UserPromptSubmit": [
+        {"hooks": [{"type": "command", "command": "/old/kaptyorka hook claude-code prompt"}]},
+        {"hooks": [{"type": "command", "command": "mine"}]}]}}))
+    ClaudeAdapter(home).configure("/k")
+    ups = json.loads(settings.read_text())["hooks"]["UserPromptSubmit"]
+    assert [h["hooks"][0]["command"] for h in ups] == ["/k hook claude-code prompt", "mine"]
+
+
 def test_configure_writes_through_symlink(home, tmp_path, fake_claude_cli):
     real = tmp_path / "setup" / "settings.json"
     real.parent.mkdir()
@@ -155,8 +199,8 @@ def test_configure_leaves_broken_settings_alone(home, fake_claude_cli):
     assert f"left alone, not valid JSON: {settings}" in lines
 
 
-def test_claude_key_matches_shim_and_bridge(home, monkeypatch):
-    write_session_file(home, pid=os.getpid(), cwd="/w/murmur")
+def test_claude_key_matches_shim_and_bridge(home, monkeypatch, tmp_path):
+    write_session_file(home, pid=os.getpid(), cwd="/w/murmur", sock=live_sock(tmp_path))
     monkeypatch.setattr(identity, "ancestors", lambda pid: [(os.getpid(), "claude")])
     ident = identity.identify("pc", pid=1)
     s = ClaudeAdapter(home).sessions()[0]

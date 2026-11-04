@@ -41,6 +41,8 @@ class ClaudeAdapter:
                 os.kill(pid, 0)
                 data = json.loads(f.read_text())
                 cwd = data["cwd"]
+                if not os.path.exists(data["messagingSocketPath"]):
+                    continue  # pid reused by another process, or a session that closed badly
             except (OSError, ValueError, KeyError, TypeError):
                 continue  # dead process, or a half-written file
             version = str(data.get("version", ""))
@@ -56,8 +58,8 @@ class ClaudeAdapter:
         try:
             pid = int(key.split(":", 1)[1])
             sock_path = json.loads((self.dir / f"{pid}.json").read_text())["messagingSocketPath"]
-            keys = sorted(self.dir.glob(f"{pid}.*.key"))
-            token = json.loads(keys[0].read_text())["peerToken"] if keys else None
+            keys = sorted(self.dir.glob(f"{pid}.*.key"), key=lambda p: p.stat().st_mtime)
+            token = json.loads(keys[-1].read_text())["peerToken"] if keys else None
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
                 s.settimeout(5)
                 s.connect(sock_path)
@@ -66,8 +68,17 @@ class ClaudeAdapter:
                 message = {"type": "user", "message": {"role": "user", "content": text}}
                 s.sendall((json.dumps(message) + "\n").encode())
                 s.shutdown(socket.SHUT_WR)
+                reply = b""
+                try:
+                    while chunk := s.recv(65536):
+                        reply += chunk
+                except socket.timeout:
+                    pass  # sent; no answer is not a refusal (2.1.318 answers nothing)
         except (OSError, ValueError, KeyError, TypeError, IndexError) as e:
             raise DeliveryError(f"claude session {key}: {e}") from e
+        if b"error" in reply.lower():
+            answer = reply.decode(errors="replace").strip()
+            raise DeliveryError(f"claude session {key} refused: {answer}")
 
     def configure(self, kaptyorka: str) -> List[str]:
         lines = []
@@ -85,10 +96,16 @@ class ClaudeAdapter:
             changed = False
             for event, name in (("SessionStart", "start"), ("UserPromptSubmit", "prompt")):
                 command = f"{kaptyorka} hook claude-code {name}"
+                entry = {"hooks": [{"type": "command", "command": command, "timeout": 5}]}
                 entries = hooks.setdefault(event, [])
-                if any(h.get("command") == command for e in entries for h in e.get("hooks", [])):
+                ours = [i for i, e in enumerate(entries) if any(
+                    str(h.get("command", "")).endswith(f" hook claude-code {name}")
+                    for h in e.get("hooks", []))]
+                if [entries[i] for i in ours] == [entry]:
                     continue
-                entries.append({"hooks": [{"type": "command", "command": command, "timeout": 5}]})
+                for i in reversed(ours):  # an older install path: replace, never add a second
+                    del entries[i]
+                entries.insert(ours[0] if ours else len(entries), entry)
                 changed = True
             return changed
 

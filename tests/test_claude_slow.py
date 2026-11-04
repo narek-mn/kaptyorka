@@ -1,4 +1,5 @@
 """Pushes into a real background Claude Code session. Run with: pytest -m slow."""
+import contextlib
 import json
 import re
 import shutil
@@ -32,12 +33,13 @@ def test_real_session_receives_push():
     # folder beside the repo inherits the trust of its parent (never the repo itself).
     project = Path(tempfile.mkdtemp(prefix=".kaptyorka-slow-",
                                     dir=Path(__file__).resolve().parents[2]))
-    r = subprocess.run(["claude", "--bg", "-n", NAME, "--model", "haiku",
-                        "--permission-mode", "acceptEdits",
-                        "Wait. When a message arrives, do what it says."],
-                       cwd=project, capture_output=True, text=True, timeout=60)
-    ids = re.findall(r"backgrounded · ([0-9a-f]+)", r.stdout)
+    ids = []
     try:
+        r = subprocess.run(["claude", "--bg", "-n", NAME, "--model", "haiku",
+                            "--permission-mode", "acceptEdits",
+                            "Wait. When a message arrives, do what it says."],
+                           cwd=project, capture_output=True, text=True, timeout=60)
+        ids = re.findall(r"backgrounded · ([0-9a-f]+)", r.stdout)
         if "Workspace not trusted" in r.stdout + r.stderr:
             pytest.skip(f"Claude Code does not trust {project.parent}; trust it once to run this")
         assert r.returncode == 0, r.stdout + r.stderr
@@ -54,6 +56,7 @@ def test_real_session_receives_push():
             time.sleep(2)
     finally:
         for target in ids[:1] or [NAME]:
-            subprocess.run(["claude", "stop", target], capture_output=True, timeout=60)
-            subprocess.run(["claude", "rm", target], capture_output=True, timeout=60)
-        shutil.rmtree(project)
+            for step in ("stop", "rm"):
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    subprocess.run(["claude", step, target], capture_output=True, timeout=60)
+        shutil.rmtree(project, ignore_errors=True)

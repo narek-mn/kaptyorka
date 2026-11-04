@@ -1,6 +1,7 @@
 import argparse
 import os
 import secrets
+import select
 import socket
 import sys
 from pathlib import Path
@@ -105,7 +106,13 @@ def _bridge(args) -> int:
 def _hook(args) -> int:
     from kaptyorka import hook
 
-    return hook.main(args.tool, args.event, "" if sys.stdin.isatty() else sys.stdin.read())
+    stdin = ""
+    try:  # a tool that keeps the pipe open must not block the hook
+        if not sys.stdin.isatty() and select.select([sys.stdin], [], [], 0.5)[0]:
+            stdin = sys.stdin.read()
+    except (OSError, ValueError):
+        pass
+    return hook.main(args.tool, args.event, stdin)
 
 
 def entry() -> None:
