@@ -7,7 +7,7 @@ from pathlib import Path
 
 from kaptyorka import __version__, http, paths, service
 
-COMMANDS = ["join", "mcp", "hook", "bridge"]
+COMMANDS = ["join", "hook", "bridge"]
 
 
 def _stub(args) -> int:
@@ -79,6 +79,17 @@ def _who(args) -> int:
     return 0
 
 
+def _mcp(args) -> int:
+    from kaptyorka import shim
+
+    cfg = paths.load_config()
+    if not cfg.get("hub") or not cfg.get("token"):
+        print("not joined: run kaptyorka join", file=sys.stderr)
+        return 1
+    shim.run(cfg, args.workspace)
+    return 0
+
+
 def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
@@ -89,6 +100,9 @@ def entry() -> None:
     s.add_argument("--foreground", action="store_true")
     s.set_defaults(run=_serve)
     sub.add_parser("who", help="list agents online").set_defaults(run=_who)
+    m = sub.add_parser("mcp", help="MCP server for one agent session (started by the tool)")
+    m.add_argument("--workspace", help="project folder, for tools that do not set the cwd")
+    m.set_defaults(run=_mcp)
     for name in COMMANDS:
         sub.add_parser(name, help=f"{name} (not implemented yet)").set_defaults(run=_stub)
     args = p.parse_args()
