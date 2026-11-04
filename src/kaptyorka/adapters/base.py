@@ -45,6 +45,23 @@ class Adapter(Protocol):
         """Wire the tool to the kaptyorka executable; return change lines; idempotent."""
 
 
+def write_atomic(path: Path, text: str) -> None:
+    """Replace the file in one step; a new file is 0600, an existing one keeps its mode.
+    Writes go to the symlink's target."""
+    target = path.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".")  # 0600
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        if target.exists():
+            os.chmod(tmp, target.stat().st_mode & 0o7777)
+        os.replace(tmp, target)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
 def merge_json(path: Path, update: Callable[[dict], bool]) -> str:
     """Apply update to a JSON file; "changed", "unchanged", or "broken" (left alone).
 
@@ -61,18 +78,7 @@ def merge_json(path: Path, update: Callable[[dict], bool]) -> str:
         return "broken"
     if not update(data):
         return "unchanged"
-    target = path.resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".")  # 0600
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(data, indent=2) + "\n")
-        if target.exists():
-            os.chmod(tmp, target.stat().st_mode & 0o7777)
-        os.replace(tmp, target)
-    except BaseException:
-        os.unlink(tmp)
-        raise
+    write_atomic(path, json.dumps(data, indent=2) + "\n")
     return "changed"
 
 

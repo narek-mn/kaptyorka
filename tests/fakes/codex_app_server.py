@@ -31,14 +31,14 @@ def _recv_frame(conn):
     return b0 & 0x0F, bytes(c ^ mask[i % 4] for i, c in enumerate(data))
 
 
-def _send_frame(conn, obj):
-    p = json.dumps(obj).encode()
+def _send_frame(conn, obj, b0=0x81):
+    p = obj if isinstance(obj, bytes) else json.dumps(obj).encode()
     if len(p) < 126:
-        head = bytes([0x81, len(p)])
+        head = bytes([b0, len(p)])
     elif len(p) < 65536:
-        head = bytes([0x81, 126]) + struct.pack(">H", len(p))
+        head = bytes([b0, 126]) + struct.pack(">H", len(p))
     else:
-        head = bytes([0x81, 127]) + struct.pack(">Q", len(p))
+        head = bytes([b0, 127]) + struct.pack(">Q", len(p))
     conn.sendall(head + p)
 
 
@@ -50,6 +50,8 @@ class FakeCodex:
         self.error = None  # a JSON-RPC error object to answer turn/start with
         self.trusted = {}  # hook key -> trusted hash
         self.calls = []  # (method, params)
+        self.noisy = False  # before each answer: a ping, a fragmented frame, a 126-length frame
+        self.pongs = []
         self.sock = socket.socket(socket.AF_UNIX)
         here = os.getcwd()
         os.chdir(os.path.dirname(self.path))  # AF_UNIX paths over 108 bytes fail
@@ -89,11 +91,20 @@ class FakeCodex:
             op, data = _recv_frame(conn)
             if op == 8:
                 return
+            if op == 10:
+                self.pongs.append(data)
+                continue
             msg = json.loads(data)
             self.calls.append((msg["method"], msg.get("params")))
             if "id" not in msg:
                 continue
             _send_frame(conn, {"method": "noise/notification", "params": {}})  # must be skipped
+            if self.noisy:
+                _send_frame(conn, b"are-you-there", 0x89)  # ping
+                part = json.dumps({"method": "noise/fragmented", "params": {}}).encode()
+                _send_frame(conn, part[:10], 0x01)  # text, not final
+                _send_frame(conn, part[10:], 0x80)  # continuation, final
+                _send_frame(conn, {"method": "noise/long", "params": {"pad": "x" * 200}})
             _send_frame(conn, dict(self._answer(msg["method"], msg.get("params") or {}),
                                    jsonrpc="2.0", id=msg["id"]))
 

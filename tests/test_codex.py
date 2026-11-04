@@ -1,13 +1,14 @@
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
 
 from fakes.codex_app_server import FakeCodex
 from kaptyorka import hook, identity
-from kaptyorka.adapters import codex
+from kaptyorka.adapters import base, codex
 from kaptyorka.adapters.base import DeliveryError, Session
 from kaptyorka.adapters.codex import CodexAdapter
 
@@ -112,6 +113,7 @@ def test_long_socket_path(tmp_path, monkeypatch):
 
 def test_sessions_start_daemon_at_most_once_a_minute(codex_home, monkeypatch):
     runs = no_daemon_start(monkeypatch)
+    monkeypatch.setattr(codex.shutil, "which", lambda name: None)
     now = [1000.0]
     monkeypatch.setattr(codex.time, "monotonic", lambda: now[0])
     lines = []
@@ -120,7 +122,51 @@ def test_sessions_start_daemon_at_most_once_a_minute(codex_home, monkeypatch):
     now[0] += 61
     assert a.sessions() == []
     assert runs == [["codex", "app-server", "daemon", "start"]] * 2
+    assert lines == ["codex: app-server daemon started"]  # logged once per change of state
+
+
+def test_daemon_started_outside_the_bridge_unit(codex_home, monkeypatch):
+    runs = no_daemon_start(monkeypatch)
+    monkeypatch.setattr(codex.sys, "platform", "linux")
+    monkeypatch.setattr(codex.shutil, "which", lambda name: "/usr/bin/" + name)
+    CodexAdapter(log=lambda line: None).sessions()
+    assert runs == [["systemd-run", "--user", "--scope", "--quiet",
+                     "codex", "app-server", "daemon", "start"]]
+
+
+def test_daemon_logged_again_after_it_was_up(codex_home, monkeypatch):
+    no_daemon_start(monkeypatch)
+    monkeypatch.setattr(codex.shutil, "which", lambda name: None)
+    now = [1000.0]
+    monkeypatch.setattr(codex.time, "monotonic", lambda: now[0])
+    lines = []
+    a = CodexAdapter(log=lines.append)
+    a.sessions()
+    srv = serve(codex_home, [], [])
+    try:
+        assert a.sessions() == []
+    finally:
+        srv.stop()
+    now[0] += 61
+    a.sessions()
     assert lines == ["codex: app-server daemon started"] * 2
+
+
+def test_noisy_frames_are_handled(fake_codex):
+    fake_codex.noisy = True
+    assert len(CodexAdapter().sessions()) == 3
+    CodexAdapter().deliver("codex:th-a", "hi")
+    assert fake_codex.calls[-1][0] == "turn/start"
+    deadline = time.monotonic() + 2
+    while not fake_codex.pongs and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert fake_codex.pongs[0] == b"are-you-there"
+
+
+def test_resolver_follows_symlinked_cwd(fake_codex, tmp_path):
+    link = tmp_path / "link"
+    link.symlink_to(CWD)
+    assert identity.RESOLVERS["codex"](12345, str(link)) == "codex:th-a"
 
 
 def configure(home, kaptyorka="/k", **kw):
@@ -138,7 +184,7 @@ def test_configure_toml_block_by_markers(home, codex_home, monkeypatch):
     assert APPROVE in first
     assert "alias codex='codex --remote unix://'" in (home / ".bashrc").read_text().splitlines()
     assert len(first) == 4
-    assert configure(home) == []
+    assert configure(home) == [APPROVE]  # no daemon: still untrusted, so say it again
     assert toml.read_text() == text
     assert configure(home, "/new/k") == [f"Codex: kaptyorka hooks added to {codex_home / 'hooks.json'}",
                                          APPROVE, f"Codex: kaptyorka MCP server set in {toml}"]
@@ -190,6 +236,31 @@ def test_configure_never_duplicates_a_trust_table(home, codex_home, fake_codex, 
     lines = configure(home)
     assert APPROVE in lines
     assert toml.read_text().count(f"[hooks.state.{json.dumps(key)}]") == 1
+
+
+def test_configure_leaves_kaptyorka_outside_the_block_alone(home, codex_home, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    toml = codex_home / "config.toml"
+    text = '[mcp_servers.kaptyorka]\ncommand = "/mine"\n'
+    toml.write_text(text)
+    lines = []
+    configure(home, log=lines.append)
+    assert toml.read_text() == text
+    assert f"left alone, kaptyorka already set outside the block: {toml}" in lines
+
+
+def test_configure_writes_toml_atomically_keeping_mode(home, codex_home, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    toml = codex_home / "config.toml"
+    toml.write_text('model = "o3"\n')
+    toml.chmod(0o640)
+    replaced = []
+    real = os.replace
+    monkeypatch.setattr(base.os, "replace", lambda a, b: replaced.append(b) or real(a, b))
+    configure(home)
+    assert toml in [Path(p) for p in replaced]
+    assert toml.stat().st_mode & 0o777 == 0o640
+    assert sorted(p.name for p in codex_home.iterdir()) == ["config.toml", "hooks.json"]
 
 
 def test_configure_leaves_broken_hooks_json_alone(home, codex_home, monkeypatch):

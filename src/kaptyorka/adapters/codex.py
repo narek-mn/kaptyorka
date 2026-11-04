@@ -10,13 +10,14 @@ import shutil
 import socket
 import struct
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from kaptyorka import __version__
-from kaptyorka.adapters.base import DeliveryError, Session, add_alias, merge_json
+from kaptyorka.adapters.base import DeliveryError, Session, add_alias, merge_json, write_atomic
 
 TIMEOUT_S = 5
 RESTART_EVERY_S = 60
@@ -179,8 +180,9 @@ def session_key(pid: int, cwd: str) -> Optional[str]:
     parent is the daemon, not the TUI, so the pid says nothing). None without a daemon."""
     try:
         with Rpc(default_socket()) as rpc:
-            here = [t for t in _loaded_threads(rpc) if t["cwd"] == cwd]
-    except (OSError, ValueError, KeyError, TypeError, RpcError):
+            here = [t for t in _loaded_threads(rpc)
+                    if os.path.realpath(t["cwd"]) == os.path.realpath(cwd)]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RpcError):
         return None
     return f"codex:{here[0]['id']}" if here else None
 
@@ -196,25 +198,36 @@ class CodexAdapter:
         self.socket_path = socket_path or default_socket(self.home)
         self.log = log
         self._started_at: Optional[float] = None
+        self._daemon = ""  # last daemon state logged: up, started, did not start: <why>
 
     def installed(self) -> bool:
         return shutil.which("codex") is not None
+
+    def _state(self, state: str) -> None:
+        if state != self._daemon:
+            self._daemon = state
+            if state != "up":
+                self.log(f"codex: app-server daemon {state}")
 
     def _start_daemon(self) -> None:
         now = time.monotonic()
         if self._started_at is not None and now - self._started_at < RESTART_EVERY_S:
             return
         self._started_at = now
+        cmd = ["codex", "app-server", "daemon", "start"]
+        if sys.platform.startswith("linux") and shutil.which("systemd-run"):
+            # its own scope: a bridge restart (KillMode=control-group) must not kill the daemon
+            cmd = ["systemd-run", "--user", "--scope", "--quiet"] + cmd
         try:
-            r = subprocess.run(["codex", "app-server", "daemon", "start"], capture_output=True,
-                               text=True, timeout=TIMEOUT_S * 3)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_S * 3,
+                               start_new_session=True)
         except (OSError, subprocess.SubprocessError) as e:
-            self.log(f"codex: app-server daemon did not start: {e}")
+            self._state(f"did not start: {e}")
             return
         if r.returncode:
-            self.log(f"codex: app-server daemon did not start: {(r.stderr or r.stdout).strip()}")
+            self._state(f"did not start: {(r.stderr or r.stdout).strip()}")
         else:
-            self.log("codex: app-server daemon started")
+            self._state("started")
 
     def sessions(self) -> List[Session]:
         try:
@@ -223,6 +236,7 @@ class CodexAdapter:
         except (FileNotFoundError, ConnectionRefusedError):
             self._start_daemon()  # the bridge keeps the daemon running
             return []
+        self._state("up")
         return [Session(f"codex:{t['id']}", self.tool, os.path.basename(t["cwd"].rstrip("/")), "")
                 for t in threads]
 
@@ -236,7 +250,7 @@ class CodexAdapter:
                     raise DeliveryError(f"codex session {key}: not loaded in the app-server")
                 rpc.call("turn/start", {"threadId": tid,
                                         "input": [{"type": "text", "text": text}]})
-        except (OSError, ValueError, KeyError, TypeError, RpcError) as e:
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RpcError) as e:
             raise DeliveryError(f"codex session {key}: {e}") from e
 
     def _trust(self, kaptyorka: str, outside: str) -> Optional[str]:
@@ -264,6 +278,8 @@ class CodexAdapter:
         lines = []
         conf = codex_home(self.home)
 
+        index: Dict[str, int] = {}  # event -> our group's index in hooks.json
+
         def add_hooks(data: dict) -> bool:
             hooks = data.setdefault("hooks", {})
             changed = False
@@ -276,6 +292,7 @@ class CodexAdapter:
                 ours = [i for i, g in enumerate(groups) if any(
                     str(h.get("command", "")).endswith(f" hook codex {name}")
                     for h in g.get("hooks", []))]
+                index[event] = ours[0] if ours else len(groups)
                 if [groups[i] for i in ours] == [group]:
                     continue
                 for i in reversed(ours):  # an older install path: replace, never add a second
@@ -301,13 +318,19 @@ class CodexAdapter:
             before, rest = text.split(START, 1)
             old, after = rest.split(END, 1)
             old, after = START + old + END + "\n", after[1:] if after.startswith("\n") else after
+        if "[mcp_servers.kaptyorka]" in before + after:  # a second table would break the file
+            self.log(f"left alone, kaptyorka already set outside the block: {toml}")
+            return self._alias(lines)
         inner = old[len(START) + 1:-len(END) - 1]
         i = inner.find("[hooks.state.")
         old_mcp, old_trust = (inner[:i], inner[i:]) if i >= 0 else (inner, "")
         trust = self._trust(kaptyorka, before + after)
         if trust is None:
             trust = old_trust  # the daemon cannot tell now: keep what was there
-            if hooks_changed == "changed":
+            keys = [f"{hooks_json}:{snake}:{index[event]}:0" for event, snake in
+                    (("SessionStart", "session_start"), ("UserPromptSubmit", "user_prompt_submit"))
+                    if event in index]
+            if keys and any(f"[hooks.state.{json.dumps(k)}]" not in text for k in keys):
                 lines.append(APPROVE)
         mcp = f'[mcp_servers.kaptyorka]\ncommand = {json.dumps(kaptyorka)}\nargs = ["mcp"]\n'
         block = f"{START}\n{mcp}{trust}{END}\n"
@@ -317,13 +340,15 @@ class CodexAdapter:
             else:
                 new = text + ("" if not text or text.endswith("\n\n") else
                               "\n" if text.endswith("\n") else "\n\n") + block
-            toml.parent.mkdir(parents=True, exist_ok=True)
-            toml.write_text(new)
+            write_atomic(toml, new)
             if mcp != old_mcp:
                 lines.append(f"Codex: kaptyorka MCP server set in {toml}")
             if trust != old_trust:
                 lines.append(f"Codex: kaptyorka hooks trusted in {toml}")
 
+        return self._alias(lines)
+
+    def _alias(self, lines: List[str]) -> List[str]:
         line = add_alias(self.home, ALIAS, "Codex", self.log)
         if line:
             lines.append(line)

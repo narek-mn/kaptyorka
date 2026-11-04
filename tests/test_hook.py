@@ -83,3 +83,14 @@ def test_cli_hook_exits_0_silently_when_not_joined(home, monkeypatch, capsys):
         cli.entry()
     assert e.value.code == 0
     assert capsys.readouterr() == ("", "")
+
+
+def test_hook_codex_session_from_stdin(home, monkeypatch):
+    join("http://127.0.0.1:1")
+    seen = []
+    monkeypatch.setattr(hook, "identify", lambda *a, **kw: pytest.fail("no lookup needed"))
+    monkeypatch.setattr(hook.http, "request", lambda method, url, token, headers, timeout:
+                        seen.append(headers) or (200, "B"))
+    hook.main("codex", "start", json.dumps({"session_id": "th-1", "cwd": "/w/app/",
+                                            "hook_event_name": "SessionStart"}))
+    assert seen == [Identity("codex:th-1", "pc", "codex", "app").headers()]

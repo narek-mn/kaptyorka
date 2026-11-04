@@ -1,9 +1,10 @@
 """`kaptyorka hook <tool> <event>`: print the hub's brief for this session. Silent on any failure."""
 import json
+import os
 from typing import Callable, Dict
 
 from kaptyorka import http, paths
-from kaptyorka.identity import identify
+from kaptyorka.identity import Identity, identify
 
 TIMEOUT_S = 3
 
@@ -26,7 +27,13 @@ def main(tool: str, event: str, stdin: str = "") -> int:
         workspace = None
         if tool == "cursor":
             workspace = (json.loads(stdin or "{}").get("workspace_roots") or [None])[0]
-        ident = identify(cfg.get("machine", ""), workspace=workspace)
+        data = json.loads(stdin or "{}") if tool == "codex" else {}
+        if data.get("session_id"):  # Codex names the thread itself: no socket call needed
+            cwd = data.get("cwd") or os.getcwd()
+            ident = Identity(f"codex:{data['session_id']}", cfg.get("machine", ""), "codex",
+                             os.path.basename(cwd.rstrip("/")))
+        else:
+            ident = identify(cfg.get("machine", ""), workspace=workspace)
         if ident is None:
             return 0
         status, brief = http.request("GET", f"{cfg['hub']}/api/brief?event={event}", cfg["token"],
