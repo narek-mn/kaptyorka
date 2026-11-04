@@ -64,8 +64,15 @@ def _session_file(pid: int) -> Path:
     return Path.home() / ".claude" / "sessions" / f"{pid}.json"
 
 
+def _opencode_key(pid: int, cwd: str) -> Optional[str]:
+    from kaptyorka.adapters.opencode import session_key
+
+    return session_key(pid, cwd)
+
+
 RESOLVERS: Dict[str, Callable[[int, str], Optional[str]]] = {
     "claude-code": lambda pid, cwd: f"claude:{pid}",
+    "opencode": _opencode_key,
     "cursor": lambda pid, cwd: f"cursor:{cwd}",
 }
 
@@ -101,7 +108,9 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
         if os.path.basename(comm) == "claude":
             return None  # Claude Code before it wrote its session file; the caller retries
     else:
-        return None
+        if not os.environ.get("OPENCODE_PID"):
+            return None
+        tool_pid, tool = int(os.environ["OPENCODE_PID"]), "opencode"  # set for OpenCode's MCP servers
     if tool == "claude-code":
         cwd = json.loads(_session_file(tool_pid).read_text())["cwd"]
     elif tool == "cursor":
