@@ -85,8 +85,8 @@ def stop(name: str, run: Callable = subprocess.run, platform: str = sys.platform
     return [f"{name}: stopped" if ok else f"{name}: not running"]
 
 
-def _change(name: str, verb: str, run: Callable, platform: str) -> List[str]:
-    """start: turn the service on. restart: restart it if it is on, else start it."""
+def restart(name: str, run: Callable = subprocess.run, platform: str = sys.platform) -> List[str]:
+    """Restart the service; start it if `stop` turned it off. Raises ServiceError on failure."""
     sh = _runner(run)
     if platform == "darwin":
         label = f"io.kaptyorka.{name}"
@@ -95,27 +95,44 @@ def _change(name: str, verb: str, run: Callable, platform: str) -> List[str]:
         if not plist.exists():
             return [f"{name}: not installed"]
         if sh("launchctl", "print", target):
-            if verb == "restart":
-                sh("launchctl", "kickstart", "-k", target, must=True)
+            sh("launchctl", "kickstart", "-k", target, must=True)
         else:
             sh("launchctl", "enable", target)
             sh("launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist), must=True)
     else:
         if not (Path.home() / ".config/systemd/user" / f"{name}.service").exists():
             return [f"{name}: not installed"]
-        if verb == "restart" and sh("systemctl", "--user", "is-enabled", "--quiet", name):
+        if sh("systemctl", "--user", "is-enabled", "--quiet", name):
             sh("systemctl", "--user", "restart", name, must=True)
         else:
             sh("systemctl", "--user", "enable", "--now", name, must=True)
-    return [f"{name}: {verb}ed"]
+    return [f"{name}: restarted"]
 
 
-def start(name: str, run: Callable = subprocess.run, platform: str = sys.platform) -> List[str]:
-    return _change(name, "start", run, platform)
+def remove(name: str, run: Callable = subprocess.run, platform: str = sys.platform) -> List[str]:
+    """Stop the service and delete its unit file. Nothing installed: nothing to do."""
+    sh = _runner(run)
 
+    def quiet(*cmd: str) -> None:
+        try:
+            sh(*cmd)
+        except ServiceError:  # no systemctl or launchctl: the file is what we can still remove
+            pass
 
-def restart(name: str, run: Callable = subprocess.run, platform: str = sys.platform) -> List[str]:
-    return _change(name, "restart", run, platform)
+    if platform == "darwin":
+        plist = Path.home() / "Library/LaunchAgents" / f"io.kaptyorka.{name}.plist"
+        if not plist.exists():
+            return []
+        quiet("launchctl", "bootout", f"gui/{os.getuid()}/io.kaptyorka.{name}")
+        plist.unlink()
+    else:
+        unit = Path.home() / ".config/systemd/user" / f"{name}.service"
+        if not unit.exists():
+            return []
+        quiet("systemctl", "--user", "disable", "--now", name)
+        unit.unlink()
+        quiet("systemctl", "--user", "daemon-reload")
+    return [f"{name}: service removed"]
 
 
 def install(name: str, argv: List[str], run: Callable = subprocess.run,

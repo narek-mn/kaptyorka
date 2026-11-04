@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from kaptyorka import __version__
-from kaptyorka.adapters.base import DeliveryError, Session, add_alias, merge_json, write_atomic
+from kaptyorka.adapters.base import (DeliveryError, Session, add_alias, drop_hooks, merge_json, remove_alias,
+                                     write_atomic)
 
 TIMEOUT_S = 5
 RESTART_EVERY_S = 60
@@ -354,3 +355,35 @@ class CodexAdapter:
         if line:
             lines.append(line)
         return lines
+
+    def unconfigure(self) -> List[str]:
+        lines = []
+        conf = codex_home(self.home)
+
+        def drop(data: dict) -> bool:
+            hooks = data.get("hooks")
+            if not isinstance(hooks, dict):
+                return False
+            changed = drop_hooks(hooks, lambda h: str(h.get("command", "")).endswith(
+                (" hook codex start", " hook codex prompt")))
+            if changed and not hooks:
+                del data["hooks"]
+            return changed
+
+        hooks_json = conf / "hooks.json"
+        result = merge_json(hooks_json, drop)
+        if result == "broken":
+            self.log(f"left alone, not valid JSON: {hooks_json}")
+        elif result == "changed":
+            lines.append(f"Codex: kaptyorka hooks removed from {hooks_json}")
+        toml = conf / "config.toml"
+        try:
+            text = toml.read_text()
+        except OSError:
+            text = ""
+        if START in text and END in text.split(START, 1)[1]:
+            before, rest = text.split(START, 1)
+            after = rest.split(END, 1)[1]
+            write_atomic(toml, before + after.removeprefix("\n"))
+            lines.append(f"Codex: kaptyorka MCP server and hook trust removed from {toml}")
+        return lines + remove_alias(self.home, ALIAS, "Codex")

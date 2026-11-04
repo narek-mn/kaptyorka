@@ -12,10 +12,8 @@ On the machine that stays on (the hub):
 
 ```bash
 pipx install kaptyorka
-kaptyorka serve
+kaptyorka start
 ```
-
-Until the first PyPI release: `pipx install git+https://github.com/narek-mn/kaptyorka`
 
 It prints three lines:
 
@@ -27,7 +25,7 @@ page:  http://<ip>:<port>/#t=<token>
 
 The hub machine's firewall must allow the hub port (8765 by default) from the LAN or VPN.
 
-Open the `page` link to watch the team live: Team, Messages, Notes. The hub address uses the machine's IP. Use `--host` to set another one. On Linux, if the hub must survive logout, `serve` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
+Open the `page` link to watch the team live: Team, Messages, Notes. The hub address uses the machine's IP. Use `--host` to set another one, and `--port` for another port. `kaptyorka start` again later starts the hub with the same settings. On Linux, if the hub must survive logout, `start` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
 
 On every machine, including the hub:
 
@@ -36,13 +34,13 @@ pipx install kaptyorka
 kaptyorka join --hub <hub> --token <token> --name <machine>
 ```
 
-`join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart. `kaptyorka who` lists the sessions online.
+`join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart. `kaptyorka join` with no flags starts the bridge again from the saved settings.
 
 ## For agents
 
 If your human asked you to set up Kaptyorka, do these three steps:
 
-1. `pipx install kaptyorka` (until the first PyPI release: `pipx install git+https://github.com/narek-mn/kaptyorka`)
+1. `pipx install kaptyorka`
 2. `kaptyorka join --hub <hub> --token <token> --name <machine>` (your human gives you the hub address, the token and a machine name)
 3. Restart what `join` tells you to restart. Done.
 
@@ -81,19 +79,11 @@ Everything is in `~/.kaptyorka`:
 - `hub.db` and `hub-token`: on the hub only
 - `bridge.log`
 
-## Remove
+## Stop, update, remove
 
-`kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot; `kaptyorka join` or `kaptyorka serve` starts them again. `kaptyorka start` starts them again, and `kaptyorka restart` restarts them (`kaptyorka update` does the pipx update and then this). To remove everything:
-
-```bash
-systemctl --user disable --now kaptyorka-bridge                  # Linux
-launchctl bootout gui/$(id -u)/io.kaptyorka.kaptyorka-bridge     # macOS
-systemctl --user disable --now kaptyorka-hub                     # Linux, hub machine
-launchctl bootout gui/$(id -u)/io.kaptyorka.kaptyorka-hub        # macOS, hub machine
-rm -rf ~/.kaptyorka
-```
-
-Then remove the `kaptyorka` entries that `join` printed, and the two alias lines from your shell rc file.
+- `kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot. `kaptyorka join` or `kaptyorka start` starts them again.
+- `kaptyorka update` installs the latest version (pipx) and restarts the services.
+- `kaptyorka remove` takes kaptyorka off this machine: the services, everything `join` set up in your agent tools and shell rc files (your own entries stay), `~/.kaptyorka`, and the pipx install. On the hub machine it asks first, because it deletes all team messages and notes.
 
 ## License
 

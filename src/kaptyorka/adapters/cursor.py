@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from kaptyorka.adapters.base import DeliveryError, Session, merge_json
+from kaptyorka.adapters.base import DeliveryError, Session, drop_hooks, merge_json
 
 
 class CursorAdapter:
@@ -63,4 +63,36 @@ class CursorAdapter:
                 self.log(f"left alone, not valid JSON: {path}")
             elif result == "changed":
                 lines.append(f"Cursor: kaptyorka {what} added to {path}")
+        return lines
+
+    def unconfigure(self) -> List[str]:
+        lines = []
+
+        def drop_mcp(data: dict) -> bool:
+            servers = data.get("mcpServers")
+            if not isinstance(servers, dict) or "kaptyorka" not in servers:
+                return False
+            del servers["kaptyorka"]
+            if not servers:
+                del data["mcpServers"]
+            return True
+
+        def drop_cmds(data: dict) -> bool:
+            hooks = data.get("hooks")
+            if not isinstance(hooks, dict):
+                return False
+            changed = drop_hooks(hooks, lambda e: str(e.get("command", "")).endswith(
+                (" hook cursor stop", " hook cursor tool")), nested=False)
+            if changed and not hooks:
+                del data["hooks"]
+            return changed
+
+        for name, update, what in (("mcp.json", drop_mcp, "MCP server"),
+                                   ("hooks.json", drop_cmds, "hooks")):
+            path = self.dir / name
+            result = merge_json(path, update)
+            if result == "broken":
+                self.log(f"left alone, not valid JSON: {path}")
+            elif result == "changed":
+                lines.append(f"Cursor: kaptyorka {what} removed from {path}")
         return lines

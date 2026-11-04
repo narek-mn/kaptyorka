@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from kaptyorka.adapters.base import DeliveryError, Session, merge_json
+from kaptyorka.adapters.base import DeliveryError, Session, drop_hooks, merge_json
 
 CLAUDE_CODE_TESTED = "2.1.318"
 
@@ -118,4 +118,30 @@ class ClaudeAdapter:
             self.log(f"left alone, not valid JSON: {settings}")
         elif result == "changed":
             lines.append(f"Claude Code: kaptyorka hooks added to {settings}")
+        return lines
+
+    def unconfigure(self) -> List[str]:
+        lines = []
+        if self.installed():
+            r = subprocess.run(["claude", "mcp", "remove", "--scope", "user", "kaptyorka"],
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                lines.append("Claude Code: kaptyorka MCP server removed")
+
+        def drop(data: dict) -> bool:
+            hooks = data.get("hooks")
+            if not isinstance(hooks, dict):
+                return False
+            changed = drop_hooks(hooks, lambda h: str(h.get("command", "")).endswith(
+                (" hook claude-code start", " hook claude-code prompt")))
+            if changed and not hooks:
+                del data["hooks"]
+            return changed
+
+        settings = self.home / ".claude" / "settings.json"
+        result = merge_json(settings, drop)
+        if result == "broken":
+            self.log(f"left alone, not valid JSON: {settings}")
+        elif result == "changed":
+            lines.append(f"Claude Code: kaptyorka hooks removed from {settings}")
         return lines

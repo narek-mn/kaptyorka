@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from kaptyorka.adapters.base import DeliveryError, Session, add_alias, merge_json
+from kaptyorka.adapters.base import DeliveryError, Session, add_alias, merge_json, remove_alias
 
 TIMEOUT_S = 5
 ALIAS = "alias opencode='opencode --port 0'"
@@ -277,3 +277,27 @@ class OpenCodeAdapter:
         if line:
             lines.append(line)
         return lines
+
+    def unconfigure(self) -> List[str]:
+        lines = []
+        conf = self.home / ".config" / "opencode"
+
+        def drop_mcp(data: dict) -> bool:
+            servers = data.get("mcp")
+            if not isinstance(servers, dict) or "kaptyorka" not in servers:
+                return False
+            del servers["kaptyorka"]
+            if not servers:
+                del data["mcp"]
+            return True
+
+        result = merge_json(conf / "opencode.json", drop_mcp)
+        if result == "broken":
+            self.log(f"left alone, not valid JSON: {conf / 'opencode.json'}")
+        elif result == "changed":
+            lines.append(f"OpenCode: kaptyorka MCP server removed from {conf / 'opencode.json'}")
+        plugin = conf / "plugins" / "kaptyorka.js"
+        if plugin.exists() or plugin.is_symlink():
+            plugin.unlink()
+            lines.append(f"OpenCode: kaptyorka plugin removed ({plugin})")
+        return lines + remove_alias(self.home, ALIAS, "OpenCode")

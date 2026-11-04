@@ -45,6 +45,9 @@ class Adapter(Protocol):
     def configure(self, kaptyorka: str) -> List[str]:
         """Wire the tool to the kaptyorka executable; return change lines; idempotent."""
 
+    def unconfigure(self) -> List[str]:
+        """Undo configure: remove only our entries; return one line per thing removed."""
+
 
 def write_atomic(path: Path, text: str) -> None:
     """Replace the file in one step; a new file is 0600, an existing one keeps its mode.
@@ -101,3 +104,52 @@ def add_alias(home: Path, alias: str, label: str, log: Callable[[str], None]) ->
     with open(rc_path, "a") as f:
         f.write(("" if current.endswith("\n") or not current else "\n") + alias + "\n")
     return f"{label}: `{alias}` added to {rc_path}, so kaptyorka can push into new {label} windows"
+
+
+def remove_alias(home: Path, alias: str, label: str) -> List[str]:
+    """Delete our alias line from the shell startup files; one line per file changed."""
+    lines = []
+    for rc in (".bashrc", ".bash_profile", ".zshrc"):
+        path = home / rc
+        try:
+            text = path.read_text()
+        except OSError:
+            continue
+        kept = [line for line in text.splitlines(keepends=True) if line.rstrip("\n") != alias]
+        if len(kept) != len(text.splitlines(keepends=True)):
+            write_atomic(path, "".join(kept))
+            lines.append(f"{label}: `{alias}` removed from {path}")
+    return lines
+
+
+def drop_hooks(hooks: dict, is_ours: Callable[[dict], bool], nested: bool = True) -> bool:
+    """Remove our hook entries from a {event: [entry, ...]} dict, keeping foreign ones.
+
+    nested: entries hold a "hooks" list of commands (Claude Code, Codex); else an entry is the command.
+    """
+    changed = False
+    for event in list(hooks):
+        entries = hooks[event]
+        if not isinstance(entries, list):
+            continue
+        kept, was = [], changed
+        changed = False
+        for e in entries:
+            if nested and isinstance(e, dict) and isinstance(e.get("hooks"), list):
+                rest = [h for h in e["hooks"] if not (isinstance(h, dict) and is_ours(h))]
+                if len(rest) != len(e["hooks"]):
+                    changed = True
+                    if rest:
+                        kept.append({**e, "hooks": rest})
+                    continue
+            elif not nested and isinstance(e, dict) and is_ours(e):
+                changed = True
+                continue
+            kept.append(e)
+        if changed:
+            if kept:
+                hooks[event] = kept
+            else:
+                del hooks[event]
+        changed = changed or was
+    return changed

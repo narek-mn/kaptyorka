@@ -42,8 +42,9 @@ def test_subcommands_listed(capsys):
     with pytest.raises(SystemExit):
         entry_with(["--help"])
     out = capsys.readouterr().out
-    for cmd in ["serve", "join", "who", "mcp", "hook", "bridge", "stop"]:
-        assert cmd in out
+    listed = out.split("positional arguments:")[1].split("options:")[0]
+    names = [l.split()[0] for l in listed.splitlines()[2:] if l.startswith("    ") and l[4] != " "]
+    assert names == ["start", "join", "stop", "update", "remove"]
 
 
 def test_config_roundtrip_is_private(home):

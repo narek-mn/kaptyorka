@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import secrets
 import select
@@ -52,6 +53,22 @@ def _serve(args) -> int:
     return 0
 
 
+def _start(args) -> int:
+    """Run the hub here; with no flags, again with the port and host used last time."""
+    saved_file = paths.home() / "hub.json"
+    try:
+        saved = json.loads(saved_file.read_text())
+    except (OSError, ValueError):
+        saved = {}
+    args.port = args.port or saved.get("port", 8765)
+    args.host = args.host or saved.get("host")
+    args.foreground = False
+    rc = _serve(args)
+    if rc == 0:
+        saved_file.write_text(json.dumps({"port": args.port, "host": args.host}))
+    return rc
+
+
 def _who(args) -> int:
     cfg = paths.load_config()
     if not cfg.get("hub") or not cfg.get("token"):
@@ -86,17 +103,21 @@ def _stop(args) -> int:
     return 0
 
 
-def _change(verb: str):
-    def run(args) -> int:
-        for unit in ("kaptyorka-bridge", "kaptyorka-hub"):
-            try:
-                for line in getattr(service, verb)(unit):
-                    print(line)
-            except service.ServiceError as e:
-                print(f"{unit}: {e}", file=sys.stderr)
-                return 1
-        return 0
-    return run
+def _restart(args) -> int:
+    for unit in ("kaptyorka-bridge", "kaptyorka-hub"):
+        try:
+            for line in service.restart(unit):
+                print(line)
+        except service.ServiceError as e:
+            print(f"{unit}: {e}", file=sys.stderr)
+            return 1
+    return 0
+
+
+def _remove(args) -> int:
+    from kaptyorka import remove
+
+    return remove.main()
 
 
 def _update(args, run=subprocess.run) -> int:
@@ -114,7 +135,7 @@ def _update(args, run=subprocess.run) -> int:
         print((r.stderr or r.stdout).strip() or "pipx reinstall failed", file=sys.stderr)
         return 1
     print(f"kaptyorka {__version__} -> {new.stdout.strip().removeprefix('kaptyorka ')}")
-    return _change("restart")(args)
+    return _restart(args)
 
 
 def _mcp(args) -> int:
@@ -156,40 +177,51 @@ def _hook(args) -> int:
 def _join(args) -> int:
     from kaptyorka import join
 
+    if not args.hub and not args.token:  # again, from the saved settings: just the bridge
+        if not paths.load_config().get("hub"):
+            print("not joined yet: run kaptyorka join --hub <address> --token <token>", file=sys.stderr)
+            return 1
+        return 0 if join.install_bridge(str(Path(sys.argv[0]).resolve())) else 1
+    if not (args.hub and args.token):
+        print("join needs both --hub and --token", file=sys.stderr)
+        return 2
     return join.main(args.hub, args.token, args.name, only=args.only)
 
 
 def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
-    sub = p.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("serve", help="run the hub (installs a user service)")
-    s.add_argument("--port", type=int, default=8765)
+    sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,stop,update,remove}")
+    hide = argparse.SUPPRESS  # subparsers are hidden by giving them no help text
+    s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
+    s.add_argument("--port", type=int, help="hub port (default 8765)")
     s.add_argument("--host", help="address shown to the team (default: this machine's IP)")
-    s.add_argument("--foreground", action="store_true")
-    s.set_defaults(run=_serve)
-    sub.add_parser("who", help="list agents online").set_defaults(run=_who)
+    s.set_defaults(run=_start)
+    j = sub.add_parser("join", help="connect this machine's agents to the hub (again, with no flags)")
+    j.add_argument("--hub", help="hub address")
+    j.add_argument("--token", help="hub token")
+    j.add_argument("--name", default=socket.gethostname().split(".")[0], help="this machine's name")
+    j.add_argument("--only", action="append", help=hide)
+    j.set_defaults(run=_join)
     sub.add_parser("stop", help="stop the bridge (and hub) and keep them off after a reboot; "
-                   "kaptyorka join / serve start them again").set_defaults(run=_stop)
-    sub.add_parser("start", help="start the bridge (and hub) installed here, after kaptyorka stop"
-                   ).set_defaults(run=_change("start"))
-    sub.add_parser("restart", help="restart the bridge (and hub) installed here, so new code or "
-                   "settings take effect (use after updating)").set_defaults(run=_change("restart"))
+                   "start / join bring them back").set_defaults(run=_stop)
     sub.add_parser("update", help="update kaptyorka (pipx) to the latest version and restart "
                    "the services").set_defaults(run=_update)
-    m = sub.add_parser("mcp", help="MCP server for one agent session (started by the tool)")
-    m.add_argument("--workspace", help="project folder, for tools that do not set the cwd")
+    sub.add_parser("remove", help="remove kaptyorka from this machine completely").set_defaults(run=_remove)
+    # called by service units and tool configs, not by people
+    v = sub.add_parser("serve")
+    v.add_argument("--port", type=int, default=8765)
+    v.add_argument("--host")
+    v.add_argument("--foreground", action="store_true")
+    v.set_defaults(run=_serve)
+    sub.add_parser("who").set_defaults(run=_who)
+    m = sub.add_parser("mcp")
+    m.add_argument("--workspace")
     m.set_defaults(run=_mcp)
-    sub.add_parser("bridge", help="push messages into this machine's sessions").set_defaults(run=_bridge)
-    h = sub.add_parser("hook", help="print the hub's brief for a tool hook (started by the tool)")
+    sub.add_parser("bridge").set_defaults(run=_bridge)
+    h = sub.add_parser("hook")
     h.add_argument("tool")
-    h.add_argument("event", help="start or prompt")
+    h.add_argument("event")
     h.set_defaults(run=_hook)
-    j = sub.add_parser("join", help="connect this machine's agents to the hub")
-    j.add_argument("--hub", required=True)
-    j.add_argument("--token", required=True)
-    j.add_argument("--name", default=socket.gethostname().split(".")[0])
-    j.add_argument("--only", action="append", help="configure only this tool (repeatable)")
-    j.set_defaults(run=_join)
     args = p.parse_args()
     sys.exit(args.run(args))

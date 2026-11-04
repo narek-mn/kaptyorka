@@ -72,7 +72,7 @@ def test_serve_creates_token_once_and_prints_three_lines(home, capsys, monkeypat
     outs = []
     for _ in range(2):
         with pytest.raises(SystemExit) as e:
-            run_cli(["serve", "--port", "9999", "--host", "10.0.0.5"])
+            run_cli(["start", "--port", "9999", "--host", "10.0.0.5"])
         assert e.value.code == 0
         outs.append(capsys.readouterr().out.splitlines())
     assert outs[0] == outs[1]
@@ -135,7 +135,7 @@ def test_serve_service_error_exits_1(home, capsys, monkeypatch):
         raise service.ServiceError("systemctl said no")
     monkeypatch.setattr(service, "install", boom)
     with pytest.raises(SystemExit) as e:
-        run_cli(["serve"])
+        run_cli(["start"])
     assert e.value.code == 1
     cap = capsys.readouterr()
     assert cap.out == "" and "systemctl said no" in cap.err
@@ -291,58 +291,6 @@ def test_restart_darwin_not_installed(home):
         "kaptyorka-hub: not installed"]
 
 
-def test_start_linux_enables_unit(home):
-    _install_unit(home)
-    calls = []
-    assert service.start("kaptyorka-hub", run=_fake(calls, {}), platform="linux") == [
-        "kaptyorka-hub: started"]
-    assert calls == [["systemctl", "--user", "enable", "--now", "kaptyorka-hub"]]
-
-
-def test_start_not_installed(home):
-    assert service.start("kaptyorka-hub", run=_fake([], {}), platform="linux") == [
-        "kaptyorka-hub: not installed"]
-    assert service.start("kaptyorka-hub", run=_fake([], {}), platform="darwin") == [
-        "kaptyorka-hub: not installed"]
-
-
-def test_start_darwin_bootstraps_only_when_not_loaded(home):
-    plist = _plist(home)
-    calls = []
-    service.start("kaptyorka-hub", run=_fake(calls, {}), platform="darwin")
-    assert [c[1] for c in calls] == ["print"]
-    calls.clear()
-    key = "launchctl print gui/%d/io.kaptyorka.kaptyorka-hub" % os.getuid()
-    service.start("kaptyorka-hub", run=_fake(calls, {key: 1}), platform="darwin")
-    assert [c[1] for c in calls] == ["print", "enable", "bootstrap"]
-    assert calls[-1][-1] == str(plist)
-
-
-def test_start_command_prints_both(capsys, monkeypatch):
-    monkeypatch.setattr(service, "start", lambda name, **k: [f"{name}: started"])
-    with pytest.raises(SystemExit) as e:
-        run_cli(["start"])
-    assert e.value.code == 0
-    assert capsys.readouterr().out.splitlines() == ["kaptyorka-bridge: started", "kaptyorka-hub: started"]
-
-
-def test_restart_command_prints_both_and_exits_0(capsys, monkeypatch):
-    monkeypatch.setattr(service, "restart", lambda name, **k: [f"{name}: restarted"])
-    with pytest.raises(SystemExit) as e:
-        run_cli(["restart"])
-    assert e.value.code == 0
-    assert capsys.readouterr().out.splitlines() == ["kaptyorka-bridge: restarted", "kaptyorka-hub: restarted"]
-
-
-def test_restart_command_failure_goes_to_stderr_and_exits_1(capsys, monkeypatch):
-    def boom(name, **k):
-        raise service.ServiceError("boom")
-    monkeypatch.setattr(service, "restart", boom)
-    with pytest.raises(SystemExit) as e:
-        run_cli(["restart"])
-    assert e.value.code == 1 and "kaptyorka-bridge: boom" in capsys.readouterr().err
-
-
 def test_hub_exits_fast_on_sigterm_with_open_connection(home):
     import signal
     import socket as sk
@@ -421,3 +369,47 @@ def test_update_needs_pipx_install(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "prefix", str(tmp_path))
     assert cli._update(None, run=lambda *a, **k: pytest.fail("ran")) == 1
     assert "not installed with pipx" in capsys.readouterr().err
+
+
+def test_start_again_uses_saved_port_and_host(home, capsys, monkeypatch):
+    monkeypatch.setattr(service, "install", lambda name, argv, **k: seen.append(argv) or [])
+    seen = []
+    for args in (["--port", "9999", "--host", "10.0.0.5"], []):
+        with pytest.raises(SystemExit):
+            run_cli(["start", *args])
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == out[3] == "hub:   http://10.0.0.5:9999"
+    assert seen[0] == seen[1] and seen[1][-2:] == ["--port", "9999"]
+
+
+def test_join_without_flags_when_never_joined(home, capsys):
+    with pytest.raises(SystemExit) as e:
+        run_cli(["join"])
+    assert e.value.code == 1
+    assert "not joined yet: run kaptyorka join --hub <address> --token <token>" in capsys.readouterr().err
+
+
+def test_join_without_flags_only_restarts_the_bridge(home, capsys, monkeypatch):
+    paths.save_config({"hub": "http://h:1", "token": "T", "machine": "pc"})
+    seen = []
+    monkeypatch.setattr(service, "install", lambda name, argv, **k: seen.append((name, argv[1:])) or ["ok"])
+    from kaptyorka import join
+    monkeypatch.setattr(join, "main", lambda *a, **k: pytest.fail("reconfigured"))
+    with pytest.raises(SystemExit) as e:
+        run_cli(["join"])
+    assert e.value.code == 0 and seen == [("kaptyorka-bridge", ["bridge"])]
+
+
+def test_join_with_flags_joins(home, monkeypatch):
+    from kaptyorka import join
+    seen = []
+    monkeypatch.setattr(join, "main", lambda *a, **k: seen.append((a, k)) or 0)
+    with pytest.raises(SystemExit) as e:
+        run_cli(["join", "--hub", "h:1", "--token", "T", "--name", "pc", "--only", "cursor"])
+    assert e.value.code == 0 and seen == [(("h:1", "T", "pc"), {"only": ["cursor"]})]
+
+
+def test_join_hub_without_token_is_an_error(home):
+    with pytest.raises(SystemExit) as e:
+        run_cli(["join", "--hub", "h"])
+    assert e.value.code == 2

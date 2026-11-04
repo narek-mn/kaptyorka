@@ -6,6 +6,20 @@ from typing import List, Optional
 from kaptyorka import http, paths, service
 
 
+def install_bridge(exe: str, install=None) -> bool:
+    """Install and start the bridge service; False (after printing why) if that failed."""
+    if os.environ.get("KAPTYORKA_SKIP_SERVICE") == "1":
+        return True
+    try:
+        for line in (install or service.install)("kaptyorka-bridge", [exe, "bridge"],
+                                                 env={"PATH": os.environ.get("PATH", "")}):
+            print(f"bridge: {line}")
+    except service.ServiceError as e:
+        print(f"bridge service failed: {e}", file=sys.stderr)
+        return False
+    return True
+
+
 def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
          install=service.install, only: Optional[List[str]] = None) -> int:
     hub = hub.strip()
@@ -49,14 +63,8 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
         ok.append(a)
         for line in lines:
             print(f"{a.tool}: {line}")
-    if os.environ.get("KAPTYORKA_SKIP_SERVICE") != "1":
-        try:
-            for line in install("kaptyorka-bridge", [exe, "bridge"],
-                                env={"PATH": os.environ.get("PATH", "")}):
-                print(f"bridge: {line}")
-        except service.ServiceError as e:
-            print(f"bridge service failed: {e}", file=sys.stderr)
-            rc = 1
+    if not install_bridge(exe, install):
+        rc = 1
     if not done:
         print(", ".join(f"{t} is not installed" for t in only) if only
               else "no supported agent tool found", file=sys.stderr)
