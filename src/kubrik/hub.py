@@ -2,6 +2,7 @@
 import asyncio
 import functools
 import hmac
+import importlib.resources
 import inspect
 import math
 from dataclasses import asdict
@@ -11,7 +12,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from starlette.websockets import WebSocketClose
 
 from kubrik.store import Agent, KubrikError, Store
@@ -218,6 +219,11 @@ def build_app(store: Store, token: str) -> Starlette:
                        "history": [asdict(h) for h in store.note_history(n["topic"])]}
                       for n in store.notes_list()],
         })
+
+    @server.custom_route("/", methods=["GET"])
+    async def page(request: Request) -> Response:
+        html = (importlib.resources.files("kubrik") / "web/index.html").read_text("utf-8")
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
     app = server.streamable_http_app(host="0.0.0.0")
     app.add_middleware(BearerAuth, token=token)
