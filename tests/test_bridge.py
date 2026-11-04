@@ -1,0 +1,182 @@
+import json
+import os
+import socket
+import threading
+import time
+
+from kaptyorka import bridge as bridge_mod
+from kaptyorka.adapters.base import DeliveryError, Session, merge_json
+from kaptyorka.bridge import Bridge
+from helpers import call, run
+
+PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
+
+
+class FakeAdapter:
+    restart_note = None
+
+    def __init__(self, tool="codex", prefix="codex", sessions=(), fail=False):
+        self.tool, self.prefix, self.fail = tool, prefix, fail
+        self._sessions = list(sessions)
+        self.delivered = []
+
+    def installed(self):
+        return True
+
+    def sessions(self):
+        return self._sessions
+
+    def deliver(self, key, text):
+        if self.fail:
+            raise DeliveryError("door closed")
+        self.delivered.append((key, text))
+
+    def configure(self, kaptyorka):
+        return []
+
+
+def cfg(hub):
+    return {"hub": hub.url, "token": hub.token, "machine": "dgx"}
+
+
+def fake_codex():
+    return FakeAdapter(sessions=[Session("codex:5", "codex", "proj")])
+
+
+def send_hi(hub):
+    run(call(hub, PC, "send", to="dgx/codex/proj", text="hi"))
+
+
+def wait_for(cond, timeout=5):
+    deadline = time.monotonic() + timeout
+    while not cond():
+        assert time.monotonic() < deadline, "condition not met in time"
+        time.sleep(0.01)
+
+
+def test_heartbeat_reports_all_sessions(hub, home):
+    a = FakeAdapter(sessions=[Session("codex:1", "codex", "a"), Session("codex:2", "codex", "b")])
+    b = FakeAdapter("opencode", "opencode", [Session("opencode:x", "opencode", "c", "editing")])
+    Bridge(cfg(hub), [a, b], bridge_mod.log).heartbeat()
+    online = {x.key: x for x in hub.store.online()}
+    assert set(online) == {"codex:1", "codex:2", "opencode:x"}
+    assert online["opencode:x"].activity == "editing"
+    assert online["opencode:x"].machine == "dgx"
+
+
+def test_poll_delivers_and_acks(hub, home):
+    fake = fake_codex()
+    bridge = Bridge(cfg(hub), [fake], bridge_mod.log)
+    bridge.heartbeat()
+    send_hi(hub)
+    assert bridge.poll_once(wait=1) == 1
+    assert fake.delivered == [("codex:5", "Kaptyorka message from pc/claude-code/murmur:\n\nhi")]
+    assert hub.store.inbox("codex:5") == []
+
+
+def test_failed_door_logs_and_leaves_for_pull(hub, home, capsys):
+    fake = fake_codex()
+    fake.fail = True
+    bridge = Bridge(cfg(hub), [fake], bridge_mod.log)
+    bridge.heartbeat()
+    send_hi(hub)
+    assert bridge.poll_once(1) == 0
+    line = "push to codex:5 failed: door closed; message 1 left for pull"
+    assert line in (home / ".kaptyorka/bridge.log").read_text()
+    assert line in capsys.readouterr().err
+    assert [m.text for m in hub.store.inbox("codex:5")] == ["hi"]
+
+
+def test_no_adapter_for_key_is_not_acked_ok(hub, home):
+    bridge = Bridge(cfg(hub), [FakeAdapter("cursor", "cursor")], bridge_mod.log)
+    Bridge(cfg(hub), [fake_codex()], bridge_mod.log).heartbeat()
+    send_hi(hub)
+    assert bridge.poll_once(1) == 0
+    assert "push to codex:5 failed" in (home / ".kaptyorka/bridge.log").read_text()
+    assert [m.text for m in hub.store.inbox("codex:5")] == ["hi"]
+
+
+def test_empty_poll_is_silent(hub, home):
+    lines = []
+    assert Bridge(cfg(hub), [fake_codex()], lines.append).poll_once(0) == 0
+    assert lines == []
+
+
+def test_bad_token_is_logged_not_unreachable(hub, home):
+    lines = []
+    bridge = Bridge({**cfg(hub), "token": "wrong"}, [], lines.append)
+    assert bridge._step() == bridge_mod.RETRY_S
+    assert lines == ["hub answered 401 to poll"]
+
+
+def test_run_heartbeats_delivers_and_stops(hub, home, monkeypatch):
+    monkeypatch.setattr(bridge_mod, "WAIT_S", 1)
+    fake = fake_codex()
+    bridge = Bridge(cfg(hub), [fake], bridge_mod.log)
+    th = threading.Thread(target=bridge.run)
+    th.start()
+    try:
+        wait_for(lambda: hub.store.agent("codex:5") is not None)
+        send_hi(hub)
+        wait_for(lambda: fake.delivered)
+    finally:
+        bridge.stop.set()
+        th.join(10)
+    assert not th.is_alive()
+    assert fake.delivered[0][0] == "codex:5"
+
+
+def _closed_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_hub_down_logged_once(home, monkeypatch):
+    monkeypatch.setattr(bridge_mod, "RETRY_S", 0.01)
+    lines = []
+    url = f"http://127.0.0.1:{_closed_port()}"
+    bridge = Bridge({"hub": url, "token": "T", "machine": "dgx"}, [], lines.append)
+    calls = []
+    real_poll = bridge.poll_once
+    bridge.poll_once = lambda wait=25: (calls.append(1), real_poll(wait))[1]
+    th = threading.Thread(target=bridge.run)
+    th.start()
+    try:
+        wait_for(lambda: len(calls) >= 3)
+    finally:
+        bridge.stop.set()
+        th.join(10)
+    assert not th.is_alive()
+    assert lines == [f"kaptyorka hub unreachable at {url}"]
+
+
+def test_merge_json_keeps_symlink_and_other_keys(tmp_path):
+    target = tmp_path / "real.json"
+    target.write_text('{"a": 1}')
+    os.chmod(target, 0o600)
+    link = tmp_path / "link.json"
+    link.symlink_to(target)
+
+    def add_b(d):
+        d["b"] = 2
+        return True
+
+    assert merge_json(link, add_b) == "changed"
+    assert link.is_symlink()
+    assert json.loads(target.read_text()) == {"a": 1, "b": 2}
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert merge_json(link, lambda d: False) == "unchanged"
+
+
+def test_merge_json_missing_file_starts_empty(tmp_path):
+    p = tmp_path / "sub" / "new.json"
+    assert merge_json(p, lambda d: d.setdefault("x", 1) == 1) == "changed"
+    assert json.loads(p.read_text()) == {"x": 1}
+
+
+def test_merge_json_broken_file_untouched(tmp_path):
+    p = tmp_path / "c.json"
+    p.write_text("{not json")
+    assert merge_json(p, lambda d: True) == "broken"
+    assert p.read_text() == "{not json"

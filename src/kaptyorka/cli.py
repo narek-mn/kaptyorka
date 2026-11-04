@@ -7,7 +7,7 @@ from pathlib import Path
 
 from kaptyorka import __version__, http, paths, service
 
-COMMANDS = ["join", "hook", "bridge"]
+COMMANDS = ["join", "hook"]
 
 
 def _stub(args) -> int:
@@ -90,6 +90,18 @@ def _mcp(args) -> int:
     return 0
 
 
+def _bridge(args) -> int:
+    from kaptyorka.adapters import all_adapters
+    from kaptyorka.bridge import Bridge, log
+
+    cfg = paths.load_config()
+    if not cfg.get("hub") or not cfg.get("token"):
+        print("not joined: run kaptyorka join", file=sys.stderr)
+        return 1
+    Bridge(cfg, [a for a in all_adapters() if a.installed()], log).run()
+    return 0
+
+
 def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
@@ -103,6 +115,7 @@ def entry() -> None:
     m = sub.add_parser("mcp", help="MCP server for one agent session (started by the tool)")
     m.add_argument("--workspace", help="project folder, for tools that do not set the cwd")
     m.set_defaults(run=_mcp)
+    sub.add_parser("bridge", help="push messages into this machine's sessions").set_defaults(run=_bridge)
     for name in COMMANDS:
         sub.add_parser(name, help=f"{name} (not implemented yet)").set_defaults(run=_stub)
     args = p.parse_args()
