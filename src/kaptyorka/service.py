@@ -74,7 +74,11 @@ def stop(name: str, run: Callable = subprocess.run, platform: str = sys.platform
     """Stop the service and keep it off after a reboot. Not installed counts as fine."""
     sh = _runner(run)
     if platform == "darwin":
-        ok = sh("launchctl", "bootout", f"gui/{os.getuid()}/io.kaptyorka.{name}")
+        target = f"gui/{os.getuid()}/io.kaptyorka.{name}"
+        plist = Path.home() / "Library/LaunchAgents" / f"io.kaptyorka.{name}.plist"
+        out = sh("launchctl", "bootout", target)
+        off = sh("launchctl", "disable", target)  # bootout alone returns at the next login
+        ok = (out or off) and plist.exists()
     else:
         ok = sh("systemctl", "--user", "disable", "--now", name)
     return [f"{name}: stopped" if ok else f"{name}: not running"]
@@ -90,6 +94,7 @@ def install(name: str, argv: List[str], run: Callable = subprocess.run,
         plist.parent.mkdir(parents=True, exist_ok=True)
         plist.write_text(unit_text(name, argv, "darwin", env))
         domain = f"gui/{os.getuid()}"
+        sh("launchctl", "enable", f"{domain}/io.kaptyorka.{name}")  # bootstrap fails if disabled
         sh("launchctl", "bootout", domain, str(plist))
         for attempt in range(5):
             try:

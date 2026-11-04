@@ -179,10 +179,28 @@ def test_stop_linux_disables_unit():
     assert calls == [["systemctl", "--user", "disable", "--now", "kaptyorka-bridge"]]
 
 
-def test_stop_darwin_boots_out_unit():
+def test_stop_darwin_boots_out_then_disables(home):
+    plist = home / "Library/LaunchAgents/io.kaptyorka.kaptyorka-hub.plist"
+    plist.parent.mkdir(parents=True)
+    plist.write_text("x")
     calls = []
-    service.stop("kaptyorka-hub", run=fake_run(calls), platform="darwin")
-    assert calls == [["launchctl", "bootout", f"gui/{os.getuid()}/io.kaptyorka.kaptyorka-hub"]]
+    assert service.stop("kaptyorka-hub", run=fake_run(calls), platform="darwin") == [
+        "kaptyorka-hub: stopped"]
+    target = f"gui/{os.getuid()}/io.kaptyorka.kaptyorka-hub"
+    assert calls == [["launchctl", "bootout", target], ["launchctl", "disable", target]]
+
+
+def test_stop_darwin_without_plist_is_not_running(home):
+    assert service.stop("kaptyorka-hub", run=fake_run([]), platform="darwin") == [
+        "kaptyorka-hub: not running"]
+
+
+def test_install_darwin_enables_before_bootstrap(home):
+    calls = []
+    install("kaptyorka-hub", ["/k", "serve"], run=fake_run(calls), platform="darwin")
+    verbs = [c[1] for c in calls]
+    assert verbs.index("enable") < verbs.index("bootstrap")
+    assert calls[0] == ["launchctl", "enable", f"gui/{os.getuid()}/io.kaptyorka.kaptyorka-hub"]
 
 
 def test_stop_not_installed_is_fine():
