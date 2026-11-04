@@ -8,6 +8,7 @@ Session keys, one per tool, identical in shim, hook and bridge:
 """
 import json
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,3 +74,23 @@ def merge_json(path: Path, update: Callable[[dict], bool]) -> str:
         os.unlink(tmp)
         raise
     return "changed"
+
+
+def add_alias(home: Path, alias: str, label: str, log: Callable[[str], None]) -> Optional[str]:
+    """Append alias to the shell startup file once; the change line, or None if already there."""
+    shell = os.path.basename(os.environ.get("SHELL", ""))
+    bash_rc = ".bash_profile" if sys.platform == "darwin" else ".bashrc"  # macOS: login shells
+    rc = {"bash": bash_rc, "zsh": ".zshrc"}.get(shell)
+    if rc is None:
+        log(f"{label}: add `{alias}` to your shell startup file so kaptyorka can push")
+        return None
+    rc_path = home / rc
+    try:
+        current = rc_path.read_text()
+    except FileNotFoundError:
+        current = ""
+    if alias in current.splitlines():
+        return None
+    with open(rc_path, "a") as f:
+        f.write(("" if current.endswith("\n") or not current else "\n") + alias + "\n")
+    return f"{label}: `{alias}` added to {rc_path}, so kaptyorka can push into new {label} windows"

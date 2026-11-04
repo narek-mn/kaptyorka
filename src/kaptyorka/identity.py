@@ -70,9 +70,16 @@ def _opencode_key(pid: int, cwd: str) -> Optional[str]:
     return session_key(pid, cwd)
 
 
+def _codex_key(pid: int, cwd: str) -> Optional[str]:
+    from kaptyorka.adapters.codex import session_key
+
+    return session_key(pid, cwd)
+
+
 RESOLVERS: Dict[str, Callable[[int, str], Optional[str]]] = {
     "claude-code": lambda pid, cwd: f"claude:{pid}",
     "opencode": _opencode_key,
+    "codex": _codex_key,
     "cursor": lambda pid, cwd: f"cursor:{cwd}",
 }
 
@@ -119,6 +126,8 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
         cwd = json.loads(_session_file(tool_pid).read_text())["cwd"]
     elif tool == "cursor":
         cwd = workspace or os.getcwd()
+    elif tool == "codex":
+        cwd = os.getcwd()  # under the daemon the parent is the daemon, not the TUI in the project
     else:
         cwd = proc_cwd(tool_pid)
     resolve = RESOLVERS.get(tool)

@@ -11,6 +11,9 @@ TIMEOUT_S = 3
 FORMATTERS: Dict[str, Callable[[str, str], str]] = {
     "claude-code": lambda event, brief: brief,
     "opencode": lambda event, brief: brief,  # the plugin pushes it as a system line
+    "codex": lambda event, brief: json.dumps({"hookSpecificOutput": {
+        "hookEventName": "SessionStart" if event == "start" else "UserPromptSubmit",
+        "additionalContext": brief}}),
 }
 
 

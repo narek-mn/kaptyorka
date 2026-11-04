@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from kaptyorka.adapters.base import DeliveryError, Session, merge_json
+from kaptyorka.adapters.base import DeliveryError, Session, add_alias, merge_json
 
 TIMEOUT_S = 5
 ALIAS = "alias opencode='opencode --port 0'"
@@ -273,20 +273,7 @@ class OpenCodeAdapter:
             plugin.write_text(text)
             lines.append(f"OpenCode: kaptyorka plugin written to {plugin}")
 
-        shell = os.path.basename(os.environ.get("SHELL", ""))
-        bash_rc = ".bash_profile" if sys.platform == "darwin" else ".bashrc"  # macOS: login shells
-        rc = {"bash": bash_rc, "zsh": ".zshrc"}.get(shell)
-        if rc is None:
-            self.log(f"OpenCode: add `{ALIAS}` to your shell startup file so kaptyorka can push")
-        else:
-            rc_path = self.home / rc
-            try:
-                current = rc_path.read_text()
-            except FileNotFoundError:
-                current = ""
-            if ALIAS not in current.splitlines():
-                with open(rc_path, "a") as f:
-                    f.write(("" if current.endswith("\n") or not current else "\n") + ALIAS + "\n")
-                lines.append(f"OpenCode: `{ALIAS}` added to {rc_path}, so kaptyorka can push "
-                             "into new OpenCode windows")
+        line = add_alias(self.home, ALIAS, "OpenCode", self.log)
+        if line:
+            lines.append(line)
         return lines
