@@ -95,10 +95,10 @@ def _bridge(args) -> int:
     from kaptyorka.bridge import Bridge, log
 
     cfg = paths.load_config()
-    if not cfg.get("hub") or not cfg.get("token"):
+    if not cfg.get("hub") or not cfg.get("token") or not cfg.get("machine"):
         print("not joined: run kaptyorka join", file=sys.stderr)
         return 1
-    Bridge(cfg, [a for a in all_adapters() if a.installed()], log).run()
+    Bridge(cfg, [a for a in all_adapters(log) if a.installed()], log).run()
     return 0
 
 

@@ -1,3 +1,4 @@
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -24,7 +25,7 @@ def request(method: str, url: str, token: str, body: "dict | None" = None,
             return r.status, _decode(r.read(), r.headers.get("Content-Type", ""))
     except urllib.error.HTTPError as e:
         return e.code, _decode(e.read(), e.headers.get("Content-Type", ""))
-    except (urllib.error.URLError, OSError):
+    except (urllib.error.URLError, OSError, http.client.HTTPException):
         raise HubUnreachable(url) from None
 
 

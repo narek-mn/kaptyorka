@@ -64,6 +64,20 @@ def test_heartbeat_reports_all_sessions(hub, home):
     assert online["opencode:x"].machine == "dgx"
 
 
+class BrokenAdapter(FakeAdapter):
+    def sessions(self):
+        raise OSError("state db locked")
+
+
+def test_heartbeat_skips_broken_adapter_and_logs_once(hub, home):
+    lines = []
+    bridge = Bridge(cfg(hub), [BrokenAdapter("opencode", "opencode"), fake_codex()], lines.append)
+    for _ in range(3):
+        bridge.heartbeat()
+    assert [a.key for a in hub.store.online()] == ["codex:5"]
+    assert lines == ["opencode sessions failed: state db locked"]
+
+
 def test_poll_delivers_and_acks(hub, home):
     fake = fake_codex()
     bridge = Bridge(cfg(hub), [fake], bridge_mod.log)
@@ -132,7 +146,7 @@ def _closed_port():
         return s.getsockname()[1]
 
 
-def test_hub_down_logged_once(home, monkeypatch):
+def test_hub_down_logged_once_per_outage(hub, home, monkeypatch):
     monkeypatch.setattr(bridge_mod, "RETRY_S", 0.01)
     lines = []
     url = f"http://127.0.0.1:{_closed_port()}"
@@ -148,13 +162,48 @@ def test_hub_down_logged_once(home, monkeypatch):
         bridge.stop.set()
         th.join(10)
     assert not th.is_alive()
-    assert lines == [f"kaptyorka hub unreachable at {url}"]
+    down = f"kaptyorka hub unreachable at {url}"
+    assert lines == [down]
+    # recovery, then a second outage is logged again
+    monkeypatch.setattr(bridge_mod, "WAIT_S", 0)
+    bridge.cfg = {**bridge.cfg, "hub": hub.url}
+    assert bridge._step() == 0
+    bridge.cfg = {**bridge.cfg, "hub": url}
+    bridge._step()
+    assert lines == [down, f"kaptyorka hub unreachable at {url}"]
+
+
+def test_cut_off_reply_counts_as_unreachable():
+    from kaptyorka import http
+
+    with socket.socket() as srv:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+
+        def answer():
+            conn, _ = srv.accept()
+            with conn:
+                conn.recv(4096)
+                conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                             b"Content-Length: 100\r\n\r\n[1, 2")
+
+        th = threading.Thread(target=answer)
+        th.start()
+        try:
+            url = f"http://127.0.0.1:{srv.getsockname()[1]}/bridge/poll"
+            try:
+                http.request("GET", url, "T")
+                raise AssertionError("expected HubUnreachable")
+            except http.HubUnreachable:
+                pass
+        finally:
+            th.join(10)
 
 
 def test_merge_json_keeps_symlink_and_other_keys(tmp_path):
     target = tmp_path / "real.json"
     target.write_text('{"a": 1}')
-    os.chmod(target, 0o600)
+    os.chmod(target, 0o640)
     link = tmp_path / "link.json"
     link.symlink_to(target)
 
@@ -165,7 +214,8 @@ def test_merge_json_keeps_symlink_and_other_keys(tmp_path):
     assert merge_json(link, add_b) == "changed"
     assert link.is_symlink()
     assert json.loads(target.read_text()) == {"a": 1, "b": 2}
-    assert target.stat().st_mode & 0o777 == 0o600
+    assert target.stat().st_mode & 0o777 == 0o640
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["link.json", "real.json"]
     assert merge_json(link, lambda d: False) == "unchanged"
 
 

@@ -8,6 +8,7 @@ Session keys, one per tool, identical in shim, hook and bridge:
 """
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Protocol
@@ -46,7 +47,8 @@ class Adapter(Protocol):
 def merge_json(path: Path, update: Callable[[dict], bool]) -> str:
     """Apply update to a JSON file; "changed", "unchanged", or "broken" (left alone).
 
-    A missing file counts as {}. Writes go to the symlink's target, keeping its mode.
+    A missing file counts as {} and is created 0600. Writes go to the symlink's target,
+    keeping its mode.
     """
     try:
         data = json.loads(path.read_text())
@@ -60,9 +62,14 @@ def merge_json(path: Path, update: Callable[[dict], bool]) -> str:
         return "unchanged"
     target = path.resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(target.name + ".kaptyorka-tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
-    if target.exists():
-        os.chmod(tmp, target.stat().st_mode & 0o7777)
-    os.replace(tmp, target)
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".")  # 0600
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(data, indent=2) + "\n")
+        if target.exists():
+            os.chmod(tmp, target.stat().st_mode & 0o7777)
+        os.replace(tmp, target)
+    except BaseException:
+        os.unlink(tmp)
+        raise
     return "changed"

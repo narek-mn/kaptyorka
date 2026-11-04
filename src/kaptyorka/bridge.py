@@ -3,7 +3,7 @@ import sys
 import threading
 import time
 from dataclasses import asdict
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
 from kaptyorka import http, paths
@@ -25,12 +25,35 @@ class Bridge:
     def __init__(self, cfg: dict, adapters: List[Adapter], log: Callable[[str], None]):
         self.cfg, self.adapters, self.log = cfg, adapters, log
         self.stop = threading.Event()
-        self._problem: Optional[str] = None
+        self._problems: Dict[str, Optional[str]] = {}
+
+    def _report(self, area: str, problem: Optional[str]) -> None:
+        """Log a problem once per area until that area succeeds (problem None) again."""
+        if problem is not None and problem != self._problems.get(area):
+            self.log(problem)
+        self._problems[area] = problem
 
     def heartbeat(self) -> None:
-        sessions = [asdict(s) for a in self.adapters for s in a.sessions()]
-        http.request("POST", self.cfg["hub"] + "/bridge/heartbeat", self.cfg["token"],
-                     {"machine": self.cfg["machine"], "sessions": sessions})
+        sessions = []
+        for a in self.adapters:
+            try:
+                found = [asdict(s) for s in a.sessions()]
+                problem = None
+            except Exception as e:  # one broken adapter must not hide the others
+                found, problem = [], f"{a.tool} sessions failed: {e}"
+            self._report("sessions:" + a.prefix, problem)
+            sessions += found
+        status, _ = http.request("POST", self.cfg["hub"] + "/bridge/heartbeat", self.cfg["token"],
+                                 {"machine": self.cfg["machine"], "sessions": sessions})
+        self._report("heartbeat", None if status == 204 else f"hub answered {status} to heartbeat")
+
+    def _ack(self, msg_id: int, ok: bool) -> None:
+        url, body = self.cfg["hub"] + "/bridge/ack", {"id": msg_id, "ok": ok}
+        try:
+            status, _ = http.request("POST", url, self.cfg["token"], body)
+        except http.HubUnreachable:
+            status, _ = http.request("POST", url, self.cfg["token"], body)
+        self._report("ack", None if status == 204 else f"hub answered {status} to ack")
 
     def poll_once(self, wait: float = WAIT_S) -> int:
         query = urlencode({"machine": self.cfg["machine"], "wait": wait})
@@ -51,8 +74,7 @@ class Bridge:
             except Exception as e:  # any failure leaves the message for pull
                 self.log(f"push to {key} failed: {e}; message {m['id']} left for pull")
                 ok = False
-            http.request("POST", self.cfg["hub"] + "/bridge/ack", self.cfg["token"],
-                         {"id": m["id"], "ok": ok})
+            self._ack(m["id"], ok)
             delivered += ok
         return delivered
 
@@ -63,11 +85,9 @@ class Bridge:
         except (http.HubUnreachable, RuntimeError) as e:
             problem = (f"kaptyorka hub unreachable at {self.cfg['hub']}"
                        if isinstance(e, http.HubUnreachable) else str(e))
-            if problem != self._problem:
-                self._problem = problem
-                self.log(problem)
+            self._report("poll", problem)
             return RETRY_S
-        self._problem = None
+        self._report("poll", None)
         return 0
 
     def _beat(self) -> None:
@@ -77,7 +97,7 @@ class Bridge:
             except http.HubUnreachable:
                 pass  # the poll loop reports the outage
             except Exception as e:
-                self.log(f"heartbeat failed: {e}")
+                self._report("heartbeat", f"heartbeat failed: {e}")
             self.stop.wait(HEARTBEAT_S)
 
     def run(self) -> None:
