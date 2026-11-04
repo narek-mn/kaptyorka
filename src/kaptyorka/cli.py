@@ -8,14 +8,6 @@ from pathlib import Path
 
 from kaptyorka import __version__, http, paths, service
 
-COMMANDS = ["join"]
-
-
-def _stub(args) -> int:
-    print("not implemented")
-    return 2
-
-
 def _token() -> str:
     p = paths.home() / "hub-token"
     if not p.exists():
@@ -115,6 +107,12 @@ def _hook(args) -> int:
     return hook.main(args.tool, args.event, stdin)
 
 
+def _join(args) -> int:
+    from kaptyorka import join
+
+    return join.main(args.hub, args.token, args.name, only=args.only)
+
+
 def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
@@ -133,7 +131,11 @@ def entry() -> None:
     h.add_argument("tool")
     h.add_argument("event", help="start or prompt")
     h.set_defaults(run=_hook)
-    for name in COMMANDS:
-        sub.add_parser(name, help=f"{name} (not implemented yet)").set_defaults(run=_stub)
+    j = sub.add_parser("join", help="connect this machine's agents to the hub")
+    j.add_argument("--hub", required=True)
+    j.add_argument("--token", required=True)
+    j.add_argument("--name", default=socket.gethostname().split(".")[0])
+    j.add_argument("--only", action="append", help="configure only this tool (repeatable)")
+    j.set_defaults(run=_join)
     args = p.parse_args()
     sys.exit(args.run(args))

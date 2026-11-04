@@ -5,3 +5,4 @@
 - Never call real agent tools in tests, except tests marked `-m slow`.
 - `KAPTYORKA_TEST_IDENTITY` (JSON of an `Identity`: key, machine, tool, project) overrides session detection in `identity.identify()`. It exists only so tests can run the `kaptyorka mcp` shim outside an agent tool; never set it elsewhere.
 - No push and no PyPI release without approval.
+- `KAPTYORKA_SKIP_SERVICE=1` makes `kaptyorka join` skip installing the bridge service. Tests only; never set it elsewhere.
