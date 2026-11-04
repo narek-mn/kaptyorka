@@ -26,8 +26,10 @@ def hub(tmp_path):
                                            log_level="warning"))
     thread = threading.Thread(target=server.run)
     thread.start()
+    deadline = time.monotonic() + 10
     while not server.started:
         assert thread.is_alive(), "hub server failed to start"
+        assert time.monotonic() < deadline, "hub server did not start within 10 s"
         time.sleep(0.01)
     port = server.servers[0].sockets[0].getsockname()[1]
     yield SimpleNamespace(url=f"http://127.0.0.1:{port}", token="T", store=store)

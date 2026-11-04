@@ -3,6 +3,7 @@ import asyncio
 import functools
 import hmac
 import inspect
+import math
 from dataclasses import asdict
 from typing import List, Union
 
@@ -47,6 +48,17 @@ class BearerAuth:
 
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+def _bad_request(fn):
+    """Answer 400 instead of 500 when a client sends a malformed request."""
+    @functools.wraps(fn)
+    async def wrapper(request):
+        try:
+            return await fn(request)
+        except (ValueError, KeyError, TypeError):  # JSONDecodeError is a ValueError
+            return PlainTextResponse("bad request", status_code=400)
+    return wrapper
 
 
 def _agent_row(a: Agent, now: float) -> dict:
@@ -141,15 +153,20 @@ def build_app(store: Store, token: str) -> Starlette:
         return f"saved note {topic}"
 
     @server.custom_route("/bridge/heartbeat", methods=["POST"])
+    @_bad_request
     async def bridge_heartbeat(request: Request) -> Response:
         body = await request.json()
         store.heartbeat(body["machine"], body["sessions"])
         return Response(status_code=204)
 
     @server.custom_route("/bridge/poll", methods=["GET"])
+    @_bad_request
     async def bridge_poll(request: Request) -> Response:
         machine = request.query_params["machine"]
-        wait = min(max(float(request.query_params.get("wait", 0)), 0), MAX_WAIT_S)
+        wait = float(request.query_params.get("wait", 0))
+        if not math.isfinite(wait):
+            raise ValueError("wait must be a finite number")
+        wait = min(max(wait, 0), MAX_WAIT_S)
         event = sent["event"]  # taken before offer, so a send after offer still wakes us
         items = store.offer(machine)
         if not items and wait:
@@ -161,9 +178,10 @@ def build_app(store: Store, token: str) -> Starlette:
         return JSONResponse(items)
 
     @server.custom_route("/bridge/ack", methods=["POST"])
+    @_bad_request
     async def bridge_ack(request: Request) -> Response:
         body = await request.json()
-        store.ack(int(body["id"]), bool(body["ok"]))
+        store.ack(int(body["id"]), body["ok"] is True)
         return Response(status_code=204)
 
     @server.custom_route("/api/brief", methods=["GET"])

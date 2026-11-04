@@ -118,6 +118,40 @@ def test_ack_true_marks_read(hub):
     assert brief(hub, DGX, "prompt") == ""
 
 
+def test_ack_string_false_is_not_ok(hub):
+    dgx_online(hub)
+    hub_send(hub, PC, DGX_NAME, "hi")
+    _, items = http.request("GET", f"{hub.url}/bridge/poll?machine=dgx&wait=0", "T")
+    assert http.request("POST", hub.url + "/bridge/ack", "T",
+                        {"id": items[0]["id"], "ok": "false"})[0] == 204
+    assert "hi" in brief(hub, DGX, "prompt")
+
+
+def raw_post(hub, path, data: bytes):
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(hub.url + path, data=data, method="POST",
+                                 headers={"Authorization": "Bearer T",
+                                          "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def test_bad_input_is_400(hub):
+    assert raw_post(hub, "/bridge/heartbeat", b"{not json") == 400
+    assert raw_post(hub, "/bridge/ack", b"{not json") == 400
+    assert http.request("POST", hub.url + "/bridge/heartbeat", "T",
+                        {"machine": "dgx", "sessions": [{"key": "k"}]})[0] == 400
+    assert http.request("POST", hub.url + "/bridge/ack", "T", {"ok": True})[0] == 400
+    assert http.request("GET", hub.url + "/bridge/poll?wait=0", "T")[0] == 400
+    for wait in ("abc", "nan", "inf"):
+        assert http.request("GET", f"{hub.url}/bridge/poll?machine=dgx&wait={wait}",
+                            "T")[0] == 400
+
+
 def test_brief_start_summary_exact(hub):
     dgx_online(hub)
     run(call(hub, PC, "who"))
