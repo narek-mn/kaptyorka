@@ -73,6 +73,10 @@ class Store:
         self.db.executescript(SCHEMA)
         self.sends: Dict[str, List[float]] = {}
 
+    def close(self) -> None:
+        with self.lock:
+            self.db.close()
+
     # agents
 
     def _agent(self, row, now) -> Agent:

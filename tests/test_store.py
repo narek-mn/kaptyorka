@@ -18,7 +18,9 @@ def clock():
 
 @pytest.fixture
 def store(tmp_path, clock):
-    return Store(tmp_path / "hub.db", clock=clock)
+    s = Store(tmp_path / "hub.db", clock=clock)
+    yield s
+    s.close()
 
 
 def test_names_get_suffix_when_shared(store):
@@ -108,6 +110,35 @@ def test_survives_reopen(tmp_path):
     s.seen("a", "pc", "codex", "x"); s.seen("b", "dgx", "codex", "y")
     s.notes_write("a", "api", "v1")
     s.send("a", "dgx/codex/y", "hi")
+    s.close()
     s2 = Store(path)
     assert s2.notes_read("api").text == "v1"
     assert [m.text for m in s2.messages()] == ["hi"]
+    s2.close()
+
+
+def test_heartbeat_sets_activity_and_seen_keeps_it(store):
+    store.heartbeat("pc", [{"key": "a", "tool": "codex", "project": "p", "activity": "x"}])
+    store.seen("a", "pc", "codex", "p")
+    assert store.agent("a").activity == "x"
+    store.heartbeat("pc", [{"key": "a", "tool": "codex", "project": "p"}])
+    assert store.agent("a").activity == "x"
+    store.heartbeat("pc", [{"key": "a", "tool": "codex", "project": "p", "activity": "y"}])
+    assert store.agent("a").activity == "y"
+
+
+def test_send_to_offline_held_name_reaches_next_session(store, clock):
+    store.seen("s", "pc", "codex", "a"); store.seen("old", "dgx", "claude-code", "murmur")
+    clock.t += 31; store.seen("s", "pc", "codex", "a")
+    assert store.send("s", "dgx/claude-code/murmur", "hi") == 1
+    store.seen("new", "dgx", "claude-code", "murmur")
+    assert [m.text for m in store.inbox("new")] == ["hi"]
+
+
+def test_returning_agent_gets_suffix_if_name_taken(store, clock):
+    store.seen("s", "pc", "codex", "a"); store.seen("A", "dgx", "codex", "m")
+    clock.t += 31; store.seen("s", "pc", "codex", "a")
+    assert store.seen("B", "dgx", "codex", "m").name == "dgx/codex/m"
+    assert store.seen("A", "dgx", "codex", "m").name == "dgx/codex/m-2"
+    store.send("s", "dgx/codex/m", "hi")
+    assert store.inbox("A") == [] and [m.text for m in store.inbox("B")] == ["hi"]
