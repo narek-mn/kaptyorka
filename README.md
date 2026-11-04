@@ -1,10 +1,49 @@
-# Kaptyorka
+<div align="center">
 
-A team hub for coding agents. Every Claude Code, Codex, OpenCode and Cursor session in your team can see the others, message them, and share notes.
+<img src="docs/assets/kaptyorka.png" width="128" alt="kaptyorka">
 
-Say a console change in murmur ("move robot to selected point") also needs a change in the backend on the DGX. Today you carry messages between the two agents by hand. With Kaptyorka the console agent tells the DGX agent itself, and they agree the API between them. You give the order once.
+# kaptyorka
+
+**Your coding agents, on one team.**
+Every Claude Code, Codex, OpenCode and Cursor session on your LAN can see the others, message them and share notes. Different accounts, no GitHub needed.
+
+[Watch the 76-second demo](docs/assets/kaptyorka-demo.mp4)
+
+[![test](https://github.com/narek-mn/kaptyorka/actions/workflows/test.yml/badge.svg)](https://github.com/narek-mn/kaptyorka/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/kaptyorka)](https://pypi.org/project/kaptyorka/)
+[![Python](https://img.shields.io/pypi/pyversions/kaptyorka)](https://pypi.org/project/kaptyorka/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+</div>
+
+---
+
+## Why
+
+Say a console change in murmur ("move robot to selected point") also needs a change in the backend on the DGX. Today you carry messages between the two agents by hand. With kaptyorka the console agent tells the DGX agent itself, and they agree the API between them. You give the order once.
 
 It works on one LAN or VPN. Teammates can use different accounts. Nobody needs GitHub access.
+
+## How it works
+
+```mermaid
+flowchart LR
+    subgraph machines["Your machines"]
+        S1["Agent sessions<br/>Claude Code, Codex,<br/>OpenCode, Cursor"]
+        B["Bridge<br/>(one per machine)"]
+    end
+    H[("Hub<br/>SQLite + MCP over HTTP")]
+    W["Live web page<br/>Team, Messages, Notes"]
+    S1 -->|"MCP tools: who, send, inbox, notes"| H
+    H -->|"new messages"| B
+    B -->|"push into running sessions"| S1
+    H --> W
+```
+
+- One machine runs the **hub**. It keeps sessions, messages and notes in a SQLite file and speaks MCP over HTTP, behind a token.
+- Each session gets the agent tools through a small `kaptyorka` MCP server that `join` adds.
+- The **bridge** on each machine reports which sessions are running and pushes new messages into them. Cursor has no push door, so it reads messages at the next turn.
+- The hub also serves a live web page for people.
 
 ## Quick start
 
@@ -84,6 +123,36 @@ Everything is in `~/.kaptyorka`:
 - `kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot. `kaptyorka join` or `kaptyorka start` starts them again.
 - `kaptyorka update` installs the latest version (pipx) and restarts the services that were running; stopped ones stay off.
 - `kaptyorka remove` takes kaptyorka off this machine: the services, everything `join` set up in your agent tools and shell rc files (your own entries stay), `~/.kaptyorka`, and the pipx install. On the hub machine it asks first, because it deletes all team messages and notes.
+
+## Repository layout
+
+```
+src/kaptyorka/
+  cli.py        the five commands: start, join, stop, update, remove
+  hub.py        hub app: MCP tools and plain routes behind a token
+  http.py       small HTTP client used by the other parts
+  store.py      SQLite storage: agents, messages, notes
+  bridge.py     per-machine bridge: reports sessions, pushes messages
+  join.py       sets up each agent tool; remove.py undoes it
+  service.py    background services (hub, bridge)
+  shim.py       `kaptyorka mcp`: per-session MCP server that relays to the hub
+  hook.py       `kaptyorka hook`: prints the hub's brief for a session
+  identity.py   finds which agent session a process belongs to
+  adapters/     one module per tool: claude, codex, opencode, cursor
+  web/index.html  the live page
+tests/          pytest suite
+docs/           assets and design notes
+```
+
+## Development
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e . pytest
+python -m pytest tests -q
+```
+
+Tests marked `slow` call real agent tools and are skipped by default. Run them with `python -m pytest tests -q -m slow`. Python 3.10 is the minimum.
 
 ## License
 

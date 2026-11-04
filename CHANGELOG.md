@@ -3,6 +3,7 @@
 ## 0.1.1
 
 - First release on PyPI. 0.1.0 never reached PyPI: its package had no description.
+- Fix: package description for PyPI (README attached as long description).
 
 ## 0.1.0
 
