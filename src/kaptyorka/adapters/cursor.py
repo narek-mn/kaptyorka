@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from kaptyorka.adapters.base import DeliveryError, Session, drop_hooks, merge_json
+from kaptyorka.adapters.base import DeliveryError, Session, drop_hooks, is_our_hook, merge_json
 
 
 class CursorAdapter:
@@ -81,8 +81,8 @@ class CursorAdapter:
             hooks = data.get("hooks")
             if not isinstance(hooks, dict):
                 return False
-            changed = drop_hooks(hooks, lambda e: str(e.get("command", "")).endswith(
-                (" hook cursor stop", " hook cursor tool")), nested=False)
+            changed = drop_hooks(hooks, lambda e: is_our_hook(e.get("command", ""), "cursor",
+                                                              ("stop", "tool")), nested=False)
             if changed and not hooks:
                 del data["hooks"]
             return changed

@@ -1,8 +1,37 @@
+import os
+import shlex
+import subprocess
 import threading
 import time
 from types import SimpleNamespace
 
 import pytest
+
+# Commands that touch the real machine: services, the pipx install, agent tools.
+FENCED = {"systemctl", "launchctl", "loginctl", "systemd-run", "pipx",
+          "claude", "codex", "opencode", "cursor"}
+
+
+@pytest.fixture(autouse=True)
+def fence_real_commands(request, monkeypatch):
+    """Fail any test (except `slow` ones) that would run a fenced command for real.
+
+    Guards Popen itself, which run/check_output/call use, so a default argument
+    bound to the real `subprocess.run` at import time is still caught.
+    """
+    if request.node.get_closest_marker("slow"):
+        return
+    real_init = subprocess.Popen.__init__
+
+    def guarded(self, args, *a, **kw):
+        argv = shlex.split(args) if isinstance(args, str) else list(args)
+        name = os.path.basename(os.fsdecode(argv[0])) if argv else ""
+        if name in FENCED:
+            pytest.fail(f"test tried to run the real `{name}` ({argv!r}); inject a fake `run`",
+                        pytrace=False)
+        real_init(self, args, *a, **kw)
+
+    monkeypatch.setattr(subprocess.Popen, "__init__", guarded)
 
 
 @pytest.fixture

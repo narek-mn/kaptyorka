@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import secrets
 import select
 import socket
@@ -53,13 +54,26 @@ def _serve(args) -> int:
     return 0
 
 
+def _installed_hub_port() -> dict:
+    """The port of a hub unit installed by a version that did not write hub.json."""
+    for unit in (Path.home() / ".config/systemd/user/kaptyorka-hub.service",
+                 Path.home() / "Library/LaunchAgents/io.kaptyorka.kaptyorka-hub.plist"):
+        try:
+            m = re.search(r"--port(?:</string>)?\s*(?:<string>)?(\d+)", unit.read_text())
+        except OSError:
+            continue
+        if m:
+            return {"port": int(m.group(1))}
+    return {}
+
+
 def _start(args) -> int:
     """Run the hub here; with no flags, again with the port and host used last time."""
     saved_file = paths.home() / "hub.json"
     try:
         saved = json.loads(saved_file.read_text())
     except (OSError, ValueError):
-        saved = {}
+        saved = _installed_hub_port()
     args.port = args.port or saved.get("port", 8765)
     args.host = args.host or saved.get("host")
     args.foreground = False

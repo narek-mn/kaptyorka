@@ -8,6 +8,7 @@ Session keys, one per tool, identical in shim, hook and bridge:
 """
 import json
 import os
+import shlex
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -120,6 +121,22 @@ def remove_alias(home: Path, alias: str, label: str) -> List[str]:
             write_atomic(path, "".join(kept))
             lines.append(f"{label}: `{alias}` removed from {path}")
     return lines
+
+
+def is_our_hook(command: object, tool: str, events: tuple) -> bool:
+    """True only for `<path>/kaptyorka hook <tool> <event>`, quoted or not (older installs)."""
+    command = str(command)
+    for event in events:
+        suffix = f" hook {tool} {event}"
+        if command.endswith(suffix):
+            exe = command[:-len(suffix)]
+            try:
+                parts = shlex.split(exe)
+            except ValueError:
+                return False
+            exe = parts[0] if len(parts) == 1 else exe  # unquoted path with spaces
+            return os.path.basename(exe) == "kaptyorka"
+    return False
 
 
 def drop_hooks(hooks: dict, is_ours: Callable[[dict], bool], nested: bool = True) -> bool:

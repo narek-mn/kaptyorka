@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from kaptyorka import __version__
-from kaptyorka.adapters.base import (DeliveryError, Session, add_alias, drop_hooks, merge_json, remove_alias,
-                                     write_atomic)
+from kaptyorka.adapters.base import (DeliveryError, Session, add_alias, drop_hooks, is_our_hook, merge_json,
+                                     remove_alias, write_atomic)
 
 TIMEOUT_S = 5
 RESTART_EVERY_S = 60
@@ -364,8 +364,8 @@ class CodexAdapter:
             hooks = data.get("hooks")
             if not isinstance(hooks, dict):
                 return False
-            changed = drop_hooks(hooks, lambda h: str(h.get("command", "")).endswith(
-                (" hook codex start", " hook codex prompt")))
+            changed = drop_hooks(hooks, lambda h: is_our_hook(h.get("command", ""), "codex",
+                                                              ("start", "prompt")))
             if changed and not hooks:
                 del data["hooks"]
             return changed

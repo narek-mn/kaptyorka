@@ -413,3 +413,17 @@ def test_join_hub_without_token_is_an_error(home):
     with pytest.raises(SystemExit) as e:
         run_cli(["join", "--hub", "h"])
     assert e.value.code == 2
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_start_without_saved_settings_keeps_port_of_older_hub_unit(home, capsys, monkeypatch, platform):
+    exe_argv = ["/opt/x/kaptyorka", "serve", "--foreground", "--port", "9001"]
+    unit = (home / ".config/systemd/user/kaptyorka-hub.service" if platform == "linux"
+            else home / "Library/LaunchAgents/io.kaptyorka.kaptyorka-hub.plist")
+    unit.parent.mkdir(parents=True)
+    unit.write_text(unit_text("kaptyorka-hub", exe_argv, platform))
+    seen = []
+    monkeypatch.setattr(service, "install", lambda name, argv, **k: seen.append(argv) or [])
+    with pytest.raises(SystemExit):
+        run_cli(["start"])
+    assert seen[0][-2:] == ["--port", "9001"]

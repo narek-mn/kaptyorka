@@ -57,9 +57,9 @@ def test_join_configures_installed_only(hub, home, capsys):
 def test_join_twice_same_result(hub, home, fake_claude_cli):  # noqa: F811
     from kaptyorka.adapters.claude import ClaudeAdapter
     settings = home / ".claude/settings.json"
-    main(hub.url, "T", "pc", adapters=[ClaudeAdapter(home)], install=no_service([]))
+    main(hub.url, "T", "pc", adapters=[ClaudeAdapter(home, run=fake_claude_cli.run)], install=no_service([]))
     first = settings.read_text()
-    main(hub.url, "T", "pc", adapters=[ClaudeAdapter(home)], install=no_service([]))
+    main(hub.url, "T", "pc", adapters=[ClaudeAdapter(home, run=fake_claude_cli.run)], install=no_service([]))
     assert settings.read_text() == first and json.loads(first)["hooks"]
 
 

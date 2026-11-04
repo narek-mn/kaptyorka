@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from kaptyorka.adapters.base import DeliveryError, Session, drop_hooks, merge_json
+from kaptyorka.adapters.base import DeliveryError, Session, drop_hooks, is_our_hook, merge_json
 
 CLAUDE_CODE_TESTED = "2.1.318"
 
@@ -25,8 +25,10 @@ class ClaudeAdapter:
     prefix = "claude"
     restart_note = "Claude Code: open sessions pick up kaptyorka after a restart"
 
-    def __init__(self, home: Optional[Path] = None, log: Callable[[str], None] = print):
+    def __init__(self, home: Optional[Path] = None, log: Callable[[str], None] = print,
+                 run: Callable = subprocess.run):
         self.home = home or Path.home()
+        self.run = run
         self.dir = self.home / ".claude" / "sessions"
         self.log = log
         self._warned = False
@@ -85,9 +87,9 @@ class ClaudeAdapter:
 
     def configure(self, kaptyorka: str) -> List[str]:
         lines = []
-        subprocess.run(["claude", "mcp", "remove", "--scope", "user", "kaptyorka"],
-                       capture_output=True)
-        r = subprocess.run(["claude", "mcp", "add", "--scope", "user", "kaptyorka", "--",
+        self.run(["claude", "mcp", "remove", "--scope", "user", "kaptyorka"],
+                 capture_output=True)
+        r = self.run(["claude", "mcp", "add", "--scope", "user", "kaptyorka", "--",
                             kaptyorka, "mcp"], capture_output=True, text=True)
         if r.returncode:
             self.log(f"claude mcp add failed: {(r.stderr or r.stdout).strip()}")
@@ -122,18 +124,25 @@ class ClaudeAdapter:
 
     def unconfigure(self) -> List[str]:
         lines = []
-        if self.installed():
-            r = subprocess.run(["claude", "mcp", "remove", "--scope", "user", "kaptyorka"],
-                               capture_output=True, text=True)
-            if r.returncode == 0:
-                lines.append("Claude Code: kaptyorka MCP server removed")
+        manual = "Claude Code: run `claude mcp remove --scope user kaptyorka` to remove the MCP server"
+        if not self.installed():
+            self.log(f"claude not found; {manual}")
+        else:
+            try:
+                r = self.run(["claude", "mcp", "remove", "--scope", "user", "kaptyorka"],
+                             capture_output=True, text=True)
+            except OSError as e:  # still remove the hooks below
+                self.log(f"claude failed: {e}; {manual}")
+            else:
+                if r.returncode == 0:
+                    lines.append("Claude Code: kaptyorka MCP server removed")
 
         def drop(data: dict) -> bool:
             hooks = data.get("hooks")
             if not isinstance(hooks, dict):
                 return False
-            changed = drop_hooks(hooks, lambda h: str(h.get("command", "")).endswith(
-                (" hook claude-code start", " hook claude-code prompt")))
+            changed = drop_hooks(hooks, lambda h: is_our_hook(
+                h.get("command", ""), "claude-code", ("start", "prompt")))
             if changed and not hooks:
                 del data["hooks"]
             return changed

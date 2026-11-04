@@ -1,6 +1,7 @@
 import json
 import os
 import socket
+import subprocess
 import threading
 
 import pytest
@@ -50,21 +51,24 @@ class UnixServer:
 
 @pytest.fixture
 def fake_claude_cli(tmp_path, monkeypatch):
+    """A `claude` on PATH (so installed() is true) and a fake run that records the calls."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    record = tmp_path / "claude-calls"
     script = bin_dir / "claude"
-    script.write_text("#!/usr/bin/env python3\nimport json, sys\n"
-                      f"open({str(record)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n")
+    script.write_text("#!/bin/sh\nexit 1\n")
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
 
     class Fake:
-        @property
-        def calls(self):
-            return [["claude"] + json.loads(line) for line in record.read_text().splitlines()]
+        calls = []
 
-    return Fake()
+        def run(self, cmd, **kw):
+            self.calls.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    fake = Fake()
+    fake.calls = []
+    return fake
 
 
 def live_sock(tmp_path):
@@ -153,7 +157,7 @@ def test_configure_keeps_existing_hooks_and_is_idempotent(home, fake_claude_cli)
     settings.parent.mkdir()
     settings.write_text('{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"mine"}]}]},'
                         '"mcpServers":{"other":{}}}')
-    a = ClaudeAdapter(home)
+    a = ClaudeAdapter(home, run=fake_claude_cli.run)
     a.configure("/k")
     a.configure("/k")
     data = json.loads(settings.read_text())
@@ -173,7 +177,7 @@ def test_configure_replaces_hook_from_moved_install(home, fake_claude_cli):
     settings.write_text(json.dumps({"hooks": {"UserPromptSubmit": [
         {"hooks": [{"type": "command", "command": "/old/kaptyorka hook claude-code prompt"}]},
         {"hooks": [{"type": "command", "command": "mine"}]}]}}))
-    ClaudeAdapter(home).configure("/k")
+    ClaudeAdapter(home, run=fake_claude_cli.run).configure("/k")
     ups = json.loads(settings.read_text())["hooks"]["UserPromptSubmit"]
     assert [h["hooks"][0]["command"] for h in ups] == ["/k hook claude-code prompt", "mine"]
 
@@ -184,7 +188,7 @@ def test_configure_writes_through_symlink(home, tmp_path, fake_claude_cli):
     real.write_text("{}")
     (home / ".claude").mkdir()
     (home / ".claude/settings.json").symlink_to(real)
-    ClaudeAdapter(home).configure("/k")
+    ClaudeAdapter(home, run=fake_claude_cli.run).configure("/k")
     assert (home / ".claude/settings.json").is_symlink()
     assert "UserPromptSubmit" in json.loads(real.read_text())["hooks"]
 
@@ -194,7 +198,7 @@ def test_configure_leaves_broken_settings_alone(home, fake_claude_cli):
     settings.parent.mkdir()
     settings.write_text("{not json")
     lines = []
-    ClaudeAdapter(home, log=lines.append).configure("/k")
+    ClaudeAdapter(home, log=lines.append, run=fake_claude_cli.run).configure("/k")
     assert settings.read_text() == "{not json"
     assert f"left alone, not valid JSON: {settings}" in lines
 
@@ -212,7 +216,7 @@ def test_configure_quotes_exe_and_replaces_old_unquoted_hook(home, fake_claude_c
     settings.parent.mkdir()
     settings.write_text(json.dumps({"hooks": {"UserPromptSubmit": [
         {"hooks": [{"type": "command", "command": "/my dir/k hook claude-code prompt"}]}]}}))
-    ClaudeAdapter(home).configure("/my dir/k")
+    ClaudeAdapter(home, run=fake_claude_cli.run).configure("/my dir/k")
     ups = json.loads(settings.read_text())["hooks"]["UserPromptSubmit"]
     assert [h["hooks"][0]["command"] for h in ups] == ["'/my dir/k' hook claude-code prompt"]
     assert ["claude", "mcp", "add", "--scope", "user", "kaptyorka", "--", "/my dir/k", "mcp"] \

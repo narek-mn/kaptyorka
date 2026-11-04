@@ -19,7 +19,11 @@ def main(adapters: Optional[list] = None, run: Callable = subprocess.run,
         if not (sys.stdin.isatty() if isatty is None else isatty):
             print(HUB_ONLY, file=sys.stderr)
             return 1
-        if ask(ASK).strip().lower() != "y":
+        try:
+            answer = ask(ASK)
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer.strip().lower() != "y":
             print("nothing removed")
             return 1
     if adapters is None:
@@ -43,7 +47,11 @@ def main(adapters: Optional[list] = None, run: Callable = subprocess.run,
     for line in lines:
         print(line)
     if (Path(sys.prefix) / "pipx_metadata.json").exists():  # last: this runs from that venv
-        r = run(["pipx", "uninstall", "kaptyorka"], capture_output=True, text=True)
+        try:
+            r = run(["pipx", "uninstall", "kaptyorka"], capture_output=True, text=True)
+        except FileNotFoundError:
+            print("pipx not found; run: pipx uninstall kaptyorka", file=sys.stderr)
+            return 1
         if r.returncode:
             print((r.stderr or r.stdout).strip() or "pipx uninstall failed", file=sys.stderr)
             return 1

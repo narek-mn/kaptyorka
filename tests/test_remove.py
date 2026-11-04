@@ -23,8 +23,8 @@ def fake_run(calls):
 def test_claude_unconfigure_removes_only_ours(home, fake_claude_cli):
     settings = home / ".claude/settings.json"
     settings.parent.mkdir()
-    a = ClaudeAdapter(home)
-    a.configure("/k")
+    a = ClaudeAdapter(home, run=fake_claude_cli.run)
+    a.configure("/opt/x/kaptyorka")
     data = json.loads(settings.read_text())
     data["hooks"]["SessionStart"].append({"hooks": [{"type": "command", "command": "mine"}]})
     data["hooks"]["SessionStart"][0]["hooks"].append({"type": "command", "command": "also mine"})
@@ -38,9 +38,9 @@ def test_claude_unconfigure_removes_only_ours(home, fake_claude_cli):
 
 
 def test_claude_unconfigure_drops_empty_hooks_and_ignores_broken(home, fake_claude_cli):
-    a = ClaudeAdapter(home)
+    a = ClaudeAdapter(home, run=fake_claude_cli.run)
     (home / ".claude").mkdir()
-    a.configure("/k")
+    a.configure("/opt/x/kaptyorka")
     a.unconfigure()
     assert json.loads((home / ".claude/settings.json").read_text()) == {}
     (home / ".claude/settings.json").write_text("{not json")
@@ -54,8 +54,8 @@ def test_claude_unconfigure_follows_symlink(home, tmp_path, fake_claude_cli):
     real.write_text("{}")
     (home / ".claude").mkdir()
     (home / ".claude/settings.json").symlink_to(real)
-    a = ClaudeAdapter(home)
-    a.configure("/k")
+    a = ClaudeAdapter(home, run=fake_claude_cli.run)
+    a.configure("/opt/x/kaptyorka")
     a.unconfigure()
     assert (home / ".claude/settings.json").is_symlink() and json.loads(real.read_text()) == {}
 
@@ -66,7 +66,7 @@ def test_cursor_unconfigure_keeps_foreign(home):
     (d / "mcp.json").write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}}))
     (d / "hooks.json").write_text(json.dumps({"version": 1, "hooks": {"stop": [{"command": "mine"}]}}))
     a = CursorAdapter(home)
-    a.configure("/k")
+    a.configure("/opt/x/kaptyorka")
     a.unconfigure()
     assert json.loads((d / "mcp.json").read_text()) == {"mcpServers": {"other": {"command": "x"}}}
     assert json.loads((d / "hooks.json").read_text()) == {"version": 1, "hooks": {"stop": [{"command": "mine"}]}}
@@ -80,7 +80,7 @@ def test_opencode_unconfigure(home, monkeypatch):
     (conf / "opencode.json").write_text(json.dumps({"mcp": {"other": {}}, "theme": "x"}))
     (home / ".bashrc").write_text("export A=1\n")
     a = OpenCodeAdapter(home=home)
-    a.configure("/k")
+    a.configure("/opt/x/kaptyorka")
     lines = a.unconfigure()
     assert json.loads((conf / "opencode.json").read_text()) == {"mcp": {"other": {}}, "theme": "x"}
     assert not (conf / "plugins/kaptyorka.js").exists()
@@ -97,7 +97,7 @@ def test_codex_unconfigure_removes_block_hooks_and_alias(home, monkeypatch):
     (conf / "hooks.json").write_text(json.dumps(
         {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}]}}))
     a = CodexAdapter(home=home, socket_path=conf / "none.sock")
-    a.configure("/k")
+    a.configure("/opt/x/kaptyorka")
     assert "kaptyorka" in (conf / "config.toml").read_text()
     a.unconfigure()
     assert (conf / "config.toml").read_text().strip() == 'model = "x"'
@@ -174,3 +174,58 @@ def test_remove_pipx_failure_exits_1(home, tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "prefix", str(tmp_path))
     run = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "nope")
     assert remove.main([], run=run, platform="linux") == 1
+
+
+def test_hook_match_is_precise():
+    from kaptyorka.adapters.base import is_our_hook
+    ev = ("start", "prompt")
+    assert is_our_hook("/a/kaptyorka hook claude-code start", "claude-code", ev)
+    assert is_our_hook("'/my dir/kaptyorka' hook claude-code prompt", "claude-code", ev)
+    assert is_our_hook("/my dir/kaptyorka hook claude-code prompt", "claude-code", ev)  # older, unquoted
+    assert not is_our_hook("/usr/bin/other hook claude-code start", "claude-code", ev)
+    assert not is_our_hook("echo kaptyorka hook claude-code start", "claude-code", ev)
+    assert not is_our_hook("/a/kaptyorka hook claude-code stop", "claude-code", ev)
+    assert not is_our_hook(None, "claude-code", ev)
+
+
+def test_claude_unconfigure_keeps_lookalike_hook(home, fake_claude_cli):
+    settings = home / ".claude/settings.json"
+    settings.parent.mkdir()
+    foreign = {"hooks": [{"type": "command", "command": "/usr/bin/other hook claude-code start"}]}
+    settings.write_text(json.dumps({"hooks": {"SessionStart": [foreign]}}))
+    ClaudeAdapter(home, run=fake_claude_cli.run).unconfigure()
+    assert json.loads(settings.read_text()) == {"hooks": {"SessionStart": [foreign]}}
+
+
+def test_claude_unconfigure_without_claude_still_drops_hooks(home, monkeypatch):
+    monkeypatch.setenv("PATH", "")
+    settings = home / ".claude/settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({"hooks": {"SessionStart": [
+        {"hooks": [{"type": "command", "command": "/a/kaptyorka hook claude-code start"}]}]}}))
+    log = []
+    lines = ClaudeAdapter(home, log=log.append, run=fake_run(calls := [])).unconfigure()
+    assert calls == [] and any("claude mcp remove --scope user kaptyorka" in l for l in log)
+    assert json.loads(settings.read_text()) == {} and any("hooks removed" in l for l in lines)
+
+
+def test_remove_on_hub_end_of_input_is_no(home, monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+    (paths.home() / "hub-token").write_text("T")
+
+    def eof(q):
+        raise EOFError
+    assert remove.main([], run=fake_run([]), isatty=True, ask=eof) == 1
+    assert (paths.home() / "hub-token").exists()
+
+
+def test_remove_pipx_missing_says_what_to_run(home, tmp_path, monkeypatch, capsys):
+    (tmp_path / "pipx_metadata.json").write_text("{}")
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+
+    def run(cmd, **kw):
+        if cmd[0] == "pipx":
+            raise FileNotFoundError(cmd[0])
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    assert remove.main([], run=run, platform="linux") == 1
+    assert "pipx uninstall kaptyorka" in capsys.readouterr().err
