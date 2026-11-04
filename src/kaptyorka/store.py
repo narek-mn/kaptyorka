@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS notes (
 """
 
 
-class KubrikError(Exception):
+class KaptyorkaError(Exception):
     """Error whose message is shown to the agent."""
 
 
@@ -148,13 +148,13 @@ class Store:
             now = self.clock()
             sender = self.db.execute("SELECT * FROM agents WHERE key=?", (sender_key,)).fetchone()
             if sender is None:
-                raise KubrikError("unknown sender session")
+                raise KaptyorkaError("unknown sender session")
             if len(text) > MAX_TEXT:
-                raise KubrikError(f"message too long: {len(text)} characters, limit {MAX_TEXT}")
+                raise KaptyorkaError(f"message too long: {len(text)} characters, limit {MAX_TEXT}")
             count, window = RATE
             recent = [t for t in self.sends.get(sender_key, []) if now - t < window]
             if len(recent) >= count:
-                raise KubrikError(f"rate limit: at most {count} sends per {window} s")
+                raise KaptyorkaError(f"rate limit: at most {count} sends per {window} s")
             online = self._online_rows(now)
             if to == "all":
                 targets = [r for r in online if r["key"] != sender_key]
@@ -164,7 +164,7 @@ class Store:
                     (to,)).fetchall()
                 if not match:
                     names = ", ".join(r["name"] for r in online) or "none"
-                    raise KubrikError(f"no session named {to}; online: {names}")
+                    raise KaptyorkaError(f"no session named {to}; online: {names}")
                 targets = match[:1]
             for t in targets:
                 self.db.execute(
@@ -210,7 +210,7 @@ class Store:
                     self.db.execute("UPDATE messages SET push_state='offered', offered_at=?"
                                     " WHERE id=?", (now, m["id"]))
                     out.append({"id": m["id"], "key": t["key"],
-                                "text": f"Kubrik message from {m['sender_name']}:\n\n{m['text']}"})
+                                "text": f"Kaptyorka message from {m['sender_name']}:\n\n{m['text']}"})
             return out
 
     def ack(self, msg_id: int, ok: bool) -> None:
@@ -234,7 +234,7 @@ class Store:
         with self.lock:
             row = self.db.execute("SELECT name FROM agents WHERE key=?", (key,)).fetchone()
             if row is None:
-                raise KubrikError("unknown session")
+                raise KaptyorkaError("unknown session")
             self.db.execute("INSERT INTO notes (topic, text, author, time) VALUES (?,?,?,?)",
                             (topic, text, row["name"], self.clock()))
 

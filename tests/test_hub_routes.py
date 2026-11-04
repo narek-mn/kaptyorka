@@ -2,8 +2,8 @@ import asyncio
 import threading
 import time
 
-from kubrik import http
-from kubrik.hub import BearerAuth
+from kaptyorka import http
+from kaptyorka.hub import BearerAuth
 from helpers import call, run
 
 PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
@@ -35,7 +35,7 @@ def hub_send(hub, ident, to, text):
 
 
 def ident_headers(ident):
-    return {f"X-Kubrik-{k.capitalize()}": v for k, v in ident.items()}
+    return {f"X-Kaptyorka-{k.capitalize()}": v for k, v in ident.items()}
 
 
 def brief(hub, ident, event):
@@ -78,7 +78,7 @@ def test_poll_returns_immediately_when_queued(hub):
                                  timeout=30)
     assert status == 200 and len(items) == 1 and time.time() - t0 < 1
     assert items[0]["key"] == DGX["key"]
-    assert items[0]["text"] == "Kubrik message from pc/claude-code/murmur:\n\nhi"
+    assert items[0]["text"] == "Kaptyorka message from pc/claude-code/murmur:\n\nhi"
 
 
 def test_poll_wakes_on_send(hub):
@@ -105,7 +105,7 @@ def test_ack_false_leaves_message_for_brief(hub):
     assert http.request("POST", hub.url + "/bridge/ack", "T",
                         {"id": items[0]["id"], "ok": False})[0] == 204
     assert brief(hub, DGX, "prompt") == \
-        "Kubrik message from pc/claude-code/murmur:\n\nmove api?"
+        "Kaptyorka message from pc/claude-code/murmur:\n\nmove api?"
     assert brief(hub, DGX, "prompt") == ""
 
 
@@ -158,14 +158,14 @@ def test_brief_start_summary_exact(hub):
     run(call(hub, DGX, "notes_write", topic="murmur-api", text="v1"))
     hub_send(hub, DGX, "pc/claude-code/murmur", "ping")
     assert brief(hub, PC, "start") == (
-        "Kubrik: you are `pc/claude-code/murmur`. 1 other online: dgx/claude-code/backend"
+        "Kaptyorka: you are `pc/claude-code/murmur`. 1 other online: dgx/claude-code/backend"
         " (idle). 1 unread message. Board topics: murmur-api.\n\n"
-        "Kubrik message from dgx/claude-code/backend:\n\nping")
+        "Kaptyorka message from dgx/claude-code/backend:\n\nping")
 
 
 def test_brief_start_alone_plural_no_topics(hub):
     assert brief(hub, PC, "start") == \
-        "Kubrik: you are `pc/claude-code/murmur`. No one else online. 0 unread messages."
+        "Kaptyorka: you are `pc/claude-code/murmur`. No one else online. 0 unread messages."
     dgx_online(hub, activity="")
     heartbeat(hub, "jetson", [{"key": "oc:1", "tool": "opencode", "project": "nav",
                                "activity": "busy"}])
@@ -174,10 +174,10 @@ def test_brief_start_alone_plural_no_topics(hub):
     hub_send(hub, DGX, "pc/claude-code/murmur", "one")
     hub_send(hub, DGX, "pc/claude-code/murmur", "two")
     assert brief(hub, PC, "start") == (
-        "Kubrik: you are `pc/claude-code/murmur`. 2 others online: dgx/claude-code/backend,"
+        "Kaptyorka: you are `pc/claude-code/murmur`. 2 others online: dgx/claude-code/backend,"
         " jetson/opencode/nav (busy). 2 unread messages. Board topics: b, a.\n\n"
-        "Kubrik message from dgx/claude-code/backend:\n\none\n\n"
-        "Kubrik message from dgx/claude-code/backend:\n\ntwo")
+        "Kaptyorka message from dgx/claude-code/backend:\n\none\n\n"
+        "Kaptyorka message from dgx/claude-code/backend:\n\ntwo")
 
 
 def test_brief_prompt_empty_when_nothing_new(hub):
@@ -186,7 +186,7 @@ def test_brief_prompt_empty_when_nothing_new(hub):
 
 def test_brief_without_identity_refused(hub):
     status, body = http.request("GET", f"{hub.url}/api/brief?event=start", "T")
-    assert status == 400 and "kubrik join" in body
+    assert status == 400 and "kaptyorka join" in body
 
 
 def test_feed_lists_messages_and_note_history(hub):

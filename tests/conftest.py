@@ -6,7 +6,7 @@ def home(tmp_path, monkeypatch):
     h = tmp_path / "home"
     h.mkdir()
     monkeypatch.setenv("HOME", str(h))
-    monkeypatch.setenv("KUBRIK_HOME", str(h / ".kubrik"))
+    monkeypatch.setenv("KAPTYORKA_HOME", str(h / ".kaptyorka"))
     return h
 
 
@@ -18,8 +18,8 @@ def hub(tmp_path):
 
     import uvicorn
 
-    from kubrik.hub import build_app
-    from kubrik.store import Store
+    from kaptyorka.hub import build_app
+    from kaptyorka.store import Store
 
     store = Store(tmp_path / "hub.db")
     server = uvicorn.Server(uvicorn.Config(build_app(store, "T"), host="127.0.0.1", port=0,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def home() -> Path:
-    p = Path(os.environ.get("KUBRIK_HOME") or Path.home() / ".kubrik")
+    p = Path(os.environ.get("KAPTYORKA_HOME") or Path.home() / ".kaptyorka")
     p.mkdir(mode=0o700, parents=True, exist_ok=True)
     return p
 

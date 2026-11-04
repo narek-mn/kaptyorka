@@ -1,14 +1,14 @@
-# Kubrik Implementation Plan
+# Kaptyorka Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** One pipx package, `kubrik`, that lets every coding-agent session on the team (Claude Code, OpenCode, Codex CLI, Cursor) see the others, message them with push delivery where the tool allows it, and share versioned notes, through one hub on the DGX.
+**Goal:** One pipx package, `kaptyorka`, that lets every coding-agent session on the team (Claude Code, OpenCode, Codex CLI, Cursor) see the others, message them with push delivery where the tool allows it, and share versioned notes, through one hub on the DGX.
 
-**Architecture:** `kubrik serve` runs the hub: an `mcp` SDK `MCPServer` over streamable HTTP plus a few plain HTTP routes (bridge, hooks, web page) on the same Starlette app, storing everything in one SQLite file. On every machine, `kubrik join` writes each installed tool's user config so the tool starts a tiny local stdio shim (`kubrik mcp`) that relays MCP calls to the hub and stamps them with the session's identity, found from its parent process; `join` also installs the bridge service, which reports presence and pushes incoming messages through each tool's door, falling back to pull via hooks.
+**Architecture:** `kaptyorka serve` runs the hub: an `mcp` SDK `MCPServer` over streamable HTTP plus a few plain HTTP routes (bridge, hooks, web page) on the same Starlette app, storing everything in one SQLite file. On every machine, `kaptyorka join` writes each installed tool's user config so the tool starts a tiny local stdio shim (`kaptyorka mcp`) that relays MCP calls to the hub and stamps them with the session's identity, found from its parent process; `join` also installs the bridge service, which reports presence and pushes incoming messages through each tool's door, falling back to pull via hooks.
 
 **Tech Stack:** Python 3.10+, `mcp` 2.x (`mcp.server.mcpserver.MCPServer`, `mcp.Client`), Starlette and uvicorn (both come with `mcp`), stdlib `sqlite3` and `urllib.request`, pytest. systemd `--user` / launchd for services. One static HTML file for the page.
 
-**Spec:** `docs/superpowers/specs/2026-11-04-kubrik-design.md`
+**Spec:** `docs/superpowers/specs/2026-11-04-kaptyorka-design.md`
 
 ## Global Constraints
 
@@ -19,19 +19,19 @@
 - Session names: `machine/tool/project`, then `-2`, `-3` when several online sessions share all three. Tool names in names: `claude-code`, `opencode`, `codex`, `cursor`.
 - One team token; every MCP, bridge, hook and page-data call carries `Authorization: Bearer <token>`. Wrong or missing: HTTP 401.
 - Default hub port 8765. Linux and macOS only; no Windows code paths.
-- The token never enters git, a test fixture file, or a tool config: it lives in `~/.kubrik/hub-token` (hub) and `~/.kubrik/config.json` (each machine), both mode 0600.
+- The token never enters git, a test fixture file, or a tool config: it lives in `~/.kaptyorka/hub-token` (hub) and `~/.kaptyorka/config.json` (each machine), both mode 0600.
 - `send(all)` reaches sessions online at that moment only. A message to one session is never dropped: it stays unread until pushed or pulled; a closed target's message goes to the next session with the same machine, tool and project.
 - Notes keep every write as a new row (topic, text, author, time).
 - Limits (spec: same kind as built-in messaging, nothing more): message text at most 32 000 characters; at most 30 `send` calls per sender per 60 s. No hop caps, no loop detection.
 - Timings: bridge heartbeat every 10 s; a session is online while last seen < 30 s ago; long-poll waits 25 s; an offered but unacked message is offered again after 60 s; a hook gives up on the hub after 3 s and exits 0.
 - Claude Code socket format pinned to `CLAUDE_CODE_TESTED = "2.1.318"`; the bridge warns once when a session's `version` is newer.
 - Web page: dark, strong, professional; no explaining sentences, icons carry meaning; plain HTML + inline JS, no frontend toolchain, no CDN.
-- Tests never call real `claude`, `opencode`, `codex` or `cursor`, never touch the real `~` (fixtures set `HOME` and `KUBRIK_HOME` to `tmp_path`), never run real `systemctl`/`launchctl`. Only tests marked `slow` call real `claude`.
+- Tests never call real `claude`, `opencode`, `codex` or `cursor`, never touch the real `~` (fixtures set `HOME` and `KAPTYORKA_HOME` to `tmp_path`), never run real `systemctl`/`launchctl`. Only tests marked `slow` call real `claude`.
 - Never `git push` and never publish to PyPI from this plan. Commits go through the `kursi` manager as for every project here; each PyPI release needs Narek's yes.
 
 ## Review Focus
 
-1. Hub unreachable (DGX rebooting, VPN down): a shim tool call returns the text `kubrik hub unreachable at <url>` within 5 s instead of hanging; a hook prints nothing and exits 0 within 3 s, so the session is never blocked. Tests: Task 8 `test_shim_hub_down`, Task 10 `test_hook_hub_down_is_silent`.
+1. Hub unreachable (DGX rebooting, VPN down): a shim tool call returns the text `kaptyorka hub unreachable at <url>` within 5 s instead of hanging; a hook prints nothing and exits 0 within 3 s, so the session is never blocked. Tests: Task 8 `test_shim_hub_down`, Task 10 `test_hook_hub_down_is_silent`.
 2. `join` run on a machine that already has config: other MCP servers and other hooks (Narek's `~/.claude/settings.json` already has SessionStart and UserPromptSubmit hooks) are kept; running `join` twice adds nothing twice; a config file that is a symlink stays a symlink (here `~/.claude/settings.json` points into `~/claude-setup`); a file with broken JSON is left untouched and named in the output. Tests in Tasks 10 to 14 (`test_configure_*`).
 3. `send` to a name that is not online and was never seen (typo): refused with the list of online names, not stored as a forever-unread message. Test: Task 3 `test_send_unknown_name_lists_online`.
 4. Multi-line text, quotes and emoji in a message pushed through the Claude Code socket arrive as one JSON line and intact. Test: Task 10 `test_socket_push_multiline_text`.
@@ -44,21 +44,21 @@
 ```
 pyproject.toml, LICENSE, .gitignore, CLAUDE.md, README.md, CHANGELOG.md
 .github/workflows/test.yml, .github/workflows/publish.yml
-src/kubrik/__init__.py        __version__
-src/kubrik/cli.py             argparse entry: serve, join, who, mcp, hook, bridge
-src/kubrik/paths.py           ~/.kubrik paths, config load/save (0600)
-src/kubrik/http.py            urllib JSON request helper with bearer
-src/kubrik/store.py           SQLite: agents, messages, notes; naming; limits
-src/kubrik/hub.py             build_app(): MCP tools, bridge/hook/page routes, auth
-src/kubrik/web/index.html     the page
-src/kubrik/service.py         systemd --user / launchd unit write + enable
-src/kubrik/identity.py        who am I: walk parent processes to the tool
-src/kubrik/shim.py            `kubrik mcp`: stdio MCP relay to the hub
-src/kubrik/bridge.py          presence heartbeat, long-poll, delivery, fallback log
-src/kubrik/hook.py            `kubrik hook <tool> <event>`: pull brief, tool-shaped output
-src/kubrik/adapters/base.py   Session, Adapter protocol, DeliveryError, json merge helper
-src/kubrik/adapters/claude.py, opencode.py, codex.py, cursor.py
-src/kubrik/join.py            `kubrik join`
+src/kaptyorka/__init__.py        __version__
+src/kaptyorka/cli.py             argparse entry: serve, join, who, mcp, hook, bridge
+src/kaptyorka/paths.py           ~/.kaptyorka paths, config load/save (0600)
+src/kaptyorka/http.py            urllib JSON request helper with bearer
+src/kaptyorka/store.py           SQLite: agents, messages, notes; naming; limits
+src/kaptyorka/hub.py             build_app(): MCP tools, bridge/hook/page routes, auth
+src/kaptyorka/web/index.html     the page
+src/kaptyorka/service.py         systemd --user / launchd unit write + enable
+src/kaptyorka/identity.py        who am I: walk parent processes to the tool
+src/kaptyorka/shim.py            `kaptyorka mcp`: stdio MCP relay to the hub
+src/kaptyorka/bridge.py          presence heartbeat, long-poll, delivery, fallback log
+src/kaptyorka/hook.py            `kaptyorka hook <tool> <event>`: pull brief, tool-shaped output
+src/kaptyorka/adapters/base.py   Session, Adapter protocol, DeliveryError, json merge helper
+src/kaptyorka/adapters/claude.py, opencode.py, codex.py, cursor.py
+src/kaptyorka/join.py            `kaptyorka join`
 tests/conftest.py             home + hub fixtures
 tests/fakes/                  fake OpenCode HTTP server, fake Codex app-server
 tests/test_*.py
@@ -70,17 +70,17 @@ docs/superpowers/spikes/2026-11-04-doors.md
 ### Task 1: Repo scaffold, pyproject, CLI skeleton
 
 **Files:**
-- Create: `pyproject.toml`, `LICENSE` (MIT, `narek-mn`), `.gitignore`, `CLAUDE.md`, `src/kubrik/__init__.py`, `src/kubrik/cli.py`, `src/kubrik/paths.py`, `src/kubrik/http.py`, `tests/conftest.py`, `tests/test_cli.py`, `.github/workflows/test.yml`
+- Create: `pyproject.toml`, `LICENSE` (MIT, `narek-mn`), `.gitignore`, `CLAUDE.md`, `src/kaptyorka/__init__.py`, `src/kaptyorka/cli.py`, `src/kaptyorka/paths.py`, `src/kaptyorka/http.py`, `tests/conftest.py`, `tests/test_cli.py`, `.github/workflows/test.yml`
 
 **Interfaces:**
 - Produces:
-  - `kubrik.__version__ = "0.1.0"`
-  - `paths.home() -> Path` (`$KUBRIK_HOME` or `~/.kubrik`, created 0700), `paths.config_path() -> Path`, `paths.load_config() -> dict` (`{}` if missing), `paths.save_config(cfg: dict) -> None` (writes 0600). Keys: `hub`, `token`, `machine`.
+  - `kaptyorka.__version__ = "0.1.0"`
+  - `paths.home() -> Path` (`$KAPTYORKA_HOME` or `~/.kaptyorka`, created 0700), `paths.config_path() -> Path`, `paths.load_config() -> dict` (`{}` if missing), `paths.save_config(cfg: dict) -> None` (writes 0600). Keys: `hub`, `token`, `machine`.
   - `http.request(method: str, url: str, token: str, body: dict | None = None, headers: dict | None = None, timeout: float = 10) -> tuple[int, Any]` (JSON in/out, text for `text/*`; returns `(status, body)` for every HTTP status, 4xx and 5xx included; raises `HubUnreachable(url)` only on connection error or timeout).
   - `cli.entry() -> None` with subcommands `serve`, `join`, `who`, `mcp`, `hook`, `bridge` (each stub prints `not implemented` and exits 2 until its task).
-  - Fixture `home(tmp_path, monkeypatch)` sets `HOME=tmp_path/"home"` and `KUBRIK_HOME=tmp_path/"home"/".kubrik"`, returns the `HOME` path.
+  - Fixture `home(tmp_path, monkeypatch)` sets `HOME=tmp_path/"home"` and `KAPTYORKA_HOME=tmp_path/"home"/".kaptyorka"`, returns the `HOME` path.
 
-- [ ] **Step 1:** `git init` in `/home/narek/workspace/projects/kubrik`. Write `pyproject.toml` in libraryan's shape (`/home/narek/workspace/projects/libraryan/pyproject.toml`): setuptools>=77, name `kubrik`, `requires-python = ">=3.10"`, `dependencies = ["mcp>=2.3,<3"]`, script `kubrik = "kubrik.cli:entry"`, src layout (`[tool.setuptools.packages.find] where = ["src"]`), `package-data` `kubrik = ["web/*.html"]`, pytest marker `slow` and `addopts = "-m 'not slow'"`, URLs `https://github.com/narek-mn/kubrik`. `CLAUDE.md` lists: run `python3 -m pytest tests -q` in a venv with `pip install -e . pytest`; 3.10 floor; never call real agent tools in tests except `-m slow`; no push or PyPI without approval. `test.yml` copies libraryan's matrix with `pip install -e . pytest`.
+- [ ] **Step 1:** `git init` in `/home/narek/workspace/projects/kaptyorka`. Write `pyproject.toml` in libraryan's shape (`/home/narek/workspace/projects/libraryan/pyproject.toml`): setuptools>=77, name `kaptyorka`, `requires-python = ">=3.10"`, `dependencies = ["mcp>=2.3,<3"]`, script `kaptyorka = "kaptyorka.cli:entry"`, src layout (`[tool.setuptools.packages.find] where = ["src"]`), `package-data` `kaptyorka = ["web/*.html"]`, pytest marker `slow` and `addopts = "-m 'not slow'"`, URLs `https://github.com/narek-mn/kaptyorka`. `CLAUDE.md` lists: run `python3 -m pytest tests -q` in a venv with `pip install -e . pytest`; 3.10 floor; never call real agent tools in tests except `-m slow`; no push or PyPI without approval. `test.yml` copies libraryan's matrix with `pip install -e . pytest`.
 - [ ] **Step 2: Write the failing tests** in `tests/test_cli.py`:
 
 ```python
@@ -105,10 +105,10 @@ def test_request_unreachable_raises():
     with pytest.raises(http.HubUnreachable): http.request("GET", "http://127.0.0.1:9/x", "t", timeout=1)
 ```
 
-- [ ] **Step 3:** Run `python3 -m pytest tests/test_cli.py -q`. Expected: FAIL (module `kubrik` missing).
+- [ ] **Step 3:** Run `python3 -m pytest tests/test_cli.py -q`. Expected: FAIL (module `kaptyorka` missing).
 - [ ] **Step 4:** Implement `paths.py`, `http.py`, `cli.py` (argparse, `--version`), `__init__.py`.
 - [ ] **Step 5:** Run `python3 -m pytest tests -q`. Expected: 4 passed.
-- [ ] **Step 6: Commit** `git add -A && git commit -m "chore: scaffold kubrik package and CLI skeleton"`
+- [ ] **Step 6: Commit** `git add -A && git commit -m "chore: scaffold kaptyorka package and CLI skeleton"`
 
 ---
 
@@ -120,7 +120,7 @@ Short, timed spikes, as was done for Claude Code. Each answers fixed questions; 
 - Create: `docs/superpowers/spikes/2026-11-04-doors.md`
 
 - [ ] **Step 1: OpenCode.** Start `opencode` in a scratch folder. Record: (a) how to find its HTTP port from outside, by pid (`lsof -a -p <pid> -iTCP -sTCP:LISTEN` on macOS/Linux; `/proc/net/tcp` + `/proc/<pid>/fd` if `lsof` is missing), or whether `join` must set a fixed port (config key or alias); (b) whether `GET /session` and `POST /session/:id/prompt_async` with `{"parts":[{"type":"text","text":"..."}]}` make the open TUI session act (exact body and status); (c) whether `OPENCODE_SERVER_PASSWORD` is set by default; (d) which plugin event or hook can add text to the model's context at session start / before a prompt (docs: https://opencode.ai/docs/plugins/), with a working minimal plugin; (e) the process name (`ps -o comm=`) and whether a stdio MCP server's parent chain reaches the `opencode` process; (f) how the shim, knowing the parent `opencode` pid and its cwd, finds its own session id (expected: that pid's server, `GET /session`, most recently updated session whose directory is the cwd).
-- [ ] **Step 2: Codex.** Record: (a) whether threads of an interactive `codex` TUI are visible to `codex app-server` / `codex remote-control start` (`thread/loaded/list`, `thread/list`), and whether `turn/start` on such a thread makes the TUI act; if not, whether starting the TUI through the remote-control daemon (a `join`-written alias or setting) makes it so; (b) the exact JSON-RPC request shapes that worked and the socket path; (c) whether `~/.codex/hooks.json` hooks need a feature flag in `config.toml`, and the stdout shape that adds context on session start and prompt submit; (d) process name and MCP parent chain, and how the shim finds its own thread id (expected: `thread/loaded/list`, most recent thread whose cwd is the shim's project cwd); (e) the `config.toml` keys for a stdio MCP server (`[mcp_servers.kubrik] command=..., args=[...]`).
+- [ ] **Step 2: Codex.** Record: (a) whether threads of an interactive `codex` TUI are visible to `codex app-server` / `codex remote-control start` (`thread/loaded/list`, `thread/list`), and whether `turn/start` on such a thread makes the TUI act; if not, whether starting the TUI through the remote-control daemon (a `join`-written alias or setting) makes it so; (b) the exact JSON-RPC request shapes that worked and the socket path; (c) whether `~/.codex/hooks.json` hooks need a feature flag in `config.toml`, and the stdout shape that adds context on session start and prompt submit; (d) process name and MCP parent chain, and how the shim finds its own thread id (expected: `thread/loaded/list`, most recent thread whose cwd is the shim's project cwd); (e) the `config.toml` keys for a stdio MCP server (`[mcp_servers.kaptyorka] command=..., args=[...]`).
 - [ ] **Step 3: Cursor.** With a stdio MCP server in `~/.cursor/mcp.json` that logs its `os.getcwd()`, `os.getppid()` chain and env: record whether `${workspaceFolder}` in `args` is expanded (else what the cwd is), and the exact `hooks.json` shape and stdout for `stop` (`followup_message`) and `postToolUse` (`additional_context`), including the hook input field that names the workspace.
 - [ ] **Step 4:** Write the findings file. Start it with a `## Claude Code (verified 2026-11-04, 2.1.318)` section holding the verified spike script as a code block, copied verbatim from `/tmp/claude-1000/-home-narek-workspace-projects/aceaf218-2b42-41bf-a451-44117dd8c51e/scratchpad/spike-inbox/post.py` (the scratchpad will not last). Then: per tool, "door works: yes/no", the exact commands and JSON that worked, and the chosen discovery method. If a door is unusable, write "pull only" and why; Task 15's README must repeat it.
 - [ ] **Step 5: Commit** `git add docs/superpowers/spikes && git commit -m "docs: record push-door spikes for opencode, codex, cursor"`
@@ -130,11 +130,11 @@ Short, timed spikes, as was done for Claude Code. Each answers fixed questions; 
 ### Task 3: Hub storage
 
 **Files:**
-- Create: `src/kubrik/store.py`, `tests/test_store.py`
+- Create: `src/kaptyorka/store.py`, `tests/test_store.py`
 
 **Interfaces:**
 - Produces:
-  - `class KubrikError(Exception)` (message is shown to the agent).
+  - `class KaptyorkaError(Exception)` (message is shown to the agent).
   - `@dataclass Agent: key: str; name: str; machine: str; tool: str; project: str; status: str; activity: str; last_seen: float; online: bool`
   - `@dataclass Message: id: int; sender: str; to: str; text: str; created: float; read: bool` (`sender`/`to` are names)
   - `@dataclass Note: topic: str; text: str; author: str; time: float`
@@ -150,13 +150,13 @@ Short, timed spikes, as was done for Claude Code. Each answers fixed questions; 
     - `notes_list() -> list[dict]` (`topic, author, time`, latest version per topic), `notes_read(topic) -> Note | None`, `notes_write(key, topic, text) -> None`, `note_history(topic) -> list[Note]` (newest first)
     - `messages(limit: int = 500) -> list[Message]` (oldest first)
   - `ONLINE_S = 30`, `LEASE_S = 60`, `MAX_TEXT = 32_000`, `RATE = (30, 60)`
-  - Push framing (exact): `f"Kubrik message from {sender_name}:\n\n{text}"`
+  - Push framing (exact): `f"Kaptyorka message from {sender_name}:\n\n{text}"`
 
 Schema (builder fills column types): `agents(key PK, name, machine, tool, project, status, activity, last_seen)`, `messages(id PK, sender_key, sender_name, to_key NULL, to_name, machine, tool, project, text, created, read_at NULL, push_state 'new'|'offered'|'pushed'|'failed', offered_at NULL)`, `notes(id PK, topic, text, author, time)`. One `sqlite3` connection, `check_same_thread=False`, guarded by a `threading.Lock`; WAL mode.
 
 Rules the tests pin:
 - Name = `machine/tool/project`; if another online agent holds it, the lowest free `-2`, `-3`, ... A name is kept while online.
-- `send(to=name)`: target must be online, or an offline agent seen before whose name matches (held). Unknown name: `KubrikError` listing online names. `to="all"`: one row per online agent except the sender; returns that count.
+- `send(to=name)`: target must be online, or an offline agent seen before whose name matches (held). Unknown name: `KaptyorkaError` listing online names. `to="all"`: one row per online agent except the sender; returns that count.
 - Delivery target: `to_key` while that agent is online; otherwise the first online agent with the same machine, tool and project. `inbox` and `offer` both use this rule.
 - `offer(machine)`: unread rows whose delivery target is online on `machine`, with `push_state='new'`, or `'offered'` older than `LEASE_S`; sets `offered`.
 - `ack(ok=True)`: read + `pushed`. `ack(ok=False)`: `failed` (never offered again; stays unread for `inbox`).
@@ -175,7 +175,7 @@ def test_offline_after_30s(store, clock):
 
 def test_send_unknown_name_lists_online(store):
     store.seen("k", "pc", "codex", "nav")
-    with pytest.raises(KubrikError, match="pc/codex/nav"): store.send("k", "dgx/codex/typo", "hi")
+    with pytest.raises(KaptyorkaError, match="pc/codex/nav"): store.send("k", "dgx/codex/typo", "hi")
 
 def test_send_all_online_only(store, clock):
     for i, m in enumerate(["pc", "dgx", "jet"]): store.seen(f"k{i}", m, "codex", "p")
@@ -199,7 +199,7 @@ def test_offer_frames_and_ack_marks_read(store):
     store.seen("s", "pc", "codex", "a"); store.seen("t", "dgx", "codex", "b")
     store.send("s", "dgx/codex/b", "hi")
     [o] = store.offer("dgx")
-    assert o["key"] == "t" and o["text"] == "Kubrik message from pc/codex/a:\n\nhi"
+    assert o["key"] == "t" and o["text"] == "Kaptyorka message from pc/codex/a:\n\nhi"
     store.ack(o["id"], True); assert store.inbox("t") == [] and store.offer("dgx") == []
 
 def test_failed_push_stays_for_pull(store):
@@ -209,7 +209,7 @@ def test_offer_lease_reoffers_unacked(store, clock):
     ...  # send, offer -> 1 item; offer again -> []; clock.t += 61; seen() sender and target again (else both are offline); offer -> same id
 
 def test_text_and_rate_limits(store):
-    ...  # 32_001 chars -> KubrikError("too long"); 31st send within 60 s -> KubrikError("rate")
+    ...  # 32_001 chars -> KaptyorkaError("too long"); 31st send within 60 s -> KaptyorkaError("rate")
 
 def test_notes_keep_history(store):
     store.seen("a", "pc", "codex", "x"); store.notes_write("a", "api", "v1"); store.notes_write("a", "api", "v2")
@@ -221,24 +221,24 @@ def test_survives_reopen(tmp_path):
     ...  # write a note and a message, new Store(same path) sees both
 ```
 
-- [ ] **Step 2:** Run `python3 -m pytest tests/test_store.py -q`. Expected: FAIL (`kubrik.store` missing).
+- [ ] **Step 2:** Run `python3 -m pytest tests/test_store.py -q`. Expected: FAIL (`kaptyorka.store` missing).
 - [ ] **Step 3:** Implement `store.py` to the interfaces and rules above.
 - [ ] **Step 4:** Run `python3 -m pytest tests/test_store.py -q`. Expected: all pass.
-- [ ] **Step 5: Commit** `git add src/kubrik/store.py tests/test_store.py && git commit -m "feat: hub storage with naming, held messages and note history"`
+- [ ] **Step 5: Commit** `git add src/kaptyorka/store.py tests/test_store.py && git commit -m "feat: hub storage with naming, held messages and note history"`
 
 ---
 
 ### Task 4: Hub MCP tools, auth and identity
 
 **Files:**
-- Create: `src/kubrik/hub.py`, `tests/test_hub_tools.py`; Modify: `tests/conftest.py` (add `hub` fixture)
+- Create: `src/kaptyorka/hub.py`, `tests/test_hub_tools.py`; Modify: `tests/conftest.py` (add `hub` fixture)
 
 **Interfaces:**
 - Consumes: `Store` (Task 3).
 - Produces:
-  - `hub.build_app(store: Store, token: str) -> Starlette`. Inside: `MCPServer("kubrik", instructions=...)` with the seven tools; `streamable_http_app(host="0.0.0.0")`; wrapped in an ASGI bearer check that returns 401 for every path except `GET /` (the page shell, Task 6).
-  - Identity headers set by the shim (Task 8) and hooks: `X-Kubrik-Key`, `X-Kubrik-Machine`, `X-Kubrik-Tool`, `X-Kubrik-Project`. Each tool reads them from `ctx.headers`, calls `store.seen(...)` (this is how Cursor appears without a bridge), and refuses with `KubrikError("no kubrik identity; run kubrik join")` when absent.
-  - Tool returns: `who() -> list[dict]` (`name, machine, tool, project, status, activity, last_seen_s`, the caller marked `"you": true`); `async def send(to: str, text: str) -> str` (`"sent to 1 session"` / `"sent to N sessions"`; async because Task 5 makes it set the long-poll event); `inbox() -> list[dict]` (`from, text, time`); `status(text: str) -> str`; `notes_list() -> list[dict]`; `notes_read(topic: str) -> dict | str` (`"no note named <topic>"` when missing); `notes_write(topic: str, text: str) -> str`. `KubrikError` becomes a tool error with its message.
+  - `hub.build_app(store: Store, token: str) -> Starlette`. Inside: `MCPServer("kaptyorka", instructions=...)` with the seven tools; `streamable_http_app(host="0.0.0.0")`; wrapped in an ASGI bearer check that returns 401 for every path except `GET /` (the page shell, Task 6).
+  - Identity headers set by the shim (Task 8) and hooks: `X-Kaptyorka-Key`, `X-Kaptyorka-Machine`, `X-Kaptyorka-Tool`, `X-Kaptyorka-Project`. Each tool reads them from `ctx.headers`, calls `store.seen(...)` (this is how Cursor appears without a bridge), and refuses with `KaptyorkaError("no kaptyorka identity; run kaptyorka join")` when absent.
+  - Tool returns: `who() -> list[dict]` (`name, machine, tool, project, status, activity, last_seen_s`, the caller marked `"you": true`); `async def send(to: str, text: str) -> str` (`"sent to 1 session"` / `"sent to N sessions"`; async because Task 5 makes it set the long-poll event); `inbox() -> list[dict]` (`from, text, time`); `status(text: str) -> str`; `notes_list() -> list[dict]`; `notes_read(topic: str) -> dict | str` (`"no note named <topic>"` when missing); `notes_write(topic: str, text: str) -> str`. `KaptyorkaError` becomes a tool error with its message.
   - Test fixture `hub` (in `conftest.py`): runs `uvicorn.Server` on a free port in a thread with `build_app(Store(tmp_path/"hub.db"), "T")`, yields `SimpleNamespace(url, token="T", store)`.
   - Test helper `tests/helpers.py: async def call(hub, ident: dict, tool: str, **args) -> Any` connecting with `mcp.Client` over a transport made by `mcp.client.streamable_http.streamable_http_client(url + "/mcp", http_client=<httpx2.AsyncClient(headers=...)>)` (check the installed `mcp.Client` docstring for how it accepts a transport).
 
@@ -250,7 +250,7 @@ DGX = {"key": "claude:2", "machine": "dgx", "tool": "claude-code", "project": "b
 
 def test_lists_exactly_seven_tools(hub): assert tool_names(hub) == {"who","send","inbox","status","notes_list","notes_read","notes_write"}
 def test_wrong_token_401(hub): assert http.request("POST", hub.url + "/mcp", "bad", {})[0] == 401
-def test_missing_identity_refused(hub): assert "kubrik join" in call_error(hub, {}, "who")
+def test_missing_identity_refused(hub): assert "kaptyorka join" in call_error(hub, {}, "who")
 def test_send_then_inbox_between_two_sessions(hub):
     run(call(hub, DGX, "who"))
     assert run(call(hub, PC, "send", to="dgx/claude-code/backend", text="move api?")) == "sent to 1 session"
@@ -269,7 +269,7 @@ def test_notes_roundtrip(hub): ...      # notes_write then notes_read returns te
 ### Task 5: Hub routes for bridges, hooks and the page
 
 **Files:**
-- Modify: `src/kubrik/hub.py`; Create: `tests/test_hub_routes.py`
+- Modify: `src/kaptyorka/hub.py`; Create: `tests/test_hub_routes.py`
 
 **Interfaces:**
 - Consumes: `Store`, `build_app` (Tasks 3, 4).
@@ -278,7 +278,7 @@ def test_notes_roundtrip(hub): ...      # notes_write then notes_read returns te
   - `GET /bridge/poll?machine=<m>&wait=<s>` → 200 JSON list from `store.offer(m)`; if empty, waits up to `wait` (max 25) for a `send`, then offers again.
   - `POST /bridge/ack` body `{"id": int, "ok": bool}` → 204.
   - `GET /api/brief?event=start|prompt` with identity headers → `text/plain`. Calls `store.seen`, then `store.inbox`. `start`: the summary line plus unread messages. `prompt`: unread messages only, empty body when none. Summary format (from the spec's example):
-    `Kubrik: you are \`{me}\`. {n} others online: {name} ({activity}), {name}. {u} unread messages. Board topics: {t1}, {t2}.` Singular forms `1 other online`, `1 unread message`; `({activity})` only when known. With nobody else: `No one else online.`; with no topics the board clause is omitted. Each unread message follows as `Kubrik message from {sender}:\n\n{text}`.
+    `Kaptyorka: you are \`{me}\`. {n} others online: {name} ({activity}), {name}. {u} unread messages. Board topics: {t1}, {t2}.` Singular forms `1 other online`, `1 unread message`; `({activity})` only when known. With nobody else: `No one else online.`; with no topics the board clause is omitted. Each unread message follows as `Kaptyorka message from {sender}:\n\n{text}`.
   - `GET /api/feed` → `{"agents": [...online, as who()], "messages": [...last 500], "notes": [{"topic", "history": [...]}]}`.
 
 - [ ] **Step 1: Write the failing tests:**
@@ -295,7 +295,7 @@ def test_poll_empty_after_wait(hub): ...  # wait=1 with nothing -> [] after ~1 s
 def test_ack_false_leaves_message_for_brief(hub): ...  # poll, ack(ok=False), brief(event=prompt) contains the text
 def test_brief_start_summary_exact(hub):
     # PC and DGX online, DGX activity "idle", note "murmur-api", one unread for PC
-    assert brief(hub, PC, "start").startswith("Kubrik: you are `pc/claude-code/murmur`. 1 other online: dgx/claude-code/backend (idle). 1 unread message. Board topics: murmur-api.")
+    assert brief(hub, PC, "start").startswith("Kaptyorka: you are `pc/claude-code/murmur`. 1 other online: dgx/claude-code/backend (idle). 1 unread message. Board topics: murmur-api.")
 def test_brief_prompt_empty_when_nothing_new(hub): assert brief(hub, PC, "prompt") == ""
 def test_feed_requires_token(hub): assert http.request("GET", hub.url + "/api/feed", "bad")[0] == 401
 ```
@@ -312,7 +312,7 @@ def test_feed_requires_token(hub): assert http.request("GET", hub.url + "/api/fe
 Use the `frontend-design` skill before writing the page. Look at two or three real dark ops dashboards (Grafana, Linear, Vercel) first and say which one the page follows.
 
 **Files:**
-- Create: `src/kubrik/web/index.html`; Modify: `src/kubrik/hub.py` (serve `GET /`); Create: `tests/test_page.py`
+- Create: `src/kaptyorka/web/index.html`; Modify: `src/kaptyorka/hub.py` (serve `GET /`); Create: `tests/test_page.py`
 
 **Interfaces:**
 - Consumes: `GET /api/feed` (Task 5).
@@ -325,7 +325,7 @@ def test_page_served_without_token(hub):
     s, html = http.request("GET", hub.url + "/", "")
     assert s == 200 and all(v in html for v in ['id="team"', 'id="messages"', 'id="notes"'])
 def test_page_has_no_external_urls(hub): assert re.findall(r'(?:src|href|url\()=?"?https?://', page(hub)) == []
-def test_page_is_packaged(): assert (importlib.resources.files("kubrik") / "web/index.html").is_file()
+def test_page_is_packaged(): assert (importlib.resources.files("kaptyorka") / "web/index.html").is_file()
 ```
 
 - [ ] **Step 2:** Run `python3 -m pytest tests/test_page.py -q`. Expected: FAIL.
@@ -336,60 +336,60 @@ def test_page_is_packaged(): assert (importlib.resources.files("kubrik") / "web/
 
 ---
 
-### Task 7: `kubrik serve`, service install, `kubrik who`
+### Task 7: `kaptyorka serve`, service install, `kaptyorka who`
 
 **Files:**
-- Create: `src/kubrik/service.py`, `tests/test_serve.py`; Modify: `src/kubrik/cli.py`
+- Create: `src/kaptyorka/service.py`, `tests/test_serve.py`; Modify: `src/kaptyorka/cli.py`
 
 **Interfaces:**
 - Consumes: `build_app`, `Store`, `paths`, `http.request`.
 - Produces:
-  - `service.unit_text(name: str, argv: list[str], platform: str) -> str` (`platform` is `"linux"` or `"darwin"`; systemd unit with `Restart=always`, `WantedBy=default.target`; launchd plist with `KeepAlive` and `RunAtLoad`, logs to `~/.kubrik/<name>.log`).
-  - `service.install(name: str, argv: list[str], run: Callable = subprocess.run, platform: str = sys.platform) -> list[str]` (returns change lines). Linux: writes `~/.config/systemd/user/<name>.service`, runs `systemctl --user daemon-reload`, `systemctl --user enable --now <name>` (restart if already active), then `loginctl enable-linger <user>`; if that fails, add the line `run once: sudo loginctl enable-linger <user>` (the hub must survive logout). macOS: writes `~/Library/LaunchAgents/io.kubrik.<name>.plist`, `launchctl bootout` (ignore failure) then `launchctl bootstrap gui/<uid> <plist>`. Unit names: `kubrik-hub`, `kubrik-bridge`. `argv[0]` is the absolute path of the running `kubrik` (`sys.argv[0]` resolved), so the service does not depend on `PATH`.
-  - `kubrik serve [--port 8765] [--foreground]`: creates `~/.kubrik/hub-token` (`secrets.token_urlsafe(24)`, 0600) if missing. Without `--foreground`: installs `kubrik-hub` with argv `[kubrik, "serve", "--foreground", "--port", N]`, then prints exactly three lines: `hub:   http://<hostname>:<port>`, `token: <token>`, `page:  http://<hostname>:<port>/#t=<token>`. With `--foreground`: runs uvicorn on `0.0.0.0:<port>` with `Store(~/.kubrik/hub.db)`.
-  - `kubrik who`: `GET /api/feed` with `config.json`'s hub and token; prints a fixed-width table `NAME  STATUS  ACTIVITY  LAST SEEN`; exits 1 with `not joined: run kubrik join` or `kubrik hub unreachable at <url>`.
+  - `service.unit_text(name: str, argv: list[str], platform: str) -> str` (`platform` is `"linux"` or `"darwin"`; systemd unit with `Restart=always`, `WantedBy=default.target`; launchd plist with `KeepAlive` and `RunAtLoad`, logs to `~/.kaptyorka/<name>.log`).
+  - `service.install(name: str, argv: list[str], run: Callable = subprocess.run, platform: str = sys.platform) -> list[str]` (returns change lines). Linux: writes `~/.config/systemd/user/<name>.service`, runs `systemctl --user daemon-reload`, `systemctl --user enable --now <name>` (restart if already active), then `loginctl enable-linger <user>`; if that fails, add the line `run once: sudo loginctl enable-linger <user>` (the hub must survive logout). macOS: writes `~/Library/LaunchAgents/io.kaptyorka.<name>.plist`, `launchctl bootout` (ignore failure) then `launchctl bootstrap gui/<uid> <plist>`. Unit names: `kaptyorka-hub`, `kaptyorka-bridge`. `argv[0]` is the absolute path of the running `kaptyorka` (`sys.argv[0]` resolved), so the service does not depend on `PATH`.
+  - `kaptyorka serve [--port 8765] [--foreground]`: creates `~/.kaptyorka/hub-token` (`secrets.token_urlsafe(24)`, 0600) if missing. Without `--foreground`: installs `kaptyorka-hub` with argv `[kaptyorka, "serve", "--foreground", "--port", N]`, then prints exactly three lines: `hub:   http://<hostname>:<port>`, `token: <token>`, `page:  http://<hostname>:<port>/#t=<token>`. With `--foreground`: runs uvicorn on `0.0.0.0:<port>` with `Store(~/.kaptyorka/hub.db)`.
+  - `kaptyorka who`: `GET /api/feed` with `config.json`'s hub and token; prints a fixed-width table `NAME  STATUS  ACTIVITY  LAST SEEN`; exits 1 with `not joined: run kaptyorka join` or `kaptyorka hub unreachable at <url>`.
 
 - [ ] **Step 1: Write the failing tests:**
 
 ```python
-def test_systemd_unit_runs_absolute_kubrik(): assert "ExecStart=/opt/x/kubrik serve --foreground --port 8765" in unit_text("kubrik-hub", ["/opt/x/kubrik","serve","--foreground","--port","8765"], "linux")
-def test_launchd_plist_keepalive(): assert "<key>KeepAlive</key>" in unit_text("kubrik-bridge", ["/opt/x/kubrik","bridge"], "darwin")
+def test_systemd_unit_runs_absolute_kaptyorka(): assert "ExecStart=/opt/x/kaptyorka serve --foreground --port 8765" in unit_text("kaptyorka-hub", ["/opt/x/kaptyorka","serve","--foreground","--port","8765"], "linux")
+def test_launchd_plist_keepalive(): assert "<key>KeepAlive</key>" in unit_text("kaptyorka-bridge", ["/opt/x/kaptyorka","bridge"], "darwin")
 def test_install_linux_commands(home):
-    calls = []; install("kubrik-hub", ["/k","serve"], run=fake_run(calls), platform="linux")
-    assert ["systemctl","--user","enable","--now","kubrik-hub"] in calls
-    assert (home/".config/systemd/user/kubrik-hub.service").exists()
+    calls = []; install("kaptyorka-hub", ["/k","serve"], run=fake_run(calls), platform="linux")
+    assert ["systemctl","--user","enable","--now","kaptyorka-hub"] in calls
+    assert (home/".config/systemd/user/kaptyorka-hub.service").exists()
 def test_install_linux_linger_failure_prints_one_command(home): ...  # loginctl fails -> a returned line == "run once: sudo loginctl enable-linger <user>"
 def test_install_darwin_bootstrap(home): ...  # plist written; ["launchctl","bootstrap",f"gui/{uid}", plist] in calls
 def test_serve_creates_token_once_and_prints_three_lines(home, capsys, monkeypatch): ...  # run twice (service.install patched): same token, 0600, output lines start "hub:", "token:", "page:" and page ends with "#t=<token>"
 def test_who_prints_table(hub, home, capsys): ...  # config pointing at fixture hub, one agent -> its name in output
-def test_who_not_joined(home, capsys): ...  # exit 1, "not joined: run kubrik join"
+def test_who_not_joined(home, capsys): ...  # exit 1, "not joined: run kaptyorka join"
 ```
 
 - [ ] **Step 2:** Run `python3 -m pytest tests/test_serve.py -q`. Expected: FAIL.
 - [ ] **Step 3:** Implement `service.py` and the `serve` and `who` subcommands.
 - [ ] **Step 4:** Run `python3 -m pytest tests -q`. Expected: all pass.
-- [ ] **Step 5:** Manual check: `kubrik serve --foreground --port 18765` in a scratch `KUBRIK_HOME`, open `http://localhost:18765/#t=<token>`, see the empty Team view; stop it. Do not install the real service on this PC in this task.
-- [ ] **Step 6: Commit** `git commit -m "feat: kubrik serve with user service install, and kubrik who"`
+- [ ] **Step 5:** Manual check: `kaptyorka serve --foreground --port 18765` in a scratch `KAPTYORKA_HOME`, open `http://localhost:18765/#t=<token>`, see the empty Team view; stop it. Do not install the real service on this PC in this task.
+- [ ] **Step 6: Commit** `git commit -m "feat: kaptyorka serve with user service install, and kaptyorka who"`
 
 ---
 
-### Task 8: Session identity and the `kubrik mcp` shim
+### Task 8: Session identity and the `kaptyorka mcp` shim
 
-Why a shim: the tool configs are per user, not per session, so a static header cannot tell two sessions apart. A stdio MCP server is started by the session itself, so it can find its session from its parent processes, with zero typing by the agent. The token stays in `~/.kubrik/config.json`, out of tool configs.
+Why a shim: the tool configs are per user, not per session, so a static header cannot tell two sessions apart. A stdio MCP server is started by the session itself, so it can find its session from its parent processes, with zero typing by the agent. The token stays in `~/.kaptyorka/config.json`, out of tool configs.
 
 **Files:**
-- Create: `src/kubrik/identity.py`, `src/kubrik/shim.py`, `tests/test_identity.py`, `tests/test_shim.py`; Modify: `src/kubrik/cli.py`
+- Create: `src/kaptyorka/identity.py`, `src/kaptyorka/shim.py`, `tests/test_identity.py`, `tests/test_shim.py`; Modify: `src/kaptyorka/cli.py`
 
 **Interfaces:**
 - Consumes: `paths.load_config`, hub `/mcp` (Task 4), spike findings (Task 2) for process names and Cursor's workspace source.
 - Produces:
-  - `@dataclass Identity: key: str; machine: str; tool: str; project: str`; `Identity.headers() -> dict` (the four `X-Kubrik-*` headers).
+  - `@dataclass Identity: key: str; machine: str; tool: str; project: str`; `Identity.headers() -> dict` (the four `X-Kaptyorka-*` headers).
   - `identity.ancestors(pid: int) -> list[tuple[int, str]]` (pid, command name), nearest first, via `ps -o ppid=,comm= -p <pid>` (works on Linux and macOS).
   - `identity.proc_cwd(pid: int) -> str` (`/proc/<pid>/cwd` on Linux; `lsof -a -p <pid> -d cwd -Fn` on macOS).
   - `identity.identify(machine: str, pid: int | None = None, workspace: str | None = None) -> Identity | None`: walk ancestors; first match wins: a pid with `~/.claude/sessions/<pid>.json` → `claude-code`; command `opencode` → `opencode`; `codex` → `codex`; command containing `cursor` (any case) → `cursor`. `None` if no match. The key comes from `identity.RESOLVERS: dict[str, Callable[[int, str], str | None]]` (`(tool_pid, cwd) -> key`; `cwd` is the tool process's cwd, except for `cursor`, where it is `workspace` if given, else the shim's own cwd); this task fills `claude-code` and `cursor`, Tasks 11 and 12 add `opencode` and `codex`.
   - Session keys, one per tool, identical in shim, hook and bridge (also stated in `adapters/base.py`): `claude:<pid>` (project = basename of the session file's `cwd`); `opencode:<session id>`; `codex:<thread id>`; `cursor:<workspace path>` (workspace = the `workspace` argument, else the shim's cwd; project = its basename).
-  - `shim.run(cfg: dict, workspace: str | None = None) -> None`: stdio MCP server built on the low-level `mcp.server.lowlevel.Server` (`on_list_tools`, `on_call_tool`, check names in the installed version), relaying both to the hub over one `mcp.Client` opened with the bearer and identity headers. Tool list comes from the hub, so tools are defined once (Task 4). If the hub cannot be reached, `list_tools` returns the seven names with a one-line description and every call returns `kubrik hub unreachable at <url>`; connection attempts time out after 5 s. After any failed call the client is dropped and the next tool call opens a new one, so a hub restart heals without restarting the session. If `tool == "cursor"`, the shim also posts `/bridge/heartbeat` for itself every 10 s (Cursor has no bridge discovery).
-  - CLI: `kubrik mcp [--workspace PATH]` runs `shim.run(load_config(), workspace)` (Cursor's `mcp.json` passes `${workspaceFolder}` if Task 2 found it expanded).
+  - `shim.run(cfg: dict, workspace: str | None = None) -> None`: stdio MCP server built on the low-level `mcp.server.lowlevel.Server` (`on_list_tools`, `on_call_tool`, check names in the installed version), relaying both to the hub over one `mcp.Client` opened with the bearer and identity headers. Tool list comes from the hub, so tools are defined once (Task 4). If the hub cannot be reached, `list_tools` returns the seven names with a one-line description and every call returns `kaptyorka hub unreachable at <url>`; connection attempts time out after 5 s. After any failed call the client is dropped and the next tool call opens a new one, so a hub restart heals without restarting the session. If `tool == "cursor"`, the shim also posts `/bridge/heartbeat` for itself every 10 s (Cursor has no bridge discovery).
+  - CLI: `kaptyorka mcp [--workspace PATH]` runs `shim.run(load_config(), workspace)` (Cursor's `mcp.json` passes `${workspaceFolder}` if Task 2 found it expanded).
 
 - [ ] **Step 1: Write the failing tests:**
 
@@ -402,37 +402,37 @@ def test_identify_uses_resolver(monkeypatch): ...  # ancestors [(7,"node"),(9,"o
 def test_identify_cursor_workspace(monkeypatch): ...  # ancestors [(5,"Cursor")], workspace="/w/app" -> Identity("cursor:/w/app","pc","cursor","app")
 def test_identify_none_outside_a_tool(monkeypatch): ...  # ancestors [(1,"systemd")] -> None
 def test_ancestors_real_process(): assert ancestors(os.getpid())[0][0] == os.getppid()
-def test_shim_relays_with_identity(hub, home): ...  # run shim in a subprocess via mcp stdio client with KUBRIK_TEST_IDENTITY env override; call "who" -> caller row present in hub.store.online()
-def test_shim_hub_down(home): ...  # config hub=http://127.0.0.1:9; call "who" returns text "kubrik hub unreachable at http://127.0.0.1:9" within 5 s
+def test_shim_relays_with_identity(hub, home): ...  # run shim in a subprocess via mcp stdio client with KAPTYORKA_TEST_IDENTITY env override; call "who" -> caller row present in hub.store.online()
+def test_shim_hub_down(home): ...  # config hub=http://127.0.0.1:9; call "who" returns text "kaptyorka hub unreachable at http://127.0.0.1:9" within 5 s
 def test_shim_reconnects_after_hub_restart(home, tmp_path): ...  # hub on fixed port; who ok; stop hub; who -> "unreachable"; start hub again on same port and db; who ok, same shim process
 ```
 
-`KUBRIK_TEST_IDENTITY` (JSON of an `Identity`) is read by `identify()` first; it exists only so tests can run the shim outside a tool. Document it in `CLAUDE.md`, not the README.
+`KAPTYORKA_TEST_IDENTITY` (JSON of an `Identity`) is read by `identify()` first; it exists only so tests can run the shim outside a tool. Document it in `CLAUDE.md`, not the README.
 
 - [ ] **Step 2:** Run `python3 -m pytest tests/test_identity.py tests/test_shim.py -q`. Expected: FAIL.
 - [ ] **Step 3:** Implement `identity.py`, `shim.py`, the `mcp` subcommand.
 - [ ] **Step 4:** Run `python3 -m pytest tests -q`. Expected: all pass.
-- [ ] **Step 5: Commit** `git commit -m "feat: per-session identity and the kubrik mcp relay"`
+- [ ] **Step 5: Commit** `git commit -m "feat: per-session identity and the kaptyorka mcp relay"`
 
 ---
 
 ### Task 9: Bridge core
 
 **Files:**
-- Create: `src/kubrik/adapters/__init__.py`, `src/kubrik/adapters/base.py`, `src/kubrik/bridge.py`, `tests/test_bridge.py`; Modify: `src/kubrik/cli.py`
+- Create: `src/kaptyorka/adapters/__init__.py`, `src/kaptyorka/adapters/base.py`, `src/kaptyorka/bridge.py`, `tests/test_bridge.py`; Modify: `src/kaptyorka/cli.py`
 
 **Interfaces:**
 - Consumes: hub routes (Task 5), `http.request`, `paths`.
 - Produces:
   - `@dataclass Session: key: str; tool: str; project: str; activity: str = ""`
   - `class DeliveryError(Exception)`
-  - `class Adapter(Protocol)`: `tool: str`; `prefix: str` (key prefix: `claude`, `opencode`, `codex`, `cursor`); constructors take `log: Callable[[str], None]` (default `print`); `installed() -> bool`; `sessions() -> list[Session]`; `deliver(key: str, text: str) -> None` (raises `DeliveryError`); `configure(kubrik: str) -> list[str]` (`kubrik` = absolute path of the executable; returns change lines; idempotent); `restart_note: str | None`.
+  - `class Adapter(Protocol)`: `tool: str`; `prefix: str` (key prefix: `claude`, `opencode`, `codex`, `cursor`); constructors take `log: Callable[[str], None]` (default `print`); `installed() -> bool`; `sessions() -> list[Session]`; `deliver(key: str, text: str) -> None` (raises `DeliveryError`); `configure(kaptyorka: str) -> list[str]` (`kaptyorka` = absolute path of the executable; returns change lines; idempotent); `restart_note: str | None`.
   - `base.merge_json(path: Path, update: Callable[[dict], bool]) -> str` → `"changed" | "unchanged" | "broken"`: reads JSON (missing file = `{}`), applies `update` (returns True if it changed anything), writes back through the symlink (write to the resolved target, keep mode), refuses to write when the file does not parse (the adapter logs `left alone, not valid JSON: <path>`). Every adapter's `configure` uses it.
   - Module docstring of `base.py` states the four session keys from Task 8.
   - `adapters.all_adapters() -> list[Adapter]` (filled in Tasks 10 to 13).
   - `class Bridge(cfg: dict, adapters: list[Adapter], log: Callable[[str], None])`: `heartbeat() -> None` (all adapters' sessions, one POST); `poll_once(wait: float = 25) -> int` (GET poll with `timeout=wait + 5`, deliver each to the adapter whose `prefix` equals `key.split(":", 1)[0]`, ack ok/fail, returns delivered count); `run() -> None` (heartbeat thread every 10 s + poll loop; on `HubUnreachable` log once per outage and retry every 5 s).
-  - Fallback log line (exact): `push to {key} failed: {error}; message {id} left for pull`. Written to `~/.kubrik/bridge.log` and stderr.
-  - CLI: `kubrik bridge` runs `Bridge(load_config(), [a for a in all_adapters() if a.installed()], log).run()`.
+  - Fallback log line (exact): `push to {key} failed: {error}; message {id} left for pull`. Written to `~/.kaptyorka/bridge.log` and stderr.
+  - CLI: `kaptyorka bridge` runs `Bridge(load_config(), [a for a in all_adapters() if a.installed()], log).run()`.
 
 - [ ] **Step 1: Write the failing tests** (with a `FakeAdapter(tool="codex", prefix="codex", sessions=[...], fail=False)` that records deliveries):
 
@@ -440,11 +440,11 @@ def test_shim_reconnects_after_hub_restart(home, tmp_path): ...  # hub on fixed 
 def test_heartbeat_reports_all_sessions(hub, home): ...  # 2 fake adapters, 3 sessions -> hub.store.online() has 3
 def test_poll_delivers_and_acks(hub, home):
     # sender online elsewhere; send to the fake session; poll_once(wait=1)
-    assert fake.delivered == [("codex:5", "Kubrik message from pc/claude-code/murmur:\n\nhi")]
+    assert fake.delivered == [("codex:5", "Kaptyorka message from pc/claude-code/murmur:\n\nhi")]
     assert hub.store.inbox("codex:5") == []
 def test_failed_door_logs_and_leaves_for_pull(hub, home):
     fake.fail = True; bridge.poll_once(1)
-    assert "push to codex:5 failed" in (home/".kubrik/bridge.log").read_text()
+    assert "push to codex:5 failed" in (home/".kaptyorka/bridge.log").read_text()
     assert [m.text for m in hub.store.inbox("codex:5")] == ["hi"]
 def test_hub_down_logged_once(home): ...  # hub url to closed port; two loop iterations -> one "hub unreachable" log line
 def test_merge_json_keeps_symlink_and_other_keys(tmp_path): ...  # link -> target with {"a":1}; update adds "b" -> link still symlink, target has a and b
@@ -461,7 +461,7 @@ def test_merge_json_broken_file_untouched(tmp_path): ...  # "{not json" -> retur
 ### Task 10: Claude Code adapter, hooks command, real push test
 
 **Files:**
-- Create: `src/kubrik/adapters/claude.py`, `src/kubrik/hook.py`, `tests/test_claude.py`, `tests/test_hook.py`, `tests/test_claude_slow.py`; Modify: `src/kubrik/adapters/__init__.py`, `src/kubrik/cli.py`
+- Create: `src/kaptyorka/adapters/claude.py`, `src/kaptyorka/hook.py`, `tests/test_claude.py`, `tests/test_hook.py`, `tests/test_claude_slow.py`; Modify: `src/kaptyorka/adapters/__init__.py`, `src/kaptyorka/cli.py`
 
 **Interfaces:**
 - Consumes: `Adapter`, `Session`, `DeliveryError`, `merge_json` (Task 9), `identify` (Task 8), `/api/brief` (Task 5).
@@ -469,9 +469,9 @@ def test_merge_json_broken_file_untouched(tmp_path): ...  # "{not json" -> retur
   - `ClaudeAdapter(home: Path = Path.home(), log: Callable[[str], None] = print)`, `tool = "claude-code"`, `prefix = "claude"`, `CLAUDE_CODE_TESTED = "2.1.318"`.
   - `sessions()`: every `~/.claude/sessions/<pid>.json` whose pid is alive (`os.kill(pid, 0)`), key `claude:<pid>`, project = basename of `cwd`, activity = `status` (`idle`/`busy`). Warns once per bridge run via the log when any `version` is newer than `CLAUDE_CODE_TESTED` (compare as int tuples): `claude-code <v> is newer than tested 2.1.318; push may break, pull still works`.
   - `deliver(key, text)`: read `messagingSocketPath` and the `<pid>.*.key` file's `peerToken`; connect (timeout 5 s); send `{"type":"auth","token":...}\n` when a key file exists, then `{"type":"user","message":{"role":"user","content":text}}\n` (`json.dumps`, so newlines are escaped); `shutdown(SHUT_WR)`; close. Any OS error or missing file → `DeliveryError`. Reference: the verified spike script in `docs/superpowers/spikes/2026-11-04-doors.md` (copy its logic).
-  - `configure(kubrik)`: run `claude mcp remove --scope user kubrik` (ignore failure) then `claude mcp add --scope user kubrik -- <kubrik> mcp` (stdio; flags checked against `claude mcp add --help` on 2.1.318). Merge into `~/.claude/settings.json` one entry each under `hooks.SessionStart` and `hooks.UserPromptSubmit`: `{"hooks": [{"type": "command", "command": "<kubrik> hook claude-code start|prompt", "timeout": 5}]}`, appended, existing entries untouched, skipped if an entry with that command exists. `restart_note = "Claude Code: open sessions pick up kubrik after a restart"`.
+  - `configure(kaptyorka)`: run `claude mcp remove --scope user kaptyorka` (ignore failure) then `claude mcp add --scope user kaptyorka -- <kaptyorka> mcp` (stdio; flags checked against `claude mcp add --help` on 2.1.318). Merge into `~/.claude/settings.json` one entry each under `hooks.SessionStart` and `hooks.UserPromptSubmit`: `{"hooks": [{"type": "command", "command": "<kaptyorka> hook claude-code start|prompt", "timeout": 5}]}`, appended, existing entries untouched, skipped if an entry with that command exists. `restart_note = "Claude Code: open sessions pick up kaptyorka after a restart"`.
   - `hook.main(tool: str, event: str, stdin: str = "") -> int`: `identify()` (for `cursor`, `workspace` = first of `workspace_roots` in the stdin JSON), `GET /api/brief?event=<start|prompt>` with 3 s timeout, print in the tool's shape, always return 0. Claude Code: plain stdout. Other tools' shapes are added in Tasks 11 to 13 through `hook.FORMATTERS: dict[str, Callable[[str, str], str]]` (`(event, brief) -> stdout`).
-  - CLI: `kubrik hook <tool> <event>`.
+  - CLI: `kaptyorka hook <tool> <event>`.
 
 - [ ] **Step 1: Write the failing tests:**
 
@@ -491,8 +491,8 @@ def test_configure_keeps_existing_hooks_and_is_idempotent(home, fake_claude_cli)
     a = ClaudeAdapter(home); a.configure("/k"); a.configure("/k")
     ss = json.loads(settings.read_text())["hooks"]["SessionStart"]
     assert [h["hooks"][0]["command"] for h in ss] == ["mine", "/k hook claude-code start"]
-    assert ["claude","mcp","add","--scope","user","kubrik","--","/k","mcp"] in fake_claude_cli.calls
-def test_hook_start_prints_brief(hub, home, monkeypatch, capsys): ...  # identify patched -> stdout starts "Kubrik: you are `"
+    assert ["claude","mcp","add","--scope","user","kaptyorka","--","/k","mcp"] in fake_claude_cli.calls
+def test_hook_start_prints_brief(hub, home, monkeypatch, capsys): ...  # identify patched -> stdout starts "Kaptyorka: you are `"
 def test_hook_hub_down_is_silent(home, capsys): ...  # hub at closed port -> returns 0, stdout "", under 3.5 s
 def test_claude_key_matches_shim_and_bridge(home, monkeypatch): ...  # session file for os.getpid(); identify() with ancestors patched to that pid == ClaudeAdapter(home).sessions()[0].key
 ```
@@ -502,7 +502,7 @@ def test_claude_key_matches_shim_and_bridge(home, monkeypatch): ...  # session f
 - [ ] **Step 2:** Run `python3 -m pytest tests/test_claude.py tests/test_hook.py -q`. Expected: FAIL.
 - [ ] **Step 3:** Implement `adapters/claude.py`, `hook.py`, register in `all_adapters()`, CLI `hook`.
 - [ ] **Step 4:** Run `python3 -m pytest tests -q`. Expected: all pass.
-- [ ] **Step 5: Write the slow real test** `tests/test_claude_slow.py::test_real_session_receives_push` (`@pytest.mark.slow`, skipped if `claude` is not on `PATH`): in a `tmp_path` project, `claude --bg -n kubrik-slow --permission-mode acceptEdits "Wait. When a message arrives, do what it says."`; wait up to 60 s for a new `~/.claude/sessions/<pid>.json` with that `cwd`; `ClaudeAdapter().deliver(key, "Kubrik message from test/x/y:\n\nWrite the text KUBRIK-OK into received.txt in this folder.")`; wait up to 180 s for `received.txt` to contain `KUBRIK-OK`; always `claude stop` and `claude rm` the session in `finally`. This test reads the real `~/.claude/sessions`, so it does not use the `home` fixture.
+- [ ] **Step 5: Write the slow real test** `tests/test_claude_slow.py::test_real_session_receives_push` (`@pytest.mark.slow`, skipped if `claude` is not on `PATH`): in a `tmp_path` project, `claude --bg -n kaptyorka-slow --permission-mode acceptEdits "Wait. When a message arrives, do what it says."`; wait up to 60 s for a new `~/.claude/sessions/<pid>.json` with that `cwd`; `ClaudeAdapter().deliver(key, "Kaptyorka message from test/x/y:\n\nWrite the text KAPTYORKA-OK into received.txt in this folder.")`; wait up to 180 s for `received.txt` to contain `KAPTYORKA-OK`; always `claude stop` and `claude rm` the session in `finally`. This test reads the real `~/.claude/sessions`, so it does not use the `home` fixture.
 - [ ] **Step 6:** Run `python3 -m pytest tests/test_claude_slow.py -m slow -q`. Expected: 1 passed. Report how long it took.
 - [ ] **Step 7: Commit** `git commit -m "feat: claude code adapter: discovery, socket push, hooks"`
 
@@ -511,7 +511,7 @@ def test_claude_key_matches_shim_and_bridge(home, monkeypatch): ...  # session f
 ### Task 11: OpenCode adapter
 
 **Files:**
-- Create: `src/kubrik/adapters/opencode.py`, `tests/fakes/opencode_server.py`, `tests/test_opencode.py`; Modify: `src/kubrik/adapters/__init__.py`, `src/kubrik/hook.py` (formatter if the plugin uses the hook command)
+- Create: `src/kaptyorka/adapters/opencode.py`, `tests/fakes/opencode_server.py`, `tests/test_opencode.py`; Modify: `src/kaptyorka/adapters/__init__.py`, `src/kaptyorka/hook.py` (formatter if the plugin uses the hook command)
 
 **Interfaces:**
 - Consumes: Task 2 findings (port discovery, request body, plugin shape), `Adapter`, `merge_json`.
@@ -520,7 +520,7 @@ def test_claude_key_matches_shim_and_bridge(home, monkeypatch): ...  # session f
   - Registers `identity.RESOLVERS["opencode"]`: port of that pid, `GET /session`, most recently updated session whose directory is the cwd → `opencode:<session id>`.
   - `sessions()`: per running `opencode` pid, its most recently updated session (same rule as the resolver), key `opencode:<session id>`, project = basename of its directory, activity from the spike's status source (else `""`).
   - `deliver(key, text)`: find the port whose `GET /session` lists that session id, `POST /session/<id>/prompt_async` with the body recorded in the spike; anything but 2xx or a connection error → `DeliveryError`.
-  - `configure(kubrik)`: merge into `~/.config/opencode/opencode.json` `"mcp": {"kubrik": {"type": "local", "command": ["<kubrik>", "mcp"], "enabled": true}}` (check `type`/`command` keys against https://opencode.ai/docs/mcp-servers/); write `~/.config/opencode/plugins/kubrik.js` from the spike's minimal plugin, which runs `<kubrik> hook opencode start|prompt` and adds its stdout to context. Plus whatever the spike says `join` must set for a findable port (setting or alias), named in a change line. `restart_note` per spike.
+  - `configure(kaptyorka)`: merge into `~/.config/opencode/opencode.json` `"mcp": {"kaptyorka": {"type": "local", "command": ["<kaptyorka>", "mcp"], "enabled": true}}` (check `type`/`command` keys against https://opencode.ai/docs/mcp-servers/); write `~/.config/opencode/plugins/kaptyorka.js` from the spike's minimal plugin, which runs `<kaptyorka> hook opencode start|prompt` and adds its stdout to context. Plus whatever the spike says `join` must set for a findable port (setting or alias), named in a change line. `restart_note` per spike.
   - If the spike found the door unusable: `deliver` always raises `DeliveryError("opencode: pull only")` and `sessions()` still reports presence.
 - [ ] **Step 1: Write the failing tests** (the fake is a `http.server` thread that records requests and serves `GET /session` with two sessions of different `time.updated`):
 
@@ -528,7 +528,7 @@ def test_claude_key_matches_shim_and_bridge(home, monkeypatch): ...  # session f
 def test_deliver_posts_to_session(fake_opencode): ...  # deliver(f"opencode:{newest}") -> POST path == f"/session/{newest}/prompt_async", body text == the message
 def test_opencode_key_matches_shim_and_bridge(fake_opencode): ...  # RESOLVERS["opencode"](pid, cwd) == adapter.sessions()[0].key
 def test_deliver_server_gone_raises(): ...                    # find_ports -> {9: closed port} -> DeliveryError
-def test_configure_merges_mcp_and_plugin(home): ...           # existing "mcp": {"other": {...}} kept; kubrik entry added; plugins/kubrik.js exists; second run reports unchanged
+def test_configure_merges_mcp_and_plugin(home): ...           # existing "mcp": {"other": {...}} kept; kaptyorka entry added; plugins/kaptyorka.js exists; second run reports unchanged
 ```
 
 - [ ] **Step 2:** Run `python3 -m pytest tests/test_opencode.py -q`. Expected: FAIL.
@@ -542,7 +542,7 @@ def test_configure_merges_mcp_and_plugin(home): ...           # existing "mcp": 
 ### Task 12: Codex adapter
 
 **Files:**
-- Create: `src/kubrik/adapters/codex.py`, `tests/fakes/codex_app_server.py`, `tests/test_codex.py`; Modify: `src/kubrik/adapters/__init__.py`, `src/kubrik/hook.py` (`FORMATTERS["codex"]`)
+- Create: `src/kaptyorka/adapters/codex.py`, `tests/fakes/codex_app_server.py`, `tests/test_codex.py`; Modify: `src/kaptyorka/adapters/__init__.py`, `src/kaptyorka/hook.py` (`FORMATTERS["codex"]`)
 
 **Interfaces:**
 - Consumes: Task 2 findings, `Adapter`, `merge_json`.
@@ -551,7 +551,7 @@ def test_configure_merges_mcp_and_plugin(home): ...           # existing "mcp": 
   - Registers `identity.RESOLVERS["codex"]`: `thread/loaded/list`, most recent thread whose cwd is the cwd → `codex:<thread id>`.
   - `sessions()`: loaded threads from `thread/loaded/list` (+ `thread/list` for cwd), key `codex:<thread id>`, project = basename of thread cwd.
   - `deliver(key, text)`: JSON-RPC `turn/start` on that thread with the text input shape from the spike; JSON-RPC error or no socket → `DeliveryError`.
-  - `configure(kubrik)`: in `~/.codex/config.toml`, add a `[mcp_servers.kubrik]` table with `command = "<kubrik>"`, `args = ["mcp"]` as plain text between the lines `# kubrik start` and `# kubrik end`: replace that block if present, else append it (no `tomllib`, which is 3.11+); merge `~/.codex/hooks.json` with SessionStart and UserPromptSubmit commands `<kubrik> hook codex start|prompt`; enable the hooks feature flag if the spike says it is needed; plus what the spike says makes the door open (daemon via `codex remote-control start` installed as part of the bridge, or an alias), named in a change line.
+  - `configure(kaptyorka)`: in `~/.codex/config.toml`, add a `[mcp_servers.kaptyorka]` table with `command = "<kaptyorka>"`, `args = ["mcp"]` as plain text between the lines `# kaptyorka start` and `# kaptyorka end`: replace that block if present, else append it (no `tomllib`, which is 3.11+); merge `~/.codex/hooks.json` with SessionStart and UserPromptSubmit commands `<kaptyorka> hook codex start|prompt`; enable the hooks feature flag if the spike says it is needed; plus what the spike says makes the door open (daemon via `codex remote-control start` installed as part of the bridge, or an alias), named in a change line.
   - `FORMATTERS["codex"]`: the stdout shape from the spike.
   - If the spike found the door unusable: `deliver` raises `DeliveryError("codex: pull only")`.
 
@@ -561,7 +561,7 @@ def test_configure_merges_mcp_and_plugin(home): ...           # existing "mcp": 
 def test_sessions_from_loaded_threads(fake_codex): ...       # two loaded threads -> two Sessions with project basenames
 def test_deliver_starts_turn(fake_codex): ...                # recorded turn/start params carry the thread id and text
 def test_deliver_rpc_error_raises(fake_codex): ...           # fake returns error -> DeliveryError
-def test_configure_toml_block_by_markers(home): ... # text tests: existing [mcp_servers.other] kept; after two runs exactly one "# kubrik start" block; a changed kubrik path replaces the block
+def test_configure_toml_block_by_markers(home): ... # text tests: existing [mcp_servers.other] kept; after two runs exactly one "# kaptyorka start" block; a changed kaptyorka path replaces the block
 def test_codex_key_matches_shim_and_bridge(fake_codex): ...  # RESOLVERS["codex"](pid, cwd) == adapter.sessions()[0].key
 def test_hook_formatter_codex(): ...                         # FORMATTERS["codex"]("start", "X") equals the spike's shape
 ```
@@ -576,13 +576,13 @@ def test_hook_formatter_codex(): ...                         # FORMATTERS["codex
 ### Task 13: Cursor adapter (pull only)
 
 **Files:**
-- Create: `src/kubrik/adapters/cursor.py`, `tests/test_cursor.py`; Modify: `src/kubrik/adapters/__init__.py`, `src/kubrik/hook.py` (`FORMATTERS["cursor"]`), `src/kubrik/hub.py` (brief events `stop`, `tool`)
+- Create: `src/kaptyorka/adapters/cursor.py`, `tests/test_cursor.py`; Modify: `src/kaptyorka/adapters/__init__.py`, `src/kaptyorka/hook.py` (`FORMATTERS["cursor"]`), `src/kaptyorka/hub.py` (brief events `stop`, `tool`)
 
 **Interfaces:**
 - Consumes: Task 2 Cursor findings, `Adapter`, `merge_json`, `hook.main`.
 - Produces:
   - `CursorAdapter(home: Path = Path.home(), log: Callable[[str], None] = print)`, `tool = prefix = "cursor"`, key `cursor:<workspace path>` (Task 8), `installed()` true when `~/.cursor` exists or `cursor` is on `PATH`; `sessions() -> []` (presence comes from the shim, Task 8); `deliver` raises `DeliveryError("cursor: pull only")`.
-  - `configure(kubrik)`: merge `~/.cursor/mcp.json` `"mcpServers": {"kubrik": {"command": "<kubrik>", "args": ["mcp", "--workspace", "${workspaceFolder}"]}}` (only `["mcp"]` if Task 2 found it not expanded)`; merge `~/.cursor/hooks.json` (`"version": 1`) with `stop` → `<kubrik> hook cursor stop` and `postToolUse` → `<kubrik> hook cursor tool`. `restart_note = "Cursor: restart the app"`.
+  - `configure(kaptyorka)`: merge `~/.cursor/mcp.json` `"mcpServers": {"kaptyorka": {"command": "<kaptyorka>", "args": ["mcp", "--workspace", "${workspaceFolder}"]}}` (only `["mcp"]` if Task 2 found it not expanded)`; merge `~/.cursor/hooks.json` (`"version": 1`) with `stop` → `<kaptyorka> hook cursor stop` and `postToolUse` → `<kaptyorka> hook cursor tool`. `restart_note = "Cursor: restart the app"`.
   - `/api/brief` events: `stop` and `tool` behave like `prompt` (unread messages only).
   - `FORMATTERS["cursor"]`: `stop` → `{"followup_message": brief}` JSON when brief is non-empty, else `{}`; `tool` → `{"additional_context": brief}` when non-empty, else `{}`. Exact keys as checked in the spike.
 
@@ -593,7 +593,7 @@ def test_cursor_is_pull_only(): assert CursorAdapter().sessions() == [] and rais
 def test_formatter_stop_followup(): assert json.loads(FORMATTERS["cursor"]("stop", "msg")) == {"followup_message": "msg"}
 def test_formatter_empty_is_noop(): assert json.loads(FORMATTERS["cursor"]("tool", "")) == {}
 def test_configure_merges_mcp_and_hooks(home): ...  # existing mcpServers.other and hooks.stop entries kept; second run unchanged
-def test_cursor_key_matches_shim_and_hook(monkeypatch): ...  # ancestors patched to [(5,"Cursor")]; http.request patched to capture headers; hook.main("cursor","stop", stdin='{"workspace_roots":["/w/app"]}') sends X-Kubrik-Key == identify("pc", workspace="/w/app").key == "cursor:/w/app"
+def test_cursor_key_matches_shim_and_hook(monkeypatch): ...  # ancestors patched to [(5,"Cursor")]; http.request patched to capture headers; hook.main("cursor","stop", stdin='{"workspace_roots":["/w/app"]}') sends X-Kaptyorka-Key == identify("pc", workspace="/w/app").key == "cursor:/w/app"
 ```
 
 - [ ] **Step 2:** Run `python3 -m pytest tests/test_cursor.py -q`. Expected: FAIL.
@@ -603,18 +603,18 @@ def test_cursor_key_matches_shim_and_hook(monkeypatch): ...  # ancestors patched
 
 ---
 
-### Task 14: `kubrik join`
+### Task 14: `kaptyorka join`
 
 **Files:**
-- Create: `src/kubrik/join.py`, `tests/test_join.py`; Modify: `src/kubrik/cli.py`, `CLAUDE.md` (document `KUBRIK_SKIP_SERVICE`)
+- Create: `src/kaptyorka/join.py`, `tests/test_join.py`; Modify: `src/kaptyorka/cli.py`, `CLAUDE.md` (document `KAPTYORKA_SKIP_SERVICE`)
 
 **Interfaces:**
 - Consumes: `all_adapters()`, `service.install`, `paths.save_config`, `http.request`.
 - Produces: `join.main(hub: str, token: str, name: str, adapters: list[Adapter] | None = None, install=service.install) -> int`.
-  1. `GET <hub>/api/feed` with the token: 401 → print `wrong token` and return 1; unreachable → `kubrik hub unreachable at <hub>`, return 1. Nothing is written before this passes.
+  1. `GET <hub>/api/feed` with the token: 401 → print `wrong token` and return 1; unreachable → `kaptyorka hub unreachable at <hub>`, return 1. Nothing is written before this passes.
   2. Save `{"hub", "token", "machine": name}` to `config.json`.
-  3. For each installed adapter: `configure(<abs kubrik>)`; print each change line prefixed by the tool. `--only <tool>` (repeatable) limits this to the named adapters.
-  4. `install("kubrik-bridge", [<abs kubrik>, "bridge"])` and print its lines, skipped when `KUBRIK_SKIP_SERVICE=1` (tests only).
+  3. For each installed adapter: `configure(<abs kaptyorka>)`; print each change line prefixed by the tool. `--only <tool>` (repeatable) limits this to the named adapters.
+  4. `install("kaptyorka-bridge", [<abs kaptyorka>, "bridge"])` and print its lines, skipped when `KAPTYORKA_SKIP_SERVICE=1` (tests only).
   5. Last lines: one `restart: <restart_note>` per configured tool that has one, or `done, nothing to restart`.
   - Hub URL is normalised (no trailing slash). `--name` defaults to the short hostname.
 
@@ -622,17 +622,17 @@ def test_cursor_key_matches_shim_and_hook(monkeypatch): ...  # ancestors patched
 
 ```python
 def test_join_bad_token_writes_nothing(hub, home): assert main(hub.url, "bad", "pc", adapters=[], install=lambda *a, **k: None) == 1 and not paths.config_path().exists()
-def test_join_configures_installed_only(hub, home, capsys): ...  # two FakeAdapters, one installed -> only it configured; config saved; bridge install called with [kubrik, "bridge"]
+def test_join_configures_installed_only(hub, home, capsys): ...  # two FakeAdapters, one installed -> only it configured; config saved; bridge install called with [kaptyorka, "bridge"]
 def test_join_twice_same_result(hub, home): ...                 # with the real ClaudeAdapter + fake claude CLI: settings.json identical after second run
 def test_join_prints_restart_notes(hub, home, capsys): ...      # output ends with "restart: Claude Code: ..."
 def test_join_only_limits_adapters(hub, home): ...             # --only claude-code with two installed fakes -> only claude-code configured
-def test_join_skip_service_env(hub, home, monkeypatch): ...     # KUBRIK_SKIP_SERVICE=1 -> install not called
+def test_join_skip_service_env(hub, home, monkeypatch): ...     # KAPTYORKA_SKIP_SERVICE=1 -> install not called
 ```
 
 - [ ] **Step 2:** Run `python3 -m pytest tests/test_join.py -q`. Expected: FAIL.
 - [ ] **Step 3:** Implement `join.py` and the CLI flags `--hub`, `--token`, `--name`.
 - [ ] **Step 4:** Run `python3 -m pytest tests -q`. Expected: all pass.
-- [ ] **Step 5: Commit** `git commit -m "feat: kubrik join configures every tool and installs the bridge"`
+- [ ] **Step 5: Commit** `git commit -m "feat: kaptyorka join configures every tool and installs the bridge"`
 
 ---
 
@@ -647,7 +647,7 @@ def test_join_skip_service_env(hub, home, monkeypatch): ...     # KUBRIK_SKIP_SE
 def test_readme_agent_steps():
     r = Path("README.md").read_text()
     assert "## For agents" in r
-    assert "pipx install kubrik" in r and "kubrik join --hub" in r
+    assert "pipx install kaptyorka" in r and "kaptyorka join --hub" in r
 def test_readme_names_every_tool_and_door():
     r = Path("README.md").read_text()
     for t in ["Claude Code", "OpenCode", "Codex", "Cursor"]: assert t in r
@@ -655,7 +655,7 @@ def test_readme_names_every_tool_and_door():
 ```
 
 - [ ] **Step 2:** Run it. Expected: FAIL (no README).
-- [ ] **Step 3:** Write `README.md` in libraryan's style (`/home/narek/workspace/projects/libraryan/README.md`): short plain-English intro (the murmur/DGX example), quick start (`kubrik serve` on the hub; `kubrik join` on each machine; open the page link), a **For agents** section with exactly the spec's three steps, a table of tools × "push / pull only" × what `join` changes × restart needed, the seven tools in one table, where files live (`~/.kubrik`), how to remove (`systemctl --user disable --now kubrik-bridge` / `launchctl bootout`, delete `~/.kubrik`, remove the `kubrik` entries `join` printed). No token in any example (use `<token>`). `CHANGELOG.md` with `0.1.0`. `publish.yml` copied from libraryan's (tag-triggered); add a comment that each release needs Narek's yes.
+- [ ] **Step 3:** Write `README.md` in libraryan's style (`/home/narek/workspace/projects/libraryan/README.md`): short plain-English intro (the murmur/DGX example), quick start (`kaptyorka serve` on the hub; `kaptyorka join` on each machine; open the page link), a **For agents** section with exactly the spec's three steps, a table of tools × "push / pull only" × what `join` changes × restart needed, the seven tools in one table, where files live (`~/.kaptyorka`), how to remove (`systemctl --user disable --now kaptyorka-bridge` / `launchctl bootout`, delete `~/.kaptyorka`, remove the `kaptyorka` entries `join` printed). No token in any example (use `<token>`). `CHANGELOG.md` with `0.1.0`. `publish.yml` copied from libraryan's (tag-triggered); add a comment that each release needs Narek's yes.
 - [ ] **Step 4:** Run `python3 -m pytest tests -q`. Expected: all pass. Also `git grep -nE "Bearer [A-Za-z0-9_-]{20,}"` prints nothing.
 - [ ] **Step 5: Commit** `git commit -m "docs: README with agent install steps, changelog, publish workflow"`
 
@@ -666,16 +666,16 @@ def test_readme_names_every_tool_and_door():
 **Files:**
 - Create: `tests/test_e2e_slow.py`
 
-This test uses a real hub on a scratch port and scratch `KUBRIK_HOME`, but the real `claude`. Joining (Claude Code only) writes to the real `~/.claude/settings.json` and user MCP list, which is a symlink into `~/claude-setup` (a versioned repo): back up the target file before, restore it after (in `finally`), and check `git -C ~/claude-setup status` is unchanged at the end. Do not install the bridge or hub as services; run them as subprocesses.
+This test uses a real hub on a scratch port and scratch `KAPTYORKA_HOME`, but the real `claude`. Joining (Claude Code only) writes to the real `~/.claude/settings.json` and user MCP list, which is a symlink into `~/claude-setup` (a versioned repo): back up the target file before, restore it after (in `finally`), and check `git -C ~/claude-setup status` is unchanged at the end. Do not install the bridge or hub as services; run them as subprocesses.
 
 - [ ] **Step 1: Write the test** `test_two_sessions_talk` (`@pytest.mark.slow`):
-  1. Start `kubrik serve --foreground --port 18765` with `KUBRIK_HOME=<tmp>/hub`.
-  2. `kubrik join --hub http://127.0.0.1:18765 --token <t> --name e2e --only claude-code` with `KUBRIK_HOME=<tmp>/pc` and `KUBRIK_SKIP_SERVICE=1`, then start `kubrik bridge` as a subprocess. No Cursor, OpenCode or Codex config is touched.
-  3. Start two `claude --bg` sessions in `<tmp>/murmur` and `<tmp>/backend`, `--permission-mode acceptEdits`, the first told: "Use the kubrik send tool to ask e2e/claude-code/backend to write PONG into reply.txt in its folder."
+  1. Start `kaptyorka serve --foreground --port 18765` with `KAPTYORKA_HOME=<tmp>/hub`.
+  2. `kaptyorka join --hub http://127.0.0.1:18765 --token <t> --name e2e --only claude-code` with `KAPTYORKA_HOME=<tmp>/pc` and `KAPTYORKA_SKIP_SERVICE=1`, then start `kaptyorka bridge` as a subprocess. No Cursor, OpenCode or Codex config is touched.
+  3. Start two `claude --bg` sessions in `<tmp>/murmur` and `<tmp>/backend`, `--permission-mode acceptEdits`, the first told: "Use the kaptyorka send tool to ask e2e/claude-code/backend to write PONG into reply.txt in its folder."
   4. Wait up to 240 s for `<tmp>/backend/reply.txt` to contain `PONG`.
   5. Assert the hub feed shows both names online and the message; assert `bridge.log` has no `failed` line.
-  6. `finally`: stop and remove both sessions, stop bridge and hub, restore `settings.json`, `claude mcp remove --scope user kubrik`.
+  6. `finally`: stop and remove both sessions, stop bridge and hub, restore `settings.json`, `claude mcp remove --scope user kaptyorka`.
 - [ ] **Step 2:** Run `python3 -m pytest tests/test_e2e_slow.py -m slow -q`. Expected: 1 passed. Report the time and attach the page screenshot of the Messages view taken while the test ran.
-- [ ] **Step 3:** Run `git -C ~/claude-setup status --short` and `claude mcp list`. Expected: same as before the test; no `kubrik` server.
+- [ ] **Step 3:** Run `git -C ~/claude-setup status --short` and `claude mcp list`. Expected: same as before the test; no `kaptyorka` server.
 - [ ] **Step 4:** Run the whole fast suite once: `python3 -m pytest tests -q`. Expected: all pass.
 - [ ] **Step 5: Commit** `git commit -m "test: end-to-end push between two real claude code sessions"`

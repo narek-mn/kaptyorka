@@ -1,14 +1,14 @@
-# Kubrik design
+# Kaptyorka design
 
 Date: 2026-11-04. Status: approved by Narek on 2026-11-04.
-Name: "kubrik" (Narek, 2026-11-04).
+Name: "kaptyorka" (Narek, 2026-11-04).
 
 ## Intent
 
 One job often spans several machines (PC, Jetsons, DGX) and several
 coding agents, each on a different personal account. Today Narek is the
 messenger between them: tell one agent, carry its answer to the next.
-Kubrik lets every coding-agent session in the team see the others,
+Kaptyorka lets every coding-agent session in the team see the others,
 message them, and share notes that outlive the session, so Narek gives an
 order once and the agents sort out the rest between themselves.
 
@@ -27,7 +27,7 @@ should agree the API without Narek relaying.
   the team board and knows the state of the other projects.
 - Works for Claude Code, Codex CLI, OpenCode and Cursor (Narek:
   all four in version one).
-- Setup is one instruction to any agent: "install and use kubrik".
+- Setup is one instruction to any agent: "install and use kaptyorka".
   The agent installs it and configures its own tool. The human at most
   restarts an IDE.
 - Runs on the team LAN/VPN only. Hub on the DGX (always on).
@@ -105,10 +105,10 @@ a different shape of project than one pipx tool).
 
 ## Design
 
-One Python package, `kubrik`, public on GitHub and PyPI, installed with
-`pipx install kubrik`. Two commands.
+One Python package, `kaptyorka`, public on GitHub and PyPI, installed with
+`pipx install kaptyorka`. Two commands.
 
-### `kubrik serve` (the hub, on the DGX)
+### `kaptyorka serve` (the hub, on the DGX)
 
 - An MCP server over streamable HTTP (official `mcp` Python SDK),
   default port 8765, plus a few plain HTTP endpoints for the bridges.
@@ -137,7 +137,7 @@ One Python package, `kubrik`, public on GitHub and PyPI, installed with
   later session in the same project on that machine, if the target was
   closed) pulls it. A message is never dropped.
 
-### The web page (part of `kubrik serve`, nothing extra to run)
+### The web page (part of `kaptyorka serve`, nothing extra to run)
 
 Served by the hub itself at the hub address (`http://dgx:8765/`). No
 login, no config, no build step. Narek (2026-11-04): the user runs one
@@ -154,7 +154,7 @@ cartoon. No explaining sentences; the picture and icons carry it. Plain
 HTML and a little JavaScript served from the package, no frontend
 toolchain.
 
-### `kubrik join --hub http://dgx:8765 --token T --name jetson-3`
+### `kaptyorka join --hub http://dgx:8765 --token T --name jetson-3`
 (the bridge, on every machine)
 
 Run once per machine. It does three things.
@@ -182,7 +182,7 @@ code, and the bridge warns once when the installed version is newer.
 
 ### What the agent sees
 
-At session start (hook): "Kubrik: you are `narek-pc / claude-code /
+At session start (hook): "Kaptyorka: you are `narek-pc / claude-code /
 murmur`. 2 others online: dgx / claude-code / murmur-backend (idle),
 jetson-3 / opencode / nav. 1 unread message. Board topics: murmur-api,
 nav-protocol." Then it uses the MCP tools like any other.
@@ -194,23 +194,23 @@ with the sender's name, tool, machine and project.
 ### Install story (the README's "for agents" section)
 
 The README has a short section written for an agent to follow:
-1. `pipx install kubrik`
-2. `kubrik join --hub <url> --token <token> --name <machine>`
+1. `pipx install kaptyorka`
+2. `kaptyorka join --hub <url> --token <token> --name <machine>`
 3. Restart the IDE if `join` says so. Done.
 
 Narek pastes the hub URL and token to each teammate once. Teammates need
 no GitHub access. The
-instruction to any agent is "install kubrik from <repo> with hub <url>
+instruction to any agent is "install kaptyorka from <repo> with hub <url>
 and token <token>".
 
 ### Repo and tooling
 
-- Public GitHub repo `narek-mn/kubrik`, published on PyPI, same shape as
+- Public GitHub repo `narek-mn/kaptyorka`, published on PyPI, same shape as
   libraryan. Narek (2026-11-04): public is fine as long as no secret is
   ever in git. The token lives only in the hub's data folder and in each
   machine's local config, never in the repo. Each PyPI release needs
   Narek's yes, as with libraryan.
-  `pyproject.toml`, `src/kubrik/`, `tests/`, README, this spec.
+  `pyproject.toml`, `src/kaptyorka/`, `tests/`, README, this spec.
 - Python 3.10+ (Jetson stock Ubuntu). Dependencies: `mcp` SDK, and the
   smallest HTTP client that it brings in. Nothing else unless the
   builder shows it is needed.
@@ -254,7 +254,7 @@ and token <token>".
   teammates" cases.
 - A message to a closed session is held for the next session on that
   machine and project. Reason: anti-goal "silently lost".
-- `kubrik who` also prints the team table in the terminal, for a quick
+- `kaptyorka who` also prints the team table in the terminal, for a quick
   look without a browser.
 - Cursor is pull-only. Fact of Cursor, not a choice.
 - One shared team token, no per-person identity. The team is small and

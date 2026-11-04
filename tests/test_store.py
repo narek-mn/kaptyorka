@@ -1,6 +1,6 @@
 import pytest
 
-from kubrik.store import KubrikError, Store
+from kaptyorka.store import KaptyorkaError, Store
 
 
 class Clock:
@@ -36,7 +36,7 @@ def test_offline_after_30s(store, clock):
 
 def test_send_unknown_name_lists_online(store):
     store.seen("k", "pc", "codex", "nav")
-    with pytest.raises(KubrikError, match="pc/codex/nav"): store.send("k", "dgx/codex/typo", "hi")
+    with pytest.raises(KaptyorkaError, match="pc/codex/nav"): store.send("k", "dgx/codex/typo", "hi")
 
 
 def test_send_all_online_only(store, clock):
@@ -64,7 +64,7 @@ def test_offer_frames_and_ack_marks_read(store):
     store.seen("s", "pc", "codex", "a"); store.seen("t", "dgx", "codex", "b")
     store.send("s", "dgx/codex/b", "hi")
     [o] = store.offer("dgx")
-    assert o["key"] == "t" and o["text"] == "Kubrik message from pc/codex/a:\n\nhi"
+    assert o["key"] == "t" and o["text"] == "Kaptyorka message from pc/codex/a:\n\nhi"
     store.ack(o["id"], True); assert store.inbox("t") == [] and store.offer("dgx") == []
 
 
@@ -89,11 +89,11 @@ def test_offer_lease_reoffers_unacked(store, clock):
 
 def test_text_and_rate_limits(store):
     store.seen("s", "pc", "codex", "a"); store.seen("t", "dgx", "codex", "b")
-    with pytest.raises(KubrikError, match="too long"):
+    with pytest.raises(KaptyorkaError, match="too long"):
         store.send("s", "dgx/codex/b", "x" * 32_001)
     for _ in range(30):
         store.send("s", "dgx/codex/b", "hi")
-    with pytest.raises(KubrikError, match="rate"):
+    with pytest.raises(KaptyorkaError, match="rate"):
         store.send("s", "dgx/codex/b", "hi")
 
 

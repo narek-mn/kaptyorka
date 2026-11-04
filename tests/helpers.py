@@ -10,7 +10,7 @@ run = asyncio.run
 
 def _headers(hub, ident: dict) -> dict:
     h = {"Authorization": f"Bearer {hub.token}"}
-    h.update({f"X-Kubrik-{k.capitalize()}": v for k, v in ident.items()})
+    h.update({f"X-Kaptyorka-{k.capitalize()}": v for k, v in ident.items()})
     return h
 
 

@@ -15,14 +15,14 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from starlette.websockets import WebSocketClose
 
-from kubrik.store import Agent, KubrikError, Store
+from kaptyorka.store import Agent, KaptyorkaError, Store
 
 MAX_WAIT_S = 25
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
        "style-src 'unsafe-inline'; img-src 'self' data:")
 
 INSTRUCTIONS = (
-    "kubrik connects you with the other coding agents on this team. "
+    "kaptyorka connects you with the other coding agents on this team. "
     "who() lists online sessions; send(to, text) messages one by name or 'all'; "
     "inbox() reads your messages; status(text) says what you are working on; "
     "notes_list/notes_read/notes_write share a team board, one text per topic."
@@ -71,32 +71,32 @@ def _agent_row(a: Agent, now: float) -> dict:
 
 
 def _tool_errors(fn):
-    """Show a KubrikError to the agent as a tool error with its message."""
+    """Show a KaptyorkaError to the agent as a tool error with its message."""
     if inspect.iscoroutinefunction(fn):
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
             try:
                 return await fn(*args, **kwargs)
-            except KubrikError as e:
+            except KaptyorkaError as e:
                 raise ToolError(str(e)) from e
     else:
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
             try:
                 return fn(*args, **kwargs)
-            except KubrikError as e:
+            except KaptyorkaError as e:
                 raise ToolError(str(e)) from e
     return wrapper
 
 
 def build_app(store: Store, token: str) -> Starlette:
-    server = MCPServer("kubrik", instructions=INSTRUCTIONS)
+    server = MCPServer("kaptyorka", instructions=INSTRUCTIONS)
     sent = {"event": asyncio.Event()}  # set and replaced after each send; wakes bridge polls
 
     def identify(h) -> Agent:
-        ident = [h.get(f"x-kubrik-{k}") for k in ("key", "machine", "tool", "project")]
+        ident = [h.get(f"x-kaptyorka-{k}") for k in ("key", "machine", "tool", "project")]
         if not all(ident):
-            raise KubrikError("no kubrik identity; run kubrik join")
+            raise KaptyorkaError("no kaptyorka identity; run kaptyorka join")
         return store.seen(*ident)
 
     def me(ctx: Context) -> Agent:
@@ -191,13 +191,13 @@ def build_app(store: Store, token: str) -> Starlette:
     async def api_brief(request: Request) -> Response:
         try:
             agent = identify(request.headers)
-        except KubrikError as e:
+        except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         unread = store.inbox(agent.key)
-        parts = [f"Kubrik message from {m.sender}:\n\n{m.text}" for m in unread]
+        parts = [f"Kaptyorka message from {m.sender}:\n\n{m.text}" for m in unread]
         if request.query_params.get("event") == "start":
             others = [a for a in store.online() if a.key != agent.key]
-            line = f"Kubrik: you are `{agent.name}`. "
+            line = f"Kaptyorka: you are `{agent.name}`. "
             if others:
                 names = ", ".join(a.name + (f" ({a.activity})" if a.activity else "")
                                   for a in others)
@@ -224,7 +224,7 @@ def build_app(store: Store, token: str) -> Starlette:
 
     @server.custom_route("/", methods=["GET"])
     async def page(request: Request) -> Response:
-        html = (importlib.resources.files("kubrik") / "web/index.html").read_text("utf-8")
+        html = (importlib.resources.files("kaptyorka") / "web/index.html").read_text("utf-8")
         return HTMLResponse(html, headers={"Cache-Control": "no-store", "Content-Security-Policy": CSP})
 
     app = server.streamable_http_app(host="0.0.0.0")

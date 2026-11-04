@@ -5,11 +5,11 @@ from unittest import mock
 
 import pytest
 
-from kubrik import cli, http, paths
+from kaptyorka import cli, http, paths
 
 
 def entry_with(args):
-    with mock.patch.object(sys, "argv", ["kubrik", *args]):
+    with mock.patch.object(sys, "argv", ["kaptyorka", *args]):
         cli.entry()
 
 

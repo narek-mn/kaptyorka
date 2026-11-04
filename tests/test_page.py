@@ -1,7 +1,7 @@
 import importlib.resources
 import re
 
-from kubrik import http
+from kaptyorka import http
 
 
 def page(hub) -> str:
@@ -20,4 +20,4 @@ def test_page_has_no_external_urls(hub):
 
 
 def test_page_is_packaged():
-    assert (importlib.resources.files("kubrik") / "web/index.html").is_file()
+    assert (importlib.resources.files("kaptyorka") / "web/index.html").is_file()

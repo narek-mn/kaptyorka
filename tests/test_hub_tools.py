@@ -1,4 +1,4 @@
-from kubrik import http
+from kaptyorka import http
 from helpers import call, call_error, run, tool_names
 
 PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
@@ -15,7 +15,7 @@ def test_wrong_token_401(hub):
 
 
 def test_missing_identity_refused(hub):
-    assert "kubrik join" in call_error(hub, {}, "who")
+    assert "kaptyorka join" in call_error(hub, {}, "who")
 
 
 def test_send_then_inbox_between_two_sessions(hub):
