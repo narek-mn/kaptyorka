@@ -3,12 +3,7 @@ import os
 
 from kaptyorka import identity
 from kaptyorka.identity import Identity, ancestors, identify
-
-
-def write_session_file(home, pid, cwd):
-    d = home / ".claude" / "sessions"
-    d.mkdir(parents=True)
-    (d / f"{pid}.json").write_text(json.dumps({"pid": pid, "cwd": cwd}))
+from helpers import write_session_file
 
 
 def test_identify_claude_from_session_file(home, monkeypatch):

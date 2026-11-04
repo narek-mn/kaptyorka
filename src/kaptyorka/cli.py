@@ -7,7 +7,7 @@ from pathlib import Path
 
 from kaptyorka import __version__, http, paths, service
 
-COMMANDS = ["join", "hook"]
+COMMANDS = ["join"]
 
 
 def _stub(args) -> int:
@@ -102,6 +102,12 @@ def _bridge(args) -> int:
     return 0
 
 
+def _hook(args) -> int:
+    from kaptyorka import hook
+
+    return hook.main(args.tool, args.event, "" if sys.stdin.isatty() else sys.stdin.read())
+
+
 def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
@@ -116,6 +122,10 @@ def entry() -> None:
     m.add_argument("--workspace", help="project folder, for tools that do not set the cwd")
     m.set_defaults(run=_mcp)
     sub.add_parser("bridge", help="push messages into this machine's sessions").set_defaults(run=_bridge)
+    h = sub.add_parser("hook", help="print the hub's brief for a tool hook (started by the tool)")
+    h.add_argument("tool")
+    h.add_argument("event", help="start or prompt")
+    h.set_defaults(run=_hook)
     for name in COMMANDS:
         sub.add_parser(name, help=f"{name} (not implemented yet)").set_defaults(run=_stub)
     args = p.parse_args()

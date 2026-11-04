@@ -40,3 +40,18 @@ def call_error(hub, ident: dict, tool: str, **args) -> str:
 def tool_names(hub) -> set:
     r = run(_client(hub, {}, lambda c: c.list_tools()))
     return {t.name for t in r.tools}
+
+
+def write_session_file(home, pid, cwd="/w/murmur", status="idle", version="2.1.318",
+                       sock=None, peer_token=None):
+    """A Claude Code session file (and its .key file when peer_token is given)."""
+    import json
+
+    d = home / ".claude" / "sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    data = {"pid": pid, "cwd": cwd, "status": status, "version": version}
+    if sock is not None:
+        data["messagingSocketPath"] = str(sock)
+    (d / f"{pid}.json").write_text(json.dumps(data))
+    if peer_token is not None:
+        (d / f"{pid}.ab12.key").write_text(json.dumps({"peerToken": peer_token}))
