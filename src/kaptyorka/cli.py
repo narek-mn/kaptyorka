@@ -24,6 +24,15 @@ def _token() -> str:
     return p.read_text().strip()
 
 
+def _outbound_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
 def _serve(args) -> int:
     token = _token()
     if args.foreground:
@@ -36,9 +45,14 @@ def _serve(args) -> int:
         uvicorn.run(build_app(store, token), host="0.0.0.0", port=args.port, log_level="warning")
         return 0
     exe = str(Path(sys.argv[0]).resolve())
-    for line in service.install("kaptyorka-hub", [exe, "serve", "--foreground", "--port", str(args.port)]):
+    try:
+        lines = service.install("kaptyorka-hub", [exe, "serve", "--foreground", "--port", str(args.port)])
+    except service.ServiceError as e:
+        print(e, file=sys.stderr)
+        return 1
+    for line in lines:
         print(line, file=sys.stderr)
-    url = f"http://{socket.gethostname()}:{args.port}"
+    url = f"http://{args.host or _outbound_ip()}:{args.port}"
     print(f"hub:   {url}\ntoken: {token}\npage:  {url}/#t={token}")
     return 0
 
@@ -49,9 +63,12 @@ def _who(args) -> int:
         print("not joined: run kaptyorka join")
         return 1
     try:
-        _, feed = http.request("GET", cfg["hub"] + "/api/feed", cfg["token"])
+        status, feed = http.request("GET", cfg["hub"] + "/api/feed", cfg["token"])
     except http.HubUnreachable:
         print(f"kaptyorka hub unreachable at {cfg['hub']}")
+        return 1
+    if status != 200:
+        print(f"kaptyorka hub at {cfg['hub']} answered {status}")
         return 1
     rows = [("NAME", "STATUS", "ACTIVITY", "LAST SEEN")] + [
         (a["name"], a["status"], a.get("activity") or "", f"{a['last_seen_s']}s ago")
@@ -68,6 +85,7 @@ def entry() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("serve", help="run the hub (installs a user service)")
     s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--host", help="address shown to the team (default: this machine's IP)")
     s.add_argument("--foreground", action="store_true")
     s.set_defaults(run=_serve)
     sub.add_parser("who", help="list agents online").set_defaults(run=_who)

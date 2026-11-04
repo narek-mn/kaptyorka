@@ -1,6 +1,5 @@
 import getpass
 import os
-import socket
 import subprocess
 import sys
 from unittest import mock
@@ -59,9 +58,10 @@ def test_install_linux_linger_failure_prints_one_command(home):
 
 def test_install_darwin_bootstrap(home):
     calls = []
-    install("kaptyorka-hub", ["/k", "serve"], run=fake_run(calls, fail=("launchctl",)), platform="darwin")
+    lines = install("kaptyorka-hub", ["/k", "serve"], run=fake_run(calls), platform="darwin")
     plist = home / "Library/LaunchAgents/io.kaptyorka.kaptyorka-hub.plist"
     assert plist.exists()
+    assert lines == [f"installed {plist}"]
     assert ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)] in calls
     assert calls.index(["launchctl", "bootout", f"gui/{os.getuid()}", str(plist)]) < calls.index(
         ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)])
@@ -72,13 +72,12 @@ def test_serve_creates_token_once_and_prints_three_lines(home, capsys, monkeypat
     outs = []
     for _ in range(2):
         with pytest.raises(SystemExit) as e:
-            run_cli(["serve", "--port", "9999"])
+            run_cli(["serve", "--port", "9999", "--host", "10.0.0.5"])
         assert e.value.code == 0
         outs.append(capsys.readouterr().out.splitlines())
     assert outs[0] == outs[1]
     token = (paths.home() / "hub-token").read_text().strip()
-    host = socket.gethostname()
-    assert outs[0] == [f"hub:   http://{host}:9999", f"token: {token}", f"page:  http://{host}:9999/#t={token}"]
+    assert outs[0] == ["hub:   http://10.0.0.5:9999", f"token: {token}", f"page:  http://10.0.0.5:9999/#t={token}"]
     assert (paths.home() / "hub-token").stat().st_mode & 0o777 == 0o600
 
 
@@ -91,6 +90,7 @@ def test_who_prints_table(hub, home, capsys):
     out = capsys.readouterr().out
     assert out.splitlines()[0].split() == ["NAME", "STATUS", "ACTIVITY", "LAST", "SEEN"]
     assert len(out.splitlines()) == 2
+    assert paths.load_config() and hub.store.online()[0].name in out
 
 
 def test_who_not_joined(home, capsys):
@@ -106,3 +106,53 @@ def test_who_unreachable(home, capsys):
         run_cli(["who"])
     assert e.value.code == 1
     assert "kaptyorka hub unreachable at http://127.0.0.1:1" in capsys.readouterr().out
+
+
+def test_who_non_200(hub, home, capsys):
+    paths.save_config({"hub": hub.url, "token": "X"})
+    with pytest.raises(SystemExit) as e:
+        run_cli(["who"])
+    assert e.value.code == 1
+    assert f"kaptyorka hub at {hub.url} answered 401" in capsys.readouterr().out
+
+
+def test_install_linux_enable_failure_raises(home):
+    def run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 1 if "enable" in cmd else 0, "", "boom")
+    with pytest.raises(service.ServiceError, match="boom"):
+        install("kaptyorka-hub", ["/k"], run=run, platform="linux")
+
+
+def test_install_missing_systemctl_raises(home):
+    def run(cmd, **kw):
+        raise FileNotFoundError
+    with pytest.raises(service.ServiceError):
+        install("kaptyorka-hub", ["/k"], run=run, platform="linux")
+
+
+def test_serve_service_error_exits_1(home, capsys, monkeypatch):
+    def boom(*a, **k):
+        raise service.ServiceError("systemctl said no")
+    monkeypatch.setattr(service, "install", boom)
+    with pytest.raises(SystemExit) as e:
+        run_cli(["serve"])
+    assert e.value.code == 1
+    cap = capsys.readouterr()
+    assert cap.out == "" and "systemctl said no" in cap.err
+
+
+def test_darwin_bootstrap_retries(home):
+    calls, n = [], []
+    def run(cmd, **kw):
+        calls.append(list(cmd))
+        bad = cmd[1] == "bootstrap" and len(n) < 2
+        if cmd[1] == "bootstrap":
+            n.append(1)
+        return subprocess.CompletedProcess(cmd, 1 if bad else 0, "", "busy")
+    install("kaptyorka-hub", ["/k"], run=run, platform="darwin", sleep=lambda s: None)
+    assert sum(c[1] == "bootstrap" for c in calls) == 3
+
+
+def test_systemd_unit_quotes_and_escapes_percent():
+    text = unit_text("x", ["/a b/k", "100%"], "linux")
+    assert "ExecStart='/a b/k' 100%%" in text and "RestartSec=2" in text
