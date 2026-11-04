@@ -13,6 +13,7 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 
 @dataclass
@@ -23,7 +24,9 @@ class Identity:
     project: str
 
     def headers(self) -> dict:
-        return {f"X-Kaptyorka-{k.capitalize()}": v for k, v in asdict(self).items()}
+        """Percent-encoded, since header values must be ASCII; the hub unquotes them."""
+        return {f"X-Kaptyorka-{k.capitalize()}": quote(v, safe="")
+                for k, v in asdict(self).items()}
 
 
 def _ps(pid: int) -> Optional[Tuple[int, str]]:
@@ -80,13 +83,23 @@ def _tool(pid: int, comm: str) -> Optional[str]:
 
 def identify(machine: str, pid: Optional[int] = None,
              workspace: Optional[str] = None) -> Optional[Identity]:
+    """The session this process belongs to, or None (not in a tool, or not detectable yet)."""
     test = os.environ.get("KAPTYORKA_TEST_IDENTITY")
     if test:
         return Identity(**json.loads(test))
-    for tool_pid, comm in ancestors(os.getpid() if pid is None else pid):
+    try:
+        return _identify(machine, os.getpid() if pid is None else pid, workspace)
+    except (OSError, ValueError, KeyError, StopIteration):
+        return None  # e.g. a half-written session file or a process that just exited
+
+
+def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Identity]:
+    for tool_pid, comm in ancestors(pid):
         tool = _tool(tool_pid, comm)
         if tool:
             break
+        if os.path.basename(comm) == "claude":
+            return None  # Claude Code before it wrote its session file; the caller retries
     else:
         return None
     if tool == "claude-code":
@@ -97,6 +110,7 @@ def identify(machine: str, pid: Optional[int] = None,
         cwd = proc_cwd(tool_pid)
     resolve = RESOLVERS.get(tool)
     key = resolve(tool_pid, cwd) if resolve else None
-    if not key:
+    project = os.path.basename(cwd.rstrip("/"))
+    if not key or not project:
         return None
-    return Identity(key, machine, tool, os.path.basename(cwd.rstrip("/")))
+    return Identity(key, machine, tool, project)

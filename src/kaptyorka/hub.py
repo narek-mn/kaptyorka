@@ -7,6 +7,7 @@ import inspect
 import math
 from dataclasses import asdict
 from typing import List, Union
+from urllib.parse import unquote
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -94,7 +95,8 @@ def build_app(store: Store, token: str) -> Starlette:
     sent = {"event": asyncio.Event()}  # set and replaced after each send; wakes bridge polls
 
     def identify(h) -> Agent:
-        ident = [h.get(f"x-kaptyorka-{k}") for k in ("key", "machine", "tool", "project")]
+        # values are percent-encoded by Identity.headers(), since headers must be ASCII
+        ident = [unquote(h.get(f"x-kaptyorka-{k}") or "") for k in ("key", "machine", "tool", "project")]
         if not all(ident):
             raise KaptyorkaError("no kaptyorka identity; run kaptyorka join")
         return store.seen(*ident)

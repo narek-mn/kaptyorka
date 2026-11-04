@@ -47,10 +47,37 @@ def test_identify_test_override(monkeypatch):
     assert identify("pc") == Identity(**ident)
 
 
-def test_headers():
-    assert Identity("k", "m", "t", "p").headers() == {
-        "X-Kaptyorka-Key": "k", "X-Kaptyorka-Machine": "m",
+def test_headers_are_percent_encoded_ascii():
+    assert Identity("cursor:/w/мой app", "m", "t", "p").headers() == {
+        "X-Kaptyorka-Key": "cursor%3A%2Fw%2F%D0%BC%D0%BE%D0%B9%20app", "X-Kaptyorka-Machine": "m",
         "X-Kaptyorka-Tool": "t", "X-Kaptyorka-Project": "p"}
+
+
+def test_identify_corrupt_session_file_is_none(home, monkeypatch):
+    d = home / ".claude" / "sessions"
+    d.mkdir(parents=True)
+    (d / "4242.json").write_text('{"pid": 42')  # half written
+    monkeypatch.setattr(identity, "ancestors", lambda pid: [(4242, "claude")])
+    assert identify("pc", pid=1) is None
+
+
+def test_identify_proc_gone_is_none(home, monkeypatch):
+    def gone(pid):
+        raise FileNotFoundError(pid)
+    monkeypatch.setattr(identity, "ancestors", lambda pid: [(9, "opencode")])
+    monkeypatch.setattr(identity, "proc_cwd", gone)
+    monkeypatch.setitem(identity.RESOLVERS, "opencode", lambda pid, cwd: "opencode:S1")
+    assert identify("pc", pid=1) is None
+
+
+def test_identify_claude_without_session_file_stops_the_walk(home, monkeypatch):
+    monkeypatch.setattr(identity, "ancestors", lambda pid: [(4242, "claude"), (5, "Cursor")])
+    assert identify("pc", pid=1, workspace="/w/app") is None
+
+
+def test_identify_empty_project_is_none(home, monkeypatch):
+    monkeypatch.setattr(identity, "ancestors", lambda pid: [(5, "Cursor")])
+    assert identify("pc", pid=1, workspace="/") is None
 
 
 def test_ancestors_real_process():

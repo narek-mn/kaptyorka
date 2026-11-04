@@ -4,7 +4,7 @@ from typing import Optional
 import anyio
 import httpx2
 import mcp_types as types
-from mcp import Client
+from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
@@ -13,6 +13,7 @@ from kaptyorka import http, identity
 
 TIMEOUT_S = 4.5  # whole call, connection included: the agent hears back within 5 s
 HEARTBEAT_S = 10
+TRANSPORT_ERRORS = (types.CONNECTION_CLOSED, types.REQUEST_TIMEOUT)  # the client's, not the hub's
 FALLBACK_TOOLS = ["who", "send", "inbox", "status", "notes_list", "notes_read", "notes_write"]
 
 
@@ -30,7 +31,8 @@ class Relay:
         stop = anyio.Event()
         started = False
         try:
-            async with httpx2.AsyncClient(headers=self.headers, timeout=TIMEOUT_S) as h:
+            async with httpx2.AsyncClient(headers=self.headers,
+                                         timeout=httpx2.Timeout(TIMEOUT_S, read=None)) as h:
                 async with Client(streamable_http_client(self.url + "/mcp", http_client=h)) as c:
                     started = True
                     task_status.started((c, stop))
@@ -41,7 +43,10 @@ class Relay:
             # closing a client whose hub is gone fails; nothing to do about it
 
     async def use(self, fn):
-        """Run fn(client) within TIMEOUT_S; on any failure drop the client and return None."""
+        """Run fn(client) within TIMEOUT_S. On a transport failure drop the client and return
+        None. Any other JSON-RPC error (MCPError) is raised to show its message; the client is
+        dropped then too, since an expired session after a quick hub restart arrives as one."""
+        client = None
         try:
             with anyio.fail_after(TIMEOUT_S):
                 async with self.lock:
@@ -49,12 +54,21 @@ class Relay:
                         self.client, self.stop = await self.tg.start(self._hold)
                     client = self.client
                 return await fn(client)
+        except MCPError as e:
+            await self.drop(client)
+            if e.code in TRANSPORT_ERRORS:
+                return None
+            raise
         except Exception:
-            async with self.lock:
-                if self.client is not None:
-                    self.stop.set()
-                    self.client = self.stop = None
+            await self.drop(client)
             return None
+
+    async def drop(self, client: Optional[Client]) -> None:
+        """Close client if it is still the current one, so a late failure keeps a newer client."""
+        async with self.lock:
+            if client is not None and self.client is client:
+                self.stop.set()
+                self.client = self.stop = None
 
 
 async def _heartbeat(cfg: dict, ident: identity.Identity) -> None:
@@ -69,17 +83,37 @@ async def _heartbeat(cfg: dict, ident: identity.Identity) -> None:
         await anyio.sleep(HEARTBEAT_S)
 
 
+def _headers(cfg: dict, ident: Optional[identity.Identity]) -> dict:
+    return {"Authorization": f"Bearer {cfg['token']}", **(ident.headers() if ident else {})}
+
+
 async def _serve(cfg: dict, workspace: Optional[str]) -> None:
     url = cfg["hub"]
-    ident = identity.identify(cfg.get("machine", ""), workspace=workspace)
-    headers = {"Authorization": f"Bearer {cfg['token']}", **(ident.headers() if ident else {})}
     unreachable = f"kaptyorka hub unreachable at {url}"
 
     async with anyio.create_task_group() as tg:
-        relay = Relay(url, headers, tg)
+        relay = Relay(url, _headers(cfg, None), tg)
+        found = {"ident": None}
+
+        async def identify() -> None:
+            # Retried on each call until found: Claude Code may start the shim before it
+            # writes its session file.
+            if found["ident"]:
+                return
+            ident = await anyio.to_thread.run_sync(
+                lambda: identity.identify(cfg.get("machine", ""), workspace=workspace))
+            if ident:
+                found["ident"] = ident
+                relay.headers = _headers(cfg, ident)
+                await relay.drop(relay.client)
+                if ident.tool == "cursor":
+                    tg.start_soon(_heartbeat, cfg, ident)  # Cursor has no bridge to find its sessions
 
         async def list_tools(ctx, params) -> types.ListToolsResult:
-            r = await relay.use(lambda c: c.list_tools())
+            try:
+                r = await relay.use(lambda c: c.list_tools())
+            except MCPError:
+                r = None
             if r is not None:
                 return types.ListToolsResult(tools=r.tools)
             return types.ListToolsResult(tools=[
@@ -87,15 +121,19 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 for n in FALLBACK_TOOLS])
 
         async def call_tool(ctx, params) -> types.CallToolResult:
-            r = await relay.use(lambda c: c.call_tool(params.name, params.arguments or {}))
+            await identify()
+            try:
+                r = await relay.use(lambda c: c.call_tool(params.name, params.arguments or {}))
+            except MCPError as e:
+                return types.CallToolResult(content=[types.TextContent(text=e.message)],
+                                            is_error=True)
             if r is not None:
                 return r
             return types.CallToolResult(content=[types.TextContent(text=unreachable)],
                                         is_error=True)
 
         server = Server("kaptyorka", on_list_tools=list_tools, on_call_tool=call_tool)
-        if ident and ident.tool == "cursor":
-            tg.start_soon(_heartbeat, cfg, ident)  # Cursor has no bridge to find its sessions
+        await identify()
         async with stdio_server() as (read, write):
             await server.run(read, write, server.create_initialization_options())
         tg.cancel_scope.cancel()
