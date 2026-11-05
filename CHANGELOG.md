@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- `kaptyorka start` also prints the full `kaptyorka join` command, ready to copy and paste on each machine.
+
 ## 0.1.2
 
 - Tests now pass on macOS (long socket paths, socket shutdown, symlinked temp folder). CI jobs time out after 15 minutes instead of hanging.

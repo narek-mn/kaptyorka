@@ -35,7 +35,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.1.2" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.1.3" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
