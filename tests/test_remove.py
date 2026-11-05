@@ -135,6 +135,28 @@ def test_remove_everything_and_pipx_last(home, tmp_path, monkeypatch, capsys):
     assert "kaptyorka-bridge: service removed" in out and "spy: undone" in out and "uninstalled" in out
 
 
+def test_leave_undoes_join_and_keeps_hub_and_install(home, tmp_path, monkeypatch, capsys):
+    units = home / ".config/systemd/user"
+    units.mkdir(parents=True)
+    (units / "kaptyorka-bridge.service").write_text("x")
+    (units / "kaptyorka-hub.service").write_text("x")
+    paths.save_config({"hub": "h", "token": "t"})
+    (paths.home() / "hub-token").write_text("t\n")
+    venv = tmp_path / "venv"
+    venv.mkdir()
+    (venv / "pipx_metadata.json").write_text("{}")
+    monkeypatch.setattr(sys, "prefix", str(venv))
+    calls = []
+    assert remove.leave([Spy(calls)], run=fake_run(calls), platform="linux") == 0
+    assert not (units / "kaptyorka-bridge.service").exists()
+    assert (units / "kaptyorka-hub.service").exists() and (paths.home() / "hub-token").exists()
+    assert paths.load_config() == {"hub": "h", "token": "t"}  # plain `join` brings it back
+    assert "unconfigure" in calls and not any(c[0] == "pipx" for c in calls if isinstance(c, list))
+    assert not any("kaptyorka-hub" in " ".join(c) for c in calls if isinstance(c, list))
+    out = capsys.readouterr().out
+    assert "spy: undone" in out and "kaptyorka join brings this machine back" in out
+
+
 def test_remove_without_pipx_does_not_call_it(home, tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "prefix", str(tmp_path))
     calls = []

@@ -10,6 +10,34 @@ HUB_ONLY = "this machine runs the hub; run kaptyorka remove in a terminal to con
 ASK = "This machine runs the hub. Delete all team messages and notes? [y/N] "
 
 
+def _undo_join(adapters: Optional[list], run: Callable, platform: str, units) -> tuple:
+    """Remove the services and what `join` set up in each agent tool: (lines, exit code)."""
+    if adapters is None:
+        from kaptyorka.adapters import all_adapters
+        adapters = all_adapters(print)
+    lines: List[str] = []
+    for unit in units:
+        lines += service.remove(unit, run=run, platform=platform)
+    rc = 0
+    for a in adapters:
+        try:
+            lines += a.unconfigure()
+        except Exception as e:  # one broken tool must not stop the rest
+            print(f"{a.tool}: failed: {e}", file=sys.stderr)
+            rc = 1
+    return lines, rc
+
+
+def leave(adapters: Optional[list] = None, run: Callable = subprocess.run,
+          platform: str = sys.platform) -> int:
+    """Leave the hub: undo `join` here, keep kaptyorka, the saved hub address and any hub."""
+    lines, rc = _undo_join(adapters, run, platform, ("kaptyorka-bridge",))
+    for line in lines:
+        print(line)
+    print("left the hub; kaptyorka join brings this machine back")
+    return rc
+
+
 def main(adapters: Optional[list] = None, run: Callable = subprocess.run,
          platform: str = sys.platform, isatty: Optional[bool] = None,
          ask: Callable[[str], str] = input) -> int:
@@ -26,19 +54,7 @@ def main(adapters: Optional[list] = None, run: Callable = subprocess.run,
         if answer.strip().lower() != "y":
             print("nothing removed")
             return 1
-    if adapters is None:
-        from kaptyorka.adapters import all_adapters
-        adapters = all_adapters(print)
-    lines: List[str] = []
-    for unit in ("kaptyorka-bridge", "kaptyorka-hub"):
-        lines += service.remove(unit, run=run, platform=platform)
-    rc = 0
-    for a in adapters:
-        try:
-            lines += a.unconfigure()
-        except Exception as e:  # one broken tool must not stop the rest
-            print(f"{a.tool}: failed: {e}", file=sys.stderr)
-            rc = 1
+    lines, rc = _undo_join(adapters, run, platform, ("kaptyorka-bridge", "kaptyorka-hub"))
     if home.is_symlink():
         home.unlink()
     else:

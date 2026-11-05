@@ -142,6 +142,12 @@ def _remove(args) -> int:
     return remove.main()
 
 
+def _leave(args) -> int:
+    from kaptyorka import remove
+
+    return remove.leave()
+
+
 def _update(args, run=subprocess.run) -> int:
     venv = Path(sys.prefix)
     if not (venv / "pipx_metadata.json").exists():  # pipx writes this into every venv it makes
@@ -215,7 +221,7 @@ def _join(args) -> int:
 def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
-    sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,stop,update,remove}")
+    sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove}")
     hide = argparse.SUPPRESS  # subparsers are hidden by giving them no help text
     s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
     s.add_argument("--port", type=int, help="hub port (default 8765)")
@@ -227,6 +233,8 @@ def entry() -> None:
     j.add_argument("--name", default=socket.gethostname().split(".")[0], help="this machine's name")
     j.add_argument("--only", action="append", help=hide)
     j.set_defaults(run=_join)
+    sub.add_parser("leave", help="leave the hub: undo join on this machine, keep kaptyorka "
+                   "installed; join brings it back").set_defaults(run=_leave)
     sub.add_parser("stop", help="stop the bridge (and hub) and keep them off after a reboot; "
                    "start / join bring them back").set_defaults(run=_stop)
     sub.add_parser("update", help="update kaptyorka (pipx) to the latest version and restart "
