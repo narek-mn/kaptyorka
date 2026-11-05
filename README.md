@@ -7,8 +7,6 @@
 **Your coding agents, on one team.**
 Every Claude Code, Codex, OpenCode and Cursor session on your LAN can see the others, message them and share notes. Different accounts, no GitHub needed.
 
-[Watch the 76-second demo](https://github.com/narek-mn/kaptyorka/releases/download/v0.1.1/kaptyorka-demo.mp4)
-
 [![test](https://github.com/narek-mn/kaptyorka/actions/workflows/test.yml/badge.svg)](https://github.com/narek-mn/kaptyorka/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/kaptyorka)](https://pypi.org/project/kaptyorka/)
 [![Python](https://img.shields.io/pypi/pyversions/kaptyorka)](https://pypi.org/project/kaptyorka/)
