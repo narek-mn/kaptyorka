@@ -114,6 +114,7 @@ def test_listen_ports_of_real_process():
 
 def test_configure_merges_mcp_and_plugin(home, monkeypatch):
     monkeypatch.setenv("SHELL", "/bin/bash")
+    monkeypatch.setattr(opencode.sys, "platform", "linux")  # macOS writes .bash_profile instead
     cfg = home / ".config/opencode/opencode.json"
     cfg.parent.mkdir(parents=True)
     cfg.write_text(json.dumps({"mcp": {"other": {"type": "local", "command": ["x"]}}}))

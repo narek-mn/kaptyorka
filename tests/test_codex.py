@@ -175,6 +175,7 @@ def configure(home, kaptyorka="/k", **kw):
 
 def test_configure_toml_block_by_markers(home, codex_home, monkeypatch):
     monkeypatch.setenv("SHELL", "/bin/bash")
+    monkeypatch.setattr(base.sys, "platform", "linux")  # macOS writes .bash_profile instead
     toml = codex_home / "config.toml"
     toml.write_text('model = "o3"\n\n[mcp_servers.other]\ncommand = "x"\n')
     first = configure(home)
@@ -258,7 +259,7 @@ def test_configure_writes_toml_atomically_keeping_mode(home, codex_home, monkeyp
     real = os.replace
     monkeypatch.setattr(base.os, "replace", lambda a, b: replaced.append(b) or real(a, b))
     configure(home)
-    assert toml in [Path(p) for p in replaced]
+    assert toml.resolve() in [Path(p).resolve() for p in replaced]  # macOS tmp is a symlink
     assert toml.stat().st_mode & 0o777 == 0o640
     assert sorted(p.name for p in codex_home.iterdir()) == ["config.toml", "hooks.json"]
 

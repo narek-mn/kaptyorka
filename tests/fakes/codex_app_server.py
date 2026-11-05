@@ -60,7 +60,7 @@ class FakeCodex:
         finally:
             os.chdir(here)
         self.sock.listen(8)
-        self.thread = threading.Thread(target=self._serve)
+        self.thread = threading.Thread(target=self._serve, daemon=True)
         self.thread.start()
 
     def _serve(self):
@@ -149,7 +149,10 @@ class FakeCodex:
         return out
 
     def stop(self):
-        self.sock.shutdown(socket.SHUT_RDWR)
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass  # macOS: a listening socket was never connected
         self.sock.close()
         self.thread.join()
         os.unlink(self.path)

@@ -12,13 +12,12 @@ import socket
 import struct
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from kaptyorka import __version__
-from kaptyorka.adapters.base import (DeliveryError, Session, add_alias, drop_hooks, is_our_hook, merge_json,
+from kaptyorka.adapters.base import (DeliveryError, Session, add_alias, connect_unix, drop_hooks, is_our_hook, merge_json,
                                      remove_alias, write_atomic)
 
 TIMEOUT_S = 5
@@ -27,7 +26,6 @@ ALIAS = "alias codex='codex --remote unix://'"
 START, END = "# kaptyorka start", "# kaptyorka end"
 APPROVE = "codex: approve the kaptyorka hooks once with /hooks in Codex"
 EVENTS = (("SessionStart", "start"), ("UserPromptSubmit", "prompt"))
-_cwd_lock = threading.Lock()
 
 
 def codex_home(home: Optional[Path] = None) -> Path:
@@ -52,7 +50,7 @@ class Rpc:
         self.s.settimeout(timeout)
         self.next_id = 0
         try:
-            self._connect(path)
+            connect_unix(self.s, path)
             self.s.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
                            b"Connection: Upgrade\r\nSec-WebSocket-Key: "
                            + base64.b64encode(os.urandom(16))
@@ -68,18 +66,6 @@ class Rpc:
         except BaseException:
             self.s.close()
             raise
-
-    def _connect(self, path: Path) -> None:
-        if len(os.fsencode(str(path))) < 100:
-            self.s.connect(str(path))
-            return
-        with _cwd_lock:  # AF_UNIX paths over 108 bytes fail: connect from the socket's folder
-            here = os.getcwd()
-            os.chdir(path.parent)
-            try:
-                self.s.connect(path.name)
-            finally:
-                os.chdir(here)
 
     def __enter__(self):
         return self

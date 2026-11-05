@@ -9,8 +9,10 @@ Session keys, one per tool, identical in shim, hook and bridge:
 import json
 import os
 import shlex
+import socket
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Protocol
@@ -48,6 +50,24 @@ class Adapter(Protocol):
 
     def unconfigure(self) -> List[str]:
         """Undo configure: remove only our entries; return one line per thing removed."""
+
+
+_cwd_lock = threading.Lock()
+
+
+def connect_unix(sock: socket.socket, path) -> None:
+    """Connect a Unix socket; a long path is reached from its own folder."""
+    path = str(path)
+    if len(os.fsencode(path)) < 100:  # limit is 108 bytes on Linux, 104 on macOS
+        sock.connect(path)
+        return
+    with _cwd_lock:
+        here = os.getcwd()
+        os.chdir(os.path.dirname(path))
+        try:
+            sock.connect(os.path.basename(path))
+        finally:
+            os.chdir(here)
 
 
 def write_atomic(path: Path, text: str) -> None:

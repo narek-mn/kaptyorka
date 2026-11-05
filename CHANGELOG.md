@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Tests now pass on macOS (long socket paths, socket shutdown, symlinked temp folder). CI jobs time out after 15 minutes instead of hanging.
+- Fix: pushing to a Claude Code session works when its socket path is longer than macOS allows.
+
 ## 0.1.1
 
 - First release on PyPI. 0.1.0 never reached PyPI: its package had no description.

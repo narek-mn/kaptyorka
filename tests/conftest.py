@@ -51,7 +51,7 @@ def start_hub(store, port: int = 0):
 
     server = uvicorn.Server(uvicorn.Config(build_app(store, "T"), host="127.0.0.1", port=port,
                                            log_level="warning", timeout_graceful_shutdown=1))
-    thread = threading.Thread(target=server.run)
+    thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     deadline = time.monotonic() + 10
     while not server.started:

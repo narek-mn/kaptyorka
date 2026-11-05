@@ -1,8 +1,11 @@
 import json
 import os
+import shutil
 import socket
 import subprocess
+import tempfile
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -33,7 +36,7 @@ class UnixServer:
         self.sock.bind(str(path))
         self.sock.listen(1)
         self.data = b""
-        self.thread = threading.Thread(target=self._serve)
+        self.thread = threading.Thread(target=self._serve, daemon=True)
         self.thread.start()
 
     def _serve(self):
@@ -71,6 +74,14 @@ def fake_claude_cli(tmp_path, monkeypatch):
     return fake
 
 
+@pytest.fixture
+def sock_dir():
+    """Short folder: macOS caps Unix socket paths at 104 bytes and its tmp_path is longer."""
+    d = Path(tempfile.mkdtemp(prefix="kp", dir="/tmp"))
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def live_sock(tmp_path):
     p = tmp_path / "live.sock"
     p.touch()
@@ -84,9 +95,9 @@ def test_sessions_from_folder(home, tmp_path):
         Session(f"claude:{os.getpid()}", "claude-code", "murmur", "idle")]
 
 
-def test_socket_push_multiline_text(home, tmp_path):
-    srv = UnixServer(tmp_path / "s.sock")
-    write_session_file(home, pid=os.getpid(), sock=tmp_path / "s.sock", peer_token="P")
+def test_socket_push_multiline_text(home, sock_dir):
+    srv = UnixServer(sock_dir / "s.sock")
+    write_session_file(home, pid=os.getpid(), sock=sock_dir / "s.sock", peer_token="P")
     ClaudeAdapter(home).deliver(f"claude:{os.getpid()}", 'line1\nline2 "q" ✓')
     a, u = [json.loads(line) for line in srv.lines()]
     assert a == {"type": "auth", "token": "P"}
@@ -99,9 +110,9 @@ def test_sessions_skip_missing_socket(home, tmp_path):
     assert ClaudeAdapter(home).sessions() == []
 
 
-def test_socket_push_uses_newest_key_file(home, tmp_path):
-    srv = UnixServer(tmp_path / "s.sock")
-    write_session_file(home, pid=os.getpid(), sock=tmp_path / "s.sock")
+def test_socket_push_uses_newest_key_file(home, sock_dir):
+    srv = UnixServer(sock_dir / "s.sock")
+    write_session_file(home, pid=os.getpid(), sock=sock_dir / "s.sock")
     d = home / ".claude" / "sessions"
     (d / f"{os.getpid()}.ffff.key").write_text(json.dumps({"peerToken": "OLD"}))
     os.utime(d / f"{os.getpid()}.ffff.key", (1, 1))
@@ -110,17 +121,17 @@ def test_socket_push_uses_newest_key_file(home, tmp_path):
     assert json.loads(srv.lines()[0]) == {"type": "auth", "token": "NEW"}
 
 
-def test_socket_push_error_reply_raises(home, tmp_path):
-    srv = UnixServer(tmp_path / "s.sock", reply=b'{"type":"error","message":"bad token"}\n')
-    write_session_file(home, pid=os.getpid(), sock=tmp_path / "s.sock", peer_token="P")
+def test_socket_push_error_reply_raises(home, sock_dir):
+    srv = UnixServer(sock_dir / "s.sock", reply=b'{"type":"error","message":"bad token"}\n')
+    write_session_file(home, pid=os.getpid(), sock=sock_dir / "s.sock", peer_token="P")
     with pytest.raises(DeliveryError, match="bad token"):
         ClaudeAdapter(home).deliver(f"claude:{os.getpid()}", "hi")
     srv.lines()
 
 
-def test_socket_push_without_key_file_skips_auth(home, tmp_path):
-    srv = UnixServer(tmp_path / "s.sock")
-    write_session_file(home, pid=os.getpid(), sock=tmp_path / "s.sock")
+def test_socket_push_without_key_file_skips_auth(home, sock_dir):
+    srv = UnixServer(sock_dir / "s.sock")
+    write_session_file(home, pid=os.getpid(), sock=sock_dir / "s.sock")
     ClaudeAdapter(home).deliver(f"claude:{os.getpid()}", "hi")
     assert [json.loads(line)["type"] for line in srv.lines()] == ["user"]
 

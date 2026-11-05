@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from kaptyorka.adapters.base import DeliveryError, Session, drop_hooks, is_our_hook, merge_json
+from kaptyorka.adapters.base import DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, merge_json
 
 CLAUDE_CODE_TESTED = "2.1.318"
 
@@ -67,7 +67,7 @@ class ClaudeAdapter:
             token = json.loads(keys[-1].read_text())["peerToken"] if keys else None
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
                 s.settimeout(5)
-                s.connect(sock_path)
+                connect_unix(s, sock_path)
                 if token is not None:
                     s.sendall((json.dumps({"type": "auth", "token": token}) + "\n").encode())
                 message = {"type": "user", "message": {"role": "user", "content": text}}

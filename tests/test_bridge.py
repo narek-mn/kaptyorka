@@ -127,7 +127,7 @@ def test_run_heartbeats_delivers_and_stops(hub, home, monkeypatch):
     monkeypatch.setattr(bridge_mod, "WAIT_S", 1)
     fake = fake_codex()
     bridge = Bridge(cfg(hub), [fake], bridge_mod.log)
-    th = threading.Thread(target=bridge.run)
+    th = threading.Thread(target=bridge.run, daemon=True)
     th.start()
     try:
         wait_for(lambda: hub.store.agent("codex:5") is not None)
@@ -154,7 +154,7 @@ def test_hub_down_logged_once_per_outage(hub, home, monkeypatch):
     calls = []
     real_poll = bridge.poll_once
     bridge.poll_once = lambda wait=25: (calls.append(1), real_poll(wait))[1]
-    th = threading.Thread(target=bridge.run)
+    th = threading.Thread(target=bridge.run, daemon=True)
     th.start()
     try:
         wait_for(lambda: len(calls) >= 3)
@@ -187,7 +187,7 @@ def test_cut_off_reply_counts_as_unreachable():
                 conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
                              b"Content-Length: 100\r\n\r\n[1, 2")
 
-        th = threading.Thread(target=answer)
+        th = threading.Thread(target=answer, daemon=True)
         th.start()
         try:
             url = f"http://127.0.0.1:{srv.getsockname()[1]}/bridge/poll"
