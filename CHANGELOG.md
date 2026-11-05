@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7
+
+- Fix: a message held for an offline session goes only to that session, or to a new session that takes its name, never to another session in the same folder.
+
 ## 0.1.6
 
 - A restarted or resumed Claude Code session keeps its name (sessions are now keyed by Claude's session id, not the process id). A closed session frees its name at once.

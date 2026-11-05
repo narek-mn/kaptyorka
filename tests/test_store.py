@@ -60,6 +60,28 @@ def test_message_to_online_dash2_not_taken_by_first(store):
     assert store.inbox("one") == [] and len(store.inbox("two")) == 1
 
 
+def test_held_message_not_taken_by_other_session_in_same_folder(store, clock):
+    store.seen("s", "pc", "codex", "a")
+    store.seen("one", "boo", "opencode", "workspace"); store.seen("two", "boo", "opencode", "workspace")
+    store.send("s", "boo/opencode/workspace-2", "hi")
+    clock.t += 31; store.seen("s", "pc", "codex", "a"); store.seen("one", "boo", "opencode", "workspace")
+    assert store.inbox("one") == []
+    store.seen("two", "boo", "opencode", "workspace")
+    assert [m.text for m in store.inbox("two")] == ["hi"]
+
+
+def test_held_message_goes_to_new_session_after_restart(store, clock):
+    sess = {"key": "claude:S1", "tool": "claude-code", "project": "murmur"}
+    store.seen("s", "pc", "codex", "a")
+    store.heartbeat("dgx", [sess], ["claude-code"])
+    store.send("s", "dgx/claude-code/murmur", "hi"); clock.t += 5
+    store.heartbeat("dgx", [], ["claude-code"])  # session gone, name free
+    store.seen("s", "pc", "codex", "a")
+    new = store.seen("claude:S2", "dgx", "claude-code", "murmur")
+    assert new.name == "dgx/claude-code/murmur"
+    assert [m.text for m in store.inbox("claude:S2")] == ["hi"]
+
+
 def test_offer_frames_and_ack_marks_read(store):
     store.seen("s", "pc", "codex", "a"); store.seen("t", "dgx", "codex", "b")
     store.send("s", "dgx/codex/b", "hi")

@@ -205,8 +205,7 @@ class Store:
         out = []
         for m in self.db.execute("SELECT * FROM messages WHERE read_at IS NULL ORDER BY id"):
             target = by_key.get(m["to_key"]) or next(
-                (r for r in online if (r["machine"], r["tool"], r["project"])
-                 == (m["machine"], m["tool"], m["project"])), None)
+                (r for r in online if r["name"] == m["to_name"]), None)
             if target is not None:
                 out.append((m, target))
         return out
