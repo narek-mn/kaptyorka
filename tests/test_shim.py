@@ -126,12 +126,12 @@ def test_shim_finds_claude_session_file_written_late(hub, home):
             assert r.is_error and "no kaptyorka identity" in text(r)
             d = home / ".claude" / "sessions"
             d.mkdir(parents=True)
-            (d / f"{os.getpid()}.json").write_text(json.dumps({"cwd": "/w/murmur"}))
+            (d / f"{os.getpid()}.json").write_text(json.dumps({"cwd": "/w/murmur", "sessionId": "sid-x"}))
             r = await c.call_tool("who", {})
             assert not r.is_error, text(r)
     anyio.run(go)
     [a] = hub.store.online()
-    assert (a.key, a.tool, a.project) == (f"claude:{os.getpid()}", "claude-code", "murmur")
+    assert (a.key, a.tool, a.project) == ("claude:sid-x", "claude-code", "murmur")
 
 
 def test_shim_passes_hub_errors_through(hub, home):
@@ -153,3 +153,18 @@ def test_shim_opencode_v2_session_from_call_meta(hub, home):
     anyio.run(go)
     assert sorted((a.key, a.tool) for a in hub.store.online()) == [
         ("opencode:ses_a", "opencode"), ("opencode:ses_b", "opencode")]
+
+
+def test_shim_follows_claude_session_id_change(hub, home):
+    d = home / ".claude" / "sessions"
+    d.mkdir(parents=True)
+    f = d / f"{os.getpid()}.json"
+    f.write_text(json.dumps({"cwd": "/w/murmur", "sessionId": "old"}))
+
+    async def go():
+        async with shim(home, hub.url, ident=None) as c:
+            assert not (await c.call_tool("who", {})).is_error
+            f.write_text(json.dumps({"cwd": "/w/murmur", "sessionId": "new"}))  # /clear
+            assert not (await c.call_tool("who", {})).is_error
+    anyio.run(go)
+    assert {a.key for a in hub.store.online()} == {"claude:old", "claude:new"}

@@ -236,3 +236,14 @@ def test_bridge_drives_only_joined_tools():
     a, b = FakeAdapter("claude-code", "claude"), FakeAdapter("codex", "codex")
     assert joined_adapters({"tools": ["claude-code"]}, [a, b]) == [a]
     assert joined_adapters({}, [a, b]) == [a, b]  # joined without --only
+
+
+def test_heartbeat_frees_closed_claude_session_but_keeps_codex_when_list_is_empty(hub, home):
+    cl = FakeAdapter("claude-code", "claude", [Session("claude:S1", "claude-code", "m")])
+    codex = fake_codex()
+    bridge = Bridge(cfg(hub), [cl, codex], bridge_mod.log)
+    bridge.heartbeat()
+    cl._sessions.clear()
+    codex._sessions.clear()  # daemon down: an empty list proves nothing
+    bridge.heartbeat()
+    assert [a.key for a in hub.store.online()] == ["codex:5"]

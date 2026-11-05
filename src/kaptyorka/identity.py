@@ -1,7 +1,8 @@
 """Which agent session started this process, found from its parent processes.
 
 Session keys, one per tool, identical in shim, hook and bridge:
-  claude:<pid>             project = basename of the session file's cwd
+  claude:<session id>      Claude's sessionId from ~/.claude/sessions/<pid>.json (kept on resume);
+                           project = basename of the session file's cwd
   opencode:<session id>
   codex:<thread id>
   cursor:<workspace path>  workspace = the --workspace argument, else the shim's cwd
@@ -77,7 +78,7 @@ def _codex_key(pid: int, cwd: str) -> Optional[str]:
 
 
 RESOLVERS: Dict[str, Callable[[int, str], Optional[str]]] = {
-    "claude-code": lambda pid, cwd: f"claude:{pid}",
+    "claude-code": lambda pid, cwd: "claude:" + json.loads(_session_file(pid).read_text())["sessionId"],
     "opencode": _opencode_key,
     "codex": _codex_key,
     "cursor": lambda pid, cwd: f"cursor:{cwd}",

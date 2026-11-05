@@ -9,7 +9,7 @@ from helpers import write_session_file
 def test_identify_claude_from_session_file(home, monkeypatch):
     write_session_file(home, pid=4242, cwd="/w/murmur")
     monkeypatch.setattr(identity, "ancestors", lambda pid: [(100, "sh"), (4242, "claude")])
-    assert identify("pc", pid=1) == Identity("claude:4242", "pc", "claude-code", "murmur")
+    assert identify("pc", pid=1) == Identity("claude:sid-4242", "pc", "claude-code", "murmur")
 
 
 def test_identify_uses_resolver(home, monkeypatch):

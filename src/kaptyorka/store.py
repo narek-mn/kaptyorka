@@ -4,7 +4,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence
 
 ONLINE_S = 30
 LEASE_S = 60
@@ -127,9 +127,16 @@ class Store:
             row = self.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
             return self._agent(row, now)
 
-    def heartbeat(self, machine: str, sessions: List[dict]) -> None:
+    def heartbeat(self, machine: str, sessions: List[dict], tools: Sequence[str] = ()) -> None:
+        """`tools` are the tools whose sessions this list is complete for: the rest of their agents
+        on this machine are gone, so their names are free at once."""
         with self.lock:
             now = self.clock()
+            seen = {s["key"] for s in sessions}
+            for r in self._online_rows(now):
+                if r["machine"] == machine and r["tool"] in tools and r["key"] not in seen:
+                    self.db.execute("UPDATE agents SET last_seen=? WHERE key=?",
+                                    (now - ONLINE_S, r["key"]))
             for s in sessions:
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s.get("activity"),
                             s.get("label", ""))

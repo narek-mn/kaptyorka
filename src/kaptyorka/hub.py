@@ -165,7 +165,7 @@ def build_app(store: Store, token: str) -> Starlette:
     @_bad_request
     async def bridge_heartbeat(request: Request) -> Response:
         body = await request.json()
-        store.heartbeat(body["machine"], body["sessions"])
+        store.heartbeat(body["machine"], body["sessions"], body.get("tools", ()))
         return Response(status_code=204)
 
     @server.custom_route("/bridge/poll", methods=["GET"])

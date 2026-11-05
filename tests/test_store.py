@@ -196,3 +196,22 @@ def test_old_db_without_label_column_opens(tmp_path):
     assert s.agent("a").label == "named"
     s.close()
     Store(path).close()  # reopening with the column present is fine
+
+
+def test_resumed_session_keeps_its_name(store, clock):
+    sess = [{"key": "claude:S1", "tool": "claude-code", "project": "murmur"}]
+    store.heartbeat("pc", sess, ["claude-code"]); clock.t += 5
+    store.heartbeat("pc", sess, ["claude-code"])  # new pid, same session id: same key
+    assert [a.name for a in store.online()] == ["pc/claude-code/murmur"]
+
+
+def test_session_missing_from_heartbeat_frees_its_name(store, clock):
+    old = {"key": "claude:S1", "tool": "claude-code", "project": "murmur"}
+    other = {"key": "codex:T", "tool": "codex", "project": "murmur"}
+    store.heartbeat("pc", [old, other], ["claude-code", "codex"])
+    store.seen("d", "dgx", "claude-code", "murmur"); clock.t += 5
+    store.heartbeat("pc", [other], ["claude-code"])  # codex not covered, dgx is another machine
+    assert {a.key for a in store.online()} == {"codex:T", "d"}
+    store.heartbeat("pc", [{"key": "claude:S2", "tool": "claude-code", "project": "murmur"}],
+                    ["claude-code"])
+    assert store.agent("claude:S2").name == "pc/claude-code/murmur"

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+- A restarted or resumed Claude Code session keeps its name (sessions are now keyed by Claude's session id, not the process id). A closed session frees its name at once.
+
 ## 0.1.5
 
 - New `kaptyorka leave`: takes this machine off the hub (the bridge and what `join` set up in your agent tools) and keeps kaptyorka installed. `kaptyorka join` brings it back.

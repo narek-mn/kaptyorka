@@ -12,6 +12,7 @@ from kaptyorka.adapters.base import Adapter
 HEARTBEAT_S = 10
 WAIT_S = 25
 RETRY_S = 5
+COMPLETE = {"claude-code"}  # the only tool whose session list is complete; the rest may miss live ones
 
 
 def log(line: str) -> None:
@@ -40,7 +41,7 @@ class Bridge:
         self._problems[area] = problem
 
     def heartbeat(self) -> None:
-        sessions = []
+        sessions, tools = [], []
         for a in self.adapters:
             try:
                 found = [asdict(s) for s in a.sessions()]
@@ -49,8 +50,11 @@ class Bridge:
                 found, problem = [], f"{a.tool} sessions failed: {e}"
             self._report("sessions:" + a.prefix, problem)
             sessions += found
+            if problem is None and a.tool in COMPLETE:
+                tools.append(a.tool)  # this list is complete for it
         status, _ = http.request("POST", self.cfg["hub"] + "/bridge/heartbeat", self.cfg["token"],
-                                 {"machine": self.cfg["machine"], "sessions": sessions})
+                                 {"machine": self.cfg["machine"], "sessions": sessions,
+                                  "tools": tools})
         self._report("heartbeat", None if status == 204 else f"hub answered {status} to heartbeat")
 
     def _ack(self, msg_id: int, ok: bool) -> None:

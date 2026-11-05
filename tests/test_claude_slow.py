@@ -17,12 +17,13 @@ NAME = "kaptyorka-slow"
 
 def _session_for(cwd: Path):
     for s in ClaudeAdapter().sessions():
-        f = Path.home() / ".claude" / "sessions" / (s.key.split(":", 1)[1] + ".json")
-        try:
-            if json.loads(f.read_text())["cwd"] == str(cwd):
-                return s
-        except (OSError, ValueError, KeyError):
-            pass
+        for f in (Path.home() / ".claude" / "sessions").glob("*.json"):
+            try:
+                data = json.loads(f.read_text())
+                if data["sessionId"] == s.key.split(":", 1)[1] and data["cwd"] == str(cwd):
+                    return s
+            except (OSError, ValueError, KeyError):
+                pass
     return None
 
 

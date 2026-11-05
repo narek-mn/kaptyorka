@@ -100,11 +100,12 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
         async def identify() -> None:
             # Retried on each call until found: Claude Code may start the shim before it
             # writes its session file.
-            if found["ident"]:
+            # Claude Code rewrites its session id on /clear and /resume, so it is re-read each call.
+            if found["ident"] and found["ident"].tool != "claude-code":
                 return
             ident = await anyio.to_thread.run_sync(
                 lambda: identity.identify(cfg.get("machine", ""), workspace=workspace))
-            if ident:
+            if ident and ident != found["ident"]:
                 found["ident"] = ident
                 relay.headers = _headers(cfg, ident)
                 await relay.drop(relay.client)

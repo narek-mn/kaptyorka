@@ -43,13 +43,13 @@ def tool_names(hub) -> set:
 
 
 def write_session_file(home, pid, cwd="/w/murmur", status="idle", version="2.1.318",
-                       sock=None, peer_token=None, name=None, name_source=None):
+                       sock=None, peer_token=None, name=None, name_source=None, session_id=None):
     """A Claude Code session file (and its .key file when peer_token is given)."""
     import json
 
     d = home / ".claude" / "sessions"
     d.mkdir(parents=True, exist_ok=True)
-    data = {"pid": pid, "cwd": cwd, "status": status, "version": version}
+    data = {"pid": pid, "sessionId": session_id or f"sid-{pid}", "cwd": cwd, "status": status, "version": version}
     if name is not None:
         data["name"], data["nameSource"] = name, name_source
     if sock is not None:

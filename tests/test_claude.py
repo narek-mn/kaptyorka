@@ -92,13 +92,13 @@ def test_sessions_from_folder(home, tmp_path):
     write_session_file(home, pid=os.getpid(), cwd="/w/murmur", status="idle", sock=live_sock(tmp_path))
     write_session_file(home, pid=dead_pid(), cwd="/w/gone", sock=live_sock(tmp_path))
     assert ClaudeAdapter(home).sessions() == [
-        Session(f"claude:{os.getpid()}", "claude-code", "murmur", "idle")]
+        Session(f"claude:sid-{os.getpid()}", "claude-code", "murmur", "idle")]
 
 
 def test_socket_push_multiline_text(home, sock_dir):
     srv = UnixServer(sock_dir / "s.sock")
     write_session_file(home, pid=os.getpid(), sock=sock_dir / "s.sock", peer_token="P")
-    ClaudeAdapter(home).deliver(f"claude:{os.getpid()}", 'line1\nline2 "q" ✓')
+    ClaudeAdapter(home).deliver(f"claude:sid-{os.getpid()}", 'line1\nline2 "q" ✓')
     a, u = [json.loads(line) for line in srv.lines()]
     assert a == {"type": "auth", "token": "P"}
     assert u == {"type": "user", "message": {"role": "user", "content": 'line1\nline2 "q" ✓'}}
@@ -117,7 +117,7 @@ def test_socket_push_uses_newest_key_file(home, sock_dir):
     (d / f"{os.getpid()}.ffff.key").write_text(json.dumps({"peerToken": "OLD"}))
     os.utime(d / f"{os.getpid()}.ffff.key", (1, 1))
     (d / f"{os.getpid()}.0000.key").write_text(json.dumps({"peerToken": "NEW"}))
-    ClaudeAdapter(home).deliver(f"claude:{os.getpid()}", "hi")
+    ClaudeAdapter(home).deliver(f"claude:sid-{os.getpid()}", "hi")
     assert json.loads(srv.lines()[0]) == {"type": "auth", "token": "NEW"}
 
 
@@ -125,23 +125,23 @@ def test_socket_push_error_reply_raises(home, sock_dir):
     srv = UnixServer(sock_dir / "s.sock", reply=b'{"type":"error","message":"bad token"}\n')
     write_session_file(home, pid=os.getpid(), sock=sock_dir / "s.sock", peer_token="P")
     with pytest.raises(DeliveryError, match="bad token"):
-        ClaudeAdapter(home).deliver(f"claude:{os.getpid()}", "hi")
+        ClaudeAdapter(home).deliver(f"claude:sid-{os.getpid()}", "hi")
     srv.lines()
 
 
 def test_socket_push_without_key_file_skips_auth(home, sock_dir):
     srv = UnixServer(sock_dir / "s.sock")
     write_session_file(home, pid=os.getpid(), sock=sock_dir / "s.sock")
-    ClaudeAdapter(home).deliver(f"claude:{os.getpid()}", "hi")
+    ClaudeAdapter(home).deliver(f"claude:sid-{os.getpid()}", "hi")
     assert [json.loads(line)["type"] for line in srv.lines()] == ["user"]
 
 
 def test_push_to_missing_socket_raises(home, tmp_path):
     write_session_file(home, pid=os.getpid(), sock=tmp_path / "none.sock", peer_token="P")
     with pytest.raises(DeliveryError):
-        ClaudeAdapter(home).deliver(f"claude:{os.getpid()}", "hi")
+        ClaudeAdapter(home).deliver(f"claude:sid-{os.getpid()}", "hi")
     with pytest.raises(DeliveryError):
-        ClaudeAdapter(home).deliver("claude:999999999", "no session file")
+        ClaudeAdapter(home).deliver("claude:sid-nope", "no session file")
 
 
 def test_newer_version_warns_once(home, tmp_path):
@@ -242,3 +242,14 @@ def test_label_is_session_name_user_or_derived(home, tmp_path):
     assert [s.label for s in ClaudeAdapter(home).sessions()] == ["fix-the-bug"]
     write_session_file(home, pid=os.getpid(), sock=sock)  # no name at all
     assert [s.label for s in ClaudeAdapter(home).sessions()] == [""]
+
+
+def test_resumed_session_keeps_key_and_deliver_follows_new_pid(home, sock_dir):
+    srv = UnixServer(sock_dir / "s.sock")
+    write_session_file(home, pid=os.getppid(), session_id="S1", sock=live_sock(sock_dir))
+    (home / ".claude" / "sessions" / f"{os.getppid()}.json").unlink()  # old process closed
+    write_session_file(home, pid=os.getpid(), session_id="S1", sock=sock_dir / "s.sock")
+    a = ClaudeAdapter(home)
+    assert [s.key for s in a.sessions()] == ["claude:S1"]
+    a.deliver("claude:S1", "hi")
+    assert json.loads(srv.lines()[0])["message"]["content"] == "hi"

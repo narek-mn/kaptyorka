@@ -44,6 +44,7 @@ class ClaudeAdapter:
                 os.kill(pid, 0)
                 data = json.loads(f.read_text())
                 cwd = data["cwd"]
+                session_id = data["sessionId"]
                 if not os.path.exists(data["messagingSocketPath"]):
                     continue  # pid reused by another process, or a session that closed badly
             except (OSError, ValueError, KeyError, TypeError):
@@ -55,14 +56,25 @@ class ClaudeAdapter:
                          "push may break, pull still works")
             name = data.get("name")
             label = name if isinstance(name, str) else ""
-            out.append(Session(f"claude:{pid}", self.tool, os.path.basename(cwd.rstrip("/")),
+            out.append(Session(f"claude:{session_id}", self.tool, os.path.basename(cwd.rstrip("/")),
                                data.get("status", ""), label))
         return out
 
+    def _find(self, key: str):
+        """(pid, socket path) of the session file whose sessionId is in the key."""
+        wanted = key.split(":", 1)[1]
+        for f in self.dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text())
+                if data["sessionId"] == wanted:
+                    return int(f.stem), data["messagingSocketPath"]
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        raise ValueError("no session file with that id")
+
     def deliver(self, key: str, text: str) -> None:
         try:
-            pid = int(key.split(":", 1)[1])
-            sock_path = json.loads((self.dir / f"{pid}.json").read_text())["messagingSocketPath"]
+            pid, sock_path = self._find(key)
             keys = sorted(self.dir.glob(f"{pid}.*.key"), key=lambda p: p.stat().st_mtime)
             token = json.loads(keys[-1].read_text())["peerToken"] if keys else None
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:

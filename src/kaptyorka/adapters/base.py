@@ -1,7 +1,8 @@
 """What every tool adapter provides, and the shared JSON config merge.
 
 Session keys, one per tool, identical in shim, hook and bridge:
-  claude:<pid>             project = basename of the session file's cwd
+  claude:<session id>      Claude's sessionId from ~/.claude/sessions/<pid>.json (kept on resume);
+                           project = basename of the session file's cwd
   opencode:<session id>
   codex:<thread id>
   cursor:<workspace path>  workspace = the --workspace argument, else the shim's cwd
