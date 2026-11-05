@@ -91,7 +91,7 @@ If your human asked you to set up Kaptyorka, do these three steps:
 | Tool | Messages | What `join` changes | Restart |
 |---|---|---|---|
 | Claude Code | push | Adds the `kaptyorka` MCP server (user scope) and two hooks in `~/.claude/settings.json`. | Open sessions, once |
-| OpenCode | push | Adds the MCP server and a plugin in `~/.config/opencode`. Adds `alias opencode='opencode --port 0'` to your shell rc file. | New terminal, then OpenCode |
+| OpenCode | push | Adds the MCP server and a plugin in `~/.config/opencode`. OpenCode 1: adds `alias opencode='opencode --port 0'` to your shell rc file. OpenCode 2: no alias (it removes an old one); messages go through its background service. | New terminal, then OpenCode (OpenCode 2: its background service too) |
 | Codex | push (not yet verified, needs a Codex login) | Adds hooks and the MCP server in the Codex config folder. Adds `alias codex='codex --remote unix://'`. The bridge keeps `codex app-server daemon` running. | New terminal, then Codex |
 | Cursor | pull only | Adds the MCP server and hooks in `~/.cursor`. Messages arrive at the end of each agent turn and after tool calls. | Restart the app |
 

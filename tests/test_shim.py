@@ -141,3 +141,15 @@ def test_shim_passes_hub_errors_through(hub, home):
             assert r.is_error and "unreachable" not in text(r), text(r)
             assert not (await c.call_tool("who", {})).is_error
     anyio.run(go)
+
+
+def test_shim_opencode_v2_session_from_call_meta(hub, home):
+    # OpenCode V2 runs one shim per folder and tags each call with the calling session.
+    async def go():
+        async with shim(home, hub.url, ident=None) as c:
+            for sid in ("ses_a", "ses_b"):
+                r = await c.call_tool("who", {}, meta={"ai.opencode/sessionID": sid})
+                assert not r.is_error, text(r)
+    anyio.run(go)
+    assert sorted((a.key, a.tool) for a in hub.store.online()) == [
+        ("opencode:ses_a", "opencode"), ("opencode:ses_b", "opencode")]

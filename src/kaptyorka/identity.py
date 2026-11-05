@@ -108,7 +108,8 @@ def identify(machine: str, pid: Optional[int] = None,
 
 
 def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Identity]:
-    sid = os.environ.get("KAPTYORKA_OPENCODE_SESSION")  # set by the OpenCode plugin
+    # set by the OpenCode plugin; OPENCODE_SESSION_ID by some OpenCode V2 builds
+    sid = os.environ.get("KAPTYORKA_OPENCODE_SESSION") or os.environ.get("OPENCODE_SESSION_ID")
     if sid:
         project = os.path.basename(os.getcwd().rstrip("/"))
         return Identity(f"opencode:{sid}", machine, "opencode", project) if project else None

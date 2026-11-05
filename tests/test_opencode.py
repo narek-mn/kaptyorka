@@ -11,6 +11,7 @@ from kaptyorka.adapters.base import DeliveryError, Session
 from kaptyorka.adapters.opencode import OpenCodeAdapter
 
 CWD = os.getcwd()
+REAL_MAJOR, REAL_SERVICE = opencode.major, opencode.service  # conftest fakes both
 NEWEST, OLDER, ELSEWHERE, STALE = "ses_new", "ses_old", "ses_other", "ses_stale"
 STARTED = 50  # the fake TUI's start time; STALE is from an earlier run in the same folder
 
@@ -152,3 +153,113 @@ def test_configure_leaves_broken_config_alone(home, monkeypatch):
     OpenCodeAdapter(home, log=lines.append).configure("/k")
     assert cfg.read_text() == "{not json"
     assert f"left alone, not valid JSON: {cfg}" in lines
+
+
+def test_identify_takes_session_from_opencode_v2_env(monkeypatch):
+    monkeypatch.delenv("KAPTYORKA_OPENCODE_SESSION", raising=False)
+    monkeypatch.setenv("OPENCODE_SESSION_ID", "ses_v2")
+    monkeypatch.setattr(identity, "ancestors", lambda pid: pytest.fail("no walk needed"))
+    ident = identity.identify("pc", pid=1)
+    assert (ident.key, ident.tool) == ("opencode:ses_v2", "opencode")
+
+
+def test_configure_v2_writes_default_export_plugin_and_drops_alias(home, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    monkeypatch.setattr(opencode.sys, "platform", "linux")
+    (home / ".bashrc").write_text("export X=1\nalias opencode='opencode --port 0'\n")
+    monkeypatch.setattr(opencode, "major", lambda: 2)
+    lines = OpenCodeAdapter(home).configure("/k")
+    plugin = (home / ".config/opencode/plugins/kaptyorka.js").read_text()
+    assert "export default {" in plugin and 'id: "kaptyorka"' in plugin and '"/k"' in plugin
+    assert 'ctx.session.hook("prompt"' in plugin and 'ctx.session.hook("context"' in plugin
+    assert "export const" not in plugin
+    assert (home / ".bashrc").read_text() == "export X=1\n"
+    assert any("removed" in line for line in lines)
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_plugin_is_valid_javascript(home, monkeypatch, tmp_path, version):
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    monkeypatch.setattr(opencode, "major", lambda: version)
+    OpenCodeAdapter(home).configure("/k")
+    js = tmp_path / "plugin.mjs"
+    js.write_text((home / ".config/opencode/plugins/kaptyorka.js").read_text())
+    r = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def test_major_reads_version(monkeypatch):
+    import subprocess
+
+    out = {"stdout": "2.2.5\n"}
+    monkeypatch.setattr(opencode, "major", REAL_MAJOR)
+    monkeypatch.setattr(opencode.subprocess, "run",
+                        lambda *a, **k: subprocess.CompletedProcess(a, 0, out["stdout"], ""))
+    assert opencode.major() == 2
+    out["stdout"] = "opencode 1.19.5"
+    assert opencode.major() == 1
+    out["stdout"] = "garbage"
+    assert opencode.major() == 1
+
+
+def test_service_reads_service_json(tmp_path, monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(opencode, "service", REAL_SERVICE)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    assert opencode.service() is None
+    (tmp_path / "opencode").mkdir()
+    (tmp_path / "opencode/service.json").write_text(json.dumps(
+        {"id": "x", "version": "2.2.5", "url": "http://127.0.0.1:49374/", "pid": os.getpid(),
+         "password": "pw"}))
+    svc = opencode.service()
+    assert svc["url"] == "http://127.0.0.1:49374"
+    assert svc["Authorization"] == "Basic b3BlbmNvZGU6cHc="  # opencode:pw
+    gone = subprocess.Popen(["true"])
+    gone.wait()
+    info = json.loads((tmp_path / "opencode/service.json").read_text())
+    (tmp_path / "opencode/service.json").write_text(json.dumps({**info, "pid": gone.pid}))
+    assert opencode.service() is None  # left by a service that has stopped
+
+
+@pytest.fixture
+def fake_v2(monkeypatch):
+    srv = FakeOpenCode({"data": [
+        {"id": "ses_child", "parentID": "ses_v2new", "location": {"directory": CWD},
+         "time": {"created": 3, "updated": 300}},
+        {"id": "ses_v2new", "location": {"directory": CWD}, "time": {"created": 2, "updated": 200}},
+        {"id": "ses_v2old", "location": {"directory": CWD}, "time": {"created": 1, "updated": 100}},
+        {"id": "ses_v2stale", "location": {"directory": CWD}, "time": {"created": 0, "updated": 10}},
+    ]})
+    monkeypatch.setattr(opencode, "service", lambda: {"url": f"http://127.0.0.1:{srv.port}",
+                                                      "Authorization": "Basic x"})
+    monkeypatch.setattr(opencode, "_tuis", lambda: [os.getpid()])
+    monkeypatch.setattr(opencode, "_started_ms", lambda pid: STARTED)
+    yield srv
+    srv.stop()
+
+
+def test_v2_sessions_from_service(fake_v2):
+    a = OpenCodeAdapter(find_ports=lambda: pytest.fail("no V1 port scan on V2"))
+    assert a.sessions() == [Session("opencode:ses_v2new", "opencode", os.path.basename(CWD), "")]
+    method, path, _ = fake_v2.requests[-1]
+    assert method == "GET" and path.startswith("/api/session?") and "directory=" in path
+
+
+def test_v2_deliver_posts_prompt(fake_v2):
+    OpenCodeAdapter(find_ports=lambda: pytest.fail("no V1 port scan on V2")).deliver(
+        "opencode:ses_v2new", "hi team")
+    assert fake_v2.requests[-1] == ("POST", "/api/session/ses_v2new/prompt",
+                                    {"text": "hi team", "delivery": "queue", "resume": True})
+
+
+def test_v2_deliver_refused_raises(fake_v2, monkeypatch):
+    fake_v2.server.RequestHandlerClass.do_POST = lambda self: (
+        self.rfile.read(int(self.headers["Content-Length"])), self._send(404, b""))
+    with pytest.raises(DeliveryError, match="HTTP 404"):
+        OpenCodeAdapter().deliver("opencode:ses_x", "hi")

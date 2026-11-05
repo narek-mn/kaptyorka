@@ -13,6 +13,15 @@ FENCED = {"systemctl", "launchctl", "loginctl", "systemd-run", "pipx",
 
 
 @pytest.fixture(autouse=True)
+def opencode_v1(monkeypatch):
+    """OpenCode V1 unless a test says otherwise: no `opencode --version`, no V2 service."""
+    from kaptyorka.adapters import opencode
+
+    monkeypatch.setattr(opencode, "major", lambda: 1)
+    monkeypatch.setattr(opencode, "service", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def fence_real_commands(request, monkeypatch):
     """Fail any test (except `slow` ones) that would run a fenced command for real.
 

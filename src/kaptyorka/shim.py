@@ -1,5 +1,6 @@
-"""`kaptyorka mcp`: a stdio MCP server per session that relays to the hub with its identity."""
-from typing import Optional
+"""`kaptyorka mcp`: a stdio MCP server that relays to the hub with its session's identity."""
+import os
+from typing import Dict, Optional
 
 import anyio
 import httpx2
@@ -13,6 +14,7 @@ from kaptyorka import http, identity
 
 TIMEOUT_S = 4.5  # whole call, connection included: the agent hears back within 5 s
 HEARTBEAT_S = 10
+OPENCODE_META = "ai.opencode/sessionID"  # OpenCode V2 tags each tool call with its session
 TRANSPORT_ERRORS = (types.CONNECTION_CLOSED, types.REQUEST_TIMEOUT)  # the client's, not the hub's
 FALLBACK_TOOLS = ["who", "send", "inbox", "status", "notes_list", "notes_read", "notes_write"]
 
@@ -120,10 +122,24 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 types.Tool(name=n, description=unreachable, input_schema={"type": "object"})
                 for n in FALLBACK_TOOLS])
 
+        per_session: Dict[str, Relay] = {}  # OpenCode V2: one shim serves every session in a folder
+
+        def session_relay(sid: str) -> Relay:
+            if sid not in per_session:
+                ident = identity.Identity(f"opencode:{sid}", cfg.get("machine", ""), "opencode",
+                                          os.path.basename(os.getcwd().rstrip("/")))
+                per_session[sid] = Relay(url, _headers(cfg, ident), tg)
+            return per_session[sid]
+
         async def call_tool(ctx, params) -> types.CallToolResult:
-            await identify()
+            sid = (params.meta or {}).get(OPENCODE_META)
+            if sid and isinstance(sid, str):
+                use = session_relay(sid)
+            else:
+                await identify()
+                use = relay
             try:
-                r = await relay.use(lambda c: c.call_tool(params.name, params.arguments or {}))
+                r = await use.use(lambda c: c.call_tool(params.name, params.arguments or {}))
             except MCPError as e:
                 return types.CallToolResult(content=[types.TextContent(text=e.message)],
                                             is_error=True)

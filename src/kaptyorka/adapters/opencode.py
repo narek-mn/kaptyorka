@@ -1,5 +1,10 @@
-"""OpenCode: sessions and push through the TUI's local server (started with `--port 0`)."""
+"""OpenCode: sessions and push through its local server.
+
+V1: each TUI runs its own server (started with `--port 0`).
+V2: one shared background service, found through its service.json.
+"""
 import base64
+import re
 import http.client
 import json
 import os
@@ -8,6 +13,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -44,6 +50,113 @@ export const Kaptyorka = async ({ directory }) => {
   };
 };
 """
+PLUGIN_V2 = """\
+// kaptyorka: adds the team brief to every OpenCode chat. Written by `kaptyorka join`.
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+const exec = promisify(execFile);
+const KAPTYORKA = %s;
+export default {
+  id: "kaptyorka",
+  setup: async (ctx) => {
+    const brief = {};
+    const directory = ctx.location.directory;
+    const hook = async (sessionID, event) => {
+      try {
+        const run = exec(KAPTYORKA, ["hook", "opencode", event], { cwd: directory, timeout: 4000,
+          env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } });
+        run.child.stdin.end();
+        return (await run).stdout.trim();
+      } catch {
+        return "";
+      }
+    };
+    await ctx.session.hook("prompt", async (event) => {
+      brief[event.sessionID] = await hook(event.sessionID, event.sessionID in brief ? "prompt" : "start");
+    });
+    await ctx.session.hook("context", async (event) => {
+      if (brief[event.sessionID]) event.system.push({ type: "text", text: brief[event.sessionID] });
+    });
+  },
+};
+"""
+
+
+def major() -> int:
+    """OpenCode's major version from `opencode --version`; 1 if it cannot be read."""
+    try:
+        r = subprocess.run(["opencode", "--version"], capture_output=True, text=True,
+                           timeout=TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return 1
+    m = re.search(r"(\d+)\.\d+", r.stdout)
+    return int(m.group(1)) if m else 1
+
+
+def service() -> Optional[Dict[str, str]]:
+    """The V2 background service's address and auth header, from its service.json; None if
+    no V2 service runs."""
+    state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "opencode"
+    try:
+        info = json.loads((state / "service.json").read_text())
+        url = info["url"].rstrip("/")
+        if info.get("pid"):
+            os.kill(int(info["pid"]), 0)  # a file left by a service that has stopped
+    except PermissionError:
+        pass  # alive, run by another user
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    token = base64.b64encode(f"opencode:{info.get('password') or ''}".encode()).decode()
+    return {"url": url, "Authorization": f"Basic {token}"}
+
+
+def _v2_call(svc: Dict[str, str], method: str, path: str, body: Optional[dict] = None,
+             timeout: float = TIMEOUT_S):
+    """(status, decoded JSON or None) from the V2 service; raises OSError if unreachable."""
+    headers = {"Authorization": svc["Authorization"]}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(svc["url"] + path, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+            return r.status, json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        e.close()
+        return e.code, None
+
+
+def _v2_newest(svc: Dict[str, str], pid: int, cwd: str) -> Optional[str]:
+    """Like _newest, for a V2 TUI: its folder's newest top-level session since it started."""
+    since = _started_ms(pid)
+    status, data = _v2_call(svc, "GET", "/api/session?" + urllib.parse.urlencode(
+        {"directory": cwd, "limit": 20, "order": "desc"}))
+    rows = data.get("data") if status == 200 and isinstance(data, dict) else None
+    here = [s for s in rows or [] if not s.get("parentID")
+            and (s.get("location") or {}).get("directory", cwd) == cwd
+            and s.get("time", {}).get("updated", 0) >= since]
+    if not here:
+        return None
+    return "opencode:" + max(here, key=lambda s: s.get("time", {}).get("updated", 0))["id"]
+
+
+def _tuis() -> List[int]:
+    return [p for p in _opencode_pids() if not _is_service(p)]
+
+
+def _is_service(pid: int) -> bool:
+    """True for the V2 background service (`opencode serve ...`), not a TUI."""
+    try:
+        if sys.platform.startswith("linux"):
+            argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+            return b"serve" in argv
+        r = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True,
+                           timeout=TIMEOUT_S)
+        return "serve" in r.stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def _listen_ports(pid: int) -> List[int]:
@@ -187,7 +300,8 @@ def session_key(pid: int, cwd: str) -> Optional[str]:
 class OpenCodeAdapter:
     tool = "opencode"
     prefix = "opencode"
-    restart_note = "OpenCode: open a new terminal and restart OpenCode to pick up kaptyorka"
+    restart_note = ("OpenCode: open a new terminal and restart OpenCode to pick up kaptyorka "
+                    "(on OpenCode 2, its background service too)")
 
     def __init__(self, home: Optional[Path] = None,
                  find_ports: Callable[[], Dict[int, int]] = find_ports,
@@ -208,6 +322,9 @@ class OpenCodeAdapter:
     def sessions(self) -> List[Session]:
         from kaptyorka.identity import proc_cwd
 
+        svc = service()
+        if svc:
+            return self._v2_sessions(svc)
         out = []
         for pid, port in self.find_ports().items():
             try:
@@ -223,10 +340,36 @@ class OpenCodeAdapter:
                 out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), ""))
         return out
 
+    def _v2_sessions(self, svc: Dict[str, str]) -> List[Session]:
+        from kaptyorka.identity import proc_cwd
+
+        out, seen = [], set()
+        for pid in _tuis():
+            try:
+                cwd = proc_cwd(pid)
+                key = _v2_newest(svc, pid, cwd)
+            except (OSError, ValueError, TypeError, KeyError, StopIteration, IndexError,
+                    AttributeError, http.client.HTTPException, subprocess.SubprocessError):
+                continue  # TUI just exited, or the service is restarting
+            if key and key not in seen:
+                seen.add(key)
+                out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), ""))
+        return out
+
     def deliver(self, key: str, text: str) -> None:
         sid = key.partition(":")[2]
         if not sid:
             raise DeliveryError(f"not an opencode session key: {key}")
+        svc = service()
+        if svc:
+            try:
+                status, _ = _v2_call(svc, "POST", f"/api/session/{urllib.parse.quote(sid)}/prompt",
+                                     {"text": text, "delivery": "queue", "resume": True})
+            except (OSError, ValueError, http.client.HTTPException) as e:
+                raise DeliveryError(f"opencode session {key}: {e}") from e
+            if not 200 <= status < 300:
+                raise DeliveryError(f"opencode session {key} refused: HTTP {status}")
+            return
         deadline = time.monotonic() + TIMEOUT_S
         for pid, port in self.find_ports().items():
             left = deadline - time.monotonic()
@@ -267,12 +410,15 @@ class OpenCodeAdapter:
             lines.append(f"OpenCode: kaptyorka MCP server added to {conf / 'opencode.json'}")
 
         plugin = conf / "plugins" / "kaptyorka.js"
-        text = PLUGIN % json.dumps(kaptyorka)
+        v2 = major() >= 2
+        text = (PLUGIN_V2 if v2 else PLUGIN) % json.dumps(kaptyorka)
         if not plugin.exists() or plugin.read_text() != text:
             plugin.parent.mkdir(parents=True, exist_ok=True)
             plugin.write_text(text)
             lines.append(f"OpenCode: kaptyorka plugin written to {plugin}")
 
+        if v2:  # V2 has no --port flag: the V1 alias would stop it starting
+            return lines + remove_alias(self.home, ALIAS, "OpenCode")
         line = add_alias(self.home, ALIAS, "OpenCode", self.log)
         if line:
             lines.append(line)
