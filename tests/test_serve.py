@@ -77,7 +77,9 @@ def test_serve_creates_token_once_and_prints_three_lines(home, capsys, monkeypat
         outs.append(capsys.readouterr().out.splitlines())
     assert outs[0] == outs[1]
     token = (paths.home() / "hub-token").read_text().strip()
-    assert outs[0] == ["hub:   http://10.0.0.5:9999", f"token: {token}", f"page:  http://10.0.0.5:9999/#t={token}"]
+    assert outs[0] == ["hub:   http://10.0.0.5:9999", f"token: {token}", f"page:  http://10.0.0.5:9999/#t={token}",
+                       "", "On each machine, run:",
+                       f"  kaptyorka join --hub http://10.0.0.5:9999 --token {token}"]
     assert (paths.home() / "hub-token").stat().st_mode & 0o777 == 0o600
 
 
@@ -394,7 +396,7 @@ def test_start_again_uses_saved_port_and_host(home, capsys, monkeypatch):
         with pytest.raises(SystemExit):
             run_cli(["start", *args])
     out = capsys.readouterr().out.splitlines()
-    assert out[0] == out[3] == "hub:   http://10.0.0.5:9999"
+    assert out[0] == out[6] == "hub:   http://10.0.0.5:9999"
     assert seen[0] == seen[1] and seen[1][-2:] == ["--port", "9999"]
 
 

@@ -52,12 +52,15 @@ pipx install kaptyorka
 kaptyorka start
 ```
 
-It prints three lines:
+It prints:
 
 ```
 hub:   http://<ip>:<port>
 token: <token>
 page:  http://<ip>:<port>/#t=<token>
+
+On each machine, run:
+  kaptyorka join --hub http://<ip>:<port> --token <token>
 ```
 
 The hub machine's firewall must allow the hub port (8765 by default) from the LAN or VPN.
@@ -68,8 +71,10 @@ On every machine, including the hub:
 
 ```bash
 pipx install kaptyorka
-kaptyorka join --hub <hub> --token <token> --name <machine>
+kaptyorka join --hub <hub> --token <token>
 ```
+
+That is the line `start` printed; copy it as is. Add `--name <machine>` to pick a name other than the hostname.
 
 `join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart. `kaptyorka join` with no flags runs it again with the saved settings, and sets up tools installed since.
 

@@ -51,6 +51,7 @@ def _serve(args) -> int:
         print(line, file=sys.stderr)
     url = f"http://{args.host or _outbound_ip()}:{args.port}"
     print(f"hub:   {url}\ntoken: {token}\npage:  {url}/#t={token}")
+    print(f"\nOn each machine, run:\n  kaptyorka join --hub {url} --token {token}")
     return 0
 
 
