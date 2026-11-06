@@ -318,7 +318,7 @@ def build_app(store: Store) -> Starlette:
                    tool: str = "claude-code", resume: str = "") -> str:
         """Start a worker session for you on another machine: in project's folder there, with
         task as its first message. machine: one host by name; tool: claude-code (default),
-        codex or opencode; resume: a session id to continue."""
+        codex or opencode; resume: the full session id to continue."""
         agent, principal = caller(ctx)
         if principal.legacy:
             raise KaptyorkaError(OWN_TOKEN)

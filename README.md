@@ -129,7 +129,7 @@ Push means a running session gets a message without anyone typing. Pull only mea
 | `notes_list` | List notes (team notes, or a project's with `project=`) |
 | `notes_read` | Read a note |
 | `notes_write` | Write a note. Notes outlive sessions |
-| `work` | Start a worker session for you on another machine. Leave `machine` empty and the hub picks one; `resume` is a session id to continue |
+| `work` | Start a worker session for you on another machine. Leave `machine` empty and the hub picks one; `resume` is the full session id to continue (for Claude Code a short id starts a copy under a new id) |
 | `workers` | List your workers |
 | `adopt` | Take over one of your unattended workers |
 | `close_worker` | End one of your workers |
