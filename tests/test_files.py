@@ -121,7 +121,19 @@ def test_oversize_content_length_refused_unread(hub, home):
         s.sendall((f"POST /api/files HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {tok}\r\n"
                    f"X-File-Name: a.png\r\nContent-Length: 5000001\r\n\r\n").encode())  # no body sent
         s.settimeout(5)
-        reply = s.recv(4096).decode()
+        reply = b""
+        # read the whole reply: headers and body may arrive in separate packets
+        while True:
+            head, sep, body = reply.partition(b"\r\n\r\n")
+            if sep and b"content-length:" in head.lower():
+                length = int(head.lower().split(b"content-length:")[1].split(b"\r\n")[0])
+                if len(body) >= length:
+                    break
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            reply += chunk
+        reply = reply.decode()
     assert reply.startswith("HTTP/1.1 400") and "file too large: 5000001 bytes" in reply
     assert hub.store.db.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
 
