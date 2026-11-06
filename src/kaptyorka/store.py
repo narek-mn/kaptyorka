@@ -1028,10 +1028,11 @@ class Store:
                 dev = self.db.execute("SELECT host, os_user FROM devices WHERE id=?",
                                       (principal.device_id,)).fetchone()
                 self.db.execute(
-                    "UPDATE agents SET person_id=?, device_id=?, host=COALESCE(NULLIF(?, ''), host),"
+                    "UPDATE agents SET person_id=COALESCE(CASE WHEN ? THEN person_id END, ?),"
+                    " device_id=?, host=COALESCE(NULLIF(?, ''), host),"
                     " os_user=COALESCE(NULLIF(?, ''), os_user) WHERE key=?",
-                    (principal.person_id, principal.device_id, dev["host"] if dev else "",
-                     dev["os_user"] if dev else "", key))
+                    (principal.shared, principal.person_id, principal.device_id,
+                     dev["host"] if dev else "", dev["os_user"] if dev else "", key))
             row = self.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
             return self._agent(row, now)
 
@@ -1064,7 +1065,7 @@ class Store:
             for s in sessions:
                 held = self.db.execute("SELECT person_id FROM agents WHERE key=?",
                                        (s["key"],)).fetchone()
-                if principal is not None and held is not None \
+                if principal is not None and held is not None and not principal.shared \
                         and held["person_id"] not in (None, principal.person_id):
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],

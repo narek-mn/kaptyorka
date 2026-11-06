@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS workers (
     key TEXT,
     state TEXT NOT NULL CHECK(state IN ('starting','up','unattended','abandoned','closed','failed')),
     error TEXT NOT NULL DEFAULT '', created REAL NOT NULL, up_at REAL, unattended_since REAL,
-    closed_at REAL, waiting_told REAL);
+    closed_at REAL, waiting_told REAL, told REAL);
 CREATE TABLE IF NOT EXISTS launches (
     id INTEGER PRIMARY KEY AUTOINCREMENT, device_id INTEGER NOT NULL, worker TEXT NOT NULL,
     kind TEXT NOT NULL CHECK(kind IN ('launch','close')), body TEXT NOT NULL,
@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS device_settings (device_id INTEGER PRIMARY KEY, auto_
 
 def ensure_schema(db) -> None:
     db.executescript(SCHEMA)
+    if "told" not in [r[1] for r in db.execute("PRAGMA table_info(workers)")]:
+        db.execute("ALTER TABLE workers ADD COLUMN told REAL")  # a Task 2 database
 
 
 def _cut(value) -> Optional[str]:
@@ -101,7 +103,6 @@ class WorkerStore:
         self.db = store.db
         self.lock = store.lock
         self.clock = store.clock
-        self._failed = []  # (boss_key, text) for failed launches, until that boss is online
 
     # device facts
 
@@ -316,10 +317,6 @@ class WorkerStore:
                 self.db.execute("UPDATE workers SET state='failed', error=?, closed_at=?"
                                 " WHERE name=? AND state='starting'",
                                 (error or "launch failed", now, row["worker"]))
-                w = self._row(row["worker"])
-                if w is not None and w["state"] == "failed":
-                    self._failed.append(
-                        (w["boss_key"], f"worker `{w['name']}` failed to start: {w['error']}"))
             elif row["kind"] == "close" and ok:
                 self.db.execute("UPDATE workers SET state='closed', closed_at=? WHERE name=?",
                                 (now, row["worker"]))
@@ -332,8 +329,13 @@ class WorkerStore:
                 return False
             self.db.execute("UPDATE workers SET key=?, state='up', up_at=? WHERE name=?",
                             (key, self.clock(), worker))
+            if self.db.execute("SELECT 1 FROM agents WHERE key=?", (key,)).fetchone() is None:
+                dev = self.db.execute("SELECT name FROM devices WHERE id=?",
+                                      (device_id,)).fetchone()
+                self.store._touch(key, dev["name"], w["tool"], w["project"], self.clock())
             # the session belongs to the boss's group, whoever's bridge reports it
-            self.db.execute("UPDATE agents SET person_id=? WHERE key=?", (w["boss_person"], key))
+            self.db.execute("UPDATE agents SET person_id=?, device_id=? WHERE key=?",
+                            (w["boss_person"], device_id, key))
             return True
 
     def by_key(self, key: str) -> Optional[dict]:
@@ -384,6 +386,10 @@ class WorkerStore:
                     self.db.execute("UPDATE workers SET state='unattended', unattended_since=?"
                                     " WHERE name=?", (now, w["name"]))
                     continue
+                if w["state"] == "unattended" and boss_online:
+                    self.db.execute("UPDATE workers SET state='up', unattended_since=NULL"
+                                    " WHERE name=?", (w["name"],))
+                    continue
                 if w["state"] == "unattended" and w["unattended_since"] < now - ABANDONED_S:
                     self.db.execute("UPDATE workers SET state='abandoned' WHERE name=?",
                                     (w["name"],))
@@ -395,11 +401,13 @@ class WorkerStore:
                     notices.append((w["boss_key"],
                                     f"worker `{w['name']}` is waiting for a permission; attach"
                                     f" with `{self._dict(w)['attach']}`"))
-            if self._failed:
-                online = {r["key"] for r in self.db.execute(
-                    "SELECT key FROM agents WHERE last_seen > ?", (now - ONLINE_S,))}
-                notices += [n for n in self._failed if n[0] in online]
-                self._failed = [n for n in self._failed if n[0] not in online]
+            for w in self.db.execute(
+                    "SELECT w.name, w.boss_key, w.error FROM workers w JOIN agents b"
+                    " ON b.key=w.boss_key WHERE w.state='failed' AND w.told IS NULL"
+                    " AND b.last_seen > ?", (now - ONLINE_S,)).fetchall():
+                self.db.execute("UPDATE workers SET told=? WHERE name=?", (now, w["name"]))
+                notices.append((w["boss_key"],
+                                f"worker `{w['name']}` failed to start: {w['error']}"))
         return notices
 
     def adopt(self, principal: Principal, name: str, new_boss_key: str) -> dict:

@@ -297,7 +297,7 @@ def test_link_before_heartbeat_and_from_another_device(store, ws, alice, bob, al
     assert ws.link("proj-a-w1", "claude:w1", other) is False
     assert ws.link("proj-a-w9", "claude:w1", dev) is False
     assert ws.link("proj-a-w1", "claude:w1", dev) is True
-    assert store.agent("claude:w1") is None and ws.by_name("proj-a-w1")["state"] == "up"
+    assert store.agent("claude:w1").person_id == alice and ws.by_name("proj-a-w1")["state"] == "up"
 
 
 def test_failed_launch_marks_failed_with_error(store, ws, alice_p, dev, boss, clock):
@@ -443,3 +443,88 @@ def test_attach_for_other_tools_uses_tmux(ws, alice_p, dev, boss):
     w = ws.create(alice_p, "proj-a", "t", target(dev), "codex", boss, "sid-1", False)
     assert w["attach"] == "ssh u@box-1 -t tmux attach -t proj-a-w1"
     assert w["os_user"] == "u" and w["host"] == "box-1" and w["tool"] == "codex"
+
+
+def shared_box(store, bob):
+    """bob's shared box-2: its device id and bridge token."""
+    dev, token = device(store, bob, "box-2")
+    store.device_set_shared(dev, True)
+    return dev, token
+
+
+def beat_box2(store, token, key="claude:w1"):
+    store.heartbeat("box-2", [{"key": key, "tool": "claude-code", "project": "proj-a",
+                               "cwd": FOLDER}], principal=store.authenticate(token),
+                    facts={"host": "box-2", "os_user": "u"})
+
+
+def test_worker_on_shared_box_stays_online_and_with_its_boss(store, ws, alice, bob, alice_p,
+                                                             boss, clock):
+    dev, token = shared_box(store, bob)
+    ws.create(alice_p, "proj-a", "t", target(dev, "box-2"), "claude-code", boss, None, False)
+    beat_box2(store, token)
+    assert store.agent("claude:w1").person_id == bob  # bob's bridge reported it first
+    assert ws.link("proj-a-w1", "claude:w1", dev)
+    assert store.agent("claude:w1").person_id == alice
+    clock[0] += 20
+    beat_box2(store, token)
+    assert store.agent("claude:w1").last_seen == clock[0]
+    store.seen("claude:w1", "box-2", "claude-code", "proj-a", principal=store.authenticate(token))
+    assert store.agent("claude:w1").person_id == alice  # its first tool call keeps the boss
+    clock[0] += 590
+    beat_box2(store, token)
+    ws.tick(clock[0])
+    assert ws.by_name("proj-a-w1")["state"] != "closed"
+
+
+def test_link_before_heartbeat_keeps_boss_after_it(store, ws, alice, bob, alice_p, boss):
+    dev, token = shared_box(store, bob)
+    ws.create(alice_p, "proj-a", "t", target(dev, "box-2"), "claude-code", boss, None, False)
+    assert ws.link("proj-a-w1", "claude:w1", dev)
+    a = store.agent("claude:w1")
+    assert a.person_id == alice and a.tool == "claude-code" and a.project == "proj-a"
+    beat_box2(store, token)
+    assert store.agent("claude:w1").person_id == alice
+
+
+def test_boss_back_online_returns_worker_to_up(store, ws, alice, alice_p, boss, clock):
+    dev, token = linked(store, ws, alice, alice_p, boss)
+    clock[0] += ONLINE_S + UNATTENDED_S + 10
+    worker_up(store, ws, dev, token)
+    ws.tick(clock[0])
+    assert ws.by_name("proj-a-w1")["state"] == "unattended"
+    store.seen("claude:boss", "box-1", "claude-code", "proj-a", principal=alice_p)
+    ws.tick(clock[0])
+    assert ws.by_name("proj-a-w1")["state"] == "up"
+    assert store.db.execute("SELECT unattended_since FROM workers").fetchone()[0] is None
+    with store.lock:
+        store.db.execute("UPDATE workers SET state='abandoned'")
+    ws.tick(clock[0])
+    assert ws.by_name("proj-a-w1")["state"] == "abandoned"  # until adopt
+
+
+def test_failed_notice_survives_a_restart(tmp_path, store, ws, alice_p, dev, boss, clock):
+    launch(ws, alice_p, dev, boss)
+    clock[0] += ONLINE_S + 1  # boss offline: held
+    ws.ack(launch_id(store, "proj-a-w1"), False, "no folder", dev)
+    assert ws.tick(clock[0]) == []
+    again = Store(tmp_path / "hub.db", clock=lambda: clock[0])  # a restarted hub
+    ws2 = WorkerStore(again)
+    again.seen("claude:boss", "box-1", "claude-code", "proj-a")
+    assert ws2.tick(clock[0]) == [("claude:boss", "worker `proj-a-w1` failed to start: no folder")]
+    assert ws2.tick(clock[0]) == []
+    again.close()
+
+
+def test_told_column_added_to_an_old_workers_table(tmp_path, clock):
+    import sqlite3
+    db = sqlite3.connect(tmp_path / "old.db")
+    db.execute("CREATE TABLE workers (name TEXT PRIMARY KEY, state TEXT)")
+    db.commit()
+    db.close()
+    from kaptyorka.workers import ensure_schema
+    db = sqlite3.connect(tmp_path / "old.db")
+    ensure_schema(db)
+    ensure_schema(db)
+    assert "told" in [r[1] for r in db.execute("PRAGMA table_info(workers)")]
+    db.close()
