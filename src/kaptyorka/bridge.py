@@ -18,6 +18,7 @@ HEARTBEAT_S = 10
 WAIT_S = 25
 RETRY_S = 5
 UPDATE_RETRY_S = 3600  # after a failed auto-update
+UPDATE_TIMEOUT_S = 600  # a hung pipx must not block the poll loop
 FACTS_S = 60
 SHOW_UP_S = 120  # a started worker's session must appear in the session list within this
 SEEN_KEEP = 200  # order ids remembered against replay
@@ -318,7 +319,7 @@ class Bridge:
         exe = argv0 if argv0 and argv0.name == "kaptyorka" else Path(sys.executable).parent / "kaptyorka"
         self.log(f"updating kaptyorka {__version__} -> {new}")
         try:
-            r = self.runner([str(exe), "update"], capture_output=True, text=True)
+            r = self.runner([str(exe), "update"], capture_output=True, text=True, timeout=UPDATE_TIMEOUT_S)
             error = "" if r.returncode == 0 else (r.stderr or r.stdout or "").strip() or f"exit {r.returncode}"
         except Exception as e:
             error = str(e)

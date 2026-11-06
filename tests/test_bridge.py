@@ -726,3 +726,26 @@ def test_auto_update_failure_logs_once_and_retries_after_an_hour(hub, home, monk
     b._step()
     assert len(update_calls(runner)) == 2
     assert len([l for l in lines if l.startswith("auto-update failed")]) == 1
+
+
+def test_auto_update_timeout_counts_as_failure(hub, home, monkeypatch):
+    b, runner, lines = update_bridge(hub, monkeypatch)
+    seen = []
+
+    def hang(cmd, **kw):
+        runner.calls.append(cmd)
+        if cmd[-1] == "update":
+            seen.append(kw.get("timeout"))
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+        return subprocess.CompletedProcess(cmd, 1, "", "")
+
+    b.runner = hang
+    now = [1000.0]
+    monkeypatch.setattr(bridge_mod, "time", types.SimpleNamespace(
+        monotonic=lambda: now[0], time=time.time, strftime=time.strftime))
+    b._step()
+    b._step()
+    assert seen == [600] and len([l for l in lines if l.startswith("auto-update failed")]) == 1
+    now[0] += 3601
+    b._step()
+    assert len(seen) == 2
