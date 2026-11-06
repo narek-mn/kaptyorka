@@ -222,7 +222,9 @@ def build_app(store: Store) -> Starlette:
     @_tool_errors
     def status(text: str, ctx: Context) -> str:
         """Say what you are working on; others see it in who()."""
-        store.set_status(me(ctx).key, text)
+        key = me(ctx).key
+        store.set_status(key, text)
+        ms.status_signal(key, text)
         return "status set"
 
     @server.tool()
@@ -533,6 +535,17 @@ def build_app(store: Store) -> Starlette:
             agent.key, lambda: brief.compose(store, ws, ms, agent, principal),
             unread=lambda: brief.unread_count(store, agent.key), now=store.clock(),
             cache=brief_cache))
+
+    @server.custom_route("/api/done-check", methods=["GET"])
+    async def api_done_check(request: Request) -> Response:
+        try:
+            principal = principal_of(request.headers)
+            agent = identify(request.headers, principal)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        out = ms.done_check(agent.key, principal, store.clock())
+        out["mode"] = "block" if agent.tool in ("claude-code", "codex") else "remind"
+        return JSONResponse(out)
 
     @server.custom_route("/api/me", methods=["GET"])
     async def api_me(request: Request) -> Response:
