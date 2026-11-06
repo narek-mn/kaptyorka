@@ -2,7 +2,7 @@
 import hashlib
 import time
 from typing import Callable, Dict, Hashable, List
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote
 
 from starlette.responses import PlainTextResponse
 from starlette.websockets import WebSocketClose
@@ -66,6 +66,11 @@ class Auth:
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
         token = bearer(headers)
         machine = unquote(headers.get("x-kaptyorka-machine") or "") or None
+        if machine is None and scope.get("path") == "/bridge/poll":
+            # a bridge sends no identity header: its machine is in the query. /bridge/heartbeat
+            # has it in the JSON body instead, so the hub re-resolves a legacy caller there.
+            machine = parse_qs(scope.get("query_string", b"").decode("latin-1")).get(
+                "machine", [None])[0] or None
         principal = self.store.authenticate(token, machine=machine) if token else None
         if principal is None:
             # keyed by address and token, so one revoked device cannot lock out a shared host

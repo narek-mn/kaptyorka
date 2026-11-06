@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS agents (
     tool TEXT NOT NULL, project TEXT NOT NULL, status TEXT NOT NULL DEFAULT '',
     activity TEXT NOT NULL DEFAULT '', last_seen REAL NOT NULL,
     label TEXT NOT NULL DEFAULT '', person_id INTEGER, os_user TEXT NOT NULL DEFAULT '',
-    host TEXT NOT NULL DEFAULT '', started REAL);
+    host TEXT NOT NULL DEFAULT '', started REAL, device_id INTEGER);
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT, sender_key TEXT NOT NULL,
     sender_name TEXT NOT NULL, to_key TEXT, to_name TEXT NOT NULL,
@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY, message_id INTEGER, name TEXT NOT NULL, size INTEGER NOT NULL,
     sha256 TEXT NOT NULL, created REAL NOT NULL, person_id INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS rekeys (
-    device_name TEXT PRIMARY KEY, token TEXT NOT NULL, created REAL NOT NULL);
+    device_name TEXT PRIMARY KEY, token TEXT NOT NULL, created REAL NOT NULL,
+    secret TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
@@ -106,6 +107,8 @@ ADDED_COLUMNS = [
     ("messages", "knock_id", "INTEGER"),
     ("notes", "project", "TEXT"),
     ("devices", "version", "TEXT NOT NULL DEFAULT ''"),
+    ("agents", "device_id", "INTEGER"),
+    ("rekeys", "secret", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -127,6 +130,11 @@ def _sender(m) -> str:
 
 def _one_line(text: str) -> str:
     return " ".join(text.split())
+
+
+def _version_at_least(version: str, floor: Tuple[int, int]) -> bool:
+    m = re.match(r"(\d+)\.(\d+)", version or "")
+    return m is not None and (int(m.group(1)), int(m.group(2))) >= floor
 
 
 def _person(name: str) -> str:
@@ -219,11 +227,11 @@ class Store:
                 admin = self.db.execute(
                     "INSERT INTO people (name, role, created) VALUES (?, 'admin', ?)",
                     (getpass.getuser(), now)).lastrowid
-                self.db.execute(
+                legacy = self.db.execute(
                     "INSERT INTO devices (person_id, name, token_hash, created, legacy)"
                     " VALUES (?, 'legacy', ?, ?, 1)",
-                    (admin, hashlib.sha256(legacy_token.encode()).hexdigest(), now))
-                self.db.execute("UPDATE agents SET person_id=?", (admin,))
+                    (admin, hashlib.sha256(legacy_token.encode()).hexdigest(), now)).lastrowid
+                self.db.execute("UPDATE agents SET person_id=?, device_id=?", (admin, legacy))
                 self.db.execute("UPDATE notes SET project=topic WHERE project IS NULL"
                                 " AND topic IN (SELECT DISTINCT project FROM agents)")
             if self._version() != SCHEMA_VERSION:
@@ -265,11 +273,16 @@ class Store:
         shared token (the legacy device) maps a machine to a person through `legacy:<machine>`
         in settings, and to the device's own person otherwise."""
         digest = hashlib.sha256(token.encode()).hexdigest()
+        used = False
         with self.lock:
             dev = self.db.execute("SELECT * FROM devices WHERE token_hash=? AND revoked_at IS NULL",
                                   (digest,)).fetchone()
             if dev is None:
                 return None
+            if dev["legacy"]:
+                if not self._legacy_alive():
+                    return None
+                used = bool(machine) and self._legacy_used(machine)
             person_id, device_name = dev["person_id"], dev["name"]
             who = None
             if dev["legacy"] and machine:
@@ -290,8 +303,11 @@ class Store:
             if who is None:
                 return None
             self.db.execute("UPDATE devices SET last_used=? WHERE id=?", (self.clock(), dev["id"]))
-            return Principal(person_id, who["name"], who["role"], dev["id"], device_name,
-                             bool(dev["shared"]), bool(dev["legacy"]))
+            principal = Principal(person_id, who["name"], who["role"], dev["id"], device_name,
+                                  bool(dev["shared"]), bool(dev["legacy"]))
+        if used:
+            self.log_add("system", "legacy_used", machine)
+        return principal
 
     def person_create(self, name: str, role: str = "member") -> int:
         name = _person(name)
@@ -655,6 +671,115 @@ class Store:
         self.log_add(by["name"], "request_decided",
                      f"{row['kind']}:{row['target']} -> {who['name']}: {decision}{note}")
 
+    # legacy devices
+
+    def _legacy_unassigned(self) -> List[str]:
+        return [r["machine"] for r in self.db.execute(
+            "SELECT DISTINCT a.machine FROM agents a JOIN devices d ON d.id=a.device_id"
+            " WHERE d.legacy=1 AND NOT EXISTS (SELECT 1 FROM settings s"
+            " WHERE s.key='legacy:' || a.machine) ORDER BY a.machine")]
+
+    def _legacy_enabled(self) -> bool:
+        row = self.db.execute("SELECT value FROM settings WHERE key='legacy_enabled'").fetchone()
+        return row is None or row["value"] != "0"
+
+    def _legacy_alive(self) -> bool:
+        """The shared token works while it is switched on and some machine still needs it: one
+        not yet assigned, or an assigned one whose bridge has not taken its own token. Before
+        any machine is assigned it works too, so machines can show up to be assigned."""
+        if not self._legacy_enabled():
+            return False
+        if self._legacy_unassigned():
+            return True
+        if self.db.execute("SELECT 1 FROM rekeys LIMIT 1").fetchone():
+            return True
+        return self.db.execute(
+            "SELECT 1 FROM settings WHERE substr(key, 1, 7)='legacy:' LIMIT 1").fetchone() is None
+
+    def _legacy_used(self, machine: str) -> bool:
+        """True (and remembered) when this machine's use of the shared token is first in a day."""
+        key, now = f"legacy_seen:{machine}", self.clock()
+        row = self.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        try:
+            if row is not None and now - float(row["value"]) < 86400:
+                return False
+        except ValueError:
+            pass
+        self.db.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
+                        " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(now)))
+        return True
+
+    def _assigned_device(self, machine: str, person_id: int):
+        """The device assign_legacy made for `machine`, when it is still mapped to that person."""
+        mapped = self.db.execute("SELECT value FROM settings WHERE key=?",
+                                 (f"legacy:{machine}",)).fetchone()
+        if mapped is None or mapped["value"] != str(person_id):
+            return None
+        return self.db.execute(
+            "SELECT * FROM devices WHERE name=? AND person_id=? AND legacy=0 AND revoked_at IS NULL"
+            " ORDER BY id DESC LIMIT 1", (machine, person_id)).fetchone()
+
+    def legacy_unassigned(self) -> List[str]:
+        """Machines last seen with the 0.1 shared token that no person has been given yet."""
+        with self.lock:
+            return self._legacy_unassigned()
+
+    def legacy_enabled(self) -> bool:
+        with self.lock:
+            return self._legacy_enabled()
+
+    def set_legacy_enabled(self, on: bool, by: str) -> None:
+        with self.lock:
+            self.db.execute("INSERT INTO settings (key, value) VALUES ('legacy_enabled', ?)"
+                            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                            ("1" if on else "0",))
+        self.log_add(by, "legacy_toggle", "on" if on else "off")
+
+    def assign_legacy(self, machine: str, person_id: int, by: str) -> None:
+        """Give a legacy machine to a person: the shared token now speaks for them there, and
+        a device of their own waits in `rekeys` for the machine's bridge to pick up."""
+        token, secret = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        with self.lock:
+            who = self.db.execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
+            if who is None:
+                raise KaptyorkaError("no such person")
+            if machine not in self._legacy_unassigned():
+                raise KaptyorkaError(f"{machine} is not an unassigned legacy machine")
+            now = self.clock()
+            self.db.execute(
+                "INSERT INTO devices (person_id, name, token_hash, secret_hash, created)"
+                " VALUES (?,?,?,?,?)",
+                (person_id, machine, hashlib.sha256(token.encode()).hexdigest(),
+                 hashlib.sha256(secret.encode()).hexdigest(), now))
+            self.db.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
+                            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                            (f"legacy:{machine}", str(person_id)))
+            self.db.execute("INSERT OR REPLACE INTO rekeys (device_name, token, secret, created)"
+                            " VALUES (?,?,?,?)", (machine, token, secret, now))
+            self.db.execute("UPDATE agents SET person_id=? WHERE machine=?", (person_id, machine))
+        self.log_add(by, "legacy_assign", f"{machine} -> {who['name']}")
+
+    def bridge_version(self, principal: Principal, machine: str) -> str:
+        """The version a rekey may be offered on: only a legacy bridge on an assigned machine
+        gets one, judged by what it reported for its new device; "" otherwise."""
+        if principal is None or not principal.legacy:
+            return ""
+        with self.lock:
+            dev = self._assigned_device(machine, principal.person_id)
+            return dev["version"] if dev is not None else ""
+
+    def rekeyed(self, machine: str, principal: Principal) -> bool:
+        """The bridge saved its new token (and calls with it): forget the raw values.
+        False when the caller is not that machine's new device."""
+        with self.lock:
+            dev = self._assigned_device(machine, principal.person_id)
+            if principal.legacy or dev is None or dev["id"] != principal.device_id:
+                return False
+            done = self.db.execute("DELETE FROM rekeys WHERE device_name=?", (machine,)).rowcount
+        if done:
+            self.log_add(principal.person_name, "rekeyed", machine)
+        return True
+
     # log
 
     def log_add(self, person: str, kind: str, detail: str) -> None:
@@ -762,9 +887,9 @@ class Store:
                 dev = self.db.execute("SELECT host, os_user FROM devices WHERE id=?",
                                       (principal.device_id,)).fetchone()
                 self.db.execute(
-                    "UPDATE agents SET person_id=?, host=COALESCE(NULLIF(?, ''), host),"
+                    "UPDATE agents SET person_id=?, device_id=?, host=COALESCE(NULLIF(?, ''), host),"
                     " os_user=COALESCE(NULLIF(?, ''), os_user) WHERE key=?",
-                    (principal.person_id, dev["host"] if dev else "",
+                    (principal.person_id, principal.device_id, dev["host"] if dev else "",
                      dev["os_user"] if dev else "", key))
             row = self.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
             return self._agent(row, now)
@@ -777,8 +902,12 @@ class Store:
         facts = facts or {}
         host = str(facts.get("host") or "")[:80]
         os_user = str(facts.get("os_user") or "")[:80]
+        version = str(facts.get("version") or "")[:40]
         with self.lock:
             now = self.clock()
+            # a legacy bridge on an assigned machine: its sessions and facts go to that person
+            assigned = (self._assigned_device(machine, principal.person_id)
+                        if principal is not None and principal.legacy else None)
             seen = {s["key"] for s in sessions}
             for r in self._online_rows(now):
                 if r["machine"] == machine and r["tool"] in tools and r["key"] not in seen:
@@ -790,17 +919,25 @@ class Store:
                 if host:
                     self.db.execute("UPDATE agents SET host=?, os_user=? WHERE key=?",
                                     (host, os_user, s["key"]))
-                if principal is not None and not principal.legacy:  # until it calls a tool
+                if principal is not None:
+                    self.db.execute("UPDATE agents SET device_id=? WHERE key=?",
+                                    (principal.device_id, s["key"]))
+                if assigned is not None:
+                    self.db.execute("UPDATE agents SET person_id=? WHERE key=?",
+                                    (principal.person_id, s["key"]))
+                elif principal is not None and not principal.legacy:  # until it calls a tool
                     self.db.execute("UPDATE agents SET person_id=COALESCE(person_id, ?)"
                                     " WHERE key=?", (principal.person_id, s["key"]))
             if host:
                 self.db.execute("INSERT OR IGNORE INTO machines (host, owner_person_id, first_seen)"
                                 " VALUES (?,?,?)",
                                 (host, principal.person_id if principal else None, now))
-                if principal is not None and not principal.legacy:
+                device_id = (assigned["id"] if assigned is not None else
+                             principal.device_id if principal is not None and not principal.legacy
+                             else None)
+                if device_id is not None:
                     self.db.execute("UPDATE devices SET host=?, os_user=?, version=? WHERE id=?",
-                                    (host, os_user, str(facts.get("version") or "")[:40],
-                                     principal.device_id))
+                                    (host, os_user, version, device_id))
 
     def online(self) -> List[Agent]:
         with self.lock:
@@ -952,10 +1089,16 @@ class Store:
                             m["sender_key"].startswith("web:"), kind=m["kind"],
                             file=self._file_info(m["file_id"])) for m in rows]
 
-    def offer(self, machine: str) -> List[dict]:
+    def offer(self, machine: str, version: str = "") -> List[dict]:
+        """Items for a machine's bridge: a pending rekey first, when the bridge's `version` is
+        0.2 or later (0.1.9 reads every item as a message and would crash), then messages."""
         with self.lock:
             now = self.clock()
             out = []
+            rekey = self.db.execute("SELECT token, secret FROM rekeys WHERE device_name=?",
+                                    (machine,)).fetchone()
+            if rekey is not None and _version_at_least(version, (0, 2)):
+                out.append({"kind": "rekey", "token": rekey["token"], "secret": rekey["secret"]})
             for m, t in self._deliverable(now):
                 if t["machine"] != machine:
                     continue
@@ -966,7 +1109,7 @@ class Store:
                     self._bind(m, t["key"])
                     text = (f"Kaptyorka message from {_sender(m)}:\n\n{m['text']}"
                             if m["kind"] == "message" else m["text"])  # knocks and doors: as written
-                    out.append({"id": m["id"], "key": t["key"], "text": text})
+                    out.append({"kind": "message", "id": m["id"], "key": t["key"], "text": text})
             return out
 
     def ack(self, msg_id: int, ok: bool) -> None:

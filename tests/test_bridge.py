@@ -265,3 +265,30 @@ def test_heartbeat_sends_facts(hub, home, monkeypatch):
     facts = sent[0]["facts"]
     assert facts == {"host": socket.gethostname().split(".")[0], "os_user": getpass.getuser(),
                      "version": kaptyorka.__version__}
+
+
+def test_bridge_applies_rekey_and_saves_config(hub, home, monkeypatch):
+    from helpers import person
+    from kaptyorka import identity, paths
+
+    monkeypatch.setattr(identity, "facts",
+                        lambda: {"host": "dgx", "os_user": "me", "version": "0.2.0"})
+    lines = []
+    conf = {**cfg(hub), "tools": ["codex"]}
+    paths.save_config(conf)
+    bridge = Bridge(conf, [fake_codex()], lines.append)
+    bridge.heartbeat()  # with the old shared token: an unassigned legacy machine
+    kim, _ = person(hub.store, "kim")
+    hub.store.assign_legacy("dgx", kim, "root")
+    bridge.heartbeat()  # now reports its version on the assigned device
+    assert bridge.poll_once(0) == 0
+    saved = paths.load_config()
+    assert saved["token"] != "T" and saved["secret"] and saved["tools"] == ["codex"]
+    assert bridge.cfg["token"] == saved["token"]
+    assert lines == ["rekeyed: this machine now has its own token"]
+    with hub.store.lock:
+        assert hub.store.db.execute("SELECT COUNT(*) FROM rekeys").fetchone()[0] == 0
+    p = hub.store.authenticate(saved["token"])
+    assert (p.person_id, p.device_name, p.legacy) == (kim, "dgx", False)
+    hub.store.send_from_web("root", "dgx/codex/proj", "hi")
+    assert bridge.poll_once(0) == 1  # the new token works for the next requests

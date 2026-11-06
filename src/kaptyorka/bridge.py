@@ -65,6 +65,18 @@ class Bridge:
             status, _ = http.request("POST", url, self.cfg["token"], body)
         self._report("ack", None if status == 204 else f"hub answered {status} to ack")
 
+    def _rekey(self, m: dict) -> None:
+        """The hub gave this legacy machine a token of its own: save it, then confirm with it.
+        If the confirm fails, the hub offers the same token again on the next poll."""
+        self.cfg.update(token=m["token"], secret=m["secret"])
+        paths.save_config(self.cfg)
+        status, _ = http.request("POST", self.cfg["hub"] + "/bridge/rekeyed", self.cfg["token"],
+                                 {"machine": self.cfg["machine"]})
+        if status == 204:
+            self.log("rekeyed: this machine now has its own token")
+        else:
+            self._report("rekey", f"hub answered {status} to rekeyed")
+
     def poll_once(self, wait: float = WAIT_S) -> int:
         query = urlencode({"machine": self.cfg["machine"], "wait": wait})
         status, items = http.request("GET", f"{self.cfg['hub']}/bridge/poll?{query}",
@@ -74,6 +86,9 @@ class Bridge:
         by_prefix = {a.prefix: a for a in self.adapters}
         delivered = 0
         for m in items:
+            if m.get("kind", "message") == "rekey":
+                self._rekey(m)
+                continue
             key = m["key"]
             try:
                 adapter = by_prefix.get(key.split(":", 1)[0])

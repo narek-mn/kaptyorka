@@ -277,9 +277,13 @@ def build_app(store: Store) -> Starlette:
     async def bridge_heartbeat(request: Request) -> Response:
         body = await request.json()
         facts = body.get("facts")
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is not None and principal.legacy:
+            # the machine is only in the body, which Auth does not read: map it to its person
+            principal = store.authenticate(bearer(request.headers),
+                                           machine=str(body["machine"])) or principal
         store.heartbeat(body["machine"], body["sessions"], body.get("tools", ()),
-                        principal=request.scope.get("state", {}).get("principal"),
-                        facts=facts if isinstance(facts, dict) else None)
+                        principal=principal, facts=facts if isinstance(facts, dict) else None)
         return Response(status_code=204)
 
     @server.custom_route("/bridge/poll", methods=["GET"])
@@ -291,11 +295,12 @@ def build_app(store: Store) -> Starlette:
             raise ValueError("wait must be a finite number")
         wait = min(max(wait, 0), MAX_WAIT_S)
         event = sent["event"]  # taken before offer, so a send after offer still wakes us
-        items = store.offer(machine)
+        version = store.bridge_version(request.scope.get("state", {}).get("principal"), machine)
+        items = store.offer(machine, version)
         if not items and wait:
             try:
                 await asyncio.wait_for(event.wait(), wait)
-                items = store.offer(machine)
+                items = store.offer(machine, version)
             except asyncio.TimeoutError:
                 pass
         return JSONResponse(items)
@@ -305,6 +310,14 @@ def build_app(store: Store) -> Starlette:
     async def bridge_ack(request: Request) -> Response:
         body = await request.json()
         store.ack(int(body["id"]), body["ok"] is True)
+        return Response(status_code=204)
+
+    @server.custom_route("/bridge/rekeyed", methods=["POST"])
+    @_bad_request
+    async def bridge_rekeyed(request: Request) -> Response:
+        body = await request.json()
+        if not store.rekeyed(str(body["machine"]), request.scope["state"]["principal"]):
+            return PlainTextResponse("not this machine's new device", status_code=403)
         return Response(status_code=204)
 
     @server.custom_route("/api/brief", methods=["GET"])
@@ -440,6 +453,47 @@ def build_app(store: Store) -> Starlette:
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"retention_days": store.retention_days()})
+
+    @server.custom_route("/api/legacy", methods=["GET"])
+    async def api_legacy(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        return JSONResponse({"unassigned": store.legacy_unassigned(),
+                             "enabled": store.legacy_enabled()})
+
+    @server.custom_route("/api/legacy/assign", methods=["POST"])
+    @_bad_request
+    async def api_legacy_assign(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        person = store.person_by_name(str(body["person"]))
+        try:
+            if person is None:
+                raise KaptyorkaError("no such person")
+            store.assign_legacy(str(body["machine"]), person["id"],
+                                request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        wake_bridges()  # its bridge may pick up the new token on its next heartbeat and poll
+        return Response(status_code=204)
+
+    async def legacy_toggle(request: Request, on: bool) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        store.set_legacy_enabled(on, request.scope["state"]["principal"].person_name)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/legacy/off", methods=["POST"])
+    async def api_legacy_off(request: Request) -> Response:
+        return await legacy_toggle(request, False)
+
+    @server.custom_route("/api/legacy/on", methods=["POST"])
+    async def api_legacy_on(request: Request) -> Response:
+        return await legacy_toggle(request, True)
 
     @server.custom_route("/api/people", methods=["GET"])
     async def api_people(request: Request) -> Response:
