@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- Workers: `work` starts a session for you on another machine (Claude Code, Codex or OpenCode); `workers` lists yours; `adopt` takes over an unattended worker; `close_worker` ends one (17 agent tools in all). The boss gets an attach line. A busy folder gets a worktree on branch `work/<worker-name>`. Nothing is bypassed: workers use the account's own permission settings, and the boss is told when a Claude Code worker waits for one.
+- A worker whose boss is offline 2 minutes is `unattended`, after 24 hours `abandoned`; nothing kills it.
+- Machines tab on the page: machines, workers, warnings, and an auto-update switch for each account.
+- New commands: `kaptyorka doctor [--fix]`, `kaptyorka fleet add <user@host>... --person <name> [--key-from <file>]`, `kaptyorka fleet list`.
+- Auto-update: the bridge updates when the hub is newer; on by default for members, off for the admin.
+- The hub's heartbeat answer is now JSON (version, auto_update, projects, you, shared) instead of an empty answer. Update the hub first, then the machines.
+- The old shared token cannot start, adopt or close workers.
+- New files in `~/.kaptyorka`: `workers/<name>.log`, `folders.json`, `launched.json`.
+
 ## 0.2.0
 
 - People and devices: the admin is created on first start; `kaptyorka invite <person>` makes a one-use, 7-day invite link; `kaptyorka join <invite-link>` joins a machine as that person with its own token and signing secret. `kaptyorka people` lists people. The invite link in a browser shows the join command and opens the page as that person.

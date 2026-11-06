@@ -134,7 +134,34 @@ Push means a running session gets a message without anyone typing. Pull only mea
 | `adopt` | Take over one of your unattended workers |
 | `close_worker` | End one of your workers |
 
+`work(project, task, machine="", tool="claude-code", resume="")` starts a worker. `tool` is `claude-code`, `codex` or `opencode`. `adopt(name)` and `close_worker(name)` take the worker's name.
+
 Rename a Claude Code session with `/rename <name>` and agents can reach it by that name: `send(to="<name>", ...)`.
+
+## Workers
+
+A worker is an agent session that runs on another machine for you. Say "do this on the GPU box" and your agent calls `work`. Here is the story:
+
+1. Your agent calls `work(project, task)`. You need the write role in the project, and a machine you may use.
+2. The hub picks a machine and tells its bridge. The bridge finds the project folder and starts the tool there, with your task as the first message.
+3. The worker works alone. When it has news, it messages its boss (you). You get the worker's name and an attach line, so you can look inside.
+4. Attach with `claude attach <name>`. For Codex and OpenCode, the line is an `ssh ... tmux attach` command.
+5. `close_worker(name)` ends it. `workers` lists yours, with the state of each.
+
+How each tool runs:
+
+- Claude Code: `claude --bg -n <name>`. Resume uses `--bg --resume <id>`.
+- OpenCode and Codex: in `tmux`. A machine without `tmux` can host only Claude Code workers.
+
+The project folder is the path the hub learned from sessions that ran this project on that machine. If there is none, it is `~/<project>`. The page shows a folder as busy when a worker in state `up` or `starting` is in it. For a busy folder, the bridge makes a worktree `<folder>--<n>` on branch `work/<worker-name>`. Closing a worker leaves its worktree.
+
+Permissions: nothing is bypassed. A worker runs with the account's own saved permission settings. Only Claude Code reports that a worker is waiting for a permission; the boss is told once per half hour, with the attach line. Codex and OpenCode do not report it, so attach and look.
+
+If the boss goes offline, the worker keeps going. After 2 minutes it is `unattended`, and after 24 hours `abandoned`. Nothing kills it. Its messages are held. Call `adopt(name)` from one of your own sessions (or press Adopt on the page) to take it over; the held messages come to you.
+
+The old shared token cannot start, adopt or close workers. Use your own token.
+
+The **Machines** tab on the page shows each machine, its workers and warnings (for example an old version). It also has the auto-update switch for each account.
 
 ## People and access
 
@@ -147,7 +174,7 @@ The hub has people, and each person has devices (one per machine). The admin is 
 | Project | read | Read the project's notes |
 | Project | write | Read and write the project's notes |
 | Project | manage | Same as write today; only the admin changes roles |
-| Machine | use | Use that machine (its owner and the admin may always). Recorded now; it takes effect in 0.3 |
+| Machine | use | Use that machine (its owner and the admin may always). Needed to start a worker on it |
 
 The admin registers projects and grants roles, with commands or on the page:
 
@@ -183,6 +210,22 @@ The page follows the same rules. A message from the page to a session opens a do
 
 `send(to, text, file=<local path>)` attaches one file, up to 5 MB: png, jpg, jpeg, gif, webp, svg, txt, md, log, json, csv or pdf. The receiver sees the file in `inbox` and saves it with `fetch_file(id)` to `~/.kaptyorka/inbox/`. Images show inline on the page. The hub keeps files in `~/.kaptyorka/files/`.
 
+## Doctor, fleet and auto-update
+
+`kaptyorka doctor` checks this machine: the config, the hub, the bridge, and each agent tool. `kaptyorka doctor --fix` re-wires the tools that fail and starts a stopped bridge.
+
+The admin can set up many machines from the hub machine over ssh:
+
+```bash
+kaptyorka fleet add alice@box-1 alice@box-2 --person alice
+kaptyorka fleet add alice@box-1 --person alice --key-from key.env
+kaptyorka fleet list
+```
+
+`fleet add` installs kaptyorka on each target and joins it as that person, with an invite made for the job. `--key-from` is a file with one `NAME=value` line, for example an API key. It goes only to the bridge service's environment on the target (the unit file is mode 0600). `fleet list` shows the machines, who owns them and their version.
+
+Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by default for members' machines and off for the admin's. Switch it per account on the **Machines** tab.
+
 ## Upgrading from 0.1
 
 Nothing to do on teammates' machines. The old shared token keeps working as a "legacy" device, and every session already on the hub is the admin's. Run `kaptyorka start` on the hub once: it gives the admin a token of their own and prints the page link with it. From then on admin work (the People, Access and Log tabs, invites, grants) needs that token; the shared token is refused there.
@@ -199,6 +242,9 @@ Everything is in `~/.kaptyorka`:
 - `hub.db`, `hub-token` (the 0.1 shared token) and `admin-token`: on the hub only
 - `files/`: attachments, on the hub only
 - `inbox/`: files saved with `fetch_file`
+- `workers/<name>.log`: what a worker printed, on the machine that runs it
+- `folders.json`: project folders the bridge learned from sessions
+- `launched.json`: workers the bridge started, so it can find them again after a restart
 - `bridge.log`
 
 ## Commands
@@ -214,6 +260,9 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka revoke <person> <project>` | Admin: take it away; or `machine:<host>` |
 | `kaptyorka machine owner <host> <person>` | Admin: name a machine's owner |
 | `kaptyorka who` | List sessions online |
+| `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
+| `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |
+| `kaptyorka fleet list` | Admin: list machines |
 
 ## Leave, stop, update, remove
 
@@ -226,11 +275,14 @@ Everything is in `~/.kaptyorka`:
 
 ```
 src/kaptyorka/
-  cli.py        the commands: start, join, invite, people, project, grant, revoke, leave, stop, update, remove
+  cli.py        the commands: start, join, invite, people, project, grant, revoke, doctor, fleet, leave, stop, update, remove
   hub.py        hub app: MCP tools and plain routes behind a device token
   http.py       small HTTP client used by the other parts
   store.py      SQLite storage: people, devices, agents, messages, notes
-  bridge.py     per-machine bridge: reports sessions, pushes messages
+  bridge.py     per-machine bridge: reports sessions, pushes messages, starts workers
+  workers.py    hub side of workers: states, linking, adopt, close
+  launch.py     starts and stops a worker on a machine
+  doctor.py     `kaptyorka doctor`; fleet.py: `kaptyorka fleet`
   join.py       sets up each agent tool; remove.py undoes it
   service.py    background services (hub, bridge)
   shim.py       `kaptyorka mcp`: per-session MCP server that relays to the hub

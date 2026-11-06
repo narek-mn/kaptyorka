@@ -393,9 +393,10 @@ Picks the folder: the project folder, or a worktree
 `~/<project>--<n>` on branch `work/<worker-name>` when the folder is taken
 (`git worktree add`). Runs the tool detached, in the folder, with the
 environment the bridge itself runs under (so a team API key set at enrol
-time reaches the agent): Claude Code with `claude --bg --session-id <uuid>
-[--resume <id>] "<first message>"`, so the hub knows the session key before
-the session exists and the human attaches with `claude attach`; OpenCode and
+time reaches the agent): Claude Code with `claude --bg -n <name>
+[--resume <id>] "<first message>"`; the bridge reads the id that `claude --bg`
+prints (Claude Code 2.1.319 ignores `--session-id` with `--bg`) and the human
+attaches with `claude attach <name>`; OpenCode and
 Codex with `tmux new-session -d -s <worker-name> -c <folder> <command>` and
 their resume flags. The first message is the task, the boss's name and the
 order rule (below).
