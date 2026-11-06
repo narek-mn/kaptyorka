@@ -159,9 +159,14 @@ class WorkerStore:
                     d["facts"], d["folders"] = self._facts_row(d["id"])
                     d["online"] = d["last_used"] is not None and d["last_used"] > now - ONLINE_S
                     s = self.db.execute(
-                        "SELECT s.auto_update, p.role FROM devices d JOIN people p"
+                        "SELECT s.auto_update, p.role, d.person_id FROM devices d JOIN people p"
                         " ON p.id=d.person_id LEFT JOIN device_settings s ON s.device_id=d.id"
                         " WHERE d.id=?", (d["id"],)).fetchone()
+                    if s["person_id"] != principal.person_id and not (
+                            principal.is_admin() and not principal.legacy):
+                        # someone else's account: their project names and commits are theirs
+                        d["folders"] = {}
+                        d["facts"].pop("git", None)
                     d["auto_update"] = (bool(s["auto_update"]) if s["auto_update"] is not None
                                         else s["role"] != "admin")
         return rows

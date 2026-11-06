@@ -453,3 +453,25 @@ def test_worker_on_shared_box_cannot_start_adopt_or_close(hub, alice, clock):
         "starting `proj-a-w2` on box-2 (u) in a worktree, the folder is busy"
     assert [w["name"] for w in run(call(box, own, "workers"))] == ["proj-a-w2"]
     assert run(call(box, own, "close_worker", name="proj-a-w2")).startswith("closing `proj-a-w2`")
+
+
+def test_machines_hide_other_peoples_folders_and_commits(hub, alice):
+    pid, client = alice
+    bob_id, bob = member(hub, "bob")
+    git = {"git": {"/w/proj-x": {"branch": "main", "subject": "secret plan"}}}
+    b = bridge(hub, bob_id, host="box-2", folders={"proj-x": "/w/proj-x"})
+    assert heartbeat(hub, b.token, "box-2", folders={"proj-x": "/w/proj-x"},
+                     extra={"facts": {"host": "box-2", "os_user": "u", **git}})[0] == 200
+    hub.store.device_set_shared(b.device_id, True)
+    hub.store.grant_machine("box-2", pid, by="test")
+    admin = as_token(hub, hub.store.device_add(admin_id(hub), "admin-own"))
+
+    def dev(token):
+        machines = http.request("GET", hub.url + "/api/machines", token)[1]
+        return next(d for m in machines for d in m["devices"] if d["id"] == b.device_id)
+    seen = dev(client.token)  # alice may use box-2, but bob's projects are his
+    assert seen["folders"] == {} and "git" not in seen["facts"] and seen["os_user"] == "u"
+    for token in (bob.token, admin.token):
+        seen = dev(token)
+        assert seen["folders"] == {"proj-x": "/w/proj-x"} and seen["facts"]["git"] == git["git"]
+    assert dev(ADMIN)["folders"] == {}  # the shared token is no admin here
