@@ -762,12 +762,12 @@ class Store:
 
     def _check_project(self, project, principal, write=False) -> None:
         """Raise unless the principal may read (or write) the project's notes. No principal
-        (an internal caller) means no check."""
+        (an internal caller) means no check. Only a registered project has notes: an
+        unregistered folder name can belong to two people by chance."""
         if project is None or principal is None:
             return
-        if not self._registered(project) and self.db.execute(
-                "SELECT 1 FROM agents WHERE project=?", (project,)).fetchone() is None:
-            raise KaptyorkaError(f"no project named {project}")
+        if not self._registered(project):
+            raise KaptyorkaError(f"project {project} is not registered; ask the admin to register it")
         if not self._may(project, principal, write):
             raise KaptyorkaError(f"no access to project {project}; ask with request_access")
 

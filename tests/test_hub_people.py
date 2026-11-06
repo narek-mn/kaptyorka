@@ -252,12 +252,7 @@ def test_notes_project_scope_read_write(hub):
     assert "no access to project shop" in err and "request_access" in err
     assert "no access to project shop" in call_error(cat, c_id, "notes_list", project="shop")
     assert "no access" in call_error(cat, c_id, "notes_read", topic="api", project="shop")
-    assert "no project named nope" in call_error(ann, a_id, "notes_list", project="nope")
-    # an unregistered folder: only the person working in it
-    run(call(ben, b_id, "notes_write", topic="plan", text="lab plan", project="lab"))
-    assert run(call(ben, b_id, "notes_read", topic="plan", project="lab"))["text"] == "lab plan"
-    assert "no access to project lab" in call_error(ann, a_id, "notes_read", topic="plan",
-                                                    project="lab")
+    assert "project nope is not registered" in call_error(ann, a_id, "notes_list", project="nope")
     admin_note = run(call(hub, ident("k:x", "ops"), "notes_read", topic="api", project="shop"))
     assert admin_note["text"] == "v1"
 
@@ -316,3 +311,22 @@ def test_projects_for_member(hub):
     assert http.request("POST", hub.url + "/api/projects/shop/revoke", ADMIN,
                         {"person": "ann"})[0] == 204
     assert run(call(ann, a_id, "projects")) == []
+
+
+def test_unregistered_folder_notes_not_merged(hub):
+    pa, ta = person(hub.store, "ann")
+    _, tb = person(hub.store, "ben")
+    ann, ben = as_person(hub, ta), as_person(hub, tb)
+    a_id, b_id = ident("k:a", "shop", "pa"), ident("k:b", "shop", "pb")
+    refused = "project shop is not registered; ask the admin to register it"
+    for client, i in ((ann, a_id), (ben, b_id), (hub, ident("k:x", "shop", "px"))):
+        assert refused in call_error(client, i, "notes_write", topic="t", text="x", project="shop")
+        assert refused in call_error(client, i, "notes_list", project="shop")
+        assert refused in call_error(client, i, "notes_read", topic="t", project="shop")
+    hub.store.project_register("shop", by="root")
+    hub.store.grant_project("shop", pa, "write", by="root")
+    run(call(ann, a_id, "notes_write", topic="t", text="mine", project="shop"))
+    assert run(call(ann, a_id, "notes_read", topic="t", project="shop"))["text"] == "mine"
+    assert "no access to project shop" in call_error(ben, b_id, "notes_read", topic="t",
+                                                     project="shop")
+    assert "no access to project shop" in call_error(ben, b_id, "notes_list", project="shop")
