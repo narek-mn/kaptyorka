@@ -530,7 +530,7 @@ def build_app(store: Store) -> Starlette:
             return PlainTextResponse("\n\n".join(message_text(m) for m in store.inbox(agent.key)))
         principal = request.scope.get("state", {}).get("principal")
         return PlainTextResponse(brief.cached(
-            agent.key, lambda: brief.build(store, ws, ms, agent, principal),
+            agent.key, lambda: brief.compose(store, ws, ms, agent, principal),
             unread=lambda: brief.unread_count(store, agent.key), now=store.clock(),
             cache=brief_cache))
 

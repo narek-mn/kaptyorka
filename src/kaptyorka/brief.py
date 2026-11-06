@@ -111,6 +111,8 @@ def _here(store, ws, ms, agent: Agent, principal) -> Tuple[str, str, str]:
         return "", "", ""
     folders = ws.folders(principal.device_id)
     project = ms.project_of(agent.cwd, folders) if folders and agent.cwd else agent.project
+    if not project:  # "" would read the team board's notes
+        return "", "", ""
     try:
         note = store.notes_read("state", principal, project)
     except KaptyorkaError:  # not registered, or no access: nothing about it here
@@ -127,6 +129,11 @@ def _here(store, ws, ms, agent: Agent, principal) -> Tuple[str, str, str]:
 
 
 def build(store, ws, ms, agent: Agent, principal, rules_text: str = "") -> str:
+    return compose(store, ws, ms, agent, principal, rules_text)[0]
+
+
+def compose(store, ws, ms, agent: Agent, principal, rules_text: str = "") -> Tuple[str, int]:
+    """The brief, and how many unread messages it delivered (they are now marked read)."""
     worker = ws.by_key(agent.key)
     young = agent.started is not None and agent.started > store.clock() - WORKER_BRIEF_S
     # some tools cannot take the worker's task on the command line
@@ -142,6 +149,11 @@ def build(store, ws, ms, agent: Agent, principal, rules_text: str = "") -> str:
         parts = [first, rules, you, projects, head + state if state else "", git, mail]
         return "\n\n".join(p for p in parts if p)
 
+    return _fit(text, rules_text, projects, git, state), len(unread)
+
+
+def _fit(text, rules_text: str, projects: str, git: str, state: str) -> str:
+    """Cut to BUDGET: rules, then projects, then git, then the state note's tail."""
     out = text(rules_text, projects, git, state)
     if len(out) <= BUDGET:
         return out
@@ -165,18 +177,24 @@ def unread_count(store: Store, key: str) -> int:
         return sum(1 for _, t in store._deliverable(store.clock()) if t["key"] == key)
 
 
-def cached(key: str, builder: Callable[[], str], unread: Callable[[], int] = lambda: 0,
-           now: Optional[float] = None,
+def cached(key: str, builder: Callable[[], Tuple[str, int]],
+           unread: Callable[[], int] = lambda: 0, now: Optional[float] = None,
            cache: Optional[Dict[str, Tuple[float, int, str]]] = None) -> str:
     """The session's brief from the last `CACHE_S` seconds, unless its unread count changed
-    since (so a new message is never hidden); else a fresh one from `builder`."""
+    since (so a new message is never hidden); else a fresh one from `builder`, which returns
+    the text and how many messages it delivered. A brief that delivered messages is not kept:
+    served again, it would repeat them as unread."""
     cache = _CACHE if cache is None else cache
     now = time.monotonic() if now is None else now
     for k in [k for k, (t, _, _) in cache.items() if now - t >= CACHE_S]:
         del cache[k]
+    count = unread()
     hit = cache.get(key)
-    if hit is not None and hit[1] == unread():
+    if hit is not None and hit[1] == count:
         return hit[2]
-    out = builder()
-    cache[key] = (now, unread(), out)
+    out, delivered = builder()
+    if delivered:
+        cache.pop(key, None)
+    else:  # the count from before the build: a message that came during it breaks the cache
+        cache[key] = (now, count, out)
     return out

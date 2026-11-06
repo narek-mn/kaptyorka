@@ -1,4 +1,6 @@
 """The start brief: sections in order, a character budget, a short per-session cache."""
+from dataclasses import replace
+
 import pytest
 
 from helpers import person
@@ -49,14 +51,19 @@ def team(store, ws, ms, clock):
     store.grant_project("proj-a", alice.person_id, "read", by="t")
     store.grant_project("proj-a", bob.person_id, "write", by="t")
     ws.facts_seen(alice.device_id, {"host": "box-1", "os_user": "u"}, {"proj-a": A})
-    store.heartbeat("box-1", [{"key": "a:1", "tool": "claude-code", "project": "proj-a", "cwd": A}],
-                    principal=alice, facts={"host": "box-1", "os_user": "u"})
-    store.heartbeat("box-2", [{"key": "b:1", "tool": "codex", "project": "proj-a",
-                               "cwd": "/home/bob/proj-a"}],
-                    principal=bob, facts={"host": "box-2", "os_user": "u"})
+    beat(store, alice, bob)
     store.answer(store.knock("b:1", "alice", "talk"), "a:1", True)  # a door, so bob may send
     store.inbox("a:1")
     return alice, bob
+
+
+def beat(store, alice, bob):
+    """alice's session in proj-a's folder on box-1, bob's on box-2."""
+    sessions = {"box-1": (alice, "a:1", "claude-code", A),
+                "box-2": (bob, "b:1", "codex", "/home/bob/proj-a")}
+    for host, (p, key, tool, cwd) in sessions.items():
+        store.heartbeat(host, [{"key": key, "tool": tool, "project": "proj-a", "cwd": cwd}],
+                        principal=p, facts={"host": host, "os_user": "u"})
 
 
 def rich(store, ms, clock, alice, bob):
@@ -74,11 +81,7 @@ def build(store, ws, ms, principal, key="a:1", rules=""):
 def test_brief_sections_in_order(store, ws, ms, clock, team):
     alice, bob = team
     rich(store, ms, clock, alice, bob)
-    store.heartbeat("box-1", [{"key": "a:1", "tool": "claude-code", "project": "proj-a", "cwd": A}],
-                    principal=alice, facts={"host": "box-1", "os_user": "u"})
-    store.heartbeat("box-2", [{"key": "b:1", "tool": "codex", "project": "proj-a",
-                               "cwd": "/home/bob/proj-a"}],
-                    principal=bob, facts={"host": "box-2", "os_user": "u"})
+    beat(store, alice, bob)
     store.knock("b:1", "alice", "pair on the cart")
     text = build(store, ws, ms, alice, rules="Team rules:\nbe kind")
     me = store.agent("a:1").name
@@ -144,24 +147,38 @@ def test_brief_never_cuts_section_two_or_unread(store, ws, ms, team):
     assert "m" * 7000 in text and "You are `" in text
 
 
-def test_brief_cache_10s_but_new_message_breaks_it(store, clock, team):
+def test_brief_skips_the_project_section_without_a_project(store, ws, ms, team):
+    alice, _ = team
+    store.notes_write_from_web("bob", "state", "board text")  # the team board's "state"
+    agent = replace(store.agent("a:1"), cwd="/", project="")
+    text = brief.build(store, ws, ms, agent, alice)
+    assert "State of" not in text and "board text" not in text
+
+
+def test_brief_cache_10s_but_new_message_breaks_it(store, ws, ms, clock, team):
+    alice, _ = team
     me = store.agent("a:1").name
     cache, calls = {}, []
 
     def get():
         def builder():
             calls.append(1)
-            return "brief " + ",".join(m.text for m in store.inbox("a:1"))
+            return brief.compose(store, ws, ms, store.agent("a:1"), alice)
         return brief.cached("a:1", builder, unread=lambda: brief.unread_count(store, "a:1"),
                             now=clock[0], cache=cache)
 
-    assert get() == "brief "
+    first = get()
     clock[0] += brief.CACHE_S - 1
-    assert get() == "brief " and len(calls) == 1  # cached
+    assert get() == first and len(calls) == 1  # cached
     store.send("b:1", me, "new")
-    assert get() == "brief new" and len(calls) == 2  # a new message is never hidden
+    text = get()
+    assert "new" in text and "1 unread message." in text and len(calls) == 2  # never hidden
     assert brief.unread_count(store, "a:1") == 0
+    again = get()  # a brief that delivered messages is not kept, so they are not repeated
+    assert "new" not in again and "0 unread messages." in again and len(calls) == 3
+    assert get() == again and len(calls) == 3
     clock[0] += brief.CACHE_S
-    assert get() == "brief " and len(calls) == 3  # expired
-    assert brief.cached("b:1", lambda: "other", unread=lambda: 0, now=clock[0],
+    get()
+    assert len(calls) == 4  # expired
+    assert brief.cached("b:1", lambda: ("other", 0), unread=lambda: 0, now=clock[0],
                         cache=cache) == "other"  # per session
