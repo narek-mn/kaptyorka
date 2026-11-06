@@ -84,8 +84,9 @@ def _request_lines(store: Store, principal) -> str:
     return out
 
 
-def _titled(a: Agent) -> str:
-    return f"{a.label} ({a.name})" if a.label else a.name
+def _titled(a: Agent, name: str = "") -> str:
+    name = name or a.name
+    return f"{a.label} ({name})" if a.label else name
 
 
 def _tool_errors(fn):
@@ -315,11 +316,14 @@ def build_app(store: Store) -> Starlette:
                  f"Kaptyorka message from {m.sender}{' (web page)' if m.from_web else ''}:\n\n{m.text}"
                  for m in unread]
         if request.query_params.get("event") == "start":
+            principal = request.scope.get("state", {}).get("principal")
             others = [a for a in store.online() if a.key != agent.key]
             line = f"Kaptyorka: you are `{_titled(agent)}`. "
             if others:
-                names = ", ".join(_titled(a) + (f" ({a.activity})" if a.activity else "")
-                                  for a in others)
+                now, people = store.clock(), {p["id"]: p["name"] for p in store.people()}
+                # masked like who(): another person's private folder is not named
+                names = ", ".join(_titled(a, session_row(store, a, principal, people, now)["name"])
+                                  + (f" ({a.activity})" if a.activity else "") for a in others)
                 line += f"{_plural(len(others), 'other')} online: {names}. "
             else:
                 line += "No one else online. "
@@ -327,7 +331,6 @@ def build_app(store: Store) -> Starlette:
             topics = [n["topic"] for n in store.notes_list()]
             if topics:
                 line += f" Board topics: {', '.join(topics)}."
-            principal = request.scope.get("state", {}).get("principal")
             line += _request_lines(store, principal)
             if principal is not None and principal.is_admin() and store.legacy_ready_to_disable():
                 line += (" All old machines have their own tokens;"

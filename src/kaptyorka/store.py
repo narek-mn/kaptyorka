@@ -26,6 +26,7 @@ INVITE_TTL_S = 7 * 86400
 ROLES = ("admin", "member", "manager")
 PROJECT_ROLES = ("read", "write", "manage")
 PROJECT_NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+PRIVATE = "(private)"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -130,6 +131,13 @@ def _sender(m) -> str:
 
 def _one_line(text: str) -> str:
     return " ".join(text.split())
+
+
+def private_name(name: str, machine: str, tool: str, project: str) -> str:
+    """The session name with its project hidden: machine/tool/(private), keeping a -N suffix."""
+    base = f"{machine}/{tool}/{project}"
+    suffix = name[len(base):] if name.startswith(base) else ""
+    return f"{machine}/{tool}/{PRIVATE}{suffix}"
 
 
 def _owns(row, principal) -> bool:
@@ -1038,7 +1046,7 @@ class Store:
                     raise KaptyorkaError("that file is not yours")
             self._rate_check(sender_key, now)
             self._expire_doors(now)
-            targets = self._targets(sender_key, to, now)
+            targets = self._targets(sender_key, to, now, sender["person_id"])
             if to == "all":
                 targets = [t for t in targets if self._may_message(sender, t)]
             elif not all(self._may_message(sender, self._as_target(t)) for t in targets):
@@ -1067,7 +1075,7 @@ class Store:
             _check_length(text)
             now = self.clock()
             key = f"web:{name}"
-            targets = self._targets(key, to, now)
+            targets = self._targets(key, to, now, person_id)
             if person_id is not None:
                 self._expire_doors(now)
                 me = {"key": key, "person_id": person_id}
@@ -1101,7 +1109,20 @@ class Store:
                 "INSERT INTO doors (a_key, a_person, b_key, b_person, scope, opened_at, opened_by)"
                 " VALUES (?,?,?,?,'session',?,?)", (web_key, person_id, t["key"], tp, now, person_id))
 
-    def _targets(self, sender_key, to, now):
+    def _shown(self, row, viewer) -> str:
+        """A session's name as person `viewer` may see it (the who() rule): the project is
+        hidden unless the session is theirs or in a registered project they have a role in."""
+        if viewer is not None and (row["person_id"] == viewer
+                                   or self._role(row["project"], viewer) is not None):
+            return row["name"]
+        return private_name(row["name"], row["machine"], row["tool"], row["project"])
+
+    def _titles(self, rows, viewer) -> str:
+        return ", ".join(self._shown(r, viewer) + (f" ({r['label']})" if r["label"] else "")
+                         for r in rows)
+
+    def _targets(self, sender_key, to, now, viewer=None):
+        """`viewer` is the sender's person, for whom names in errors are masked."""
         online = self._online_rows(now)
         if to == "all":
             return [r for r in online if r["key"] != sender_key]
@@ -1110,7 +1131,7 @@ class Store:
             labeled = [r for r in online if r["label"] and r["label"].lower() == to.lower()]
             if len(labeled) > 1:
                 raise KaptyorkaError(f"several sessions are named {to}: "
-                                     + ", ".join(r["name"] for r in labeled))
+                                     + ", ".join(self._shown(r, viewer) for r in labeled))
             match = labeled
         match = match or self.db.execute(
             "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1",
@@ -1121,8 +1142,7 @@ class Store:
         person = next((p for p in people if p.lower() == to.lower()), None)
         if person is not None:  # a person on the web page: they read replies there
             return [{"key": f"web:{person}", "name": person, "machine": "", "tool": "", "project": ""}]
-        names = ", ".join(r["name"] + (f" ({r['label']})" if r["label"] else "")
-                          for r in online) or "none"
+        names = self._titles(online, viewer) or "none"
         extra = f"; people: {', '.join(people)}" if people else ""
         raise KaptyorkaError(f"no session named {to}; online: {names}{extra}")
 
@@ -1383,15 +1403,16 @@ class Store:
             raise KaptyorkaError("unknown session")
         return row
 
-    def _online_session(self, to, now):
-        """An online session by name, or by label when that is unique; None when neither."""
+    def _online_session(self, to, now, viewer=None):
+        """An online session by name, or by label when that is unique; None when neither.
+        `viewer` is the asking person, for whom names in errors are masked."""
         online = self._online_rows(now)
         match = [r for r in online if r["name"] == to]
         if not match:
             match = [r for r in online if r["label"] and r["label"].lower() == to.lower()]
             if len(match) > 1:
                 raise KaptyorkaError(f"several sessions are named {to}: "
-                                     + ", ".join(r["name"] for r in match))
+                                     + ", ".join(self._shown(r, viewer) for r in match))
         return match[0] if match else None
 
     def knock(self, from_key: str, to: str, about: str) -> int:
@@ -1411,7 +1432,7 @@ class Store:
             p = None if target is not None else self.db.execute(
                 "SELECT id FROM people WHERE lower(name)=lower(?)", (to.strip(),)).fetchone()
             if target is None and p is None:
-                target = self._online_session(to, now)
+                target = self._online_session(to, now, sender["person_id"])
                 if target is None:
                     raise KaptyorkaError(f"no online session or person named {to}")
             if target is not None:
@@ -1513,7 +1534,7 @@ class Store:
         with self.lock:
             now = self.clock()
             by = self._session(by_key)
-            other = self._online_session(to, now) or self.db.execute(
+            other = self._online_session(to, now, by["person_id"]) or self.db.execute(
                 "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1",
                 (to,)).fetchone()
             cur = None

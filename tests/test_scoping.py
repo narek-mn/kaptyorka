@@ -128,3 +128,23 @@ def test_held_page_message_needs_a_door_at_delivery(tmp_path):
     assert [m.text for m in s.inbox("b1")] == []  # offline: not delivered
     s.seen("b1", "m", "codex", "p", principal=s.authenticate(tb))
     assert [m.text for m in s.inbox("b1")] == ["for bob"]
+
+
+def test_brief_and_errors_mask_private_folders(tmp_path):
+    s = Store(tmp_path / "hub.db")
+    _, ta = person(s, "alice")
+    _, tb = person(s, "bob")
+    s.seen("a1", "alice@pc", "codex", "secret-folder", principal=s.authenticate(ta))
+    stop = start_hub(s)
+    url = f"http://127.0.0.1:{stop.port}"
+    h = {"X-Kaptyorka-Key": "b1", "X-Kaptyorka-Machine": "bob@pc",
+         "X-Kaptyorka-Tool": "codex", "X-Kaptyorka-Project": "q"}
+    try:
+        status, text = http.request("GET", url + "/api/brief?event=start", tb, headers=h)
+        assert status == 200 and "alice@pc/codex/(private)" in text
+        assert "secret-folder" not in text
+    finally:
+        stop()
+    with pytest.raises(KaptyorkaError) as e:
+        s.send("b1", "nobody", "hi")
+    assert "secret-folder" not in str(e.value) and "(private)" in str(e.value)

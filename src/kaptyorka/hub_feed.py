@@ -1,22 +1,13 @@
 """What the page shows one viewer: the feed filtered by their person (the admin sees all)."""
 from dataclasses import asdict
 
-from kaptyorka.store import Agent, Principal, Store
-
-PRIVATE = "(private)"
+from kaptyorka.store import PRIVATE, Agent, Principal, Store, private_name
 
 
 def agent_row(a: Agent, now: float) -> dict:
     return {"name": a.name, "machine": a.machine, "tool": a.tool, "project": a.project,
             "status": a.status, "activity": a.activity, "label": a.label,
             "last_seen_s": round(now - a.last_seen)}
-
-
-def private_name(name: str, machine: str, tool: str, project: str) -> str:
-    """The session name with its project hidden: machine/tool/(private), keeping a -N suffix."""
-    base = f"{machine}/{tool}/{project}"
-    suffix = name[len(base):] if name.startswith(base) else ""
-    return f"{machine}/{tool}/{PRIVATE}{suffix}"
 
 
 def visible(store: Store, principal: Principal, person_id, project: str) -> bool:
