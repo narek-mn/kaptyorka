@@ -211,6 +211,33 @@ def test_launchd_plist_sets_environment(home):
     assert "EnvironmentVariables" not in unit_text("n", ["/k"], "darwin")
 
 
+def test_reinstall_keeps_the_units_own_keys(home):
+    odd = '/a b:/h/%u:"x"\\y'
+    unit = home / ".config/systemd/user/kaptyorka-bridge.service"
+    unit.parent.mkdir(parents=True)
+    unit.write_text('[Service]\nEnvironment="PATH=/old"\nEnvironment="MY_KEY=abc"\n'
+                    'Environment="ODD=/a b:/h/%%u:\\"x\\"\\\\y"\nExecStart=/k bridge\n')
+    assert service.existing_env(unit, "linux") == {"PATH": "/old", "MY_KEY": "abc", "ODD": odd}
+    install("kaptyorka-bridge", ["/k", "bridge"], run=fake_run([]), platform="linux",
+            env={"PATH": "/new"})  # a plain re-join
+    assert service.existing_env(unit, "linux") == {"PATH": "/new", "MY_KEY": "abc", "ODD": odd}
+    install("kaptyorka-bridge", ["/k", "bridge"], run=fake_run([]), platform="linux",
+            env={"PATH": "/new", "OTHER": "z"})  # --env-stdin: its keys replace the old ones
+    assert service.existing_env(unit, "linux") == {"PATH": "/new", "OTHER": "z"}
+
+
+def test_reinstall_keeps_the_plists_own_keys(home):
+    install("kaptyorka-bridge", ["/k", "bridge"], run=fake_run([]), platform="darwin",
+            env={"PATH": "/old", "MY_KEY": "a&b"})
+    plist = home / "Library/LaunchAgents/io.kaptyorka.kaptyorka-bridge.plist"
+    install("kaptyorka-bridge", ["/k", "bridge"], run=fake_run([]), platform="darwin",
+            env={"PATH": "/new"})
+    assert service.existing_env(plist, "darwin") == {"PATH": "/new", "MY_KEY": "a&b"}
+    install("kaptyorka-bridge", ["/k", "bridge"], run=fake_run([]), platform="darwin",
+            sleep=lambda s: None)  # no env at all: kept too
+    assert service.existing_env(plist, "darwin") == {"MY_KEY": "a&b"}
+
+
 def test_stop_linux_disables_unit():
     calls = []
     assert service.stop("kaptyorka-bridge", run=fake_run(calls), platform="linux") == [

@@ -1,5 +1,6 @@
 import getpass
 import os
+import plistlib
 import shlex
 import subprocess
 import sys
@@ -159,6 +160,49 @@ def remove(name: str, run: Callable = subprocess.run, platform: str = sys.platfo
     return [f"{name}: service removed"]
 
 
+def _systemd_unescape(v: str) -> str:
+    out, i = [], 0
+    v = v.replace("%%", "%")
+    while i < len(v):
+        if v[i] == "\\" and i + 1 < len(v):
+            i += 1
+        out.append(v[i])
+        i += 1
+    return "".join(out)
+
+
+def existing_env(path: Path, platform: str) -> Dict[str, str]:
+    """The environment an installed unit or plist sets; {} when there is none or it is
+    unreadable."""
+    try:
+        if platform == "darwin":
+            data = plistlib.loads(path.read_bytes())
+            env = data.get("EnvironmentVariables") if isinstance(data, dict) else None
+            return {k: v for k, v in env.items() if isinstance(k, str) and isinstance(v, str)} \
+                if isinstance(env, dict) else {}
+        text = path.read_text()
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return {}
+    out = {}
+    for line in text.splitlines():
+        if line.startswith('Environment="') and line.endswith('"') and len(line) > 14:
+            k, sep, v = _systemd_unescape(line[13:-1]).partition("=")
+            if sep:
+                out[k] = v
+    return out
+
+
+def _keep_env(path: Path, platform: str, env: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+    """With no key of its own given (only PATH, or nothing), a re-install keeps the keys the
+    installed file already sets (an API key a fleet add put there); given keys replace them."""
+    if env is not None and any(k != "PATH" for k in env):
+        return env
+    kept = {k: v for k, v in existing_env(path, platform).items() if k != "PATH"}
+    if not kept:
+        return env
+    return {**(env or {}), **kept}
+
+
 def install(name: str, argv: List[str], run: Callable = subprocess.run,
             platform: str = sys.platform, sleep: Callable = time.sleep,
             env: Optional[Dict[str, str]] = None) -> List[str]:
@@ -167,6 +211,7 @@ def install(name: str, argv: List[str], run: Callable = subprocess.run,
     if platform == "darwin":
         plist = Path.home() / "Library/LaunchAgents" / f"io.kaptyorka.{name}.plist"
         plist.parent.mkdir(parents=True, exist_ok=True)
+        env = _keep_env(plist, platform, env)
         _write_private(plist, unit_text(name, argv, "darwin", env))
         domain = f"gui/{os.getuid()}"
         sh("launchctl", "enable", f"{domain}/io.kaptyorka.{name}")  # bootstrap fails if disabled
@@ -182,6 +227,7 @@ def install(name: str, argv: List[str], run: Callable = subprocess.run,
         return [f"installed {plist}"]
     unit = Path.home() / ".config/systemd/user" / f"{name}.service"
     unit.parent.mkdir(parents=True, exist_ok=True)
+    env = _keep_env(unit, platform, env)
     _write_private(unit, unit_text(name, argv, "linux", env))
     lines = [f"installed {unit}"]
     sh("systemctl", "--user", "daemon-reload", must=True)
