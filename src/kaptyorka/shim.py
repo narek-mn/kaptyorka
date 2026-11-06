@@ -99,9 +99,31 @@ def _error(message: str) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(text=message)], is_error=True)
 
 
+def _private_place(path: str) -> Optional[str]:
+    """The private folder (~/.kaptyorka or ~/.ssh) a path really lies in, or None. Files
+    kaptyorka itself saved to the inbox may be passed on."""
+    real = os.path.realpath(path)
+
+    def under(folder) -> bool:
+        folder = os.path.realpath(folder)
+        return real == folder or real.startswith(folder.rstrip(os.sep) + os.sep)
+
+    if under(paths.inbox_dir()):
+        return None
+    home = os.path.expanduser("~")
+    for shown, folder in (("~/.kaptyorka", os.path.join(home, ".kaptyorka")),
+                          ("~/.kaptyorka", str(paths.home())), ("~/.ssh", os.path.join(home, ".ssh"))):
+        if under(folder):
+            return shown
+    return None
+
+
 def _upload(cfg: dict, headers: dict, args: dict) -> Optional[str]:
     """Turn a local path in args["file"] into "id:<n>" by uploading it. Returns an error text."""
     path = os.path.expanduser(args["file"])
+    refused = _private_place(path)
+    if refused:
+        return f"refusing to upload {args['file']}: it is in {refused}, where keys and tokens live"
     try:
         with open(path, "rb") as f:
             data = f.read()

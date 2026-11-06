@@ -99,3 +99,57 @@ def test_shim_download_error_is_the_hubs_answer(monkeypatch):
     out = shim._download({"hub": "http://h", "token": "t"}, {}, {"url": "/api/files/1", "id": 1,
                                                                 "name": "a", "size": 1})
     assert out == "no such file"
+
+
+NEW_SECRETS = ["sk-proj-" + "a1_-" * 6, "sk-ant-api03-" + "b2" * 12, "sk-" + "c_" * 12,
+               "github_pat_" + "d1_" * 8, "gho_" + "e" * 30, "ghs_" + "f" * 30, "ghu_" + "g" * 30,
+               "ghr_" + "h" * 30, "ghp_" + "i" * 30]
+
+
+def test_wider_secret_patterns():
+    import secrets as std
+
+    import pytest
+
+    from kaptyorka.secrets_check import check_secrets
+    from kaptyorka.store import KaptyorkaError
+
+    for bad in NEW_SECRETS:
+        with pytest.raises(KaptyorkaError, match="looks like a secret"):
+            check_secrets(f"key={bad}")
+    check_secrets("plain words, sk-short, " + std.token_urlsafe(32))
+    check_secrets("a token with a chance hit: Xsk-" + "a" * 30)  # inside a longer token
+
+
+def test_text_uploads_are_checked_for_secrets(tmp_path, home):
+    import pytest
+
+    from kaptyorka.store import KaptyorkaError
+
+    s = Store(tmp_path / "hub.db")
+    pid, _ = person(s, "ann")
+    for name in ("a.txt", "a.md", "a.log", "a.json", "a.csv"):
+        with pytest.raises(KaptyorkaError, match="looks like a secret"):
+            s.file_add(name, b"token: ghp_" + b"x" * 30, pid)
+    assert s.file_add("a.png", b"ghp_" + b"x" * 30, pid)  # images are not text
+    assert s.file_add("a.txt", b"just notes", pid)
+    s.close()
+
+
+def test_shim_refuses_private_folders(home, tmp_path):
+    from kaptyorka import paths
+
+    (home / ".ssh").mkdir()
+    key = home / ".ssh" / "id_ed25519.txt"
+    key.write_text("x")
+    cfg = paths.home() / "config.json"
+    cfg.write_text("{}")
+    link = tmp_path / "innocent.txt"
+    link.symlink_to(cfg)
+    for path, where in ((key, "~/.ssh"), (cfg, "~/.kaptyorka"), (link, "~/.kaptyorka")):
+        err = shim._upload({"hub": "http://h", "token": "t"}, {}, {"file": str(path)})
+        assert err == f"refusing to upload {path}: it is in {where}, where keys and tokens live"
+    saved = paths.inbox_dir() / "1-notes.txt"
+    saved.write_text("x")
+    assert shim._private_place(str(saved)) is None  # a file kaptyorka received may be passed on
+    assert shim._private_place(str(tmp_path / "ok.txt")) is None

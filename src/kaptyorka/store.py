@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from kaptyorka import paths
-from kaptyorka.secrets_check import check_secrets
+from kaptyorka.secrets_check import TEXT_TYPES, check_secrets
 
 ONLINE_S = 30
 LEASE_S = 60
@@ -1333,6 +1333,8 @@ class Store:
             raise KaptyorkaError(f"file type .{ext} not allowed")
         if len(data) > MAX_FILE:
             raise KaptyorkaError(f"file too large: {len(data)} bytes, limit {MAX_FILE}")
+        if ext in TEXT_TYPES:
+            check_secrets(data.decode("utf-8", "replace"))
         with self.lock:
             fid = self.db.execute(
                 "INSERT INTO files (name, size, sha256, created, person_id) VALUES (?,?,?,?,?)",
