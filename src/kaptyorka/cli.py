@@ -1,4 +1,5 @@
 import argparse
+import getpass
 import json
 import os
 import re
@@ -51,8 +52,16 @@ def _serve(args) -> int:
         print(line, file=sys.stderr)
     url = f"http://{args.host or _outbound_ip()}:{args.port}"
     print(f"hub:   {url}\ntoken: {token}\npage:  {url}/#t={token}")
-    print(f"\nOn each machine, run:\n  kaptyorka join --hub {url} --token {token}")
+    print(f"\nOn each machine, run:\n  kaptyorka join --hub {url} --token {token}\n  (add --name <name> to pick another name)")
     return 0
+
+
+def _default_name() -> str:
+    host = socket.gethostname().split(".")[0]
+    try:
+        return f"{getpass.getuser()}@{host}"
+    except Exception:
+        return host
 
 
 def _installed_hub_port() -> dict:
@@ -230,7 +239,7 @@ def entry() -> None:
     j = sub.add_parser("join", help="connect this machine's agents to the hub (again, with no flags)")
     j.add_argument("--hub", help="hub address")
     j.add_argument("--token", help="hub token")
-    j.add_argument("--name", default=socket.gethostname().split(".")[0], help="this machine's name")
+    j.add_argument("--name", default=_default_name(), help="this machine's name on the team (default: user@host)")
     j.add_argument("--only", action="append", help=hide)
     j.set_defaults(run=_join)
     sub.add_parser("leave", help="leave the hub: undo join on this machine, keep kaptyorka "

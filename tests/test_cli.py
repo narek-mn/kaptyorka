@@ -1,3 +1,4 @@
+import socket
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -35,7 +36,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.1.8" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.1.9" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
@@ -61,3 +62,12 @@ def test_request_returns_http_errors(stub_401):
 def test_request_unreachable_raises():
     with pytest.raises(http.HubUnreachable):
         http.request("GET", "http://127.0.0.1:9/x", "t", timeout=1)
+
+
+def test_join_name_defaults_to_user_at_host(monkeypatch):
+    import getpass
+    monkeypatch.setattr(getpass, "getuser", lambda: "alice")
+    host = socket.gethostname().split(".")[0]
+    assert cli._default_name() == f"alice@{host}"
+    monkeypatch.setattr(getpass, "getuser", lambda: (_ for _ in ()).throw(OSError()))
+    assert cli._default_name() == host

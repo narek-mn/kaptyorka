@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.9
+
+- `join` names the machine `user@host` by default, so one person's machines stay apart; `start` notes that `--name` picks another name.
+
 ## 0.1.8
 
 - Page redesign: Team has worded columns and a colour legend, Messages reads like a chat, Notes lists topics on the left and opens one on the right.

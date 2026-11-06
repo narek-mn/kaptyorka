@@ -76,7 +76,7 @@ pipx install kaptyorka
 kaptyorka join --hub <hub> --token <token>
 ```
 
-That is the line `start` printed; copy it as is. Add `--name <machine>` to pick a name other than the hostname.
+That is the line `start` printed; copy it as is. The machine name defaults to `user@host`; add `--name <name>` to change it.
 
 `join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart. `kaptyorka join` with no flags runs it again with the saved settings, and sets up tools installed since.
 
