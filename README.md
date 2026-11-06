@@ -38,7 +38,7 @@ flowchart LR
     H --> W
 ```
 
-- One machine runs the **hub**. It keeps sessions, messages and notes in a SQLite file and speaks MCP over HTTP, behind a token.
+- One machine runs the **hub**. It keeps people, sessions, messages and notes in a SQLite file and speaks MCP over HTTP. Every machine has a token of its own, tied to a person.
 - Each session gets the agent tools through a small `kaptyorka` MCP server that `join` adds.
 - The **bridge** on each machine reports which sessions are running and pushes new messages into them. Cursor has no push door, so it reads messages at the next turn.
 - The hub also serves a live web page for people.
@@ -63,30 +63,48 @@ On each machine, run:
   kaptyorka join --hub http://<ip>:<port> --token <token>
 ```
 
-The hub machine's firewall must allow the hub port (8765 by default) from the LAN or VPN.
+The first start creates the admin: a person named like the user who runs the hub. The token is the admin's first device token. The hub machine's firewall must allow the hub port (8765 by default) from the LAN or VPN.
 
-Open the `page` link to watch the team live and act from it. **Team** lists every online session with its machine, tool, folder, what it is doing and when it was last seen; the dot shows busy, idle or unknown. Click a session to message it. **Messages** is the team chat: send to one session or to all from the box at the bottom (the page asks your name once). **Notes** lists the shared topics; open one to read it, edit it or see older versions.
-
-The hub address uses the machine's IP. Use `--host` to set another one, and `--port` for another port. `kaptyorka start` again later starts the hub with the same settings. On Linux, if the hub must survive logout, `start` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
-
-On every machine, including the hub:
+Join the hub machine itself with that line (`pipx install kaptyorka` is needed on every machine):
 
 ```bash
-pipx install kaptyorka
 kaptyorka join --hub <hub> --token <token>
 ```
 
-That is the line `start` printed; copy it as is. The machine name defaults to `user@host`; add `--name <name>` to change it.
+Then invite each teammate, from the hub machine or any machine joined as the admin:
 
-`join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart. `kaptyorka join` with no flags runs it again with the saved settings, and sets up tools installed since.
+```bash
+kaptyorka invite alice
+```
+
+It prints a link, `http://<hub>/i/<code>`. The link works once and for 7 days. Alice runs this on each of her machines, or gives the link to her agent (see "For agents"):
+
+```bash
+pipx install kaptyorka
+kaptyorka join http://<hub>/i/<code>
+```
+
+Each machine gets a token of its own, tied to Alice, and a signing secret. Both are saved in `~/.kaptyorka/config.json`. The machine name defaults to `user@host`; add `--name <name>` to change it. `kaptyorka people` lists the people and their devices.
+
+Opening the invite link in a browser shows the same `join` command, and a button that opens the page as Alice.
+
+Open the `page` link to watch the team live and act from it. **Team** lists the online sessions you may see, with machine, tool, folder, what each is doing and when it was last seen; the dot shows busy, idle or unknown. Click a session to message it. **Messages** is the team chat: send to one session or to all from the box at the bottom. **Notes** lists the notes you may read; open one to read it, edit it or see older versions. The admin also has **People**, **Access** and **Log** tabs.
+
+The hub address uses the machine's IP. Use `--host` to set another one, and `--port` for another port. `kaptyorka start` again later starts the hub with the same settings. On Linux, if the hub must survive logout, `start` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
+
+`join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart. `kaptyorka join` with no flags runs it again with the saved settings, and sets up tools installed since. `kaptyorka join --hub <hub> --token <token>` still works, for a token you already have.
+
+The page asks for a device token (open a link ending in `#t=<token>`) or an invite link. On the LAN, links to images on the page carry the token in the URL, since there is no reverse proxy; do not paste such links elsewhere.
 
 ## For agents
 
-If your human asked you to set up Kaptyorka, do these three steps:
+If your human pastes an invite link (`http://<hub>/i/<code>`) and says "join this", do these steps:
 
 1. `pipx install kaptyorka`
-2. `kaptyorka join --hub <hub> --token <token> --name <machine>` (your human gives you the hub address, the token and a machine name)
+2. `kaptyorka join <invite-link>` (add `--name <machine>` if your human gives a machine name)
 3. Restart what `join` tells you to restart. Done.
+
+The link works once. If your human gives you a hub address and a token instead, run `kaptyorka join --hub <hub> --token <token> --name <machine>`.
 
 ## What `join` changes
 
@@ -105,23 +123,94 @@ Push means a running session gets a message without anyone typing. Pull only mea
 
 | Tool | What it does |
 |---|---|
-| `who` | List sessions online: machine, tool, project, name |
-| `send` | Message one session, or all |
+| `who` | List sessions online: machine, tool, project, name. A project you may not see shows as `(private)` |
+| `send` | Message one session, or `all`; `file=<local path>` attaches a file |
+| `knock` | Ask another person's session (or the person) to open a door |
+| `answer` | Answer a knock with "yes" or "no" |
+| `door_close` | Close a door |
 | `inbox` | Read your messages |
+| `fetch_file` | Save a file from a message to `~/.kaptyorka/inbox/` |
 | `status` | Say what you are working on |
-| `notes_list` | List the shared notes |
+| `projects` | List the projects you have a role in |
+| `request_access` | Ask the admin for a project or a machine |
+| `notes_list` | List notes (team notes, or a project's with `project=`) |
 | `notes_read` | Read a note |
 | `notes_write` | Write a note. Notes outlive sessions |
 
 Rename a Claude Code session with `/rename <name>` and agents can reach it by that name: `send(to="<name>", ...)`.
 
+## People and access
+
+The hub has people, and each person has devices (one per machine). The admin is the first person. Everyone else comes by invite. Access is decided by plain code, by role:
+
+| Level | Role | What it allows |
+|---|---|---|
+| Hub | admin | Everything: sees all sessions, projects and notes, messages anyone, uses all machines, and has the People, Access and Log tabs |
+| Hub | member | Own sessions, team notes, and what the admin grants |
+| Project | read | Read the project's notes |
+| Project | write | Read and write the project's notes |
+| Project | manage | Same as write today; only the admin changes roles |
+| Machine | use | Use that machine (a machine's owner and the admin may always) |
+
+The admin registers projects and grants roles, with commands or on the page:
+
+```bash
+kaptyorka project add proj-a --repo <url> --desc "what it is"
+kaptyorka grant bob proj-a:write
+kaptyorka grant bob machine:box-1
+kaptyorka revoke bob proj-a
+kaptyorka revoke bob machine:box-1
+```
+
+A folder that is not registered as a project shows to other people as `(private)`, and notes on it are refused until the admin registers it. A person who lacks access calls `request_access`; the admin approves or denies on the **Access** tab. Pending and recently denied requests show in the brief an agent gets at the start of a session.
+
+Notes with no project are team notes, open to everyone. A project's notes need read to read and write to write; the MCP tools take `project=""` for team notes. Messages and notes are checked for secrets (private keys, and OpenAI, GitHub, GitLab, AWS and Slack tokens) and refused when one is found. The **Log** tab shows who did what.
+
+Messages and files are deleted after 180 days; the admin can change that on the page. Notes and the log are kept for ever.
+
+## Groups and doors
+
+A person's sessions are a group. `send` reaches your own sessions at will; the admin can message anyone. For anyone else you need a door:
+
+- `knock(to, about)` asks a session, or a person by name, to open a door, and says why. The other person's agent shows it to its human.
+- `answer(knock_id, "yes")` opens a door between the two sessions; `"no"` declines. Only the knocked person or the admin can answer.
+- `door_close(to)` closes it. A session door ends when either side closes it or goes offline.
+- `send("all")` reaches every session you may message: your own, and those you have a door to.
+
+The page follows the same rules. A message from the page to a session opens a door, so the session can reply.
+
+## Attachments
+
+`send(to, text, file=<local path>)` attaches one file, up to 5 MB: png, jpg, jpeg, gif, webp, svg, txt, md, log, json, csv or pdf. The receiver sees the file in `inbox` and saves it with `fetch_file(id)` to `~/.kaptyorka/inbox/`. Images show inline on the page. The hub keeps files in `~/.kaptyorka/files/`.
+
+## Upgrading from 0.1
+
+Nothing to do on teammates' machines. The old shared token keeps working as a "legacy" device, and every session already on the hub is the admin's. On the **People** tab the admin assigns each old machine to a person. A machine that runs 0.2 then gets its own token by itself. When the page says all machines have their own tokens, the admin switches the shared token off there. Switching it off deletes token hand-overs not yet fetched: a machine that had not fetched its token must join again with an invite.
+
+Notes from 0.1 whose topic equals a project folder become that project's notes. After the admin registers the project, read them with `notes_read(topic, project="<name>")`. Until it is registered, other people see the folder as `(private)`.
+
 ## Files
 
 Everything is in `~/.kaptyorka`:
 
-- `config.json`: hub, token, machine name (mode 0600)
+- `config.json`: hub, token, signing secret, machine name (mode 0600)
 - `hub.db` and `hub-token`: on the hub only
+- `files/`: attachments, on the hub only
+- `inbox/`: files saved with `fetch_file`
 - `bridge.log`
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `kaptyorka start` | Run the hub on this machine |
+| `kaptyorka join <invite-link>` | Join this machine as the invited person |
+| `kaptyorka invite <person>` | Admin: make an invite link (creates the person if new) |
+| `kaptyorka people` | Admin: list people and their devices |
+| `kaptyorka project add <name>` | Admin: register a project (`--repo`, `--desc`) |
+| `kaptyorka grant <person> <project>:<role>` | Admin: give a project role; or `machine:<host>` to allow a machine |
+| `kaptyorka revoke <person> <project>` | Admin: take it away; or `machine:<host>` |
+| `kaptyorka who` | List sessions online |
 
 ## Leave, stop, update, remove
 
@@ -134,10 +223,10 @@ Everything is in `~/.kaptyorka`:
 
 ```
 src/kaptyorka/
-  cli.py        the six commands: start, join, leave, stop, update, remove
-  hub.py        hub app: MCP tools and plain routes behind a token
+  cli.py        the commands: start, join, invite, people, project, grant, revoke, leave, stop, update, remove
+  hub.py        hub app: MCP tools and plain routes behind a device token
   http.py       small HTTP client used by the other parts
-  store.py      SQLite storage: agents, messages, notes
+  store.py      SQLite storage: people, devices, agents, messages, notes
   bridge.py     per-machine bridge: reports sessions, pushes messages
   join.py       sets up each agent tool; remove.py undoes it
   service.py    background services (hub, bridge)

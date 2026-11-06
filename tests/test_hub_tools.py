@@ -2,8 +2,8 @@ import getpass
 from kaptyorka import http
 from helpers import call, call_error, run, tool_names
 
-PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
-DGX = {"key": "claude:2", "machine": "dgx", "tool": "claude-code", "project": "backend"}
+PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "proj-a"}
+BOX = {"key": "claude:2", "machine": "box-1", "tool": "claude-code", "project": "proj-b"}
 
 
 def test_lists_exactly_thirteen_tools(hub):
@@ -21,25 +21,25 @@ def test_missing_identity_refused(hub):
 
 
 def test_send_then_inbox_between_two_sessions(hub):
-    run(call(hub, DGX, "who"))
-    assert run(call(hub, PC, "send", to="dgx/claude-code/backend", text="move api?")) \
+    run(call(hub, BOX, "who"))
+    assert run(call(hub, PC, "send", to="box-1/claude-code/proj-b", text="move api?")) \
         == "sent to 1 session"
-    msgs = run(call(hub, DGX, "inbox"))
-    assert msgs[0]["from"] == "pc/claude-code/murmur"
+    msgs = run(call(hub, BOX, "inbox"))
+    assert msgs[0]["from"] == "pc/claude-code/proj-a"
     assert msgs[0]["text"] == "move api?"
 
 
 def test_status_shows_in_who(hub):
     run(call(hub, PC, "status", text="working on /move"))
     rows = run(call(hub, PC, "who"))
-    me = next(r for r in rows if r["name"] == "pc/claude-code/murmur")
+    me = next(r for r in rows if r["name"] == "pc/claude-code/proj-a")
     assert me["status"] == "working on /move"
     assert me["you"] is True
 
 
 def test_notes_roundtrip(hub):
     run(call(hub, PC, "notes_write", topic="api", text="v1 at /v1"))
-    note = run(call(hub, DGX, "notes_read", topic="api"))
+    note = run(call(hub, BOX, "notes_read", topic="api"))
     assert note["text"] == "v1 at /v1"
     assert note["author"] == getpass.getuser()  # the person behind the hub fixture's token
-    assert run(call(hub, DGX, "notes_read", topic="x")) == "no note named x"
+    assert run(call(hub, BOX, "notes_read", topic="x")) == "no note named x"

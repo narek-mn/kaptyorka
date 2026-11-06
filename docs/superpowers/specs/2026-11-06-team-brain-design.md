@@ -239,8 +239,7 @@ one click; the hub then issues that device its own token and puts a `rekey`
 order in that bridge's poll stream. The bridge rewrites `config.json`;
 shims and hooks read the config at start, so new sessions use the new token
 and running ones keep working under the legacy mapping. The legacy token is
-accepted until no unassigned legacy machine is left, or until the admin
-switches it off on the page; then it is refused with a message naming
+accepted until the admin switches it off on the page; then it is refused with a message naming
 `kaptyorka join`. Not tied to a version number, so parts released together
 cannot cut anyone off. Nothing to do by hand on the teammates' side.
 
@@ -644,8 +643,8 @@ builder tests both once.
 - A machine is a host; a device is one account on it; shared accounts are
   marked by the admin and lend their sessions to the asking person.
 - Teammates on the old shared token are reassigned by the admin on the page;
-  the bridge is re-keyed through its poll stream; the old token dies when no
-  unassigned machine is left or the admin switches it off.
+  the bridge is re-keyed through its poll stream; the old token keeps
+  working until the admin switches it off.
 - The manager has its own role that cannot answer knocks, open doors or grant.
 - Retention: messages 180 days; notes, log, rules forever; git facts 30 days.
 - Brief budget 6,000 characters, cut in the order given.
