@@ -349,6 +349,7 @@ def _hook(args) -> int:
 def _join(args) -> int:
     from kaptyorka import join
 
+    extra = {"env": join.read_env(sys.stdin.read())} if args.env_stdin else {}
     if args.invite:
         got = join.redeem(args.invite, args.name)
         if got is None:
@@ -359,17 +360,54 @@ def _join(args) -> int:
         if person:
             cfg["person"] = person
         paths.save_config(cfg)
-        return join.main(hub, token, args.name, only=args.only, secret=secret, person=person)
+        return join.main(hub, token, args.name, only=args.only, secret=secret, person=person,
+                         **extra)
     if not args.hub and not args.token:  # no flags: the previous arguments, saved by the last join
         cfg = paths.load_config()
         if not cfg.get("hub") or not cfg.get("token"):
             print("not joined yet: run kaptyorka join --hub <address> --token <token>", file=sys.stderr)
             return 1
-        return join.main(cfg["hub"], cfg["token"], cfg.get("machine") or args.name, only=cfg.get("tools"))
+        return join.main(cfg["hub"], cfg["token"], cfg.get("machine") or args.name, only=cfg.get("tools"), **extra)
     if not (args.hub and args.token):
         print("join needs both --hub and --token", file=sys.stderr)
         return 2
-    return join.main(args.hub, args.token, args.name, only=args.only)
+    return join.main(args.hub, args.token, args.name, only=args.only, **extra)
+
+
+def _fleet_add(args) -> int:
+    from kaptyorka import fleet
+
+    cfg = paths.load_config()
+
+    def invite(person: str) -> str:
+        got = _admin_call("POST", "/api/invites", {"person": person})
+        if got is None or got[0] != 200:
+            raise RuntimeError(got[1] if got and isinstance(got[1], str) else "could not make an invite")
+        return got[1]["url"]
+
+    try:
+        lines = fleet.add(args.targets, args.person, Path(args.key_from) if args.key_from else None,
+                          cfg.get("hub", ""), invite, run=subprocess.run)
+    except (RuntimeError, OSError) as e:
+        print(e, file=sys.stderr)
+        return 1
+    for line in lines:
+        print(line)
+    return 1 if any(": failed at " in l for l in lines) else 0
+
+
+def _fleet_list(args) -> int:
+    from kaptyorka import fleet
+
+    got = _admin_call("GET", "/api/machines")
+    if got is None:
+        return 1
+    if got[0] != 200:
+        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        return 1
+    for line in fleet.list(got[1]):
+        print(line)
+    return 0
 
 
 def _doctor(args) -> int:
@@ -382,7 +420,7 @@ def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove,invite,people,"
-                            "project,grant,revoke,machine,who,doctor}")
+                            "project,grant,revoke,machine,who,doctor,fleet}")
     hide = argparse.SUPPRESS  # subparsers are hidden by giving them no help text
     s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
     s.add_argument("--port", type=int, help="hub port (default 8765)")
@@ -394,6 +432,7 @@ def entry() -> None:
     j.add_argument("--token", help="hub token")
     j.add_argument("--name", default=_default_name(), help="this machine's name on the team (default: user@host)")
     j.add_argument("--only", action="append", help=hide)
+    j.add_argument("--env-stdin", action="store_true", help=hide)
     j.set_defaults(run=_join)
     sub.add_parser("leave", help="leave the hub: undo join on this machine, keep kaptyorka "
                    "installed; join brings it back").set_defaults(run=_leave)
@@ -432,6 +471,14 @@ def entry() -> None:
     d = sub.add_parser("doctor", help="check this machine's setup; --fix repairs what it can")
     d.add_argument("--fix", action="store_true", help="re-wire failing tools and restart a stopped bridge")
     d.set_defaults(run=_doctor)
+    fl = sub.add_parser("fleet")
+    fs = fl.add_subparsers(dest="fleet_cmd", required=True)
+    fa = fs.add_parser("add")
+    fa.add_argument("targets", nargs="+", metavar="user@host")
+    fa.add_argument("--person", required=True)
+    fa.add_argument("--key-from", help="file with one NAME=value line, sent to the bridge's environment")
+    fa.set_defaults(run=_fleet_add)
+    fs.add_parser("list").set_defaults(run=_fleet_list)
     m = sub.add_parser("mcp")
     m.add_argument("--workspace")
     m.set_defaults(run=_mcp)

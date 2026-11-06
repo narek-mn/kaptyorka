@@ -204,7 +204,7 @@ def test_cli_machine_owner(monkeypatch, home, capsys):
 def test_metavar_lists_user_commands(capsys):
     with pytest.raises(SystemExit):
         entry_with(["--help"])
-    assert ("{start,join,leave,stop,update,remove,invite,people,project,grant,revoke,machine,who,doctor}"
+    assert ("{start,join,leave,stop,update,remove,invite,people,project,grant,revoke,machine,who,doctor,fleet}"
             in capsys.readouterr().out)
 
 
@@ -217,3 +217,29 @@ def test_doctor_prints_one_line_per_check(monkeypatch, home, capsys):
     monkeypatch.setattr("kaptyorka.adapters.all_adapters", lambda log=print: seen.append(1) or [])
     assert entry_with_exit(["doctor"]) == 1
     assert capsys.readouterr().out == "ok   config\nFAIL tmux: not installed -> brew install tmux\n"
+
+
+def test_fleet_add_smoke_with_fake_run(monkeypatch, home, tmp_path, capsys):
+    from types import SimpleNamespace
+
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    monkeypatch.setattr(http, "request", lambda m, u, t, b=None, **k: (
+        200, {"url": "http://h:1/i/" + "C" * 22}))
+    seen = []
+
+    def fake_run(argv, **kw):
+        seen.append(argv)
+        return SimpleNamespace(returncode=0, stdout="/bin/claude\n", stderr="")
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    assert entry_with_exit(["fleet", "add", "alice@box-1", "--person", "alice"]) == 0
+    assert capsys.readouterr().out == "alice@box-1: joined as alice@box-1; tools: claude-code\n"
+    assert all(a[:3] == ["ssh", "-o", "BatchMode=yes"] for a in seen) and len(seen) == 4
+
+
+def test_fleet_list_prints_devices(monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    monkeypatch.setattr(http, "request", lambda *a, **k: (200, [{"host": "box-1", "devices": [
+        {"os_user": "alice", "person": "alice", "online": True, "version": "1.0"}]}]))
+    assert entry_with_exit(["fleet", "list"]) == 0
+    assert capsys.readouterr().out == "box-1 alice        alice      online 1.0\n"

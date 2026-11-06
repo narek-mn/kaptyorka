@@ -199,3 +199,17 @@ def test_join_saves_person(hub, home):
     # a plain rejoin with the same token keeps it
     assert main(hub_url, token, "box-1", adapters=[FakeAdapter("a")], install=no_service([])) == 0
     assert paths.load_config()["person"] == "alice"
+
+
+def test_join_env_stdin_reaches_service_env(hub, home):
+    seen = []
+
+    def install(name, argv, **kw):
+        seen.append(kw.get("env"))
+        return ["ok"]
+
+    assert main(hub.url, "T", "pc", adapters=[FakeAdapter("a")], install=install,
+                env={"API_KEY": "sk-x"}) == 0
+    assert seen[0]["API_KEY"] == "sk-x" and "PATH" in seen[0]
+    from kaptyorka.join import read_env
+    assert read_env("A=1\n\nbad line\nB=x=y\n") == {"A": "1", "B": "x=y"}
