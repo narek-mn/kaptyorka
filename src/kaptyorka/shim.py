@@ -1,4 +1,5 @@
 """`kaptyorka mcp`: a stdio MCP server that relays to the hub with its session's identity."""
+import json
 import os
 from typing import Dict, Optional
 
@@ -10,7 +11,9 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from kaptyorka import http, identity
+from urllib.parse import quote
+
+from kaptyorka import http, identity, paths
 
 TIMEOUT_S = 4.5  # whole call, connection included: the agent hears back within 5 s
 HEARTBEAT_S = 10
@@ -90,6 +93,37 @@ def _headers(cfg: dict, ident: Optional[identity.Identity]) -> dict:
     return {"Authorization": f"Bearer {cfg['token']}", **(ident.headers() if ident else {})}
 
 
+def _error(message: str) -> types.CallToolResult:
+    return types.CallToolResult(content=[types.TextContent(text=message)], is_error=True)
+
+
+def _upload(cfg: dict, headers: dict, args: dict) -> Optional[str]:
+    """Turn a local path in args["file"] into "id:<n>" by uploading it. Returns an error text."""
+    path = os.path.expanduser(args["file"])
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError as e:
+        return f"cannot read {args['file']}: {e.strerror or e}"
+    status, body, _ = http.request_raw(
+        "POST", cfg["hub"] + "/api/files", cfg["token"], data,
+        {**headers, "X-File-Name": quote(os.path.basename(path))})
+    if status // 100 != 2:
+        return body.decode("utf-8", "replace") or f"upload failed ({status})"
+    args["file"] = f"id:{json.loads(body)['id']}"
+    return None
+
+
+def _download(cfg: dict, headers: dict, info: dict) -> dict:
+    """Save the file the hub described to the inbox folder; return {path, name, size}."""
+    status, body, _ = http.request_raw("GET", cfg["hub"] + info["url"], cfg["token"], None, headers)
+    if status // 100 != 2:
+        raise http.HubUnreachable(cfg["hub"] + info["url"])
+    dest = paths.inbox_dir() / f"{info['id']}-{os.path.basename(info['name'])}"
+    dest.write_bytes(body)
+    return {"path": str(dest), "name": info["name"], "size": info["size"]}
+
+
 async def _serve(cfg: dict, workspace: Optional[str]) -> None:
     url = cfg["hub"]
     unreachable = f"kaptyorka hub unreachable at {url}"
@@ -140,15 +174,26 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
             else:
                 await identify()
                 use = relay
+            args = dict(params.arguments or {})
+            f = args.get("file")
             try:
-                r = await use.use(lambda c: c.call_tool(params.name, params.arguments or {}))
+                if params.name == "send" and isinstance(f, str) and f and not f.startswith("id:"):
+                    err = await anyio.to_thread.run_sync(_upload, cfg, use.headers, args)
+                    if err:
+                        return _error(err)
+                r = await use.use(lambda c: c.call_tool(params.name, args))
+                if params.name == "fetch_file" and r is not None and not r.is_error:
+                    out = await anyio.to_thread.run_sync(
+                        _download, cfg, use.headers, r.structured_content["result"])
+                    return types.CallToolResult(content=[types.TextContent(text=json.dumps(out))],
+                                                structured_content={"result": out})
             except MCPError as e:
-                return types.CallToolResult(content=[types.TextContent(text=e.message)],
-                                            is_error=True)
+                return _error(e.message)
+            except http.HubUnreachable:
+                return _error(unreachable)
             if r is not None:
                 return r
-            return types.CallToolResult(content=[types.TextContent(text=unreachable)],
-                                        is_error=True)
+            return _error(unreachable)
 
         server = Server("kaptyorka", on_list_tools=list_tools, on_call_tool=call_tool)
         await identify()

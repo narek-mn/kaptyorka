@@ -2,7 +2,7 @@ import http.client
 import json
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Optional, Tuple
 
 
 class HubUnreachable(Exception):
@@ -39,3 +39,20 @@ def _decode(raw: bytes, ctype: str) -> Any:
         return json.loads(text)
     except ValueError:
         return text
+
+
+def request_raw(method: str, url: str, token: str, data: Optional[bytes] = None,
+                headers: "dict | None" = None, timeout: float = 30) -> Tuple[int, bytes, str]:
+    """Bytes in, bytes out: (status, body, content type). For file upload and download."""
+    h = {"Authorization": f"Bearer {token}"}
+    if data is not None:
+        h["Content-Type"] = "application/octet-stream"
+    h.update(headers or {})
+    req = urllib.request.Request(url, data=data, headers=h, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read(), r.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), e.headers.get("Content-Type", "")
+    except (urllib.error.URLError, OSError, http.client.HTTPException):
+        raise HubUnreachable(url) from None

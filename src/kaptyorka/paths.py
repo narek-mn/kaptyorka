@@ -26,3 +26,17 @@ def save_config(cfg: dict) -> None:
     with os.fdopen(fd, "w") as f:
         json.dump(cfg, f, indent=2)
     os.chmod(p, 0o600)
+
+
+def _subdir(name: str) -> Path:
+    d = home() / name
+    d.mkdir(mode=0o700, exist_ok=True)
+    return d
+
+
+def files_dir() -> Path:
+    return _subdir("files")
+
+
+def inbox_dir() -> Path:
+    return _subdir("inbox")

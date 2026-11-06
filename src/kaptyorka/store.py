@@ -10,11 +10,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
+from kaptyorka import paths
+
 ONLINE_S = 30
 LEASE_S = 60
 MAX_TEXT = 32_000
 MAX_ABOUT = 500
 MAX_LABEL = 40
+MAX_FILE = 5_000_000
+FILE_TYPES = ("png", "jpg", "jpeg", "gif", "webp", "svg", "txt", "md", "log", "json", "csv", "pdf")
 RATE = (30, 60)
 SCHEMA_VERSION = 2
 INVITE_TTL_S = 7 * 86400
@@ -175,6 +179,7 @@ class Message:
     from_web: bool = False
     to_web: bool = False
     kind: str = "message"
+    file: Optional[dict] = None  # {id, name, size} of the attachment
 
 
 @dataclass
@@ -763,13 +768,18 @@ class Store:
 
     # messages
 
-    def send(self, sender_key: str, to: str, text: str) -> int:
+    def send(self, sender_key: str, to: str, text: str, file_id: Optional[int] = None) -> int:
         with self.lock:
             now = self.clock()
             sender = self.db.execute("SELECT * FROM agents WHERE key=?", (sender_key,)).fetchone()
             if sender is None:
                 raise KaptyorkaError("unknown sender session")
             _check_length(text)
+            if file_id is not None:
+                f = self.db.execute("SELECT person_id, message_id FROM files WHERE id=?",
+                                    (file_id,)).fetchone()
+                if f is None or f["person_id"] != sender["person_id"] or f["message_id"] is not None:
+                    raise KaptyorkaError("that file is not yours")
             self._rate_check(sender_key, now)
             self._expire_doors(now)
             targets = self._targets(sender_key, to, now)
@@ -778,7 +788,7 @@ class Store:
             elif not all(t["key"].startswith("web:") or self._may_message(sender, t)
                          for t in targets):  # a person on the web page: Task 11 checks those
                 raise KaptyorkaError(f"no door to {to}: knock(to, about) first")
-            n = self._insert(sender_key, sender["name"], targets, text, now)
+            n = self._insert(sender_key, sender["name"], targets, text, now, file_id)
             self._rate_hit(sender_key, now)
             return n
 
@@ -833,15 +843,18 @@ class Store:
     def _deliver(self, sender_key, sender_name, to, text, now):
         return self._insert(sender_key, sender_name, self._targets(sender_key, to, now), text, now)
 
-    def _insert(self, sender_key, sender_name, targets, text, now):
+    def _insert(self, sender_key, sender_name, targets, text, now, file_id=None):
         for t in targets:
             # a person reads it on the page, so it is never waiting for delivery
             read_at = now if t["key"].startswith("web:") else None
             self.db.execute(
                 "INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine,"
-                " tool, project, text, created, read_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                " tool, project, text, created, read_at, file_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (sender_key, sender_name, t["key"], t["name"], t["machine"],
-                 t["tool"], t["project"], text, now, read_at))
+                 t["tool"], t["project"], text, now, read_at, file_id))
+            if file_id is not None:  # the file points at the first message that carries it
+                self.db.execute("UPDATE files SET message_id=(SELECT last_insert_rowid())"
+                                " WHERE id=? AND message_id IS NULL", (file_id,))
         return len(targets)
 
     def _deliverable(self, now):
@@ -883,7 +896,8 @@ class Store:
                 self.db.execute("UPDATE messages SET read_at=? WHERE id=?", (now, m["id"]))
                 self._bind(m, key)
             return [Message(m["id"], m["sender_name"], m["to_name"], m["text"], m["created"], True,
-                            m["sender_key"].startswith("web:"), kind=m["kind"]) for m in rows]
+                            m["sender_key"].startswith("web:"), kind=m["kind"],
+                            file=self._file_info(m["file_id"])) for m in rows]
 
     def offer(self, machine: str) -> List[dict]:
         with self.lock:
@@ -916,8 +930,57 @@ class Store:
                                    (limit,)).fetchall()
             return [Message(m["id"], m["sender_name"], m["to_name"], m["text"], m["created"],
                             m["read_at"] is not None, m["sender_key"].startswith("web:"),
-                            (m["to_key"] or "").startswith("web:"), m["kind"])
+                            (m["to_key"] or "").startswith("web:"), m["kind"],
+                            self._file_info(m["file_id"]))
                     for m in reversed(rows)]
+
+    # files
+
+    def file_add(self, name: str, data: bytes, person_id: int) -> int:
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if ext not in FILE_TYPES:
+            raise KaptyorkaError(f"file type .{ext} not allowed")
+        if len(data) > MAX_FILE:
+            raise KaptyorkaError(f"file too large: {len(data)} bytes, limit {MAX_FILE}")
+        with self.lock:
+            fid = self.db.execute(
+                "INSERT INTO files (name, size, sha256, created, person_id) VALUES (?,?,?,?,?)",
+                (name[:200], len(data), hashlib.sha256(data).hexdigest(), self.clock(),
+                 person_id)).lastrowid
+            (paths.files_dir() / str(fid)).write_bytes(data)
+            return fid
+
+    def _file_info(self, file_id) -> Optional[dict]:
+        row = self.db.execute("SELECT id, name, size FROM files WHERE id=?",
+                              (file_id,)).fetchone() if file_id is not None else None
+        return dict(row) if row else None
+
+    def _file_visible(self, file_id: int, principal: Principal) -> bool:
+        if principal.is_admin():
+            return True
+        pid = principal.person_id
+        return self.db.execute(
+            "SELECT 1 FROM messages m LEFT JOIN agents s ON s.key=m.sender_key"
+            " LEFT JOIN agents r ON r.key=m.to_key WHERE m.file_id=?"
+            " AND (s.person_id=? OR r.person_id=?) LIMIT 1", (file_id, pid, pid)).fetchone() is not None
+
+    def file_visible(self, file_id: int, principal: Principal) -> bool:
+        with self.lock:
+            return self._file_visible(file_id, principal)
+
+    def file_meta(self, file_id: int, principal: Principal) -> dict:
+        with self.lock:
+            info = self._file_info(file_id)
+            if info is None or not self._file_visible(file_id, principal):
+                raise KaptyorkaError("no such file")
+            return info
+
+    def file_get(self, file_id: int, principal: Principal) -> Tuple[dict, bytes]:
+        info = self.file_meta(file_id, principal)
+        try:
+            return info, (paths.files_dir() / str(file_id)).read_bytes()
+        except OSError:
+            raise KaptyorkaError("no such file") from None
 
     # doors and knocks
 

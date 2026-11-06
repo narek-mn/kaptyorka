@@ -168,3 +168,44 @@ def test_shim_follows_claude_session_id_change(hub, home):
             assert not (await c.call_tool("who", {})).is_error
     anyio.run(go)
     assert {a.key for a in hub.store.online()} == {"claude:old", "claude:new"}
+
+
+def test_shim_send_uploads_local_path(hub, home, tmp_path):
+    pid, tok = __import__("helpers").person(hub.store, "ann", "admin")
+    src = tmp_path / "shot.png"
+    src.write_bytes(b"PNGDATA")
+    hub.store.seen("claude:2", "pc", "claude-code", "other")
+    other = hub.store.agent("claude:2").name
+
+    async def go():
+        async with shim(home, hub.url) as c:
+            r = await c.call_tool("send", {"to": other, "text": "hi", "file": str(src)})
+            assert not r.is_error, text(r)
+            r = await c.call_tool("send", {"to": other, "text": "hi", "file": str(tmp_path / "no.png")})
+            assert r.is_error and "cannot read" in text(r)
+            bad = tmp_path / "x.exe"
+            bad.write_bytes(b"x")
+            r = await c.call_tool("send", {"to": other, "text": "hi", "file": str(bad)})
+            assert r.is_error and "file type .exe not allowed" in text(r)
+    anyio.run(go)
+    with hub.store.lock:
+        rows = hub.store.db.execute("SELECT * FROM files").fetchall()
+    assert [(r["name"], r["size"]) for r in rows] == [("shot.png", 7)]
+    assert (paths.files_dir() / str(rows[0]["id"])).read_bytes() == b"PNGDATA"
+
+
+def test_shim_fetch_file_saves_to_inbox(hub, home):
+    pid, tok = __import__("helpers").person(hub.store, "ann", "admin")
+    fid = hub.store.file_add("a b/notes.txt", b"hello", pid)
+
+    async def go():
+        async with shim(home, hub.url) as c:
+            r = await c.call_tool("fetch_file", {"id": fid})
+            assert not r.is_error, text(r)
+            out = json.loads(text(r))
+            assert out["name"] == "a b/notes.txt" and out["size"] == 5
+            assert out["path"] == str(paths.inbox_dir() / f"{fid}-notes.txt")
+            assert open(out["path"], "rb").read() == b"hello"
+            r = await c.call_tool("fetch_file", {"id": 999})
+            assert r.is_error and "no such file" in text(r)
+    anyio.run(go)

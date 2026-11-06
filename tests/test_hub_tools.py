@@ -5,10 +5,10 @@ PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "mur
 DGX = {"key": "claude:2", "machine": "dgx", "tool": "claude-code", "project": "backend"}
 
 
-def test_lists_exactly_twelve_tools(hub):
+def test_lists_exactly_thirteen_tools(hub):
     assert tool_names(hub) == {"who", "send", "inbox", "status",
                                "notes_list", "notes_read", "notes_write", "projects",
-                               "knock", "answer", "door_close", "request_access"}
+                               "knock", "answer", "door_close", "request_access", "fetch_file"}
 
 
 def test_wrong_token_401(hub):

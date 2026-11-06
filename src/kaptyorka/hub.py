@@ -5,8 +5,10 @@ import html
 import importlib.resources
 import inspect
 import math
+import mimetypes
+import re
 from dataclasses import asdict
-from typing import List, Mapping, Union
+from typing import Dict, List, Mapping, Union
 from urllib.parse import unquote
 
 from mcp.server.mcpserver import Context, MCPServer
@@ -167,9 +169,17 @@ def build_app(store: Store) -> Starlette:
 
     @server.tool()
     @_tool_errors
-    async def send(to: str, text: str, ctx: Context) -> str:
-        """Send text to one session by name or label, or to 'all'."""
-        n = store.send(me(ctx).key, to, text)
+    async def send(to: str, text: str, ctx: Context, file: str = "") -> str:
+        """Send text to one session by name or label, or to 'all'. file: the local path of one
+        file to attach (png jpg gif webp svg txt md log json csv pdf, up to 5 MB)."""
+        file_id = None
+        if file:
+            m = re.fullmatch(r"id:(\d+)", file)
+            if m is None:
+                raise KaptyorkaError("attach a file by passing its local path; "
+                                     "the kaptyorka tool uploads it")
+            file_id = int(m.group(1))
+        n = store.send(me(ctx).key, to, text, file_id)
         wake_bridges()
         return f"sent to {n} session" + ("" if n == 1 else "s")
 
@@ -205,8 +215,16 @@ def build_app(store: Store) -> Starlette:
     @_tool_errors
     def inbox(ctx: Context) -> List[dict]:
         """Your unread messages; reading marks them read."""
-        return [{"from": m.sender, "text": m.text, "time": m.created, "kind": m.kind}
-                for m in store.inbox(me(ctx).key)]
+        return [{"from": m.sender, "text": m.text, "time": m.created, "kind": m.kind,
+                 "file": m.file} for m in store.inbox(me(ctx).key)]
+
+    @server.tool()
+    @_tool_errors
+    def fetch_file(id: int, ctx: Context) -> Dict[str, Union[int, str]]:
+        """Download a file attached to a message you sent or received (id from inbox)."""
+        _, principal = caller(ctx)
+        info = store.file_meta(id, principal)
+        return {**info, "url": f"/api/files/{id}"}
 
     @server.tool()
     @_tool_errors
@@ -326,6 +344,29 @@ def build_app(store: Store) -> Starlette:
                        "history": [asdict(h) for h in store.note_history(n["topic"])]}
                       for n in store.notes_list()],
         })
+
+    @server.custom_route("/api/files", methods=["POST"])
+    async def api_file_upload(request: Request) -> Response:
+        principal = request.scope["state"]["principal"]
+        name = unquote(request.headers.get("x-file-name") or "") or "file"
+        data = await request.body()
+        try:
+            fid = store.file_add(name, data, principal.person_id)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return JSONResponse({"id": fid, "name": name[:200], "size": len(data)})
+
+    @server.custom_route("/api/files/{id}", methods=["GET"])
+    async def api_file_get(request: Request) -> Response:
+        try:
+            info, data = store.file_get(int(request.path_params["id"]),
+                                        request.scope["state"]["principal"])
+        except (KaptyorkaError, ValueError):
+            return PlainTextResponse("no such file", status_code=404)
+        safe = re.sub(r"[^A-Za-z0-9._-]", "", info["name"].replace("\\", "/").rsplit("/", 1)[-1])
+        return Response(data, media_type=mimetypes.guess_type(info["name"])[0]
+                        or "application/octet-stream",
+                        headers={"Content-Disposition": f'attachment; filename="{safe or "file"}"'})
 
     @server.custom_route("/api/send", methods=["POST"])
     @_bad_request
