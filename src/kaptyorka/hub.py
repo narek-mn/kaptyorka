@@ -426,13 +426,21 @@ def build_app(store: Store) -> Starlette:
         body = await request.json()
         device_id = request.scope["state"]["principal"].device_id
         name = str(body["worker"])
+        def refused() -> Response:  # 410: stop that session; 404: leave it alone
+            if ws.state(name, device_id) in ("closed", "failed"):
+                return PlainTextResponse("that worker is closed", status_code=410)
+            return PlainTextResponse("no such starting worker here", status_code=404)
+
         if "key" not in body:
             if not ws.fail(name, str(body["error"]), device_id):
-                return PlainTextResponse("no such starting worker here", status_code=404)
+                return refused()
             tick()  # the boss hears it now
             return Response(status_code=204)
+        was = ws.state(name, device_id)
         if not ws.link(name, str(body["key"]), device_id, body.get("needs_brief") is True):
-            return PlainTextResponse("no such starting worker here", status_code=404)
+            return refused()
+        if was != "starting":
+            return Response(status_code=204)  # a retried link: the boss heard it already
         w = ws.by_name(name)
         tell(ws.boss_key(name), f"worker `{name}` is up on {w['host']}; attach with"
                                 f" `{w['attach']}`")

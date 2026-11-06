@@ -252,6 +252,15 @@ def test_create_names_and_signs(store, ws, alice_p, dev, boss, clock):
     assert launch(ws, alice_p, dev, boss)["name"] == "proj-a-w2"
 
 
+def test_worker_names_have_no_dots(store, ws, alice_p, dev, boss):
+    store.seen("claude:boss", "box-1", "claude-code", "proj-a", principal=alice_p)
+    a = ws.create(alice_p, "proj.a", "t", target(dev), "claude-code", boss, None, False)
+    assert a["name"] == "proj-a-w1" and a["project"] == "proj.a"
+    b = ws.create(alice_p, "proj-a", "t", target(dev), "claude-code", boss, None, False)
+    assert b["name"] == "proj-a-w2"  # proj-a and proj.a share the name space
+    assert ws.offer(dev)[0]["worker"] == "proj-a-w1"
+
+
 def test_create_refuses_empty_task_and_bad_project(ws, alice_p, dev, boss):
     with pytest.raises(KaptyorkaError):
         launch(ws, alice_p, dev, boss, task="  ")
@@ -287,7 +296,9 @@ def test_link_marks_up_and_moves_session_to_boss_group(store, ws, alice, alice_p
     assert store.agent("claude:w1").person_id == alice
     w = ws.by_key("claude:w1")
     assert w["name"] == "proj-a-w1" and w["state"] == "up" and w["key"] == "claude:w1"
-    assert ws.link("proj-a-w1", "claude:w1", dev) is False  # no longer starting
+    assert ws.link("proj-a-w1", "claude:w1", dev) is True  # a retried link: same key
+    assert ws.link("proj-a-w1", "claude:other", dev) is False  # up with another key
+    assert ws.state("proj-a-w1", dev) == "up"
 
 
 def test_link_before_heartbeat_and_from_another_device(store, ws, alice, bob, alice_p, boss):

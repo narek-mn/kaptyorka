@@ -271,12 +271,14 @@ class WorkerStore:
             if boss is None:
                 raise KaptyorkaError("unknown boss session")
             self._signing(device["device_id"])  # before anything is written
+            base = project.replace(".", "-")  # tmux turns dots in session names into _
             taken = {r["name"] for r in self.db.execute(
-                "SELECT name FROM workers WHERE project=?", (project,))}
+                "SELECT name FROM workers WHERE substr(name, 1, ?) = ?",
+                (len(base) + 2, base + "-w"))}
             n = 1
-            while f"{project}-w{n}" in taken:
+            while f"{base}-w{n}" in taken:
                 n += 1
-            name = f"{project}-w{n}"
+            name = f"{base}-w{n}"
             # again under the lock: a session or a starting worker may hold the folder by now
             occupied = bool(occupied) or self.db.execute(
                 "SELECT 1 FROM agents WHERE host=? AND os_user=? AND cwd=? AND last_seen>?"
@@ -335,9 +337,13 @@ class WorkerStore:
 
     def link(self, worker: str, key: str, device_id: int, needs_brief: bool = False) -> bool:
         """`needs_brief`: the tool could not take the first message on its command line, so
-        the session's start brief carries it."""
+        the session's start brief carries it. Linking again with the same key is a success:
+        the bridge retries when the hub's answer was lost."""
         with self.lock:
             w = self._row(worker)
+            if w is not None and w["state"] == "up" and w["key"] == key \
+                    and w["device_id"] == device_id:
+                return True
             if w is None or w["state"] != "starting" or w["device_id"] != device_id:
                 return False
             row = self.db.execute("SELECT person_id, device_id FROM agents WHERE key=?",
@@ -361,6 +367,12 @@ class WorkerStore:
             self.db.execute("UPDATE agents SET person_id=?, device_id=? WHERE key=?",
                             (w["boss_person"], device_id, key))
             return True
+
+    def state(self, worker: str, device_id: int) -> Optional[str]:
+        """The worker's state when it runs on that device; None otherwise."""
+        with self.lock:
+            w = self._row(worker)
+            return w["state"] if w is not None and w["device_id"] == device_id else None
 
     def fail(self, worker: str, error: str, device_id: int) -> bool:
         """The bridge could not start a worker it took: it fails with the bridge's error."""

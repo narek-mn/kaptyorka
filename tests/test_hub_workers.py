@@ -144,9 +144,12 @@ def test_poll_carries_signed_launch_and_ack_links_worker(hub, alice):
     assert hub.ws.by_name("proj-a-w1")["state"] == "up"
     assert inbox_texts(client, BOSS) == [
         "worker `proj-a-w1` is up on box-1; attach with `claude attach proj-a-w1`"]
-    # linked once only
+    # a retried link (the answer was lost) is a success and tells the boss nothing new
     assert http.request("POST", hub.url + "/bridge/worker", b.token,
-                        {"worker": "proj-a-w1", "key": "claude:w1"})[0] == 404
+                        {"worker": "proj-a-w1", "key": "claude:w1"})[0] == 204
+    assert inbox_texts(client, BOSS) == []
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "proj-a-w1", "key": "claude:other"})[0] == 404
 
     # a launch the bridge could not start: the boss hears it on the next tick
     run(call(client, BOSS, "work", project="proj-a", task="second"))
@@ -158,6 +161,13 @@ def test_poll_carries_signed_launch_and_ack_links_worker(hub, alice):
     assert hub.ws.by_name("proj-a-w2")["state"] == "failed"
     hub.app.state.tick()
     assert inbox_texts(client, BOSS) == ["worker `proj-a-w2` failed to start: no claude"]
+    # a closed or failed worker answers 410: the bridge stops that session
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "proj-a-w2", "key": "claude:w2"})[0] == 410
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "proj-a-w2", "error": "again"})[0] == 410
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "proj-a-w9", "key": "claude:w9"})[0] == 404
 
 
 def test_work_refuses_without_write_role(hub, registered):

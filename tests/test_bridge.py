@@ -474,7 +474,7 @@ def test_bridge_launches_a_signed_order_and_acks_it(team, home):
     assert team.worker()["state"] == "starting"
     assert set(team.bridge.pending) == {"proj-a-w1"}
     saved = json.loads((home / ".kaptyorka" / "launched.json").read_text())
-    assert saved == [oid]
+    assert saved == {str(oid): {"ok": True, "error": ""}}
 
 
 def test_bridge_refuses_replay_and_bad_signature(team):
@@ -484,11 +484,34 @@ def test_bridge_refuses_replay_and_bad_signature(team):
     team.bridge._order(item)  # the same signed order again
     team.bridge._order({**item, "task": "rm -rf ~"})  # changed on the way
     assert len(team.popen.calls) == 1
-    assert team.acks[1:] == [(item["id"], False, True, "order already run"),
+    assert team.acks[1:] == [(item["id"], True, True, ""),  # the stored outcome, again
                              (item["id"], False, True, "bad signature")]
-    # a restarted bridge still knows the id
+    # a restarted bridge still knows the id and its outcome
     again = Bridge(team.bridge.cfg, [], team.lines.append, run=FakeRun(), launcher=team.launcher)
-    assert item["id"] in again.seen_ids
+    assert again.seen_ids == {item["id"]: {"ok": True, "error": ""}}
+
+
+def test_lost_ack_is_answered_with_the_stored_outcome(team, monkeypatch):
+    real = bridge_mod.http.request
+    lost = []
+
+    def lose_first_ack(method, url, token, body=None, *a, **kw):
+        if url.endswith("/bridge/ack") and len(lost) < 2:  # the ack and its one retry
+            lost.append(body)
+            raise bridge_mod.http.HubUnreachable(url)
+        return real(method, url, token, body, *a, **kw)
+
+    monkeypatch.setattr(bridge_mod.http, "request", lose_first_ack)
+    team.work()
+    with pytest.raises(bridge_mod.http.HubUnreachable):
+        team.bridge.poll_once(0)
+    item = team.order()
+    with team.hub.store.lock:
+        team.hub.store.db.execute("UPDATE launches SET offered_at=NULL")  # offered again
+    team.bridge.poll_once(0)
+    assert len(team.popen.calls) == 1  # not started twice
+    assert team.acks[-1] == (item["id"], True, True, "")
+    assert team.worker()["state"] == "starting"  # not failed: it did start
 
 
 def test_bridge_without_secret_refuses_every_order(hub, home, monkeypatch):
@@ -509,7 +532,6 @@ def test_bridge_refuses_other_persons_order_unless_shared(team):
     assert team.acks == [(item["id"], False, True, "this account belongs to bob")]
     assert team.popen.calls == []
     team.acks.clear()
-    team.bridge.seen_ids.clear()
     team.bridge.hub["shared"] = True
     team.bridge._order(item)
     assert team.acks == [(item["id"], True, True, "")] and len(team.popen.calls) == 1
@@ -551,6 +573,8 @@ def test_bridge_reports_timeout_after_two_minutes(team):
     assert w["error"] == ("the session did not show up within 2 minutes;"
                           " see ~/.kaptyorka/workers/proj-a-w1.log")
     assert team.bridge.pending == {}
+    assert team.run.calls == [["claude", "stop", "proj-a-w1"]]  # nothing left running
+    assert "worker proj-a-w1 did not show up within 2 minutes; stopped its session" in team.lines
 
 
 def test_worker_closed_while_starting_gets_its_session_closed(team):
@@ -563,6 +587,40 @@ def test_worker_closed_while_starting_gets_its_session_closed(team):
     assert team.run.calls == [["claude", "stop", "proj-a-w1"]]
     assert "worker proj-a-w1 was closed while starting; stopped its session" in team.lines
     assert team.bridge.pending == {}
+
+
+def test_lost_link_answer_is_retried_without_stopping_the_worker(team, monkeypatch):
+    team.work()
+    team.bridge.poll_once(0)
+    key = "claude:" + team.popen.calls[0][0][5]
+    team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
+    real, lost = bridge_mod.http.request, []
+
+    def lose_first_answer(method, url, token, body=None, *a, **kw):
+        answer = real(method, url, token, body, *a, **kw)
+        if url.endswith("/bridge/worker") and not lost:
+            lost.append(answer)
+            raise bridge_mod.http.HubUnreachable(url)
+        return answer
+
+    monkeypatch.setattr(bridge_mod.http, "request", lose_first_answer)
+    team.bridge.heartbeat()
+    assert lost[0][0] == 204 and "proj-a-w1" in team.bridge.pending
+    team.bridge.heartbeat()  # the retry is a success too
+    assert team.bridge.pending == {} and team.run.calls == []
+    assert team.worker()["state"] == "up"
+
+
+def test_unknown_worker_404_is_dropped_without_stopping(team):
+    team.work()
+    team.bridge.poll_once(0)
+    key = "claude:" + team.popen.calls[0][0][5]
+    with team.hub.store.lock:  # the hub lost track of it (say, a restored database)
+        team.hub.store.db.execute("DELETE FROM workers")
+    team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
+    team.bridge.heartbeat()
+    assert team.bridge.pending == {} and team.run.calls == []
+    assert "worker proj-a-w1: the hub does not know it as starting here" in team.lines
 
 
 def test_close_order_stops_the_session_and_acks(team):
@@ -585,7 +643,21 @@ def test_failed_close_is_acked_with_the_error(team):
     team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
     team.bridge.heartbeat()
     run(call(team.client, BOSS, "close_worker", name="proj-a-w1"))
+    team.run.rc, team.run.stderr = 1, "EACCES: permission denied, open '/run/user/1000/x'"
+    team.bridge.poll_once(0)
+    assert team.acks[-1] == (team.order()["id"], False, True,
+                             "EACCES: permission denied, open '/run/user/1000/x'")
+    assert team.worker()["state"] == "up"
+
+
+def test_close_of_a_gone_session_marks_the_worker_closed(team):
+    team.work()
+    team.bridge.poll_once(0)
+    key = "claude:" + team.popen.calls[0][0][5]
+    team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
+    team.bridge.heartbeat()
+    run(call(team.client, BOSS, "close_worker", name="proj-a-w1"))
     team.run.rc, team.run.stderr = 1, "No job matching 'proj-a-w1'."
     team.bridge.poll_once(0)
-    assert team.acks[-1] == (team.order()["id"], False, True, "No job matching 'proj-a-w1'.")
-    assert team.worker()["state"] == "up"
+    assert team.acks[-1] == (team.order()["id"], True, True, "")
+    assert team.worker()["state"] == "closed"

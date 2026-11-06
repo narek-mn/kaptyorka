@@ -42,7 +42,7 @@ class Bridge:
         self.cfg, self.adapters, self.log = cfg, adapters, log
         self.runner = run or subprocess.run
         self.launcher = launcher or Launcher(cfg, Path.home(), run=self.runner, log=log)
-        self.seen_ids: List[int] = self._load_seen()
+        self.seen_ids: Dict[int, dict] = self._load_seen()
         self.pending: Dict[str, tuple] = {}  # worker -> (order, launch result, monotonic start)
         self._sessions: list = []  # the session objects of the last heartbeat
         self.stop = threading.Event()
@@ -99,31 +99,51 @@ class Bridge:
 
     # launch and close orders
 
-    def _load_seen(self) -> List[int]:
+    def _load_seen(self) -> Dict[int, dict]:
+        """{order id: {"ok", "error"}} of the orders this bridge ran; ok None while running."""
         try:
             data = json.loads((paths.home() / "launched.json").read_text())
         except (OSError, ValueError):
-            return []
-        return [i for i in data if isinstance(i, int)][-SEEN_KEEP:] if isinstance(data, list) else []
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        out = {}
+        for k, v in list(data.items())[-SEEN_KEEP:]:
+            if k.isdigit() and isinstance(v, dict):
+                out[int(k)] = {"ok": v.get("ok"), "error": str(v.get("error") or "")}
+        return out
 
-    def _remember(self, order_id) -> None:
-        self.seen_ids = [*self.seen_ids, order_id][-SEEN_KEEP:]
+    def _remember(self, order_id: int, ok: Optional[bool], error: str = "") -> None:
+        self.seen_ids.pop(order_id, None)
+        self.seen_ids[order_id] = {"ok": ok, "error": error}
+        while len(self.seen_ids) > SEEN_KEEP:
+            del self.seen_ids[next(iter(self.seen_ids))]
         try:
-            write_atomic(paths.home() / "launched.json", json.dumps(self.seen_ids))
+            write_atomic(paths.home() / "launched.json",
+                         json.dumps({str(k): v for k, v in self.seen_ids.items()}))
         except OSError as e:
             self.log(f"could not save launched.json: {e}")
 
     def _order(self, m: dict) -> None:
-        """Verify, run and ack one launch or close order. Every outcome is acked once."""
+        """Verify, run and ack one launch or close order. Every outcome is acked once; an
+        order run before is acked again with its stored outcome (the first ack may be lost)."""
         order = {k: v for k, v in m.items() if k != "launch"}
         oid = order.get("id")
         name = order.get("worker")
+        ran = False
         try:
             secret = self.cfg.get("secret")
             if not secret:
                 raise LaunchError(NO_SECRET)
             problem = orders.verify(order, orders.signing_key(secret), time.time(),
                                     self.seen_ids)
+            if problem == "order already run":
+                done = self.seen_ids[oid]
+                ok = done["ok"] is True
+                error = done["error"] if done["ok"] is not None \
+                    else "the bridge stopped while running this order"
+                self._ack(oid, ok, True, "" if ok else error)
+                return
             if problem:
                 raise LaunchError(problem)
             kind = order.get("kind")
@@ -133,7 +153,8 @@ class Bridge:
                     raise LaunchError(f"this account belongs to {you}")
             elif kind != "close":
                 raise LaunchError(f"unknown order kind {kind!r}")
-            self._remember(oid)  # before running: a lost ack must never start it twice
+            self._remember(oid, None)  # before running: a lost ack must never start it twice
+            ran = True
             if kind == "launch":
                 result = self.launcher.launch(order, self._sessions)
                 self.pending[name] = (order, result, time.monotonic())
@@ -147,6 +168,8 @@ class Bridge:
             ok, error = False, str(e)
         except Exception as e:  # a bug in one order must not stop the poll loop
             ok, error = False, f"{order.get('kind') or 'order'} failed: {e}"
+        if ran:
+            self._remember(oid, ok, error)
         if not ok:
             self.log(f"order {oid} for worker {name} refused: {error}")
         if isinstance(oid, int) and not isinstance(oid, bool):
@@ -160,8 +183,16 @@ class Bridge:
             return None
         return status
 
+    def _stop(self, name: str, order: dict, why: str) -> None:
+        try:
+            self.launcher.close(order)
+            self.log(f"worker {name} {why}; stopped its session")
+        except LaunchError as e:
+            self.log(f"worker {name} {why}; stopping its session failed: {e}")
+
     def _check_pending(self, sessions: list) -> None:
-        """Tell the hub each started worker's session key once it shows up, or that it never did."""
+        """Tell the hub each started worker's session key once it shows up, or that it never
+        did (then stop what was started, so nothing is left running unwatched)."""
         for name, (order, result, started) in list(self.pending.items()):
             try:
                 key = self.launcher.find_key({**order, "folder": result["folder"],
@@ -171,19 +202,21 @@ class Bridge:
                     if result.get("needs_brief"):
                         body["needs_brief"] = True
                     status = self._worker(body)
-                    if status == 404:  # the worker was closed meanwhile
+                    if status == 410:  # the worker was closed or failed meanwhile
                         self.pending.pop(name, None)
-                        self.launcher.close(order)
-                        self.log(f"worker {name} was closed while starting; stopped its session")
+                        self._stop(name, order, "was closed while starting")
+                    elif status == 404:
+                        self.pending.pop(name, None)
+                        self.log(f"worker {name}: the hub does not know it as starting here")
                     elif status == 204:
                         self.pending.pop(name, None)
                 elif time.monotonic() - started > SHOW_UP_S:
                     status = self._worker({"worker": name, "error": (
                         "the session did not show up within 2 minutes;"
                         f" see ~/.kaptyorka/workers/{name}.log")})
-                    if status in (204, 404):
+                    if status in (204, 404, 410):
                         self.pending.pop(name, None)
-                        self.log(f"worker {name}: no session within 2 minutes")
+                        self._stop(name, order, "did not show up within 2 minutes")
             except Exception as e:  # one worker must not block the others or the heartbeat
                 self.pending.pop(name, None)
                 self.log(f"worker {name}: {e}")

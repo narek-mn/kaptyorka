@@ -209,8 +209,17 @@ def test_close_commands(home):
     launcher.close({"worker": "proj-a-w1", "tool": "codex", "key": "codex:1"})
     assert run.calls == [["claude", "stop", "proj-a-w1"],
                          ["tmux", "kill-session", "-t", "proj-a-w1"]]
-    with pytest.raises(LaunchError, match="no session"):
-        make(home, run=FakeRun(1, "no session")).close({"worker": "proj-a-w1", "tool": "codex"})
+    with pytest.raises(LaunchError, match="Permission denied"):
+        make(home, run=FakeRun(1, "error connecting to /tmp/tmux-1000/default (Permission denied)")
+             ).close({"worker": "proj-a-w1", "tool": "codex"})
+
+
+def test_closing_a_gone_session_is_done(home):
+    for tool, said in [("codex", "can't find session: proj-a-w1"),
+                       ("opencode", "no server running on /tmp/tmux-1000/default"),
+                       ("codex", "can't find pane: proj-a-w1"),
+                       ("claude-code", "No job matching 'proj-a-w1'. Run 'claude agents'")]:
+        make(home, run=FakeRun(1, said)).close({"worker": "proj-a-w1", "tool": tool})
 
 
 def test_find_key(launcher):

@@ -11,6 +11,8 @@ from typing import Callable, Iterable, List, Optional, Tuple
 from kaptyorka import facts, paths
 
 NAME = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+# what tmux and claude say when the session to stop is not there
+GONE = ("can't find session", "no server running", "can't find pane", "No job matching")
 CLAUDE_WAIT_S = 60  # `claude --bg` returns once the session runs
 TMUX_WAIT_S = 10  # `tmux new-session -d` returns at once
 
@@ -144,9 +146,12 @@ class Launcher:
             r = self.run(argv, capture_output=True, text=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as e:
             raise LaunchError(f"{argv[0]} failed: {e}")
+        out = ((r.stderr or "") + (r.stdout or "")).strip()
+        if r.returncode != 0 and any(g in out for g in GONE):
+            self.log(f"worker {name} was already gone: {out}")
+            return  # closing a session that is not there is done
         if r.returncode != 0:
-            raise LaunchError((r.stderr or r.stdout or "").strip()
-                              or f"{' '.join(argv)} exited with {r.returncode}")
+            raise LaunchError(out or f"{' '.join(argv)} exited with {r.returncode}")
 
     def find_key(self, order: dict, sessions: Iterable) -> Optional[str]:
         if order.get("tool") == "claude-code":
