@@ -65,6 +65,9 @@ class Auth:
             return
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
         token = bearer(headers)
+        if not token and scope.get("method") == "GET" and scope["path"].startswith("/api/files/"):
+            # an <img> on the page cannot send a header: only file downloads take ?t=<token>
+            token = parse_qs(scope.get("query_string", b"").decode("latin-1")).get("t", [""])[0]
         machine = unquote(headers.get("x-kaptyorka-machine") or "") or None
         if machine is None and scope.get("path") == "/bridge/poll":
             # a bridge sends no identity header: its machine is in the query. /bridge/heartbeat

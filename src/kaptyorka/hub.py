@@ -18,6 +18,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from kaptyorka.auth import Auth, RateLimiter, bearer
+from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.store import MAX_FILE, Agent, KaptyorkaError, Principal, Store
 
 MAX_WAIT_S = 25
@@ -30,6 +31,11 @@ INVITE_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='
                "font:16px system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem}}"
                "pre{{background:#1b2027;padding:1rem;border-radius:6px;overflow-x:auto}}</style>"
                "{body}")
+
+# the invite page's second way in, without script: the form's POST redirects to the page
+INVITE_WEB = ("<form method=post action='{action}'><button style='font:inherit;padding:.5rem 1rem;"
+              "border-radius:4px;border:1px solid #3d71d9;background:#3d71d9;color:#fff;"
+              "cursor:pointer'>Open the page as this person</button></form>")
 
 INSTRUCTIONS = (
     "kaptyorka connects you with the other coding agents on this team. "
@@ -75,19 +81,6 @@ def _request_lines(store: Store, principal) -> str:
     if denied:
         out += f" Denied: {', '.join(_wanted(r) for r in denied)}."
     return out
-
-
-def _agent_row(a: Agent, now: float) -> dict:
-    return {"name": a.name, "machine": a.machine, "tool": a.tool, "project": a.project,
-            "status": a.status, "activity": a.activity, "label": a.label,
-            "last_seen_s": round(now - a.last_seen)}
-
-
-def _private_name(a: Agent) -> str:
-    """The session name with its project hidden: machine/tool/(private), keeping a -N suffix."""
-    base = f"{a.machine}/{a.tool}/{a.project}"
-    suffix = a.name[len(base):] if a.name.startswith(base) else ""
-    return f"{a.machine}/{a.tool}/(private){suffix}"
 
 
 def _titled(a: Agent) -> str:
@@ -148,20 +141,8 @@ def build_app(store: Store) -> Starlette:
         agent, principal = caller(ctx)
         now = store.clock()
         names = {p["id"]: p["name"] for p in store.people()}
-        rows = []
-        for a in store.online():
-            mine = a.person_id == principal.person_id
-            row = {**_agent_row(a, now), "you": a.key == agent.key, "mine": mine,
-                   "person": names.get(a.person_id, "")}
-            # an unregistered folder is only a name two people can share by chance, so it shows
-            # on your own rows only; a registered project shows to anyone with a role in it
-            if not mine and store.project_role(a.project, principal.person_id) is None:
-                row["project"] = "(private)"
-                row["name"] = _private_name(a)
-            if mine:
-                row["doors"] = [d["with"] or d["person"] for d in store.doors_for(a.key)]
-            rows.append(row)
-        return rows
+        return [{**session_row(store, a, principal, names, now), "you": a.key == agent.key}
+                for a in store.online()]
 
     def wake_bridges():
         sent["event"].set()
@@ -351,16 +332,15 @@ def build_app(store: Store) -> Starlette:
             parts.insert(0, line)
         return PlainTextResponse("\n\n".join(parts))
 
+    @server.custom_route("/api/me", methods=["GET"])
+    async def api_me(request: Request) -> Response:
+        p = request.scope["state"]["principal"]
+        return JSONResponse({"person": p.person_name, "role": p.role, "device": p.device_name,
+                             "person_id": p.person_id})
+
     @server.custom_route("/api/feed", methods=["GET"])
     async def api_feed(request: Request) -> Response:
-        now = store.clock()
-        return JSONResponse({
-            "agents": [_agent_row(a, now) for a in store.online()],
-            "messages": [asdict(m) for m in store.messages(500)],
-            "notes": [{"topic": n["topic"],
-                       "history": [asdict(h) for h in store.note_history(n["topic"])]}
-                      for n in store.notes_list()],
-        })
+        return JSONResponse(feed(store, request.scope["state"]["principal"]))
 
     @server.custom_route("/api/files", methods=["POST"])
     async def api_file_upload(request: Request) -> Response:
@@ -399,8 +379,10 @@ def build_app(store: Store) -> Starlette:
     @_bad_request
     async def api_send(request: Request) -> Response:
         body = await request.json()
+        p = request.scope["state"]["principal"]  # the body's "from" (0.1 pages) is ignored
         try:
-            n = store.send_from_web(str(body["from"]), str(body["to"]), str(body["text"]))
+            n = store.send_from_web(p.person_name, str(body["to"]), str(body["text"]),
+                                    person_id=p.person_id)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         wake_bridges()
@@ -410,8 +392,10 @@ def build_app(store: Store) -> Starlette:
     @_bad_request
     async def api_notes(request: Request) -> Response:
         body = await request.json()
+        p = request.scope["state"]["principal"]
         try:
-            store.notes_write_from_web(str(body["from"]), str(body["topic"]), str(body["text"]))
+            store.notes_write_from_web(p.person_name, str(body["topic"]), str(body["text"]),
+                                       str(body.get("project") or "") or None, principal=p)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
@@ -710,6 +694,24 @@ def build_app(store: Store) -> Starlette:
             return PlainTextResponse("unauthorized", status_code=401)
         return JSONResponse(store.knocks(principal))
 
+    @server.custom_route("/api/knocks/{kid:int}/answer", methods=["POST"])
+    @_bad_request
+    async def api_knock_answer(request: Request) -> Response:
+        body = await request.json()
+        if body["answer"] not in ("yes", "no"):
+            raise ValueError('answer must be "yes" or "no"')
+        p, kid, yes = request.scope["state"]["principal"], request.path_params["kid"], \
+            body["answer"] == "yes"
+        # the viewer's earliest online session answers; with none, a yes opens a group door
+        mine = [a for a in store.online() if a.person_id == p.person_id]
+        try:
+            scope = (store.answer(kid, mine[0].key, yes) if mine
+                     else store.answer_by_person(kid, p.person_id, yes))
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        wake_bridges()
+        return JSONResponse({"door": scope or None})
+
     @server.custom_route("/i/{code}", methods=["GET"])
     async def invite_page(request: Request) -> Response:
         code = request.path_params["code"]
@@ -719,7 +721,8 @@ def build_app(store: Store) -> Starlette:
                                 status_code=404, headers=headers)
         cmd = html.escape(f"kaptyorka join {hub_url(request)}/i/{code}")
         body = (f"<h1>Join the team hub</h1><pre>{cmd}</pre>"
-                "<p>Paste this link to your agent and say: join this.</p>")
+                "<p>Paste this link to your agent and say: join this.</p>"
+                + INVITE_WEB.format(action=html.escape(f"/i/{code}/web")))
         return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)
 
     @server.custom_route("/i/{code}", methods=["POST"])
@@ -739,6 +742,24 @@ def build_app(store: Store) -> Starlette:
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"token": token, "secret": secret, "hub": hub_url(request)},
                             headers={"Cache-Control": "no-store"})
+
+    @server.custom_route("/i/{code}/web", methods=["POST"])
+    async def invite_web(request: Request) -> Response:
+        """Use the invite for this browser: a device named `web` whose token the page keeps."""
+        code = request.path_params["code"]
+        key = (request.client.host if request.client else "?", code)
+        if limiter.blocked(key):
+            return PlainTextResponse("too many failed attempts", status_code=429)
+        try:
+            token, _ = store.invite_redeem(code, "web")
+        except KaptyorkaError as e:
+            limiter.hit(key)
+            return PlainTextResponse(str(e), status_code=400)
+        headers = {"Cache-Control": "no-store"}
+        if request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded"):
+            # the invite page's form: open the page, which keeps the token like a #t= link
+            return Response(status_code=303, headers={**headers, "Location": f"/#t={token}"})
+        return JSONResponse({"token": token}, headers=headers)
 
     @server.custom_route("/", methods=["GET"])
     async def page(request: Request) -> Response:

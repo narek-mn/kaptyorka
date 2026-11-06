@@ -66,7 +66,11 @@ nav { display: flex; align-items: stretch; gap: 4px; }
   min-width: 20px; padding: 1px 6px; border-radius: 3px;
   background: var(--raised); color: var(--text); font-size: 12px; text-align: center;
 }
-.live { margin-left: auto; display: flex; align-items: center; }
+.sep { width: 1px; margin: 15px 6px; background: var(--line-strong); }
+.viewer { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--dim); font-size: 13px; white-space: nowrap; }
+.viewer b { font-weight: 500; color: var(--text); }
+.viewer .role { padding: 1px 6px; border-radius: 3px; font-size: 11px; color: var(--blue); border: 1px solid rgba(110, 159, 255, .35); }
+.live { margin-left: 14px; display: flex; align-items: center; flex: none; }
 .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(115, 191, 105, .18); }
 .live.down i { background: var(--red); box-shadow: 0 0 0 3px rgba(242, 73, 92, .2); }
 
@@ -101,6 +105,9 @@ tbody tr:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 .seen { color: var(--dim); white-space: nowrap; text-align: right; }
 th.seen { text-align: right; }
 .seen.late { color: var(--amber); }
+tr.mine td:first-child { box-shadow: inset 2px 0 0 var(--blue-deep); }
+.c-plain.private { color: var(--faint); }
+.who .doors { display: flex; align-items: center; gap: 5px; color: var(--green); }
 .dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--faint); flex: none; }
 .dot.busy { border-color: var(--green); background: var(--green); animation: pulse 1.6s ease-out infinite; }
 .dot.idle { border-color: var(--dim); background: var(--dim); }
@@ -120,6 +127,33 @@ th.seen { text-align: right; }
 }
 .chip:hover { color: var(--text); border-color: rgba(204, 204, 220, .32); }
 .chip[aria-pressed="true"] { color: #fff; background: rgba(61, 113, 217, .25); border-color: var(--blue-deep); }
+.tag {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 3px;
+  border: 1px solid var(--line-strong); color: var(--text); font-size: 12px; background: var(--panel); white-space: nowrap;
+}
+.tag small { font-size: 12px; color: var(--faint); }
+.tag .x { color: var(--faint); margin-right: -3px; padding: 0 2px; }
+.tag .x:hover { color: var(--red); }
+.tag.door { color: var(--green); border-color: rgba(115, 191, 105, .35); }
+#knocks { flex: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+#knocks:empty { display: none; }
+.knock {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px;
+  background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 3px;
+}
+.knock > svg { color: var(--amber); }
+.knock .what { flex: 1; min-width: 0; }
+.knock .what b { font-weight: 600; color: #f0f0f6; }
+.knock .what small { color: var(--faint); font-size: 12px; }
+.knock .about { overflow-wrap: anywhere; }
+.knock .acts { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
+.knock .acts div { display: flex; gap: 6px; }
+.hint { font-size: 12px; color: var(--faint); }
+.msg.sys .text { color: var(--dim); }
+.att { display: block; max-width: min(360px, 100%); max-height: 260px; margin-top: 7px; border: 1px solid var(--line); border-radius: 3px; background: var(--canvas); }
+.file { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--blue); font-size: 12px; text-decoration: none; }
+.file:hover { text-decoration: underline; }
+.file small { color: var(--faint); font-size: 12px; }
 .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #log { flex: 1; min-height: 0; overflow-y: auto; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .msg { padding: 9px 14px 10px; border-bottom: 1px solid var(--line); }
@@ -150,7 +184,6 @@ select, input, textarea {
 select:focus, input:focus, textarea:focus { outline: none; border-color: var(--blue); }
 .compose select { height: 34px; max-width: 260px; padding: 0 8px; }
 .compose textarea { flex: 1; min-width: 0; height: 34px; max-height: 160px; padding: 6px 10px; resize: none; line-height: 1.45; }
-.compose input { width: 130px; height: 34px; padding: 0 10px; }
 .btn {
   height: 34px; padding: 0 14px; border-radius: 3px; display: inline-flex; align-items: center; gap: 7px;
   border: 1px solid var(--line-strong); color: var(--text); background: var(--panel); font-weight: 500; font-size: 13px; flex: none;
@@ -158,10 +191,10 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 .btn:hover { border-color: rgba(204, 204, 220, .34); color: #fff; }
 .btn.primary { background: var(--blue-deep); border-color: var(--blue-deep); color: #fff; }
 .btn.primary:hover { background: #4b80e8; }
+.btn.danger:hover { border-color: var(--red); color: var(--red); }
 .btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
 .btn[aria-pressed="true"] { border-color: var(--blue-deep); color: #fff; background: rgba(61, 113, 217, .25); }
-.as { font-size: 12px; color: var(--faint); height: 34px; display: flex; align-items: center; white-space: nowrap; }
-.as:hover { color: var(--text); }
+.ok { color: var(--green); font-size: 12px; }
 .err { flex: none; color: var(--red); font-size: 12px; padding: 6px 2px 0; }
 
 /* notes */
@@ -198,6 +231,34 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 .version time { margin-left: auto; }
 .blank { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--dim); min-height: 240px; padding: 24px; text-align: center; }
 .back { display: none; }
+.topic-group { display: flex; align-items: center; gap: 6px; padding: 10px 14px 5px; font-size: 12px; color: var(--faint); border-bottom: 1px solid var(--line); }
+.doc-head select { height: 28px; padding: 0 8px; font-size: 12px; }
+
+/* admin */
+.admin { overflow-y: auto; gap: 14px; }
+.admin .panel { flex: none; overflow-x: auto; }
+.phead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 45px; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line-strong); font-size: 13px; font-weight: 600; color: #f0f0f6; }
+.phead .note { font-weight: 400; font-size: 12px; color: var(--dim); }
+.inline { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 400; font-size: 12px; color: var(--dim); }
+.inline input, .inline select { height: 28px; padding: 0 8px; font-size: 12px; }
+.inline input[type="number"] { width: 72px; }
+.admin tbody tr { cursor: default; }
+.admin tbody tr:hover td { background: none; }
+.admin td { vertical-align: top; }
+.admin td.c-act { text-align: right; white-space: nowrap; }
+.admin .err { padding: 8px 14px; }
+.cell-list { display: flex; flex-direction: column; gap: 5px; }
+.cell-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.cell-tags select { height: 24px; padding: 0 6px; font-size: 12px; }
+.dev { display: flex; align-items: center; gap: 10px; min-height: 24px; }
+.dev span { color: var(--text); }
+.dev small { color: var(--faint); font-size: 12px; }
+.dev.revoked span, .dev.revoked small { color: var(--faint); }
+.empty-row { padding: 14px; color: var(--faint); font-size: 13px; }
+.invite { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: rgba(61, 113, 217, .08); font-size: 12px; color: var(--dim); }
+.invite input { flex: 1; min-width: 0; height: 28px; padding: 0 8px; font: 12px var(--mono); }
+.log-kind { color: var(--blue); white-space: nowrap; }
+.log-time { color: var(--dim); white-space: nowrap; }
 
 @media (max-width: 720px) {
   header { gap: 10px; padding: 0 16px; }
@@ -209,29 +270,35 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   .chips { flex-direction: column; align-items: stretch; }
   .chips .group + .group { margin-left: 0; padding-left: 0; border-left: 0; }
   .legend { gap: 12px; }
-  thead { display: none; }
-  table, tbody, tr, td { display: block; }
-  tr {
+  #team thead { display: none; }
+  #team table, #team tbody, #team tr, #team td { display: block; }
+  #team tr {
     display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 3px 10px;
     padding: 10px 14px; border-bottom: 1px solid var(--line);
   }
-  tbody tr:last-child { border-bottom: 0; }
-  td { padding: 0; border: 0; }
-  tbody tr:hover td { background: none; }
-  .c-dot { width: auto; padding-top: 4px; }
-  .who { grid-column: 2; }
-  .seen { grid-column: 3; grid-row: 1; padding-top: 1px; }
-  .c-plain { display: none; }
-  .status { grid-column: 2 / 4; max-width: none; white-space: normal; color: var(--dim); }
-  .status:empty { display: none; }
+  #team tbody tr:last-child { border-bottom: 0; }
+  #team td { padding: 0; border: 0; }
+  #team tbody tr:hover td { background: none; }
+  #team .c-dot { width: auto; padding-top: 4px; }
+  #team .who { grid-column: 2; }
+  #team .seen { grid-column: 3; grid-row: 1; padding-top: 1px; }
+  #team .c-plain { display: none; }
+  #team .status { grid-column: 2 / 4; max-width: none; white-space: normal; color: var(--dim); }
+  #team .status:empty { display: none; }
   .msg { padding: 9px 12px; }
   .compose { flex-wrap: wrap; padding: 8px; }
   .compose label { flex: none; }
   .compose select { flex: 1; max-width: none; min-width: 0; }
   .compose textarea { flex-basis: 100%; order: 5; }
   .compose .btn.primary { order: 6; margin-left: auto; }
-  .compose .as { order: 6; }
-  .compose input { order: 6; flex: 1; }
+  nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .tab { padding: 0 8px; }
+  .sep { margin: 15px 2px; }
+  .viewer { display: none; }
+  .live { margin-left: auto; }
+  .knock { flex-wrap: wrap; }
+  .knock .acts { flex-basis: 100%; align-items: stretch; }
+  .admin table { min-width: 560px; }
   .notes { grid-template-columns: minmax(0, 1fr); }
   .notes.reading .topics, .notes:not(.reading) .doc { display: none; }
   .back { display: inline-flex; }
@@ -258,6 +325,14 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   <symbol id="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/></symbol>
   <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-people" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20c0-3.6 2.9-6 6.5-6 1.4 0 2.6.3 3.6.9"/><path d="M18 14v6M15 17h6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.3 7.5 9.5 4.4-1.2 7.5-4.9 7.5-9.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" stroke-width="2.6"/></symbol>
+  <symbol id="i-door" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4.5A1.5 1.5 0 0 1 6.5 3h11A1.5 1.5 0 0 1 19 4.5V21"/><path d="M3 21h18M14.5 12.5v.5"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8.5" y="8.5" width="12" height="12" rx="1.5"/><path d="M15.5 8.5V5A1.5 1.5 0 0 0 14 3.5H5A1.5 1.5 0 0 0 3.5 5v9A1.5 1.5 0 0 0 5 15.5h3.5"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3.2-3.2a4.5 4.5 0 0 0-6.4-6.4L12 5.6"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3.2 3.2a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></symbol>
 </svg>
 
@@ -270,7 +345,12 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
       <button class="tab" role="tab" data-view="team" title="Team"><svg width="18" height="18"><use href="#i-team"/></svg><span class="label">Team</span><span class="count" id="n-team">0</span></button>
       <button class="tab" role="tab" data-view="messages" title="Messages"><svg width="18" height="18"><use href="#i-msg"/></svg><span class="label">Messages</span><span class="count" id="n-messages">0</span></button>
       <button class="tab" role="tab" data-view="notes" title="Notes"><svg width="18" height="18"><use href="#i-note"/></svg><span class="label">Notes</span><span class="count" id="n-notes">0</span></button>
+      <span class="sep admin-only" hidden></span>
+      <button class="tab admin-only" role="tab" data-view="people" title="People" hidden><svg width="18" height="18"><use href="#i-people"/></svg><span class="label">People</span><span class="count" id="n-people">0</span></button>
+      <button class="tab admin-only" role="tab" data-view="access" title="Access" hidden><svg width="18" height="18"><use href="#i-shield"/></svg><span class="label">Access</span><span class="count" id="n-access" hidden>0</span></button>
+      <button class="tab admin-only" role="tab" data-view="audit" title="Log" hidden><svg width="18" height="18"><use href="#i-list"/></svg><span class="label">Log</span></button>
     </nav>
+    <div class="viewer" id="viewer" title="Signed in"><svg width="15" height="15"><use href="#i-person"/></svg><b id="viewer-name"></b><span class="role" id="viewer-role" hidden>admin</span></div>
     <div class="live" id="live" title="Connecting"><i></i></div>
   </header>
   <main>
@@ -287,6 +367,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
           <thead><tr>
             <th class="c-dot"></th>
             <th>Session</th>
+            <th>Person</th>
             <th>Machine</th>
             <th>Tool</th>
             <th>Folder</th>
@@ -300,14 +381,13 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
     </section>
     <section id="messages" role="tabpanel" hidden>
       <div class="chips" id="chips"></div>
+      <div id="knocks"></div>
       <div class="chat">
         <div class="panel" id="log"></div>
         <form class="compose" id="compose" autocomplete="off">
           <label for="to">To</label>
           <select id="to"></select>
           <textarea id="text" rows="1" placeholder="Message" aria-label="Message"></textarea>
-          <input id="me" placeholder="Your name" aria-label="Your name" maxlength="40" hidden>
-          <button type="button" class="as" id="as" title="Change your name" hidden></button>
           <button type="submit" class="btn primary" title="Send (Enter)"><svg width="15" height="15"><use href="#i-send"/></svg>Send</button>
         </form>
         <div class="err" id="send-err" hidden></div>
@@ -322,16 +402,90 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
         <div class="panel doc" id="doc"></div>
       </div>
     </section>
+    <section id="people" role="tabpanel" class="admin" hidden>
+      <div class="panel">
+        <div class="phead">People
+          <form class="inline" id="add-person" autocomplete="off">
+            <input id="new-name" placeholder="Name" aria-label="Name" maxlength="40" required>
+            <select id="new-role" aria-label="Role"><option value="member">member</option><option value="manager">manager</option></select>
+            <button type="submit" class="btn small primary"><svg width="13" height="13"><use href="#i-plus"/></svg>Add person</button>
+          </form>
+        </div>
+        <div class="invite" id="invite" hidden></div>
+        <div class="err" id="people-err" hidden></div>
+        <table>
+          <thead><tr><th>Name</th><th>Role</th><th>Devices</th><th></th></tr></thead>
+          <tbody id="people-rows"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <div class="phead">Old machines <span class="note" id="legacy-state"></span><div class="inline" id="legacy-toggle"></div></div>
+        <div class="err" id="legacy-err" hidden></div>
+        <div id="legacy-rows"></div>
+      </div>
+    </section>
+    <section id="access" role="tabpanel" class="admin" hidden>
+      <div class="panel" id="req-panel" hidden>
+        <div class="phead">Requests</div>
+        <div class="err" id="req-err" hidden></div>
+        <table><tbody id="req-rows"></tbody></table>
+      </div>
+      <div class="panel">
+        <div class="phead">Projects
+          <form class="inline" id="grant" autocomplete="off">
+            <select id="grant-person" aria-label="Person"></select>
+            <select id="grant-project" aria-label="Project"></select>
+            <select id="grant-role" aria-label="Role"><option value="read">read</option><option value="write">write</option><option value="manage">manage</option></select>
+            <button type="submit" class="btn small primary">Grant</button>
+          </form>
+        </div>
+        <div class="err" id="grant-err" hidden></div>
+        <table>
+          <thead><tr><th>Project</th><th>People</th></tr></thead>
+          <tbody id="project-rows"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <div class="phead">Machines</div>
+        <div class="err" id="machine-err" hidden></div>
+        <table>
+          <thead><tr><th>Machine</th><th>Owner</th><th>Devices</th><th>Can use</th></tr></thead>
+          <tbody id="machine-rows"></tbody>
+        </table>
+      </div>
+    </section>
+    <section id="audit" role="tabpanel" class="admin" hidden>
+      <div class="panel">
+        <div class="phead">Log
+          <div class="inline">
+            <select id="log-person" aria-label="Person"></select>
+            <form class="inline" id="retention" autocomplete="off">
+              <label for="ret-days">Keep messages</label>
+              <input type="number" id="ret-days" min="1" max="3650" required>
+              <span>days</span>
+              <button type="submit" class="btn small">Save</button>
+            </form>
+          </div>
+        </div>
+        <div class="err" id="log-err" hidden></div>
+        <table>
+          <thead><tr><th>Time</th><th>Person</th><th>What</th><th>Detail</th></tr></thead>
+          <tbody id="log-rows"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 </div>
 
 <script>
 (function () {
   "use strict";
-  var KEY = "kaptyorka.token", NAME = "kaptyorka.name";
+  var KEY = "kaptyorka.token";
+  var VIEWS = ["team", "messages", "notes"], ADMIN_VIEWS = ["people", "access", "audit"];
   var token = null, view = "team", filter = { machine: null, project: null };
-  var feed = null, seen = {}, timer = null, expanded = {};
-  var note = { topic: null, mode: "read", version: 0, history: false };
+  var feed = null, seen = {}, timer = null, expanded = {}, me = null, myProjects = [];
+  var note = { key: null, project: null, topic: null, mode: "read", version: 0, history: false };
+  var logPerson = "", logRows = null;
 
   function store(fn) { try { return fn(window.localStorage); } catch (e) { return null; } }
 
@@ -342,7 +496,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   } else {
     token = store(function (s) { return s.getItem(KEY); });
   }
-  if (["team", "messages", "notes"].indexOf(params.get("view")) >= 0) view = params.get("view");
+  if (VIEWS.concat(ADMIN_VIEWS).indexOf(params.get("view")) >= 0) view = params.get("view");
   history.replaceState(null, "", location.pathname + (view === "team" ? "" : "#view=" + view));
 
   function $(id) { return document.getElementById(id); }
@@ -363,6 +517,20 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
     s.appendChild(u);
     return s;
   }
+  function button(label, cls, fn, attrs) {
+    var b = el("button", Object.assign({ "class": "btn small" + (cls ? " " + cls : ""), type: "button" }, attrs || {}),
+               typeof label === "string" ? [label] : label);
+    b.addEventListener("click", fn);
+    return b;
+  }
+  function options(sel, values, keep) {
+    sel.textContent = "";
+    values.forEach(function (v) {
+      var o = Array.isArray(v) ? v : [v, v];
+      sel.appendChild(el("option", { value: o[0], text: o[1] }));
+    });
+    if (keep != null && values.some(function (v) { return (Array.isArray(v) ? v[0] : v) === keep; })) sel.value = keep;
+  }
   function ago(s) {
     s = Math.max(0, Math.round(s));
     if (s < 5) return "now";
@@ -374,6 +542,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   function pad(n) { return (n < 10 ? "0" : "") + n; }
   function clock(t) { var d = new Date(t * 1000); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); }
   function full(t) { return new Date(t * 1000).toLocaleString(); }
+  function size(n) { return n < 1024 ? n + " B" : n < 1048576 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1) + " MB"; }
   /* relative time; the exact time on hover; refreshed after every poll */
   function timeEl(t) {
     return el("time", { "data-t": String(t), datetime: new Date(t * 1000).toISOString(), title: full(t),
@@ -391,24 +560,38 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
     $("lock").hidden = false;
   }
 
+  function checked(r) {
+    if (r.status === 401) { lock(); throw new Error("unauthorized"); }
+    if (!r.ok) return r.text().then(function (t) { throw new Error(t || "hub error " + r.status); });
+    return r;
+  }
+  function get(path) {
+    return fetch(path, { cache: "no-store", headers: { Authorization: "Bearer " + token } })
+      .then(checked).then(function (r) { return r.json(); });
+  }
   function api(path, body) {
     return fetch(path, { method: "POST", cache: "no-store",
                          headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-                         body: JSON.stringify(body) })
-      .then(function (r) {
-        if (r.status === 401) { lock(); throw new Error("unauthorized"); }
-        if (!r.ok) return r.text().then(function (t) { throw new Error(t || "hub error " + r.status); });
-        clearTimeout(timer); poll();
-        return r;
-      });
+                         body: JSON.stringify(body || {}) })
+      .then(checked)
+      .then(function (r) { clearTimeout(timer); poll(); return r; });
   }
+  /* run an admin action; its error shows in the panel's error line */
+  function act(errId, path, body) {
+    var e = $(errId);
+    return api(path, body).then(function (r) { e.hidden = true; return r; })
+      .catch(function (x) { e.hidden = false; e.textContent = x.message; throw x; });
+  }
+  function quiet(p) { p.catch(function () {}); }
+  function isAdmin() { return !!me && me.role === "admin"; }
 
   function show(v) {
+    if (ADMIN_VIEWS.indexOf(v) >= 0 && !isAdmin()) v = "team";
     view = v;
     document.querySelectorAll(".tab").forEach(function (b) {
       b.setAttribute("aria-selected", b.dataset.view === v ? "true" : "false");
     });
-    ["team", "messages", "notes"].forEach(function (id) { $(id).hidden = id !== v; });
+    VIEWS.concat(ADMIN_VIEWS).forEach(function (id) { $(id).hidden = id !== v; });
     history.replaceState(null, "", location.pathname + (v === "team" ? "" : "#view=" + v));
     if (v === "messages") { markClipped(); toBottom(); }
   }
@@ -427,6 +610,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
     return a && a.label ? a.label : "";
   }
 
+  function hidden(a) { return a.project === "(private)"; }
+
   function seenCell(td, a) {
     td.className = "seen" + (a.last_seen_s >= 20 ? " late" : "");
     td.title = "Last seen " + full(Date.now() / 1000 - a.last_seen_s);
@@ -438,7 +623,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   function renderTeam() {
     var body = $("agents");
     var agents = feed.agents;
-    var shape = agents.map(function (a) { return [a.name, a.machine, a.tool, a.project, a.status, a.activity, a.label]; });
+    var shape = agents.map(function (a) { return [a.name, a.person, a.mine, a.doors, a.machine, a.tool, a.project, a.status, a.activity, a.label]; });
     if (!changed("team", shape)) {
       body.querySelectorAll("td.seen").forEach(function (td, i) { seenCell(td, agents[i]); });
       return;
@@ -446,20 +631,29 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
     body.textContent = "";
     agents.forEach(function (a) {
       var act = ACT[a.activity] || "";
-      var tr = el("tr", { tabindex: "0", title: "Message " + (a.label || a.name) }, [
+      var who = a.label ? [el("b", { text: a.label }), el("small", { text: a.name })] : [el("b", { text: a.name })];
+      if (a.doors && a.doors.length) {
+        who.push(el("small", { "class": "doors", title: "Open doors: " + a.doors.join(", ") },
+                    [icon("i-door", 12), a.doors.join(", ")]));
+      }
+      var tr = el("tr", { "class": a.mine ? "mine" : null, tabindex: hidden(a) ? null : "0",
+                          title: hidden(a) ? "A project you have no role in" : "Message " + (a.label || a.name) }, [
         el("td", { "class": "c-dot" }, [el("div", { "class": "dot " + act, title: act || "unknown" })]),
-        el("td", { "class": "who" }, a.label
-          ? [el("b", { text: a.label }), el("small", { text: a.name })]
-          : [el("b", { text: a.name })]),
+        el("td", { "class": "who" }, who),
+        el("td", { "class": "c-plain", text: a.person || "" }),
         el("td", { "class": "c-plain", text: a.machine }),
         el("td", { "class": "c-plain", text: a.tool }),
-        el("td", { "class": "c-plain", text: a.project }),
+        el("td", { "class": "c-plain" + (hidden(a) ? " private" : ""), text: a.project }),
         el("td", { "class": "status", title: a.status || null, text: a.status || "" }),
         (function () { var td = el("td"); seenCell(td, a); return td; })()
       ]);
-      function go() { compose(a.name); }
-      tr.addEventListener("click", go);
-      tr.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+      if (!hidden(a)) {
+        var go = function () { compose(a.name); };
+        tr.addEventListener("click", go);
+        tr.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+      } else {
+        tr.style.cursor = "default";
+      }
       body.appendChild(tr);
     });
     $("team-empty").hidden = agents.length > 0;
@@ -470,12 +664,12 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
     var box = $("chips");
     box.textContent = "";
     var sets = { machine: {}, project: {} };
-    feed.agents.forEach(function (a) { sets.machine[a.machine] = 1; sets.project[a.project] = 1; });
+    feed.agents.forEach(function (a) { sets.machine[a.machine] = 1; if (!hidden(a)) sets.project[a.project] = 1; });
     feed.messages.forEach(function (m) {
       [m.sender, m.to].forEach(function (n) {
         var p = place(n);
         if (p.machine) sets.machine[p.machine] = 1;
-        if (p.project) sets.project[p.project] = 1;
+        if (p.project && p.project !== "(private)") sets.project[p.project] = 1;
       });
     });
     [["machine", "Machine"], ["project", "Folder"]].forEach(function (g) {
@@ -494,6 +688,47 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
       });
       box.appendChild(group);
     });
+    if (feed.doors.length) {
+      var doors = el("div", { "class": "group" }, [el("span", { "class": "cap", text: "Doors" })]);
+      feed.doors.forEach(function (d) {
+        var mine = me && (d.a_person === me.person || d.b_person === me.person);
+        var other = !mine ? d.a_person + " ↔ " + d.b_person : d.a_person === me.person ? d.b_person : d.a_person;
+        var detail = d.scope === "group" ? "all sessions" : (d.a_session + " ↔ " + d.b_session);
+        doors.appendChild(el("span", { "class": "tag door", title: "Open door: " + detail },
+                             [icon("i-door", 12), other || "—"]));
+      });
+      box.appendChild(doors);
+    }
+  }
+
+  /* pending knocks for the viewer: the person answers here, or the admin for anyone */
+  function renderKnocks() {
+    var box = $("knocks");
+    box.textContent = "";
+    var online = feed.agents.some(function (a) { return a.mine; });
+    feed.knocks.forEach(function (k) {
+      var forMe = me && k.to === me.person;
+      var err = el("div", { "class": "err", hidden: "" });
+      function answer(yes) {
+        api("/api/knocks/" + k.id + "/answer", { answer: yes ? "yes" : "no" })
+          .catch(function (e) { err.hidden = false; err.textContent = e.message; });
+      }
+      var hint = !forMe ? "Yes opens a door between " + k.from + " and " + k.to
+        : online ? "Yes opens a door for your earliest session online" : "Yes opens a door for all your sessions";
+      box.appendChild(el("div", { "class": "knock" }, [
+        icon("i-door", 20),
+        el("div", { "class": "what" }, [
+          el("div", null, [el("b", { text: k.from }), forMe ? " knocks" : " knocks for ", forMe ? null : el("b", { text: k.to }),
+                           " ", el("small", { text: k.from_session }), " ", el("small", null, [timeEl(k.created)])]),
+          el("div", { "class": "about", text: k.about }), err
+        ]),
+        el("div", { "class": "acts" }, [
+          el("div", null, [button("Yes", "primary", function () { answer(true); }),
+                           button("No", "", function () { answer(false); })]),
+          el("span", { "class": "hint", text: hint })
+        ])
+      ]));
+    });
   }
 
   /* a send to all is stored once per recipient: show it as one row */
@@ -504,7 +739,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
       if (last && last.sender === m.sender && last.text === m.text && Math.abs(m.created - last.created) <= 1) {
         last.to.push(m.to);
       } else {
-        rows.push({ id: m.id, sender: m.sender, web: !!m.from_web, toWeb: !!m.to_web, to: [m.to], text: m.text, created: m.created });
+        rows.push({ id: m.id, sender: m.sender, web: !!m.from_web, toWeb: !!m.to_web, to: [m.to], text: m.text,
+                    created: m.created, kind: m.kind || "message", file: m.file });
       }
     });
     return rows;
@@ -514,6 +750,14 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
     var ps = [m.sender].concat(m.to).map(place);
     function any(k) { return !filter[k] || ps.some(function (p) { return p[k] === filter[k]; }); }
     return any("machine") && any("project");
+  }
+
+  function attachment(f) {
+    var url = "/api/files/" + f.id + "?t=" + encodeURIComponent(token);
+    if (/\.(png|jpe?g|gif|webp|svg)$/i.test(f.name)) {
+      return el("img", { "class": "att", src: url, alt: f.name, title: f.name + " (" + size(f.size) + ")", loading: "lazy" });
+    }
+    return el("a", { "class": "file", href: url, download: f.name }, [icon("i-clip", 13), f.name, el("small", { text: size(f.size) })]);
   }
 
   function renderMessages(jump) {
@@ -527,14 +771,15 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
         ? el("span", { "class": "all", title: m.to.join("\n") }, [icon("i-all", 14), "all"])
         : m.toWeb
           ? el("span", { "class": "person to-person", title: "Read on this page" }, [icon("i-person", 13), el("span", { "class": "to", text: m.to[0] })])
-          : el("span", { "class": "to", title: m.to[0], text: labelOf(m.to[0]) || m.to[0] });
+          : el("span", { "class": "to", title: m.to[0], text: labelOf(m.to[0]) || m.to[0] || "—" });
       var from = m.web
         ? el("span", { "class": "person", title: "Sent from this page" }, [icon("i-person", 13), el("b", { text: m.sender })])
         : el("b", { title: m.sender, text: labelOf(m.sender) || m.sender });
       var text = el("div", { "class": "text" + (expanded[m.id] ? "" : " clip"), text: m.text });
-      var row = el("div", { "class": "msg", "data-id": String(m.id) }, [
-        el("div", { "class": "route" }, [from, icon("i-arrow", 13), to, timeEl(m.created)]),
-        text
+      var row = el("div", { "class": "msg" + (m.kind !== "message" ? " sys" : ""), "data-id": String(m.id) }, [
+        el("div", { "class": "route" }, [m.kind !== "message" ? icon("i-door", 13) : null, from, icon("i-arrow", 13), to, timeEl(m.created)]),
+        text,
+        m.file ? attachment(m.file) : null
       ]);
       log.appendChild(row);
     });
@@ -557,27 +802,22 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
         text.classList.toggle("clip", !expanded[id]);
         markClipped();
       });
-      row.appendChild(b);
+      row.insertBefore(b, text.nextSibling);
     });
   }
 
   function toBottom() { var log = $("log"); log.scrollTop = log.scrollHeight; }
 
-  /* compose */
-  function myName() { return store(function (s) { return s.getItem(NAME); }) || ""; }
-  function showName() {
-    var n = myName();
-    $("as").hidden = !n;
-    $("as").textContent = n ? "as " + n : "";
-  }
+  /* compose: as the signed-in person; private sessions cannot be named, so they are not offered */
   function renderTo() {
     var sel = $("to"), keep = sel.value || store(function (s) { return s.getItem("kaptyorka.to"); }) || "all";
     sel.textContent = "";
     sel.appendChild(el("option", { value: "all", text: "all" }));
-    feed.agents.forEach(function (a) {
+    var open = feed.agents.filter(function (a) { return !hidden(a); });
+    open.forEach(function (a) {
       sel.appendChild(el("option", { value: a.name, text: a.label ? a.label + "  (" + a.name + ")" : a.name }));
     });
-    if (keep !== "all" && !feed.agents.some(function (a) { return a.name === keep; })) {
+    if (keep !== "all" && !open.some(function (a) { return a.name === keep; })) {
       sel.appendChild(el("option", { value: keep, text: keep + "  (offline)" }));
     }
     sel.value = keep;
@@ -591,48 +831,53 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   function grow() { var t = $("text"); t.style.height = "34px"; t.style.height = Math.min(t.scrollHeight + 2, 160) + "px"; }
   function sendErr(msg) { $("send-err").hidden = !msg; $("send-err").textContent = msg || ""; }
   function send() {
-    var text = $("text").value, nameIn = $("me");
+    var text = $("text").value;
     if (!text.trim()) return;
-    if (!nameIn.hidden && nameIn.value.trim()) {
-      var n = nameIn.value.trim();
-      store(function (s) { s.setItem(NAME, n); });
-      nameIn.hidden = true;
-      showName();
-    }
-    var from = myName();
-    if (!from) { nameIn.hidden = false; nameIn.focus(); sendErr(""); return; }
     var to = $("to").value;
     store(function (s) { s.setItem("kaptyorka.to", to); });
-    api("/api/send", { to: to, text: text, from: from })
+    api("/api/send", { to: to, text: text })
       .then(function () { $("text").value = ""; grow(); sendErr(""); $("text").focus(); seen.messages = null; })
       .catch(function (e) { sendErr(e.message); });
   }
 
-  /* notes */
-  function topicOf(t) { return feed.notes.filter(function (n) { return n.topic === t; })[0]; }
+  /* notes: the team board first, then each project the viewer may read */
+  function nkey(project, topic) { return (project || "") + "\n" + topic; }
+  function topicOf(key) { return feed.notes.filter(function (n) { return nkey(n.project, n.topic) === key; })[0]; }
+  function writable() {
+    var ps = isAdmin() ? (feed.projects || []) : myProjects.filter(function (p) { return p.role === "write" || p.role === "manage"; });
+    return ps.map(function (p) { return p.name; });
+  }
   function renderTopics() {
     var box = $("topics");
     box.textContent = "";
+    var grouped = feed.notes.some(function (n) { return n.project; }), last;
     feed.notes.forEach(function (n) {
-      var h = n.history[0];
-      var b = el("button", { "class": "topic", "aria-current": n.topic === note.topic ? "true" : "false" }, [
+      if (grouped && n.project !== last) {
+        last = n.project;
+        box.appendChild(el("div", { "class": "topic-group" }, [icon(n.project ? "i-project" : "i-team", 13), n.project || "Team"]));
+      }
+      var h = n.history[0], key = nkey(n.project, n.topic);
+      var b = el("button", { "class": "topic", "aria-current": key === note.key ? "true" : "false" }, [
         el("b", { title: n.topic, text: n.topic }),
         el("small", null, [el("span", { title: h.author, text: h.author }), timeEl(h.time)])
       ]);
-      b.addEventListener("click", function () { open(n.topic); });
+      b.addEventListener("click", function () { open(n.project, n.topic); });
       box.appendChild(b);
     });
   }
-  function open(topic) {
-    note = { topic: topic, mode: "read", version: 0, history: false };
+  function open(project, topic) {
+    note = { key: nkey(project, topic), project: project, topic: topic, mode: "read", version: 0, history: false };
     renderNotes(true);
   }
   function renderNotes(force) {
     if (note.mode !== "read" && !force) return;  /* never redraw over an edit */
-    if (note.topic && note.mode !== "new" && !topicOf(note.topic)) note.topic = null;
-    if (!note.topic && note.mode === "read" && feed.notes.length && window.innerWidth > 720) note.topic = feed.notes[0].topic;
+    if (note.key && note.mode !== "new" && !topicOf(note.key)) note.key = null;
+    if (!note.key && note.mode === "read" && feed.notes.length && window.innerWidth > 720) {
+      var f = feed.notes[0];
+      note = { key: nkey(f.project, f.topic), project: f.project, topic: f.topic, mode: "read", version: 0, history: false };
+    }
     renderTopics();
-    $("notes-grid").classList.toggle("reading", !!note.topic || note.mode === "new");
+    $("notes-grid").classList.toggle("reading", !!note.key || note.mode === "new");
     $("notes-grid").querySelector(".topics").hidden = !feed.notes.length && note.mode !== "new";
     var doc = $("doc");
     doc.textContent = "";
@@ -645,9 +890,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
       return;
     }
     var back = el("button", { "class": "btn small back", type: "button", title: "Topics" }, [icon("i-back", 14)]);
-    back.addEventListener("click", function () { note = { topic: null, mode: "read", version: 0, history: false }; renderNotes(true); });
+    back.addEventListener("click", function () { note = { key: null, mode: "read", version: 0, history: false }; renderNotes(true); });
     if (note.mode === "new" || note.mode === "edit") return editor(doc, back);
-    var n = topicOf(note.topic);
+    var n = topicOf(note.key);
     if (!n) return;
     var h = n.history[note.version] || n.history[0];
     var edit = el("button", { "class": "btn small", type: "button" }, [icon("i-edit", 13), "Edit"]);
@@ -657,6 +902,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
                   [icon("i-history", 13), "History " + n.history.length]);
     hist.addEventListener("click", function () { note.history = !note.history; renderNotes(true); });
     doc.appendChild(el("div", { "class": "doc-head" }, [back, el("h2", { text: n.topic }),
+      n.project ? el("span", { "class": "tag" }, [icon("i-project", 12), n.project]) : null,
       el("div", { "class": "tools" }, [hist, edit])]));
     if (note.history) {
       doc.appendChild(el("div", { "class": "history" }, n.history.map(function (v, i) {
@@ -671,32 +917,214 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
     doc.appendChild(el("div", { "class": "byline" }, by));
     doc.appendChild(el("div", { "class": "doc-body" }, [el("div", { "class": "text", text: h.text })]));
   }
-  function newTopic() { note = { topic: null, mode: "new", version: 0, history: false }; renderNotes(true); }
+  function newTopic() { note = { key: null, project: null, topic: null, mode: "new", version: 0, history: false }; renderNotes(true); }
   function editor(doc, back) {
-    var isNew = note.mode === "new", n = topicOf(note.topic);
+    var isNew = note.mode === "new", n = topicOf(note.key);
     var topicIn = isNew ? el("input", { "class": "topic-in", placeholder: "Topic", "aria-label": "Topic", maxlength: "120" }) : null;
+    var where = null, projects = writable();
+    if (isNew && projects.length) {
+      where = el("select", { "aria-label": "Where" });
+      options(where, [["", "Team"]].concat(projects), note.project || "");
+    }
     var area = el("textarea", { "aria-label": "Note text" });
     area.value = n && !isNew ? n.history[0].text : "";
-    var nameIn = myName() ? null : el("input", { placeholder: "Your name", "aria-label": "Your name", maxlength: "40", style: "height:28px;padding:0 8px;width:130px" });
     var save = el("button", { "class": "btn small primary", type: "button" }, ["Save"]);
     var cancel = el("button", { "class": "btn small", type: "button" }, ["Cancel"]);
     var err = el("div", { "class": "err", hidden: "" });
-    cancel.addEventListener("click", function () { note.mode = "read"; if (isNew) note.topic = null; renderNotes(true); });
+    cancel.addEventListener("click", function () { note.mode = "read"; if (isNew) note.key = null; renderNotes(true); });
     save.addEventListener("click", function () {
       var topic = isNew ? topicIn.value.trim() : note.topic;
-      if (nameIn && nameIn.value.trim()) store(function (s) { s.setItem(NAME, nameIn.value.trim()); });
-      var from = myName();
+      var project = isNew ? (where ? where.value : "") || null : note.project;
       if (!topic) { topicIn.focus(); return; }
-      if (!from) { nameIn.focus(); return; }
-      showName();
-      api("/api/notes", { topic: topic, text: area.value, from: from })
-        .then(function () { note = { topic: topic, mode: "read", version: 0, history: false }; seen.notes = null; })
+      api("/api/notes", { topic: topic, text: area.value, project: project })
+        .then(function () { note = { key: nkey(project, topic), project: project, topic: topic, mode: "read", version: 0, history: false }; seen.notes = null; })
         .catch(function (e) { err.hidden = false; err.textContent = e.message; });
     });
     doc.appendChild(el("div", { "class": "doc-head" }, [back, isNew ? topicIn : el("h2", { text: note.topic }),
-      el("div", { "class": "tools" }, [nameIn, cancel, save])]));
+      !isNew && note.project ? el("span", { "class": "tag" }, [icon("i-project", 12), note.project]) : null,
+      el("div", { "class": "tools" }, [where, cancel, save])]));
     doc.appendChild(el("div", { "class": "doc-body" }, [area, err]));
     (isNew ? topicIn : area).focus();
+  }
+
+  /* admin: People */
+  function personNames(skipAdmins) {
+    return feed.people.filter(function (p) { return !skipAdmins || p.role !== "admin"; }).map(function (p) { return p.name; });
+  }
+  function showInvite(name, url) {
+    var box = $("invite"), input = el("input", { readonly: "", value: url, "aria-label": "Invite link" });
+    var done = el("span", { "class": "ok" });
+    var copy = button([icon("i-copy", 13), "Copy"], "primary", function () {
+      function ok() { done.textContent = "Copied"; }
+      input.select();
+      if (navigator.clipboard) navigator.clipboard.writeText(url).then(ok, function () { document.execCommand("copy"); ok(); });
+      else { document.execCommand("copy"); ok(); }
+    });
+    box.textContent = "";
+    [icon("i-link", 14), el("span", { text: "Invite for " + name }), input, copy, done,
+     button([icon("i-x", 12)], "", function () { box.hidden = true; }, { title: "Close" })]
+      .forEach(function (n) { box.appendChild(n); });
+    box.hidden = false;
+    input.select();
+  }
+  function renderPeople() {
+    var body = $("people-rows");
+    body.textContent = "";
+    feed.people.forEach(function (p) {
+      var devs = el("div", { "class": "cell-list" }, p.devices.map(function (d) {
+        var gone = d.revoked_at != null;
+        return el("div", { "class": "dev" + (gone ? " revoked" : "") }, [
+          el("span", { text: d.name }),
+          d.host ? el("small", { text: d.host }) : null,
+          el("small", { title: d.last_used ? full(d.last_used) : null,
+                        text: gone ? "revoked" : d.last_used ? "seen " + ago(Date.now() / 1000 - d.last_used) : "never used" }),
+          gone ? null : button("Revoke", "danger", function () {
+            if (confirm("Revoke " + d.name + " of " + p.name + "? It stops working at once.")) quiet(act("people-err", "/api/devices/" + d.id + "/revoke"));
+          })
+        ]);
+      }));
+      if (!p.devices.length) devs.appendChild(el("span", { "class": "hint", text: "No devices yet" }));
+      body.appendChild(el("tr", null, [
+        el("td", null, [el("b", { text: p.name })]),
+        el("td", { "class": "c-plain", text: p.role }),
+        el("td", null, [devs]),
+        el("td", { "class": "c-act" }, [button([icon("i-link", 13), "Invite"], "", function () {
+          act("people-err", "/api/invites", { person: p.name })
+            .then(function (r) { return r.json(); })
+            .then(function (b) { showInvite(p.name, b.url); }, function () {});
+        })])
+      ]));
+    });
+    var lg = feed.legacy;
+    $("legacy-state").textContent = !lg.enabled ? "Shared token off"
+      : lg.ready_to_disable ? "Shared token on. Every old machine has its own token now." : "Shared token on";
+    var tg = $("legacy-toggle");
+    tg.textContent = "";
+    if (lg.enabled) {
+      tg.appendChild(button("Switch shared token off", lg.ready_to_disable ? "primary" : "danger", function () {
+        if (lg.ready_to_disable || confirm("Machines still on the shared token stop working until they join again. Switch it off?")) {
+          quiet(act("legacy-err", "/api/legacy/off"));
+        }
+      }));
+    } else {
+      tg.appendChild(button("Switch shared token on", "", function () { quiet(act("legacy-err", "/api/legacy/on")); }));
+    }
+    var rows = $("legacy-rows");
+    rows.textContent = "";
+    if (!lg.unassigned.length) {
+      rows.appendChild(el("div", { "class": "empty-row", text: "No old machines waiting for a person" }));
+    } else {
+      var t = el("table"), tb = el("tbody");
+      t.appendChild(tb);
+      lg.unassigned.forEach(function (m) {
+        var sel = el("select", { "aria-label": "Person for " + m });
+        options(sel, personNames(false));
+        tb.appendChild(el("tr", null, [
+          el("td", null, [el("span", { "class": "dev" }, [icon("i-machine", 14), el("b", { text: m })])]),
+          el("td", { "class": "c-act" }, [el("span", { "class": "cell-tags", style: "justify-content:flex-end" }, [sel,
+            button("Assign", "primary", function () { quiet(act("legacy-err", "/api/legacy/assign", { machine: m, person: sel.value })); })])])
+        ]));
+      });
+      rows.appendChild(t);
+    }
+  }
+
+  /* admin: Access */
+  function wanted(r) { return r.kind === "project" ? "read access to project " + r.target : "use of machine " + r.target; }
+  function renderAccess() {
+    var reqs = feed.requests;
+    $("req-panel").hidden = !reqs.length;
+    var rb = $("req-rows");
+    rb.textContent = "";
+    reqs.forEach(function (r) {
+      rb.appendChild(el("tr", null, [
+        el("td", null, [el("b", { text: r.person }), " wants " + wanted(r),
+                        r.why ? el("div", { "class": "hint", text: r.why }) : null]),
+        el("td", { "class": "log-time" }, [timeEl(r.created)]),
+        el("td", { "class": "c-act" }, [
+          button("Approve", "primary", function () { quiet(act("req-err", "/api/requests/" + r.id, { approve: true })); }), " ",
+          button("Deny", "", function () { quiet(act("req-err", "/api/requests/" + r.id, { approve: false })); })])
+      ]));
+    });
+    options($("grant-person"), personNames(true), $("grant-person").value);
+    options($("grant-project"), feed.projects.map(function (p) { return p.name; }), $("grant-project").value);
+    var pb = $("project-rows");
+    pb.textContent = "";
+    feed.projects.forEach(function (p) {
+      var tags = el("div", { "class": "cell-tags" }, p.members.map(function (m) {
+        var x = el("button", { "class": "x", type: "button", title: "Take " + p.name + " from " + m.person }, [icon("i-x", 11)]);
+        x.addEventListener("click", function () { quiet(act("grant-err", "/api/projects/" + encodeURIComponent(p.name) + "/revoke", { person: m.person })); });
+        return el("span", { "class": "tag" }, [m.person, el("small", { text: m.role }), x]);
+      }));
+      if (!p.members.length) tags.appendChild(el("span", { "class": "hint", text: "Only the admin" }));
+      pb.appendChild(el("tr", null, [
+        el("td", null, [el("b", { text: p.name }), p.description ? el("div", { "class": "hint", text: p.description }) : null]),
+        el("td", null, [tags])
+      ]));
+    });
+    if (!feed.projects.length) pb.appendChild(el("tr", null, [el("td", { colspan: "2", "class": "empty-row", text: "No projects yet. Add one with: kaptyorka project add <name>" })]));
+    var mb = $("machine-rows");
+    mb.textContent = "";
+    feed.machines.forEach(function (m) {
+      var devs = el("div", { "class": "cell-list" }, m.devices.map(function (d) {
+        return el("div", { "class": "dev" }, [el("span", { text: d.name }), el("small", { text: d.person }),
+          button(d.shared ? "Shared" : "Not shared", "", function () {
+            quiet(act("machine-err", "/api/devices/" + d.id + "/shared", { shared: !d.shared }));
+          }, { "aria-pressed": d.shared ? "true" : "false", title: "A shared device's sessions may belong to anyone who can use this machine" })]);
+      }));
+      var tags = el("div", { "class": "cell-tags" }, m.grants.map(function (g) {
+        var x = el("button", { "class": "x", type: "button", title: "Take " + m.host + " from " + g }, [icon("i-x", 11)]);
+        x.addEventListener("click", function () { quiet(act("machine-err", "/api/machines/" + encodeURIComponent(m.host) + "/revoke", { person: g })); });
+        return el("span", { "class": "tag" }, [g, x]);
+      }));
+      var others = personNames(true).filter(function (n) { return n !== m.owner && m.grants.indexOf(n) < 0; });
+      if (others.length) {
+        var add = el("select", { "aria-label": "Let someone use " + m.host });
+        options(add, [["", "+ person"]].concat(others));
+        add.addEventListener("change", function () {
+          if (add.value) quiet(act("machine-err", "/api/machines/" + encodeURIComponent(m.host) + "/grant", { person: add.value }));
+        });
+        tags.appendChild(add);
+      }
+      mb.appendChild(el("tr", null, [
+        el("td", null, [el("span", { "class": "dev" }, [icon("i-machine", 14), el("b", { text: m.host })]),
+                        el("div", { "class": "hint", text: m.online + " online" })]),
+        el("td", { "class": "c-plain", text: m.owner || "—" }),
+        el("td", null, [devs]),
+        el("td", null, [tags])
+      ]));
+    });
+    if (!feed.machines.length) mb.appendChild(el("tr", null, [el("td", { colspan: "4", "class": "empty-row", text: "No machines yet" })]));
+  }
+
+  /* admin: Log */
+  function renderLog() {
+    options($("log-person"), [["", "Everyone"]].concat(personNames(false), ["system"]), logPerson);
+    var ret = $("ret-days");
+    if (document.activeElement !== ret) ret.value = feed.settings.retention_days;
+    var rows = logPerson ? logRows || [] : feed.log, body = $("log-rows");
+    body.textContent = "";
+    rows.forEach(function (r) {
+      body.appendChild(el("tr", null, [
+        el("td", { "class": "log-time", title: full(r.time), text: new Date(r.time * 1000).toLocaleString() }),
+        el("td", { "class": "c-plain", text: r.person }),
+        el("td", { "class": "log-kind", text: r.kind }),
+        el("td", { "class": "text", text: r.detail })
+      ]));
+    });
+    if (!rows.length) body.appendChild(el("tr", null, [el("td", { colspan: "4", "class": "empty-row", text: "Nothing logged" })]));
+  }
+  function loadLog() {
+    if (!logPerson) { logRows = null; seen.audit = null; render(); return; }
+    get("/api/log?limit=200&person=" + encodeURIComponent(logPerson))
+      .then(function (rows) { logRows = rows; seen.audit = null; render(); })
+      .catch(function (e) { $("log-err").hidden = false; $("log-err").textContent = e.message; });
+  }
+
+  /* an admin panel is not redrawn while someone is choosing or typing in it */
+  function busy(id) {
+    var a = document.activeElement;
+    return a && $(id).contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName);
   }
 
   /* redraw only the parts whose data changed, so scroll and open notes stay put */
@@ -708,13 +1136,23 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   }
   function render() {
     $("n-team").textContent = feed.agents.length;
-    $("n-messages").textContent = fold(feed.messages).length;
+    $("n-messages").textContent = fold(feed.messages).length + feed.knocks.length;
     $("n-notes").textContent = feed.notes.length;
     renderTeam();
     var places = feed.agents.map(function (a) { return [a.name, a.machine, a.project, a.label]; });
-    if (changed("messages", [feed.messages, places, filter])) renderMessages();
+    if (changed("messages", [feed.messages, feed.doors, places, filter])) renderMessages();
+    if (changed("knocks", [feed.knocks, feed.agents.some(function (a) { return a.mine; })])) renderKnocks();
     if (changed("to", places)) renderTo();
     if (note.mode === "read" && changed("notes", feed.notes)) renderNotes();
+    if (feed.people) {
+      $("n-people").textContent = feed.people.length;
+      $("n-access").textContent = feed.requests.length;
+      $("n-access").hidden = !feed.requests.length;
+      if (!busy("people") && changed("people", [feed.people, feed.legacy])) renderPeople();
+      if (!busy("access") && changed("access", [feed.requests, feed.projects, feed.machines, feed.people])) renderAccess();
+      if (!busy("audit") && changed("audit", [feed.log, feed.settings, feed.people, logPerson, logRows])) renderLog();
+      if (logPerson && changed("log-src", feed.log)) loadLog();
+    }
     tick();
   }
 
@@ -756,17 +1194,42 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   $("text").addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
   });
-  $("me").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); send(); } });
-  $("as").addEventListener("click", function () {
-    var n = $("me");
-    n.value = myName();
-    store(function (s) { s.removeItem(NAME); });
-    showName(); n.hidden = false; n.focus();
-  });
   $("new-topic").addEventListener("click", newTopic);
-  showName();
-  show(view);
-  poll();
+  $("add-person").addEventListener("submit", function (e) {
+    e.preventDefault();
+    act("people-err", "/api/people", { name: $("new-name").value.trim(), role: $("new-role").value })
+      .then(function () { $("new-name").value = ""; }, function () {});
+  });
+  $("grant").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var project = $("grant-project").value;
+    if (!project || !$("grant-person").value) return;
+    quiet(act("grant-err", "/api/projects/" + encodeURIComponent(project) + "/grant",
+              { person: $("grant-person").value, role: $("grant-role").value }));
+  });
+  $("retention").addEventListener("submit", function (e) {
+    e.preventDefault();
+    quiet(act("log-err", "/api/settings", { retention_days: parseInt($("ret-days").value, 10) })
+      .then(function () { $("ret-days").blur(); }));
+  });
+  $("log-person").addEventListener("change", function () { logPerson = $("log-person").value; loadLog(); });
+  function boot() {
+    get("/api/me").then(start).catch(function () {
+      if ($("app").hidden) return;  /* locked: the token was refused */
+      live(false); setTimeout(boot, 2000);
+    });
+  }
+  function start(m) {
+    me = m;
+    $("viewer-name").textContent = m.person;
+    $("viewer").title = "Signed in as " + m.person + " on " + m.device;
+    $("viewer-role").hidden = m.role !== "admin";
+    document.querySelectorAll(".admin-only").forEach(function (n) { n.hidden = m.role !== "admin"; });
+    if (m.role !== "admin") get("/api/projects").then(function (ps) { myProjects = ps; }, function () {});
+    show(view);
+    poll();
+  }
+  boot();
 })();
 </script>
 </body>
