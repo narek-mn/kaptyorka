@@ -77,7 +77,7 @@ pipx install kaptyorka
 kaptyorka join http://<hub>/i/<code>
 ```
 
-Each machine gets a token of its own, tied to Alice, and a signing secret. Both are saved in `~/.kaptyorka/config.json`. The machine name defaults to `user@host`; add `--name <name>` to change it. `kaptyorka people` lists the people and their devices.
+Each machine gets a token of its own, tied to Alice, and a signing secret. Both are saved in `~/.kaptyorka/config.json`. The machine name defaults to `user@host`; add `--name <name>` to change it. `kaptyorka people` lists each person with their role, how many devices they have and when one was last used.
 
 Opening the invite link in a browser shows the same `join` command, and a button that opens the page as Alice.
 
@@ -204,7 +204,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka start` | Run the hub on this machine |
 | `kaptyorka join <invite-link>` | Join this machine as the invited person |
 | `kaptyorka invite <person>` | Admin: make an invite link (creates the person if new) |
-| `kaptyorka people` | Admin: list people and their devices |
+| `kaptyorka people` | Admin: list people, roles, device counts and last use |
 | `kaptyorka project add <name>` | Admin: register a project (`--repo`, `--desc`) |
 | `kaptyorka grant <person> <project>:<role>` | Admin: give a project role; or `machine:<host>` to allow a machine |
 | `kaptyorka revoke <person> <project>` | Admin: take it away; or `machine:<host>` |

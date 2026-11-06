@@ -11,7 +11,9 @@
 - Log of who did what (admin tab), retention of messages and files (180 days by default, set on the page), secrets check on messages and notes.
 - Page: login with a device token or an invite link; People, Access and Log tabs for the admin.
 - Six new agent tools: `projects`, `knock`, `answer`, `door_close`, `request_access`, `fetch_file` (13 in all).
-- Upgrading from 0.1: nothing to do on teammates' machines. The old shared token keeps working as a "legacy" device until the admin switches it off on the People tab; the admin assigns each old machine to a person, and machines on 0.2 then get their own token. Notes from 0.1 whose topic equals a project folder become that project's notes.
+- The admin's own token: the first `kaptyorka start` makes a device `hub` for the admin, joins the hub machine with it and prints only this machine's join line, the page link with that token and how to invite. `join` prints the page link; the page's lock screen takes a pasted token. `kaptyorka machine owner <host> <person>` (or the Access tab) names a machine's owner; a machine has none until then.
+- Safety: secrets check covers more key shapes and text attachments; the `kaptyorka` tool will not attach files from `~/.kaptyorka` or `~/.ssh`; names and texts from machines are kept on one line.
+- Upgrading from 0.1: nothing to do on teammates' machines. The old shared token keeps working as a "legacy" device until the admin switches it off on the People tab (with their own admin token: once the admin has one, the shared token is refused for admin work and cannot switch itself off); the admin assigns each old machine to a person, and machines on 0.2 then get their own token. Notes from 0.1 whose topic equals a project folder become that project's notes.
 
 ## 0.1.9
 

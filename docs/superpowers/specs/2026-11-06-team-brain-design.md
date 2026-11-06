@@ -199,7 +199,9 @@ usable on its own.
 - `machines(host, owner_person_id)`: a machine is a host. The bridge
   reports the hostname in every heartbeat (the 0.1 "machine name"
   `user@host` becomes the device name). A machine row appears at the first
-  heartbeat from that host; its owner is that bridge's person. Several
+  heartbeat from that host, with no owner: the host name is self-reported,
+  so only the admin names the owner (`kaptyorka machine owner`, the page,
+  logged as `machine_owner`). Several
   devices (accounts) can sit on one host; each shows under its own person.
 - Devices gain `shared` (bool, default false), set by the admin on the page
   or by `fleet add --shared`. A shared device is an OS account the admin
