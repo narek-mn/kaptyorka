@@ -25,7 +25,8 @@ def test_migrates_019_db(tmp_path):
     assert dev["legacy"] and dev["name"] == "legacy"
     assert "token_hash" not in dev and "secret_hash" not in dev
     assert s.agent("claude:abc").person_id == admin["id"]
-    assert s.notes_read("proj-a").project == "proj-a"  # topic == a seen folder
+    assert s.notes_read("proj-a", project="proj-a").project == "proj-a"  # topic == a seen folder
+    assert s.notes_read("proj-a") is None  # a note is (project, topic): not a team note
     assert s.notes_read("team-howto").project is None
     assert [m.text for m in s.messages()] == ["hello"]
     s.close()
@@ -135,4 +136,62 @@ def test_device_on_host_does_not_grant_use(tmp_path):
     assert [m["host"] for m in s.machines(pb)] == ["h1"]  # still visible
     s.grant_machine("h1", b, by="root")
     assert s.may_use("h1", b)
+    s.close()
+
+
+def test_project_register_roles_and_log(tmp_path):
+    import pytest
+    from kaptyorka.store import KaptyorkaError
+
+    s = Store(tmp_path / "hub.db")
+    ann, ta = _member(s, "ann")
+    ben, _ = _member(s, "ben")
+    root, tr = _member(s, "root", "admin")
+    s.project_register("shop", description="d", repo="r", by="ann", by_person_id=ann)
+    assert s.project_role("shop", ann) == "manage"
+    assert s.project_role("shop", ben) is None
+    assert s.project_role("shop", root) == "manage" and s.project_role("lab", root) == "manage"
+    with pytest.raises(KaptyorkaError, match="a project named shop already exists"):
+        s.project_register("shop", by="root")
+    for bad in ("", "a b", "x" * 65, "a/b", "p:q"):
+        with pytest.raises(KaptyorkaError):
+            s.project_register(bad, by="root")
+    s.grant_project("shop", ben, "read", by="root")
+    assert s.project_role("shop", ben) == "read"
+    s.grant_project("shop", ben, "write", by="root")  # a new grant replaces the role
+    assert s.project_role("shop", ben) == "write"
+    with pytest.raises(KaptyorkaError):
+        s.grant_project("shop", ben, "owner", by="root")
+    with pytest.raises(KaptyorkaError, match="no project named lab"):
+        s.grant_project("lab", ben, "read", by="root")
+    with pytest.raises(KaptyorkaError, match="no such person"):
+        s.grant_project("shop", 999, "read", by="root")
+    s.revoke_project("shop", ben, by="root")
+    assert s.project_role("shop", ben) is None
+    rows = [(r["person"], r["kind"], r["detail"]) for r in
+            s.db.execute("SELECT person, kind, detail FROM log WHERE kind IN"
+                         " ('project_register','grant','revoke') ORDER BY id")]
+    assert rows == [("ann", "project_register", "shop"),
+                    ("root", "grant", "project:shop:read -> ben"),
+                    ("root", "grant", "project:shop:write -> ben"),
+                    ("root", "revoke", "project:shop -> ben")]
+    s.close()
+
+
+def test_may_read_write_project(tmp_path):
+    s = Store(tmp_path / "hub.db")
+    ann, ta = _member(s, "ann")
+    ben, tb = _member(s, "ben")
+    _, tr = _member(s, "root", "admin")
+    pa, pb, pr = s.authenticate(ta), s.authenticate(tb), s.authenticate(tr)
+    s.seen("k:a", "pa", "codex", "lab", principal=pa)
+    assert s.may_read_project("lab", pa) and s.may_write_project("lab", pa)
+    assert not s.may_read_project("lab", pb) and not s.may_write_project("lab", pb)
+    assert s.may_read_project("lab", pr) and s.may_write_project("lab", pr)
+    s.project_register("lab", by="root")
+    assert not s.may_read_project("lab", pa)  # registered: only roles count
+    s.grant_project("lab", ann, "read", by="root")
+    assert s.may_read_project("lab", pa) and not s.may_write_project("lab", pa)
+    s.grant_project("lab", ann, "manage", by="root")
+    assert s.may_write_project("lab", pa)
     s.close()

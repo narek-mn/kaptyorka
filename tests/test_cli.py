@@ -149,3 +149,42 @@ def test_cli_join_invite_keeps_token_when_join_fails(monkeypatch, home):
     assert entry_with_exit(["join", "http://h:1/i/CODE123", "--name", "pc"]) == 1
     cfg = paths.load_config()
     assert (cfg["hub"], cfg["token"], cfg["secret"], cfg["machine"]) == ("http://h:1", "tok", "sec", "pc")
+
+
+def test_cli_grant_parses_shapes(monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    calls = []
+
+    def fake(method, url, token, body=None, **kw):
+        calls.append((method, url, body))
+        return 204, None
+
+    monkeypatch.setattr(http, "request", fake)
+    assert entry_with_exit(["grant", "ann", "shop:write"]) == 0
+    assert entry_with_exit(["grant", "ann", "machine:my host"]) == 0
+    assert entry_with_exit(["revoke", "ann", "shop"]) == 0
+    assert entry_with_exit(["revoke", "ann", "machine:box"]) == 0
+    assert entry_with_exit(["project", "add", "shop", "--repo", "https://g/shop",
+                            "--desc", "the shop"]) == 0
+    assert entry_with_exit(["project", "add", "lab"]) == 0
+    assert calls == [
+        ("POST", "http://h:1/api/projects/shop/grant", {"person": "ann", "role": "write"}),
+        ("POST", "http://h:1/api/machines/my%20host/grant", {"person": "ann"}),
+        ("POST", "http://h:1/api/projects/shop/revoke", {"person": "ann"}),
+        ("POST", "http://h:1/api/machines/box/revoke", {"person": "ann"}),
+        ("POST", "http://h:1/api/projects",
+         {"name": "shop", "repo": "https://g/shop", "description": "the shop"}),
+        ("POST", "http://h:1/api/projects", {"name": "lab", "repo": "", "description": ""}),
+    ]
+    calls.clear()
+    assert entry_with_exit(["grant", "ann", "shop"]) == 1  # no role
+    assert entry_with_exit(["revoke", "ann", "shop:read"]) == 1
+    assert calls == []
+    assert "project>:<role" in capsys.readouterr().err
+
+
+def test_cli_grant_prints_hub_error(monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "t", "machine": "pc"})
+    monkeypatch.setattr(http, "request", lambda *a, **k: (400, "no project named shop"))
+    assert entry_with_exit(["grant", "ann", "shop:read"]) == 1
+    assert "no project named shop" in capsys.readouterr().err

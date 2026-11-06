@@ -1,6 +1,7 @@
 """SQLite storage for the hub: agents, messages, notes, people and their access."""
 import getpass
 import hashlib
+import re
 import secrets
 import sqlite3
 import threading
@@ -16,6 +17,8 @@ RATE = (30, 60)
 SCHEMA_VERSION = 2
 INVITE_TTL_S = 7 * 86400
 ROLES = ("admin", "member", "manager")
+PROJECT_ROLES = ("read", "write", "manage")
+PROJECT_NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -429,6 +432,98 @@ class Store:
         if not cur.rowcount:
             raise KaptyorkaError("no such device")
 
+    # projects
+
+    def project_register(self, name: str, description: str = "", repo: str = "", by: str = "",
+                         by_person_id: Optional[int] = None) -> None:
+        """A registered project: access to it is by role. `by_person_id` gets `manage`."""
+        if not PROJECT_NAME.match(name):
+            raise KaptyorkaError("project name must be 1 to 64 letters, digits, '.', '_' or '-'")
+        with self.lock:
+            if self.db.execute("SELECT 1 FROM projects WHERE name=?", (name,)).fetchone():
+                raise KaptyorkaError(f"a project named {name} already exists")
+            self.db.execute("INSERT INTO projects (name, description, repo, created) VALUES (?,?,?,?)",
+                            (name, description, repo, self.clock()))
+            if by_person_id is not None:
+                self.db.execute("INSERT OR REPLACE INTO project_access (project, person_id, role)"
+                                " VALUES (?,?,'manage')", (name, by_person_id))
+        self.log_add(by, "project_register", name)
+
+    def _project_target(self, project: str, person_id: int) -> str:
+        """The person's name, after checking both the project and the person exist."""
+        if self.db.execute("SELECT 1 FROM projects WHERE name=?", (project,)).fetchone() is None:
+            raise KaptyorkaError(f"no project named {project}")
+        who = self.db.execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
+        if who is None:
+            raise KaptyorkaError("no such person")
+        return who["name"]
+
+    def grant_project(self, project: str, person_id: int, role: str, by: str) -> None:
+        if role not in PROJECT_ROLES:
+            raise KaptyorkaError("project role must be read, write or manage")
+        with self.lock:
+            name = self._project_target(project, person_id)
+            self.db.execute("INSERT OR REPLACE INTO project_access (project, person_id, role)"
+                            " VALUES (?,?,?)", (project, person_id, role))
+        self.log_add(by, "grant", f"project:{project}:{role} -> {name}")
+
+    def revoke_project(self, project: str, person_id: int, by: str) -> None:
+        with self.lock:
+            name = self._project_target(project, person_id)
+            self.db.execute("DELETE FROM project_access WHERE project=? AND person_id=?",
+                            (project, person_id))
+        self.log_add(by, "revoke", f"project:{project} -> {name}")
+
+    def _role(self, project, person_id):
+        p = self.db.execute("SELECT role FROM people WHERE id=?", (person_id,)).fetchone()
+        if p is not None and p["role"] == "admin":
+            return "manage"
+        row = self.db.execute("SELECT role FROM project_access WHERE project=? AND person_id=?",
+                              (project, person_id)).fetchone()
+        return row["role"] if row else None
+
+    def project_role(self, project: str, person_id: int) -> Optional[str]:
+        """The person's role in a project; an admin always manages."""
+        with self.lock:
+            return self._role(project, person_id)
+
+    def _registered(self, project) -> bool:
+        return self.db.execute("SELECT 1 FROM projects WHERE name=?", (project,)).fetchone() is not None
+
+    def _may(self, project, principal, write) -> bool:
+        """A registered project goes by role. An unregistered one is only a folder name, which
+        two people can share by chance: it belongs to whoever has a session in it."""
+        if principal.is_admin():
+            return True
+        if self._registered(project):
+            role = self._role(project, principal.person_id)
+            return role in (("write", "manage") if write else PROJECT_ROLES)
+        return self.db.execute("SELECT 1 FROM agents WHERE project=? AND person_id=?",
+                               (project, principal.person_id)).fetchone() is not None
+
+    def may_read_project(self, project: str, principal: Principal) -> bool:
+        with self.lock:
+            return self._may(project, principal, False)
+
+    def may_write_project(self, project: str, principal: Principal) -> bool:
+        with self.lock:
+            return self._may(project, principal, True)
+
+    def projects_for(self, principal: Principal) -> List[dict]:
+        """Registered projects the principal has a role in (an admin: all), with the names of
+        the sessions online in each folder."""
+        with self.lock:
+            online = self._online_rows(self.clock())
+            out = []
+            for p in self.db.execute("SELECT * FROM projects ORDER BY name").fetchall():
+                role = self._role(p["name"], principal.person_id)
+                if role is None:
+                    continue
+                out.append({"name": p["name"], "description": p["description"], "repo": p["repo"],
+                            "role": role,
+                            "working_now": [r["name"] for r in online if r["project"] == p["name"]]})
+            return out
+
     # log
 
     def log_add(self, person: str, kind: str, detail: str) -> None:
@@ -660,41 +755,70 @@ class Store:
 
     # notes
 
-    def notes_write(self, key: str, topic: str, text: str) -> None:
+    def _person_principal(self, person_id) -> Optional[Principal]:
+        """A principal for access checks only, from a person id (None when unknown)."""
+        p = self.db.execute("SELECT name, role FROM people WHERE id=?", (person_id,)).fetchone()
+        return Principal(person_id, p["name"], p["role"], 0, "", False, False) if p else None
+
+    def _check_project(self, project, principal, write=False) -> None:
+        """Raise unless the principal may read (or write) the project's notes. No principal
+        (an internal caller) means no check."""
+        if project is None or principal is None:
+            return
+        if not self._registered(project) and self.db.execute(
+                "SELECT 1 FROM agents WHERE project=?", (project,)).fetchone() is None:
+            raise KaptyorkaError(f"no project named {project}")
+        if not self._may(project, principal, write):
+            raise KaptyorkaError(f"no access to project {project}; ask with request_access")
+
+    def notes_write(self, key: str, topic: str, text: str, project: Optional[str] = None) -> None:
+        """Write a note as a session; `project` None or "" is the team board."""
+        project = project or None
         with self.lock:
-            row = self.db.execute("SELECT name FROM agents WHERE key=?", (key,)).fetchone()
+            row = self.db.execute("SELECT name, person_id FROM agents WHERE key=?", (key,)).fetchone()
             if row is None:
                 raise KaptyorkaError("unknown session")
-            self._note(topic, text, row["name"])
+            if row["person_id"] is not None:
+                self._check_project(project, self._person_principal(row["person_id"]), write=True)
+            self._note(topic, text, row["name"], project)
 
-    def notes_write_from_web(self, name: str, topic: str, text: str) -> None:
+    def notes_write_from_web(self, name: str, topic: str, text: str,
+                             project: Optional[str] = None) -> None:
         name, topic = _person(name), topic.strip()
         if not topic:
             raise KaptyorkaError("topic is empty")
         with self.lock:
-            self._note(topic, text, name)
+            self._note(topic, text, name, project or None)
 
-    def _note(self, topic, text, author):
-        self.db.execute("INSERT INTO notes (topic, text, author, time) VALUES (?,?,?,?)",
-                        (topic, text, author, self.clock()))
+    def _note(self, topic, text, author, project=None):
+        self.db.execute("INSERT INTO notes (topic, text, author, time, project) VALUES (?,?,?,?,?)",
+                        (topic, text, author, self.clock(), project))
 
-    def notes_list(self, project: Optional[str] = None) -> List[dict]:
-        """Latest note of each topic; with `project`, only that project's topics."""
+    def notes_list(self, principal: Optional[Principal] = None,
+                   project: Optional[str] = None) -> List[dict]:
+        """Latest note of each topic on the team board, or with `project`, that project's."""
+        project = project or None
         with self.lock:
+            self._check_project(project, principal)
             rows = self.db.execute(
-                "SELECT topic, author, time FROM notes WHERE id IN"
-                " (SELECT MAX(id) FROM notes GROUP BY topic)"
-                " AND (? IS NULL OR project=?) ORDER BY id DESC", (project, project)).fetchall()
+                "SELECT topic, author, time, project FROM notes WHERE id IN"
+                " (SELECT MAX(id) FROM notes GROUP BY COALESCE(project, ''), topic)"
+                " AND project IS ? ORDER BY id DESC", (project,)).fetchall()
             return [dict(r) for r in rows]
 
-    def notes_read(self, topic: str, project: Optional[str] = None) -> Optional[Note]:
-        history = self.note_history(topic, project=project)
+    def notes_read(self, topic: str, principal: Optional[Principal] = None,
+                   project: Optional[str] = None) -> Optional[Note]:
+        history = self.note_history(topic, principal, project)
         return history[0] if history else None
 
-    def note_history(self, topic: str, project: Optional[str] = None) -> List[Note]:
+    def note_history(self, topic: str, principal: Optional[Principal] = None,
+                     project: Optional[str] = None) -> List[Note]:
+        """Every version of one note, newest first. A note is (project, topic)."""
+        project = project or None
         with self.lock:
+            self._check_project(project, principal)
             rows = self.db.execute(
-                "SELECT * FROM notes WHERE topic=? AND (? IS NULL OR project=?) ORDER BY id DESC",
-                (topic, project, project)).fetchall()
+                "SELECT * FROM notes WHERE topic=? AND project IS ? ORDER BY id DESC",
+                (topic, project)).fetchall()
             return [Note(r["topic"], r["text"], r["author"], r["time"], r["project"])
                     for r in rows]

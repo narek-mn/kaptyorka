@@ -32,7 +32,8 @@ INSTRUCTIONS = (
     "kaptyorka connects you with the other coding agents on this team. "
     "who() lists online sessions; send(to, text) messages one by name or 'all'; "
     "inbox() reads your messages; status(text) says what you are working on; "
-    "notes_list/notes_read/notes_write share a team board, one text per topic."
+    "notes_list/notes_read/notes_write share a team board, one text per topic; "
+    "pass project to use that project's notes. projects() lists the projects you have a role in."
 )
 
 
@@ -92,23 +93,39 @@ def build_app(store: Store) -> Starlette:
             raise KaptyorkaError("unauthorized")
         return principal
 
-    def identify(h) -> Agent:
+    def identify(h, principal: "Principal | None" = None) -> Agent:
         # values are percent-encoded by Identity.headers(), since headers must be ASCII
         ident = [unquote(h.get(f"x-kaptyorka-{k}") or "") for k in ("key", "machine", "tool", "project")]
         if not all(ident):
             raise KaptyorkaError("no kaptyorka identity; run kaptyorka join")
-        return store.seen(*ident, principal=principal_of(h))
+        return store.seen(*ident, principal=principal or principal_of(h))
 
     def me(ctx: Context) -> Agent:
         return identify(ctx.headers or {})
 
+    def caller(ctx: Context) -> "tuple[Agent, Principal]":
+        principal = principal_of(ctx.headers or {})
+        return identify(ctx.headers or {}, principal), principal
+
     @server.tool()
     @_tool_errors
     def who(ctx: Context) -> List[dict]:
-        """Online sessions: name, label, machine, tool, project, status, activity, last seen."""
-        key = me(ctx).key
+        """Online sessions: name, label, person, machine, tool, project, status, activity, last
+        seen. A project you may not see shows as (private)."""
+        agent, principal = caller(ctx)
         now = store.clock()
-        return [{**_agent_row(a, now), "you": a.key == key} for a in store.online()]
+        names = {p["id"]: p["name"] for p in store.people()}
+        rows = []
+        for a in store.online():
+            mine = a.person_id == principal.person_id
+            row = {**_agent_row(a, now), "you": a.key == agent.key, "mine": mine,
+                   "person": names.get(a.person_id, "")}
+            # an unregistered folder is only a name two people can share by chance, so it shows
+            # on your own rows only; a registered project shows to anyone with a role in it
+            if not mine and store.project_role(a.project, principal.person_id) is None:
+                row["project"] = "(private)"
+            rows.append(row)
+        return rows
 
     def wake_bridges():
         sent["event"].set()
@@ -138,25 +155,33 @@ def build_app(store: Store) -> Starlette:
 
     @server.tool()
     @_tool_errors
-    def notes_list(ctx: Context) -> List[dict]:
-        """Topics on the team board, newest first."""
-        me(ctx)
-        return store.notes_list()
+    def notes_list(ctx: Context, project: str = "") -> List[dict]:
+        """Topics on the team board, newest first; with project, that project's notes."""
+        _, principal = caller(ctx)
+        return store.notes_list(principal, project or None)
 
     @server.tool()
     @_tool_errors
-    def notes_read(topic: str, ctx: Context) -> Union[dict, str]:
-        """Read the latest text of a note."""
-        me(ctx)
-        note = store.notes_read(topic)
+    def notes_read(topic: str, ctx: Context, project: str = "") -> Union[dict, str]:
+        """Read the latest text of a note (a team note, or with project, that project's)."""
+        _, principal = caller(ctx)
+        note = store.notes_read(topic, principal, project or None)
         return asdict(note) if note else f"no note named {topic}"
 
     @server.tool()
     @_tool_errors
-    def notes_write(topic: str, text: str, ctx: Context) -> str:
-        """Write a new version of a note (older versions are kept)."""
-        store.notes_write(me(ctx).key, topic, text)
+    def notes_write(topic: str, text: str, ctx: Context, project: str = "") -> str:
+        """Write a new version of a note (older versions are kept); with project, that
+        project's note."""
+        store.notes_write(me(ctx).key, topic, text, project or None)
         return f"saved note {topic}"
+
+    @server.tool()
+    @_tool_errors
+    def projects(ctx: Context) -> List[dict]:
+        """Projects you have a role in: name, description, repo, your role, sessions in it now."""
+        _, principal = caller(ctx)
+        return store.projects_for(principal)
 
     @server.custom_route("/bridge/heartbeat", methods=["POST"])
     @_bad_request
@@ -351,6 +376,57 @@ def build_app(store: Store) -> Starlette:
     @_bad_request
     async def api_machine_revoke(request: Request) -> Response:
         return await machine_grant(request, False)
+
+    @server.custom_route("/api/projects", methods=["GET"])
+    async def api_projects(request: Request) -> Response:
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None:
+            return PlainTextResponse("unauthorized", status_code=401)
+        return JSONResponse(store.projects_for(principal))
+
+    @server.custom_route("/api/projects", methods=["POST"])
+    @_bad_request
+    async def api_project_create(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        try:
+            store.project_register(str(body["name"]), str(body.get("description", "")),
+                                   str(body.get("repo", "")),
+                                   by=request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return Response(status_code=204)
+
+    async def project_grant(request: Request, grant: bool) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        person = store.person_by_name(str(body["person"]))
+        project = request.path_params["name"]
+        by = request.scope["state"]["principal"].person_name
+        try:
+            if person is None:
+                raise KaptyorkaError("no such person")
+            if grant:
+                store.grant_project(project, person["id"], str(body["role"]), by)
+            else:
+                store.revoke_project(project, person["id"], by)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/projects/{name}/grant", methods=["POST"])
+    @_bad_request
+    async def api_project_grant(request: Request) -> Response:
+        return await project_grant(request, True)
+
+    @server.custom_route("/api/projects/{name}/revoke", methods=["POST"])
+    @_bad_request
+    async def api_project_revoke(request: Request) -> Response:
+        return await project_grant(request, False)
 
     @server.custom_route("/i/{code}", methods=["GET"])
     async def invite_page(request: Request) -> Response:

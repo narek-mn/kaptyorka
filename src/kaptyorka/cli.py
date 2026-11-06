@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from kaptyorka import __version__, http, paths, service
 
@@ -166,6 +167,53 @@ def _people(args) -> int:
     return 0
 
 
+def _admin_do(method: str, path: str, body: dict, done: str) -> int:
+    """One admin call that answers 204: print `done`, or the hub's message and exit 1."""
+    got = _admin_call(method, path, body)
+    if got is None:
+        return 1
+    if got[0] not in (200, 204):
+        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        return 1
+    print(done)
+    return 0
+
+
+GRANT_SHAPES = "use <project>:<role> (read, write or manage) or machine:<host>"
+
+
+def _grant(args) -> int:
+    if args.target.startswith("machine:"):
+        host = args.target[len("machine:"):]
+        return _admin_do("POST", f"/api/machines/{quote(host, safe='')}/grant",
+                         {"person": args.person}, f"granted {args.person} {args.target}")
+    project, _, role = args.target.rpartition(":")
+    if not project or not role:
+        print(GRANT_SHAPES, file=sys.stderr)
+        return 1
+    return _admin_do("POST", f"/api/projects/{quote(project, safe='')}/grant",
+                     {"person": args.person, "role": role}, f"granted {args.person} {args.target}")
+
+
+def _revoke(args) -> int:
+    if args.target.startswith("machine:"):
+        host = args.target[len("machine:"):]
+        path = f"/api/machines/{quote(host, safe='')}/revoke"
+    elif ":" in args.target:
+        print("use <project> or machine:<host>; to change a project role, " + GRANT_SHAPES,
+              file=sys.stderr)
+        return 1
+    else:
+        path = f"/api/projects/{quote(args.target, safe='')}/revoke"
+    return _admin_do("POST", path, {"person": args.person}, f"revoked {args.person} {args.target}")
+
+
+def _project_add(args) -> int:
+    return _admin_do("POST", "/api/projects",
+                     {"name": args.name, "repo": args.repo, "description": args.desc},
+                     f"project {args.name} added")
+
+
 def _stop(args) -> int:
     try:
         for unit in ("kaptyorka-bridge", "kaptyorka-hub"):
@@ -318,6 +366,17 @@ def entry() -> None:
     i.add_argument("person")
     i.set_defaults(run=_invite)
     sub.add_parser("people").set_defaults(run=_people)
+    for name, run in (("grant", _grant), ("revoke", _revoke)):
+        g = sub.add_parser(name)
+        g.add_argument("person")
+        g.add_argument("target", help="<project>:<role> or machine:<host> (revoke: <project>)")
+        g.set_defaults(run=run)
+    pj = sub.add_parser("project").add_subparsers(dest="project_cmd", required=True)
+    pa = pj.add_parser("add")
+    pa.add_argument("name")
+    pa.add_argument("--repo", default="")
+    pa.add_argument("--desc", default="")
+    pa.set_defaults(run=_project_add)
     sub.add_parser("who").set_defaults(run=_who)
     m = sub.add_parser("mcp")
     m.add_argument("--workspace")

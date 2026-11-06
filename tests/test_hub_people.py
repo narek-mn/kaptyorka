@@ -175,3 +175,144 @@ def test_device_shared_route(hub):
     assert hub.store.devices(pid)[0]["shared"] == 1
     assert http.request("POST", url, ADMIN, {"shared": False})[0] == 204
     assert hub.store.devices(pid)[0]["shared"] == 0
+
+
+# projects, roles and visibility
+
+from types import SimpleNamespace  # noqa: E402
+
+from helpers import call, call_error, run  # noqa: E402
+
+
+def as_person(hub, token):
+    """The hub seen through one person's device token."""
+    return SimpleNamespace(url=hub.url, token=token)
+
+
+def ident(key, project, machine="pc"):
+    return {"key": key, "machine": machine, "tool": "codex", "project": project}
+
+
+def rows_by_name(rows):
+    return {r["name"]: r for r in rows}
+
+
+def test_who_hides_private_project(hub):
+    _, ta = person(hub.store, "ann")
+    _, tb = person(hub.store, "ben")
+    ann, ben = as_person(hub, ta), as_person(hub, tb)
+    run(call(ann, ident("k:a", "shop", "pa"), "who"))
+    rows = rows_by_name(run(call(ben, ident("k:b", "lab", "pb"), "who")))
+    a, b = rows["pa/codex/shop"], rows["pb/codex/lab"]
+    assert a["project"] == "(private)" and a["person"] == "ann" and not a["mine"]
+    assert b["project"] == "lab" and b["person"] == "ben" and b["mine"] and b["you"]
+    admin_rows = rows_by_name(run(call(hub, ident("k:x", "ops", "px"), "who")))
+    assert admin_rows["pa/codex/shop"]["project"] == "shop"
+    assert admin_rows["pb/codex/lab"]["project"] == "lab"
+
+
+def test_same_folder_name_two_people_not_merged(hub):
+    _, ta = person(hub.store, "ann")
+    _, tb = person(hub.store, "ben")
+    ann, ben = as_person(hub, ta), as_person(hub, tb)
+    a_id, b_id = ident("k:a", "shop", "pa"), ident("k:b", "shop", "pb")
+    run(call(ann, a_id, "who"))
+    run(call(ben, b_id, "who"))
+    seen_by_ann = rows_by_name(run(call(ann, a_id, "who")))
+    seen_by_ben = rows_by_name(run(call(ben, b_id, "who")))
+    assert seen_by_ann["pa/codex/shop"]["project"] == "shop"
+    assert seen_by_ann["pb/codex/shop"]["project"] == "(private)"
+    assert seen_by_ben["pb/codex/shop"]["project"] == "shop"
+    assert seen_by_ben["pa/codex/shop"]["project"] == "(private)"
+    assert http.request("POST", hub.url + "/api/projects", ADMIN, {"name": "shop"})[0] == 204
+    for name in ("ann", "ben"):
+        assert http.request("POST", hub.url + "/api/projects/shop/grant", ADMIN,
+                            {"person": name, "role": "read"})[0] == 204
+    for client, i in ((ann, a_id), (ben, b_id)):
+        rows = run(call(client, i, "who"))
+        assert {r["project"] for r in rows} == {"shop"}
+
+
+def test_notes_project_scope_read_write(hub):
+    _, ta = person(hub.store, "ann")
+    _, tb = person(hub.store, "ben")
+    _, tc = person(hub.store, "cat")
+    ann, ben, cat = as_person(hub, ta), as_person(hub, tb), as_person(hub, tc)
+    a_id, b_id, c_id = ident("k:a", "shop"), ident("k:b", "lab"), ident("k:c", "lab")
+    hub.store.project_register("shop", by="root")
+    hub.store.grant_project("shop", hub.store.person_by_name("ann")["id"], "write", by="root")
+    hub.store.grant_project("shop", hub.store.person_by_name("ben")["id"], "read", by="root")
+    run(call(ann, a_id, "notes_write", topic="api", text="v1", project="shop"))
+    run(call(ann, a_id, "notes_write", topic="api", text="team v1"))
+    note = run(call(ben, b_id, "notes_read", topic="api", project="shop"))
+    assert note["text"] == "v1" and note["project"] == "shop"
+    assert run(call(ben, b_id, "notes_read", topic="api"))["text"] == "team v1"
+    assert [n["topic"] for n in run(call(ben, b_id, "notes_list", project="shop"))] == ["api"]
+    err = call_error(ben, b_id, "notes_write", topic="api", text="x", project="shop")
+    assert "no access to project shop" in err and "request_access" in err
+    assert "no access to project shop" in call_error(cat, c_id, "notes_list", project="shop")
+    assert "no access" in call_error(cat, c_id, "notes_read", topic="api", project="shop")
+    assert "no project named nope" in call_error(ann, a_id, "notes_list", project="nope")
+    # an unregistered folder: only the person working in it
+    run(call(ben, b_id, "notes_write", topic="plan", text="lab plan", project="lab"))
+    assert run(call(ben, b_id, "notes_read", topic="plan", project="lab"))["text"] == "lab plan"
+    assert "no access to project lab" in call_error(ann, a_id, "notes_read", topic="plan",
+                                                    project="lab")
+    admin_note = run(call(hub, ident("k:x", "ops"), "notes_read", topic="api", project="shop"))
+    assert admin_note["text"] == "v1"
+
+
+def test_team_notes_for_all(hub):
+    _, ta = person(hub.store, "ann")
+    _, tb = person(hub.store, "ben")
+    ann, ben = as_person(hub, ta), as_person(hub, tb)
+    a_id, b_id = ident("k:a", "shop"), ident("k:b", "lab")
+    run(call(ann, a_id, "notes_write", topic="howto", text="one"))
+    run(call(ben, b_id, "notes_write", topic="howto", text="two"))
+    assert run(call(ann, a_id, "notes_read", topic="howto"))["text"] == "two"
+    assert run(call(ann, a_id, "notes_read", topic="howto", project=""))["project"] is None
+    assert [n["topic"] for n in run(call(ben, b_id, "notes_list"))] == ["howto"]
+    hub.store.project_register("shop", by="root")
+    hub.store.grant_project("shop", hub.store.person_by_name("ann")["id"], "write", by="root")
+    run(call(ann, a_id, "notes_write", topic="secret", text="s", project="shop"))
+    assert [n["topic"] for n in run(call(ben, b_id, "notes_list"))] == ["howto"]
+
+
+def test_projects_for_member(hub):
+    pa, ta = person(hub.store, "ann")
+    ann = as_person(hub, ta)
+    a_id = ident("k:a", "shop", "pa")
+    run(call(ann, a_id, "who"))
+    for name in ("shop", "lab"):
+        assert http.request("POST", hub.url + "/api/projects", ADMIN,
+                            {"name": name, "repo": f"https://git.example/{name}",
+                             "description": f"the {name}"})[0] == 204
+    assert http.request("POST", hub.url + "/api/projects/shop/grant", ADMIN,
+                        {"person": "ann", "role": "write"})[0] == 204
+    [shop] = run(call(ann, a_id, "projects"))
+    assert shop == {"name": "shop", "description": "the shop", "repo": "https://git.example/shop",
+                    "role": "write", "working_now": ["pa/codex/shop"]}
+    status, rows = http.request("GET", hub.url + "/api/projects", ta)
+    assert status == 200 and [r["name"] for r in rows] == ["shop"]
+    _, rows = http.request("GET", hub.url + "/api/projects", ADMIN)
+    assert [(r["name"], r["role"]) for r in rows] == [("lab", "manage"), ("shop", "manage")]
+    # admin only, with clear errors
+    assert http.request("POST", hub.url + "/api/projects", ta, {"name": "x"})[0] == 403
+    assert http.request("POST", hub.url + "/api/projects/shop/grant", ta,
+                        {"person": "ann", "role": "manage"})[0] == 403
+    status, text = http.request("POST", hub.url + "/api/projects", ADMIN, {"name": "shop"})
+    assert status == 400 and "already exists" in text
+    status, text = http.request("POST", hub.url + "/api/projects", ADMIN, {"name": "a b"})
+    assert status == 400
+    status, text = http.request("POST", hub.url + "/api/projects/shop/grant", ADMIN,
+                                {"person": "ann", "role": "boss"})
+    assert status == 400 and "role" in text
+    status, text = http.request("POST", hub.url + "/api/projects/none/grant", ADMIN,
+                                {"person": "ann", "role": "read"})
+    assert status == 400 and "no project named none" in text
+    status, text = http.request("POST", hub.url + "/api/projects/shop/grant", ADMIN,
+                                {"person": "zed", "role": "read"})
+    assert status == 400 and "no such person" in text
+    assert http.request("POST", hub.url + "/api/projects/shop/revoke", ADMIN,
+                        {"person": "ann"})[0] == 204
+    assert run(call(ann, a_id, "projects")) == []
