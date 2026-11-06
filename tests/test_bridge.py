@@ -8,9 +8,12 @@ import time
 import pytest
 
 from kaptyorka import bridge as bridge_mod
+from kaptyorka import launch as launch_mod
 from kaptyorka.adapters.base import DeliveryError, Session, merge_json
 from kaptyorka.bridge import Bridge, joined_adapters
+from kaptyorka.launch import Launcher
 from helpers import call, run
+from test_launch import FakePopen, FakeRun as LaunchRun
 
 PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "proj-a"}
 
@@ -394,3 +397,195 @@ def test_heartbeat_sends_facts_and_reads_answer(hub, home, tmp_path):
     assert WorkerStore(hub.store).folders(device) == {"proj-a": str(proj), "proj-b": str(home / "proj-b")}
     row = hub.store.db.execute("SELECT cwd FROM agents WHERE key='codex:1'").fetchone()
     assert row["cwd"] == str(proj)
+
+
+# --- launch and close orders ---------------------------------------------------------------
+
+BOSS = {"key": "k:boss", "machine": "laptop", "tool": "codex", "project": "proj-a"}
+
+
+class Workers:
+    """alice's machine box-2 joined with an invite; her boss session can start workers."""
+
+    def __init__(self, hub, home, monkeypatch, secret=True):
+        from types import SimpleNamespace
+
+        from helpers import person
+
+        from kaptyorka import identity
+
+        monkeypatch.setattr(launch_mod.shutil, "which", lambda n: None)  # no systemd-run
+        monkeypatch.setattr(identity, "facts",
+                            lambda: {"host": "box-2", "os_user": "u", "version": "0.3.0"})
+        hub.store.project_register("proj-a", by="test")
+        self.pid, ptoken = person(hub.store, "alice")
+        hub.store.grant_project("proj-a", self.pid, "write", "test")
+        token, sec = hub.store.invite_redeem(hub.store.invite_create(self.pid), "box-2",
+                                             host="box-2", os_user="u")
+        (home / "proj-a").mkdir()
+        self.folder = str(home / "proj-a")
+        self.hub, self.client = hub, SimpleNamespace(url=hub.url, token=ptoken)
+        self.claude = FakeAdapter("claude-code", "claude")
+        self.run, self.popen, self.lines, self.acks = LaunchRun(), FakePopen(), [], []
+        conf = {**cfg(hub), "token": token, **({"secret": sec} if secret else {})}
+        self.launcher = Launcher(conf, home, run=self.run, popen=self.popen,
+                                 log=self.lines.append)
+        self.bridge = Bridge(conf, [self.claude], self.lines.append, run=FakeRun(),
+                             launcher=self.launcher)
+        real_ack = self.bridge._ack
+
+        def spy(msg_id, ok, launch=False, error=""):
+            self.acks.append((msg_id, ok, launch, error))
+            real_ack(msg_id, ok, launch, error)
+
+        self.bridge._ack = spy
+        self.bridge.heartbeat()  # the bridge learns who it is and its projects
+        self.bridge.heartbeat()  # the hub learns the folder
+
+    def work(self, task="fix the tests", **kw):
+        assert run(call(self.client, BOSS, "work", project="proj-a", task=task, **kw)) \
+            .startswith("starting `proj-a-w1` on box-2")
+
+    def order(self):
+        with self.hub.store.lock:
+            body = self.hub.store.db.execute(
+                "SELECT body FROM launches ORDER BY id DESC").fetchone()["body"]
+        return {**json.loads(body), "launch": True}
+
+    def worker(self):
+        from kaptyorka.workers import WorkerStore
+
+        return WorkerStore(self.hub.store).by_name("proj-a-w1")
+
+
+@pytest.fixture
+def team(hub, home, monkeypatch):
+    return Workers(hub, home, monkeypatch)
+
+
+def test_bridge_launches_a_signed_order_and_acks_it(team, home):
+    team.work(task='say "hi"; $(rm -rf /)')
+    assert team.bridge.poll_once(0) == 0
+    argv, kw = team.popen.calls[0]
+    assert argv[:3] == ["claude", "--bg", "-n"] and 'say "hi"; $(rm -rf /)' in argv[-1]
+    assert kw["cwd"] == team.folder
+    oid = team.order()["id"]
+    assert team.acks == [(oid, True, True, "")]
+    assert team.worker()["state"] == "starting"
+    assert set(team.bridge.pending) == {"proj-a-w1"}
+    saved = json.loads((home / ".kaptyorka" / "launched.json").read_text())
+    assert saved == [oid]
+
+
+def test_bridge_refuses_replay_and_bad_signature(team):
+    team.work()
+    team.bridge.poll_once(0)
+    item = team.order()
+    team.bridge._order(item)  # the same signed order again
+    team.bridge._order({**item, "task": "rm -rf ~"})  # changed on the way
+    assert len(team.popen.calls) == 1
+    assert team.acks[1:] == [(item["id"], False, True, "order already run"),
+                             (item["id"], False, True, "bad signature")]
+    # a restarted bridge still knows the id
+    again = Bridge(team.bridge.cfg, [], team.lines.append, run=FakeRun(), launcher=team.launcher)
+    assert item["id"] in again.seen_ids
+
+
+def test_bridge_without_secret_refuses_every_order(hub, home, monkeypatch):
+    team = Workers(hub, home, monkeypatch, secret=False)
+    team.work()
+    team.bridge.poll_once(0)
+    assert team.popen.calls == []
+    assert team.acks == [(team.order()["id"], False, True,
+                          "this machine has no signing secret; re-join with an invite")]
+    assert team.worker()["state"] == "failed"
+
+
+def test_bridge_refuses_other_persons_order_unless_shared(team):
+    team.work()
+    item = team.order()
+    team.bridge.hub = {**team.bridge.hub, "you": "bob"}
+    team.bridge._order(item)
+    assert team.acks == [(item["id"], False, True, "this account belongs to bob")]
+    assert team.popen.calls == []
+    team.acks.clear()
+    team.bridge.seen_ids.clear()
+    team.bridge.hub["shared"] = True
+    team.bridge._order(item)
+    assert team.acks == [(item["id"], True, True, "")] and len(team.popen.calls) == 1
+
+
+def test_crash_while_launching_is_acked_and_does_not_stop_the_poll(team, monkeypatch):
+    def boom(order, sessions=()):
+        raise ZeroDivisionError("division by zero")
+
+    monkeypatch.setattr(team.launcher, "launch", boom)
+    team.work()
+    assert team.bridge.poll_once(0) == 0
+    assert team.acks == [(team.order()["id"], False, True, "launch failed: division by zero")]
+    assert team.worker()["state"] == "failed"
+    assert any("proj-a-w1" in line and "division by zero" in line for line in team.lines)
+
+
+def test_bridge_reports_worker_key_when_session_appears(team):
+    team.work()
+    team.bridge.poll_once(0)
+    key = "claude:" + team.popen.calls[0][0][5]
+    team.bridge.heartbeat()
+    assert team.worker()["state"] == "starting"  # not seen yet
+    team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
+    team.bridge.heartbeat()
+    w = team.worker()
+    assert (w["state"], w["key"]) == ("up", key)
+    assert team.bridge.pending == {}
+
+
+def test_bridge_reports_timeout_after_two_minutes(team):
+    team.work()
+    team.bridge.poll_once(0)
+    order, result = team.bridge.pending["proj-a-w1"][:2]
+    team.bridge.pending["proj-a-w1"] = (order, result, time.monotonic() - 121)
+    team.bridge.heartbeat()
+    w = team.worker()
+    assert w["state"] == "failed"
+    assert w["error"] == ("the session did not show up within 2 minutes;"
+                          " see ~/.kaptyorka/workers/proj-a-w1.log")
+    assert team.bridge.pending == {}
+
+
+def test_worker_closed_while_starting_gets_its_session_closed(team):
+    team.work()
+    team.bridge.poll_once(0)
+    run(call(team.client, BOSS, "close_worker", name="proj-a-w1"))
+    key = "claude:" + team.popen.calls[0][0][5]
+    team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
+    team.bridge.heartbeat()
+    assert team.run.calls == [["claude", "stop", "proj-a-w1"]]
+    assert "worker proj-a-w1 was closed while starting; stopped its session" in team.lines
+    assert team.bridge.pending == {}
+
+
+def test_close_order_stops_the_session_and_acks(team):
+    team.work()
+    team.bridge.poll_once(0)
+    key = "claude:" + team.popen.calls[0][0][5]
+    team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
+    team.bridge.heartbeat()
+    run(call(team.client, BOSS, "close_worker", name="proj-a-w1"))
+    team.bridge.poll_once(0)
+    assert team.run.calls == [["claude", "stop", "proj-a-w1"]]
+    assert team.acks[-1] == (team.order()["id"], True, True, "")
+    assert team.worker()["state"] == "closed"
+
+
+def test_failed_close_is_acked_with_the_error(team):
+    team.work()
+    team.bridge.poll_once(0)
+    key = "claude:" + team.popen.calls[0][0][5]
+    team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
+    team.bridge.heartbeat()
+    run(call(team.client, BOSS, "close_worker", name="proj-a-w1"))
+    team.run.rc, team.run.stderr = 1, "No job matching 'proj-a-w1'."
+    team.bridge.poll_once(0)
+    assert team.acks[-1] == (team.order()["id"], False, True, "No job matching 'proj-a-w1'.")
+    assert team.worker()["state"] == "up"
