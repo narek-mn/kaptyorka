@@ -197,3 +197,47 @@ def test_route_mode_by_tool(hub):
         assert status == 200 and body["decision"] == "block" and body["mode"] == mode
         assert body["reason"].startswith("You did work in proj-a (done)")
     assert _check(hub, {})[0] == 400
+
+
+def test_done_matches_a_whole_word(ms, store, clock, p):
+    beat(store, p, A)
+    clock[0] += 10
+    ms.status_signal("claude:1", "abandoned the refactor, undone changes")
+    assert ms.done_check("claude:1", p, clock[0]) == {"decision": "ok"}
+
+
+def test_state_write_then_done_is_never_blocked(ms, store, clock, p):
+    beat(store, p, A)
+    clock[0] += 10
+    ms.state_written("claude:1", "proj-a", p.person_id, clock[0])
+    clock[0] += 10
+    ms.status_signal("claude:1", "done: shipped")
+    assert ms.done_check("claude:1", p, clock[0]) == {"decision": "ok"}
+
+
+def test_commit_write_then_done_is_not_blocked(ms, store, clock, p):
+    beat(store, p, A)
+    commit(ms, store, clock, p)
+    ms.state_written("web:alice", "proj-a", p.person_id, clock[0])
+    clock[0] += 10
+    ms.status_signal("claude:1", "done")
+    assert ms.done_check("claude:1", p, clock[0]) == {"decision": "ok"}
+
+
+def test_commit_then_done_without_write_blocks_once(ms, store, clock, p):
+    beat(store, p, A)
+    commit(ms, store, clock, p)
+    ms.status_signal("claude:1", "done")
+    assert ms.done_check("claude:1", p, clock[0]) == {"decision": "block", "reason": REASON}
+    assert ms.done_check("claude:1", p, clock[0]) == {"decision": "ok"}
+
+
+def test_shared_cwd_both_signalled_one_write_satisfies_both(ms, store, clock, p):
+    beat(store, p, A, A)  # two sessions of alice in one folder
+    commit(ms, store, clock, p)
+    with store.lock:
+        assert store.db.execute("SELECT COUNT(*) FROM done_checks WHERE signal='commit'"
+                                ).fetchone()[0] == 2
+    ms.state_written("claude:1", "proj-a", p.person_id, clock[0])
+    assert ms.done_check("claude:1", p, clock[0]) == {"decision": "ok"}
+    assert ms.done_check("claude:2", p, clock[0]) == {"decision": "ok"}

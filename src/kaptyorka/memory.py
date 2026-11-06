@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS done_checks (
 CREATE TABLE IF NOT EXISTS state_writes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, key TEXT, person_id INTEGER,
     time REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS state_writes_project ON state_writes (project, time);
 """
 
 STATE_HEADINGS = ("What it is", "Where it stands", "Decisions", "Open problems",
@@ -42,6 +43,7 @@ def check_state(text: str) -> Optional[str]:
     return "the state note needs these headings in order: " + ", ".join(STATE_HEADINGS)
 
 _WORKTREE = re.compile(r"--\d+$")
+_DONE = re.compile(r"\bdone\b", re.I)
 
 
 def ensure_schema(db) -> None:
@@ -104,7 +106,8 @@ class MemoryStore:
 
     def _signal(self, key: str, kind: str, at: Optional[float] = None) -> None:
         """Note a work signal for a session. Caller holds the lock. A pending signal (no state
-        write since it) keeps its time and takes the newer kind."""
+        write since it) keeps its time and takes the newer kind, except that "done" does not
+        replace a pending commit or clean."""
         at = self.clock() if at is None else at
         a = self._session(key)
         if a is None:
@@ -114,7 +117,7 @@ class MemoryStore:
         if row["signal_at"] is None or (last is not None and row["signal_at"] < last):
             self.db.execute("UPDATE done_checks SET signal_at=?, signal=? WHERE key=?",
                             (at, kind, key))
-        else:
+        elif not (kind == "done" and row["signal"] in ("commit", "clean")):
             self.db.execute("UPDATE done_checks SET signal=? WHERE key=?", (kind, key))
 
     def _git_since_start(self, key: str, a, row) -> None:
@@ -136,14 +139,22 @@ class MemoryStore:
                         (g["subject"], g["dirty"], key))
 
     def status_signal(self, key: str, text: str) -> None:
-        """From the status tool: "done" is a work signal; "no state change" clears it."""
-        text = (text or "").lower()
+        """From the status tool: "done" (a word) is a work signal, unless the state was written
+        at or after the last commit or clean (or the start, when there was none); "no state
+        change" clears the signal."""
+        text = text or ""
         with self.lock:
             a = self._session(key)
             if a is None:
                 return
-            if "done" in text:
-                self._signal(key, "done")
+            if _DONE.search(text):
+                row = self._row(key, a)
+                since = (row["signal_at"] if row["signal_at"] is not None
+                         and row["signal"] in ("commit", "clean") else row["started"])
+                last = self._last_write(a["project"], key, a["person_id"])
+                if last is None or last < since:
+                    self._signal(key, "done")
+            text = text.lower()
             if "no state change" in text:
                 self._row(key, a)
                 g = self._latest_git(a)
