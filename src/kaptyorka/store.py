@@ -1005,10 +1005,12 @@ class Store:
         with self.lock:
             now = self.clock()
             if principal is not None:
-                held = self.db.execute("SELECT person_id, last_seen FROM agents WHERE key=?",
+                # online or not: taking the key would take its unread messages and history.
+                # The same device may (a legacy machine's rows move with assign_legacy).
+                held = self.db.execute("SELECT person_id, device_id FROM agents WHERE key=?",
                                        (key,)).fetchone()
                 if held is not None and held["person_id"] not in (None, principal.person_id) \
-                        and now - held["last_seen"] < ONLINE_S:
+                        and held["device_id"] != principal.device_id:
                     raise KaptyorkaError("session key in use by another person")
             self._touch(key, machine, tool, project, now)
             if principal is not None:
@@ -1036,9 +1038,7 @@ class Store:
                      "activity": (None if s.get("activity") is None
                                   else clean(s["activity"], MAX_ACTIVITY))}
                     for s in sessions]
-        host = str(facts.get("host") or "")[:80]
-        os_user = str(facts.get("os_user") or "")[:80]
-        version = str(facts.get("version") or "")[:40]
+        host, os_user, version = (clean(facts.get(k), 80) for k in ("host", "os_user", "version"))
         with self.lock:
             now = self.clock()
             # a legacy bridge on an assigned machine: its sessions and facts go to that person

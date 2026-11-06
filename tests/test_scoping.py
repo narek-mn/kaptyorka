@@ -103,13 +103,40 @@ def test_heartbeat_still_expires_own(two):
     assert not s.agent("a1").online
 
 
-def test_seen_refuses_online_key_of_another_person(two):
+def test_seen_refuses_key_of_another_person(two):
     s, c, _, (pa, pb, _) = two
     with pytest.raises(KaptyorkaError, match="session key in use by another person"):
         s.seen("a1", "bob@pc", "codex", "x", principal=pb)
     assert s.agent("a1").person_id == pa.person_id
-    c.t += ONLINE_S + 1  # alice's session is long gone: the key may be used again
-    assert s.seen("a1", "bob@pc", "codex", "x", principal=pb).person_id == pb.person_id
+    c.t += ONLINE_S + 1  # offline too: the key keeps alice's messages and history
+    with pytest.raises(KaptyorkaError, match="session key in use by another person"):
+        s.seen("a1", "bob@pc", "codex", "x", principal=pb)
+    assert s.agent("a1").person_id == pa.person_id
+
+
+def test_offline_cursor_key_stays_with_its_person(two):
+    s, c, _, (pa, pb, _) = two
+    key = "cursor:alice@pc:/w/proj-a"
+    s.seen(key, "alice@pc", "cursor", "proj-a", principal=pa)
+    s.send("a1", "alice@pc/cursor/proj-a", "for alice")
+    c.t += ONLINE_S + 1
+    with pytest.raises(KaptyorkaError, match="session key in use by another person"):
+        s.seen(key, "alice@pc", "cursor", "proj-a", principal=pb)
+    assert s.agent(key).person_id == pa.person_id
+    with s.lock:
+        [m] = s.db.execute("SELECT to_key, read_at FROM messages").fetchall()
+    assert (m["to_key"], m["read_at"]) == (key, None)
+    s.seen(key, "alice@pc", "cursor", "proj-a", principal=pa)  # alice comes back
+    assert [m.text for m in s.inbox(key)] == ["for alice"]
+
+
+def test_heartbeat_facts_one_line(two):
+    s, _, _, (pa, _, _) = two
+    s.heartbeat("alice@pc", [{"key": "a1", "tool": "codex", "project": "proj-a"}], principal=pa,
+                facts={"host": "pc\nevil" + "h" * 100, "os_user": "al\nice", "version": "0.2\n"})
+    a = s.agent("a1")
+    assert a.host.startswith("pc evil") and len(a.host) == 80 and a.os_user == "al ice"
+    assert [d["version"] for d in s.devices(pa.person_id)] == ["0.2"]
 
 
 def test_held_page_message_needs_a_door_at_delivery(tmp_path):
