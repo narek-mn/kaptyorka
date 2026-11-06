@@ -351,3 +351,86 @@ def test_who_masks_name_of_private_session(hub):
     assert {"pa/codex/shop", "pa/codex/shop-2"} <= admin
     mine = {r["name"] for r in run(call(ann, a1, "who"))}
     assert {"pa/codex/shop", "pa/codex/shop-2"} <= mine
+
+
+def setup_access(hub):
+    """A project `shop` and a machine `h-b`, and a member ann with no access to either."""
+    _, ta = person(hub.store, "ann")
+    _, tb = person(hub.store, "ben")
+    assert http.request("POST", hub.url + "/api/projects", ADMIN, {"name": "shop"})[0] == 204
+    facts = {"host": "h-b", "os_user": "u", "version": "0.2.0"}
+    assert http.request("POST", hub.url + "/bridge/heartbeat", tb,
+                        {"machine": "h-b", "sessions": [], "facts": facts})[0] == 204
+    return ta, as_person(hub, ta), ident("k:a", "x")
+
+
+def test_request_then_approve_grants_read(hub):
+    ta, ann, a_id = setup_access(hub)
+    assert run(call(ann, a_id, "request_access", kind="project", target="shop",
+                    why="to help")) == "requested #1; the admin sees it on the page"
+    assert run(call(ann, a_id, "request_access", kind="machine", target="h-b")).startswith("requested #2")
+    _, rows = http.request("GET", hub.url + "/api/requests", ADMIN)
+    assert [(r["person"], r["kind"], r["target"], r["why"]) for r in rows] == [
+        ("ann", "project", "shop", "to help"), ("ann", "machine", "h-b", "")]
+    _, mine = http.request("GET", hub.url + "/api/requests", ta)
+    assert [r["id"] for r in mine] == [1, 2]
+    assert http.request("POST", hub.url + "/api/requests/1", ta, {"approve": True})[0] == 403
+    assert http.request("POST", hub.url + "/api/requests/1", ADMIN, {"approve": True})[0] == 204
+    assert http.request("POST", hub.url + "/api/requests/2", ADMIN, {"approve": True})[0] == 204
+    pid = hub.store.person_by_name("ann")["id"]
+    assert hub.store.project_role("shop", pid) == "read" and hub.store.may_use("h-b", pid)
+    assert http.request("GET", hub.url + "/api/requests", ADMIN)[1] == []
+    admin = hub.store.authenticate(ADMIN).person_name
+    log = {r["kind"]: r for r in hub.store.db.execute("SELECT * FROM log WHERE kind LIKE 'request%'")}
+    assert log["request"]["person"] == "ann"
+    assert log["request_decided"]["person"] == admin
+    assert "-> ann: approved" in log["request_decided"]["detail"]
+    status, text = http.request("POST", hub.url + "/api/requests/1", ADMIN, {"approve": True})
+    assert status == 400 and "already decided" in text
+    assert "you already have access to shop" in call_error(ann, a_id, "request_access",
+                                                           kind="project", target="shop")
+
+
+def test_request_deny(hub):
+    ta, ann, a_id = setup_access(hub)
+    run(call(ann, a_id, "request_access", kind="project", target="shop"))
+    assert http.request("POST", hub.url + "/api/requests/1", ADMIN, {"approve": False})[0] == 204
+    pid = hub.store.person_by_name("ann")["id"]
+    assert hub.store.project_role("shop", pid) is None
+    assert http.request("GET", hub.url + "/api/requests", ta)[1] == []
+    assert "decision" in hub.store.requests(pending_only=False)[0]
+    assert hub.store.requests(pending_only=False)[0]["decision"] == "denied"
+    assert "kind must be" in call_error(ann, a_id, "request_access", kind="x", target="shop")
+    assert "no project named zz" in call_error(ann, a_id, "request_access", kind="project", target="zz")
+    assert "no machine named zz" in call_error(ann, a_id, "request_access", kind="machine", target="zz")
+    assert http.request("POST", hub.url + "/api/requests/99", ADMIN, {"approve": True})[0] == 400
+
+
+def test_duplicate_request_same_id(hub):
+    ta, ann, a_id = setup_access(hub)
+    run(call(ann, a_id, "request_access", kind="project", target="shop", why="first"))
+    assert run(call(ann, a_id, "request_access", kind="project", target="shop",
+                    why="second")).startswith("requested #1;")
+    assert run(call(ann, a_id, "request_access", kind="project", target="shop")).startswith("requested #1;")
+    [r] = hub.store.requests()
+    assert r["why"] == "second"
+    assert "too long" in call_error(ann, a_id, "request_access", kind="project", target="shop",
+                                    why="x" * 501)
+
+
+def test_brief_mentions_pending(hub):
+    ta, ann, a_id = setup_access(hub)
+    h = {"X-Kaptyorka-Key": "k:a", "X-Kaptyorka-Machine": "pc", "X-Kaptyorka-Tool": "codex",
+         "X-Kaptyorka-Project": "x"}
+
+    def brief():
+        return http.request("GET", hub.url + "/api/brief?event=start", ta, headers=h)[1]
+    assert "Pending" not in brief() and "Denied" not in brief()
+    run(call(ann, a_id, "request_access", kind="project", target="shop"))
+    run(call(ann, a_id, "request_access", kind="machine", target="h-b"))
+    assert " Pending: access to shop (project), use of h-b (machine)." in brief()
+    http.request("POST", hub.url + "/api/requests/1", ADMIN, {"approve": False})
+    b = brief()
+    assert " Pending: use of h-b (machine)." in b and " Denied: access to shop (project)." in b
+    hub.store.clock = lambda t=hub.store.clock(): t + 8 * 86400
+    assert "Denied" not in brief()

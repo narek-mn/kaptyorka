@@ -532,6 +532,93 @@ class Store:
                             "working_now": [r["name"] for r in online if r["project"] == p["name"]]})
             return out
 
+    # access requests
+
+    def _request_rows(self, where: str, args: tuple = ()) -> List[dict]:
+        rows = self.db.execute(
+            "SELECT r.*, p.name AS person, d.name AS decided_by_name FROM requests r"
+            " JOIN people p ON p.id=r.person_id LEFT JOIN people d ON d.id=r.decided_by"
+            f" WHERE {where} ORDER BY r.id", args)
+        return [{"id": r["id"], "person": r["person"], "person_id": r["person_id"],
+                 "kind": r["kind"], "target": r["target"], "why": r["why"],
+                 "created": r["created"], "decided_at": r["decided_at"],
+                 "decision": r["decision"], "decided_by": r["decided_by_name"]} for r in rows]
+
+    def request_access(self, person_id: int, kind: str, target: str, why: str = "") -> int:
+        """Ask for read access to a project or for use of a machine. Asking again for the same
+        thing while it is pending returns the same id."""
+        if kind not in ("project", "machine"):
+            raise KaptyorkaError("kind must be project or machine")
+        if len(why) > MAX_ABOUT:
+            raise KaptyorkaError(f"why is too long (max {MAX_ABOUT} characters)")
+        with self.lock:
+            who = self.db.execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
+            if who is None:
+                raise KaptyorkaError("no such person")
+            if kind == "project":
+                if not self._registered(target):
+                    raise KaptyorkaError(f"no project named {target}")
+                has = self._role(target, person_id) is not None
+            else:
+                if self.db.execute("SELECT 1 FROM machines WHERE host=?", (target,)).fetchone() is None:
+                    raise KaptyorkaError(f"no machine named {target}")
+                m = self.db.execute("SELECT owner_person_id FROM machines WHERE host=?",
+                                    (target,)).fetchone()
+                has = (self._is_admin(person_id) or m["owner_person_id"] == person_id
+                       or self._granted(target, person_id))
+            if has:
+                raise KaptyorkaError(f"you already have access to {target}")
+            row = self.db.execute("SELECT id FROM requests WHERE person_id=? AND kind=? AND target=?"
+                                  " AND decided_at IS NULL", (person_id, kind, target)).fetchone()
+            if row:
+                if why:
+                    self.db.execute("UPDATE requests SET why=? WHERE id=?", (why, row["id"]))
+                return row["id"]
+            rid = self.db.execute("INSERT INTO requests (person_id, kind, target, why, created)"
+                                  " VALUES (?,?,?,?,?)",
+                                  (person_id, kind, target, why, self.clock())).lastrowid
+        self.log_add(who["name"], "request", f"{kind}:{target}")
+        return rid
+
+    def requests(self, pending_only: bool = True) -> List[dict]:
+        with self.lock:
+            return self._request_rows("r.decided_at IS NULL" if pending_only else "1")
+
+    def pending_for(self, person_id: int) -> List[dict]:
+        with self.lock:
+            return self._request_rows("r.decided_at IS NULL AND r.person_id=?", (person_id,))
+
+    def denied_since(self, person_id: int, since: float) -> List[dict]:
+        with self.lock:
+            return self._request_rows("r.decision='denied' AND r.person_id=? AND r.decided_at>?",
+                                      (person_id, since))
+
+    def decide_request(self, request_id: int, by_person_id: int, approve: bool) -> None:
+        with self.lock:
+            row = self.db.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
+            if row is None:
+                raise KaptyorkaError("no such request")
+            if row["decided_at"] is not None:
+                raise KaptyorkaError("request already decided")
+            by = self.db.execute("SELECT name FROM people WHERE id=?", (by_person_id,)).fetchone()
+            who = self.db.execute("SELECT name FROM people WHERE id=?", (row["person_id"],)).fetchone()
+        if by is None or who is None:
+            raise KaptyorkaError("no such person")
+        if approve:  # the grants take the lock themselves, so they run before the decision is saved
+            if row["kind"] == "project":
+                self.grant_project(row["target"], row["person_id"], "read", by["name"])
+            else:
+                self.grant_machine(row["target"], row["person_id"], by["name"])
+        decision = "approved" if approve else "denied"
+        with self.lock:
+            cur = self.db.execute("UPDATE requests SET decided_at=?, decision=?, decided_by=?"
+                                  " WHERE id=? AND decided_at IS NULL",
+                                  (self.clock(), decision, by_person_id, request_id))
+        if not cur.rowcount:
+            raise KaptyorkaError("request already decided")
+        self.log_add(by["name"], "request_decided",
+                     f"{row['kind']}:{row['target']} -> {who['name']}: {decision}")
+
     # log
 
     def log_add(self, person: str, kind: str, detail: str) -> None:

@@ -56,6 +56,25 @@ def _bad_request(fn):
     return wrapper
 
 
+def _wanted(r: dict) -> str:
+    return f"access to {r['target']} (project)" if r["kind"] == "project" \
+        else f"use of {r['target']} (machine)"
+
+
+def _request_lines(store: Store, principal) -> str:
+    """The start line's tail: the caller's pending and recently denied access requests."""
+    if principal is None:
+        return ""
+    out = ""
+    pending = store.pending_for(principal.person_id)
+    if pending:
+        out += f" Pending: {', '.join(_wanted(r) for r in pending)}."
+    denied = store.denied_since(principal.person_id, store.clock() - 7 * 86400)
+    if denied:
+        out += f" Denied: {', '.join(_wanted(r) for r in denied)}."
+    return out
+
+
 def _agent_row(a: Agent, now: float) -> dict:
     return {"name": a.name, "machine": a.machine, "tool": a.tool, "project": a.project,
             "status": a.status, "activity": a.activity, "label": a.label,
@@ -226,6 +245,15 @@ def build_app(store: Store) -> Starlette:
         _, principal = caller(ctx)
         return store.projects_for(principal)
 
+    @server.tool()
+    @_tool_errors
+    def request_access(kind: str, target: str, ctx: Context, why: str = "") -> str:
+        """Ask the admin for read access to a project (kind "project") or for use of a machine
+        (kind "machine"), with a short reason."""
+        _, principal = caller(ctx)
+        rid = store.request_access(principal.person_id, kind, target, why)
+        return f"requested #{rid}; the admin sees it on the page"
+
     @server.custom_route("/bridge/heartbeat", methods=["POST"])
     @_bad_request
     async def bridge_heartbeat(request: Request) -> Response:
@@ -284,6 +312,7 @@ def build_app(store: Store) -> Starlette:
             topics = [n["topic"] for n in store.notes_list()]
             if topics:
                 line += f" Board topics: {', '.join(topics)}."
+            line += _request_lines(store, request.scope.get("state", {}).get("principal"))
             parts.insert(0, line)
         return PlainTextResponse("\n\n".join(parts))
 
@@ -427,6 +456,31 @@ def build_app(store: Store) -> Starlette:
         if principal is None:
             return PlainTextResponse("unauthorized", status_code=401)
         return JSONResponse(store.projects_for(principal))
+
+    @server.custom_route("/api/requests", methods=["GET"])
+    async def api_requests(request: Request) -> Response:
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None:
+            return PlainTextResponse("unauthorized", status_code=401)
+        if principal.is_admin():
+            return JSONResponse(store.requests())
+        return JSONResponse(store.pending_for(principal.person_id))
+
+    @server.custom_route("/api/requests/{rid:int}", methods=["POST"])
+    @_bad_request
+    async def api_request_decide(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        if not isinstance(body["approve"], bool):
+            raise ValueError("approve must be true or false")
+        try:
+            store.decide_request(request.path_params["rid"],
+                                 request.scope["state"]["principal"].person_id, body["approve"])
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return Response(status_code=204)
 
     @server.custom_route("/api/projects", methods=["POST"])
     @_bad_request
