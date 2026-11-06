@@ -270,6 +270,8 @@ def _join(args) -> int:
         if got is None:
             return 1
         hub, token, secret = got
+        # the invite is spent: keep the token so a plain `kaptyorka join` can retry
+        paths.save_config({"hub": hub, "token": token, "machine": args.name, "secret": secret})
         return join.main(hub, token, args.name, only=args.only, secret=secret)
     if not args.hub and not args.token:  # no flags: the previous arguments, saved by the last join
         cfg = paths.load_config()

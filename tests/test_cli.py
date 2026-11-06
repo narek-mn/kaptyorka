@@ -138,3 +138,14 @@ def test_cli_people_table(monkeypatch, home, capsys):
     assert out[0].split() == ["NAME", "ROLE", "DEVICES", "LAST", "SEEN"]
     assert out[1].split()[:3] == ["ann", "admin", "2"] and "60s ago" in out[1]
     assert out[2].split() == ["ben", "member", "0", "never"]
+
+
+def test_cli_join_invite_keeps_token_when_join_fails(monkeypatch, home):
+    from kaptyorka import join
+
+    monkeypatch.setattr(http, "request", lambda *a, **k: (
+        200, {"token": "tok", "secret": "sec", "hub": "http://h:1"}))
+    monkeypatch.setattr(join, "main", lambda *a, **k: 1)
+    assert entry_with_exit(["join", "http://h:1/i/CODE123", "--name", "pc"]) == 1
+    cfg = paths.load_config()
+    assert (cfg["hub"], cfg["token"], cfg["secret"], cfg["machine"]) == ("http://h:1", "tok", "sec", "pc")

@@ -175,3 +175,9 @@ def test_join_saves_secret(hub, home):
     a = FakeAdapter("a")
     assert main(hub.url, "T", "pc", adapters=[a], install=no_service([]), secret="s3") == 0
     assert paths.load_config()["secret"] == "s3"
+
+
+def test_join_keeps_saved_secret_for_same_token(hub, home):
+    paths.save_config({"hub": hub.url, "token": "T", "machine": "pc", "secret": "s3"})
+    assert main(hub.url, "T", "pc", adapters=[FakeAdapter("a")], install=no_service([])) == 0
+    assert paths.load_config()["secret"] == "s3"

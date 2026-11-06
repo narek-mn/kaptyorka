@@ -75,6 +75,9 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     exe = str(Path(sys.argv[0]).resolve())
     done = [a for a in adapters if a.installed() and (not only or a.tool in only)]
     cfg = {"hub": hub, "token": token, "machine": name}
+    saved = paths.load_config()
+    # keep the signing secret saved for this same token (a retry after a failed join)
+    secret = secret or (saved.get("secret") if saved.get("token") == token else None)
     if secret:
         cfg["secret"] = secret
     if only:
