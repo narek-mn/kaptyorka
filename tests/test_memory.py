@@ -170,3 +170,26 @@ def test_bad_git_payload_does_not_fail_the_heartbeat(tmp_path, clock, monkeypatc
     finally:
         stop()
         store.close()
+
+
+GOOD = "# What it is\nx\n## Where it stands\nx\n### decisions\nx\n# Open problems\nx\n## How to run and test\nx\n"
+
+
+def test_check_state_accepts_all_headings_in_order():
+    assert memory.check_state(GOOD) is None
+
+
+def test_check_state_rejects_missing_or_misordered():
+    msg = ("the state note needs these headings in order: What it is, Where it stands, "
+           "Decisions, Open problems, How to run and test")
+    assert memory.check_state("just text") == msg
+    assert memory.check_state(GOOD.replace("# Open problems\nx\n", "")) == msg
+    swapped = "# Where it stands\n# What it is\n# Decisions\n# Open problems\n# How to run and test\n"
+    assert memory.check_state(swapped) == msg
+    assert memory.check_state("#### What it is\n" + GOOD.split("\n", 1)[1]) == msg
+
+
+def test_state_written_records_row(ms, store, clock):
+    ms.state_written("claude:1", "proj-a", 3, clock[0])
+    row = store.db.execute("SELECT project, key, person_id, time FROM state_writes").fetchone()
+    assert tuple(row) == ("proj-a", "claude:1", 3, clock[0])

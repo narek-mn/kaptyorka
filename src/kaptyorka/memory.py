@@ -19,7 +19,27 @@ CREATE TABLE IF NOT EXISTS done_checks (
     key TEXT PRIMARY KEY, project TEXT NOT NULL, started REAL NOT NULL, signal_at REAL,
     signal TEXT NOT NULL DEFAULT '', blocked_at REAL, last_subject TEXT NOT NULL DEFAULT '',
     last_dirty INTEGER);
+CREATE TABLE IF NOT EXISTS state_writes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, key TEXT, person_id INTEGER,
+    time REAL NOT NULL);
 """
+
+STATE_HEADINGS = ("What it is", "Where it stands", "Decisions", "Open problems",
+                  "How to run and test")
+_HEADING = re.compile(r"^#{1,3}[ \t]+(.*?)[ \t#]*$")
+
+
+def check_state(text: str) -> Optional[str]:
+    """None when every state heading appears as a Markdown heading, in order."""
+    want = [h.lower() for h in STATE_HEADINGS]
+    i = 0
+    for line in text.splitlines():
+        m = _HEADING.match(line.strip())
+        if m and i < len(want) and m.group(1).strip().lower() == want[i]:
+            i += 1
+    if i == len(want):
+        return None
+    return "the state note needs these headings in order: " + ", ".join(STATE_HEADINGS)
 
 _WORKTREE = re.compile(r"--\d+$")
 
@@ -132,6 +152,14 @@ class MemoryStore:
             if r["branch"] is not None:
                 out.setdefault(r["branch"], []).append(r["name"])
         return out
+
+    def state_written(self, key: Optional[str], project: str, person_id: Optional[int],
+                      now: float) -> None:
+        """Record a write to a project's state note, for the done check."""
+        with self.lock:
+            self.db.execute("INSERT INTO state_writes (project, key, person_id, time)"
+                            " VALUES (?,?,?,?)", (project, key, person_id, now))
+            self.db.commit()
 
     def prune(self, now: float) -> int:
         with self.lock:

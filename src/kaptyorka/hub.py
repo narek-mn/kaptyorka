@@ -9,6 +9,8 @@ import math
 import mimetypes
 import re
 import sys
+import threading
+from datetime import datetime, timezone
 from dataclasses import asdict, replace
 from typing import Dict, List, Mapping, Optional, Union
 from urllib.parse import unquote
@@ -23,7 +25,7 @@ from kaptyorka import __version__
 from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
-from kaptyorka.memory import MemoryStore
+from kaptyorka.memory import MemoryStore, check_state
 from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, clean
 from kaptyorka.workers import WorkerStore, safe_name
 
@@ -57,7 +59,10 @@ INSTRUCTIONS = (
     "notes_list/notes_read/notes_write share a team board, one text per topic; "
     "pass project to use that project's notes. projects() lists the projects you have a role in. "
     "work(project, task) starts a worker session for you on another machine; workers() lists "
-    "yours; adopt(name) takes over an unattended one; close_worker(name) ends one."
+    "yours; adopt(name) takes over an unattended one; close_worker(name) ends one. "
+    "state(project) reads the project's state note; state_write(project, text) updates it "
+    "(five headings: What it is, Where it stands, Decisions, Open problems, How to run and test); "
+    "decide(project, text) records one decision."
 )
 
 
@@ -124,6 +129,7 @@ def build_app(store: Store) -> Starlette:
     sent = {"event": asyncio.Event()}  # set and replaced after each send; wakes bridge polls
     ws = WorkerStore(store)
     ms = MemoryStore(store)
+    decide_lock = threading.Lock()
 
     def principal_of(headers: Mapping) -> Principal:
         """The caller's principal from its bearer token (the Auth middleware already let it in)."""
@@ -266,8 +272,63 @@ def build_app(store: Store) -> Starlette:
     def notes_write(topic: str, text: str, ctx: Context, project: str = "") -> str:
         """Write a new version of a note (older versions are kept); with project, that
         project's note."""
-        store.notes_write(me(ctx).key, topic, text, project or None)
+        agent, principal = caller(ctx)
+        project = project or None
+        is_state = project is not None and topic.strip() == "state"
+        if is_state:
+            problem = check_state(text)
+            if problem:
+                raise KaptyorkaError(problem)
+        store.notes_write(agent.key, topic, text, project)
+        if is_state:
+            ms.state_written(agent.key, project, principal.person_id, store.clock())
         return f"saved note {topic}"
+
+    @server.tool()
+    @_tool_errors
+    def state(project: str, ctx: Context) -> str:
+        """Read a project's state note (what it is, where it stands, decisions, open problems,
+        how to run and test)."""
+        _, principal = caller(ctx)
+        if not project:
+            raise KaptyorkaError("project is empty")
+        note = store.notes_read("state", principal, project)
+        if note is None:
+            return (f"no state note yet for {project}; write one with state_write(project, text)"
+                    " using the five headings")
+        return note.text
+
+    @server.tool()
+    @_tool_errors
+    def state_write(project: str, text: str, ctx: Context) -> str:
+        """Update a project's state note. It needs the headings What it is, Where it stands,
+        Decisions, Open problems, How to run and test, in that order."""
+        agent, principal = caller(ctx)
+        if not project:
+            raise KaptyorkaError("project is empty")
+        problem = check_state(text)
+        if problem:
+            raise KaptyorkaError(problem)
+        store.notes_write(agent.key, "state", text, project)
+        ms.state_written(agent.key, project, principal.person_id, store.clock())
+        return f"state of {project} updated"
+
+    @server.tool()
+    @_tool_errors
+    def decide(project: str, text: str, ctx: Context) -> str:
+        """Record one decision as a dated line in the project's decisions note (project ""
+        is the team note)."""
+        agent, principal = caller(ctx)
+        line = clean(text, 500)
+        if not line:
+            raise KaptyorkaError("text is empty")
+        day = datetime.fromtimestamp(store.clock(), timezone.utc).strftime("%Y-%m-%d")
+        entry = f"- {day} {principal.person_name}: {line}"
+        with decide_lock:  # read then write must not interleave
+            old = store.notes_read("decisions", principal, project or None)
+            body = (old.text.rstrip("\n") + "\n" if old and old.text.strip() else "") + entry + "\n"
+            store.notes_write(agent.key, "decisions", body, project or None)
+        return "decision recorded"
 
     @server.tool()
     @_tool_errors
@@ -598,9 +659,17 @@ def build_app(store: Store) -> Starlette:
     async def api_notes(request: Request) -> Response:
         body = await request.json()
         p = request.scope["state"]["principal"]
+        topic, text = str(body["topic"]), str(body["text"])
+        project = str(body.get("project") or "") or None
         try:
-            store.notes_write_from_web(p.person_name, str(body["topic"]), str(body["text"]),
-                                       str(body.get("project") or "") or None, principal=p)
+            is_state = project is not None and topic.strip() == "state"
+            if is_state:
+                problem = check_state(text)
+                if problem:
+                    raise KaptyorkaError(problem)
+            store.notes_write_from_web(p.person_name, topic, text, project, principal=p)
+            if is_state:
+                ms.state_written(f"web:{p.person_name}", project, p.person_id, store.clock())
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
