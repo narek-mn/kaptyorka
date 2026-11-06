@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 ONLINE_S = 30
 LEASE_S = 60
 MAX_TEXT = 32_000
+MAX_ABOUT = 500
 RATE = (30, 60)
 SCHEMA_VERSION = 2
 INVITE_TTL_S = 7 * 86400
@@ -33,7 +34,7 @@ CREATE TABLE IF NOT EXISTS messages (
     machine TEXT NOT NULL, tool TEXT NOT NULL, project TEXT NOT NULL,
     text TEXT NOT NULL, created REAL NOT NULL, read_at REAL,
     push_state TEXT NOT NULL DEFAULT 'new', offered_at REAL, file_id INTEGER,
-    kind TEXT NOT NULL DEFAULT 'message');
+    kind TEXT NOT NULL DEFAULT 'message', knock_id INTEGER);
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL,
     text TEXT NOT NULL, author TEXT NOT NULL, time REAL NOT NULL, project TEXT);
@@ -96,6 +97,7 @@ ADDED_COLUMNS = [
     ("agents", "started", "REAL"),
     ("messages", "file_id", "INTEGER"),
     ("messages", "kind", "TEXT NOT NULL DEFAULT 'message'"),
+    ("messages", "knock_id", "INTEGER"),
     ("notes", "project", "TEXT"),
     ("devices", "version", "TEXT NOT NULL DEFAULT ''"),
 ]
@@ -167,6 +169,7 @@ class Message:
     read: bool
     from_web: bool = False
     to_web: bool = False
+    kind: str = "message"
 
 
 @dataclass
@@ -609,6 +612,9 @@ class Store:
                 if host:
                     self.db.execute("UPDATE agents SET host=?, os_user=? WHERE key=?",
                                     (host, os_user, s["key"]))
+                if principal is not None and not principal.legacy:  # until it calls a tool
+                    self.db.execute("UPDATE agents SET person_id=COALESCE(person_id, ?)"
+                                    " WHERE key=?", (principal.person_id, s["key"]))
             if host:
                 self.db.execute("INSERT OR IGNORE INTO machines (host, owner_person_id, first_seen)"
                                 " VALUES (?,?,?)",
@@ -621,6 +627,7 @@ class Store:
     def online(self) -> List[Agent]:
         with self.lock:
             now = self.clock()
+            self._expire_doors(now)
             return [self._agent(r, now) for r in self._online_rows(now)]
 
     def agent(self, key: str) -> Optional[Agent]:
@@ -641,14 +648,27 @@ class Store:
             if sender is None:
                 raise KaptyorkaError("unknown sender session")
             _check_length(text)
-            count, window = RATE
-            recent = [t for t in self.sends.get(sender_key, []) if now - t < window]
-            if len(recent) >= count:
-                raise KaptyorkaError(f"rate limit: at most {count} sends per {window} s")
-            n = self._deliver(sender_key, sender["name"], to, text, now)
-            recent.append(now)
-            self.sends[sender_key] = recent
+            self._rate_check(sender_key, now)
+            self._expire_doors(now)
+            targets = self._targets(sender_key, to, now)
+            if to == "all":
+                targets = [t for t in targets if self._may_message(sender, t)]
+            elif not all(t["key"].startswith("web:") or self._may_message(sender, t)
+                         for t in targets):  # a person on the web page: Task 11 checks those
+                raise KaptyorkaError(f"no door to {to}: knock(to, about) first")
+            n = self._insert(sender_key, sender["name"], targets, text, now)
+            self._rate_hit(sender_key, now)
             return n
+
+    def _rate_check(self, key, now):
+        count, window = RATE
+        recent = [t for t in self.sends.get(key, []) if now - t < window]
+        if len(recent) >= count:
+            raise KaptyorkaError(f"rate limit: at most {count} sends per {window} s")
+        self.sends[key] = recent
+
+    def _rate_hit(self, key, now):
+        self.sends.setdefault(key, []).append(now)
 
     def send_from_web(self, name: str, to: str, text: str) -> int:
         """Send as a person on the web page, not an agent: sender key `web:<name>`."""
@@ -689,7 +709,9 @@ class Store:
         return [r["sender_name"] for r in rows]
 
     def _deliver(self, sender_key, sender_name, to, text, now):
-        targets = self._targets(sender_key, to, now)
+        return self._insert(sender_key, sender_name, self._targets(sender_key, to, now), text, now)
+
+    def _insert(self, sender_key, sender_name, targets, text, now):
         for t in targets:
             # a person reads it on the page, so it is never waiting for delivery
             read_at = now if t["key"].startswith("web:") else None
@@ -701,16 +723,29 @@ class Store:
         return len(targets)
 
     def _deliverable(self, now):
-        """Unread messages paired with the online agent they go to now."""
+        """Unread messages paired with the online agent they go to now. A knock goes to its
+        session, or when that is gone (or it was to a person), the person's earliest online
+        session."""
+        self._expire_doors(now)
         online = self._online_rows(now)
         by_key = {r["key"]: r for r in online}
         out = []
-        for m in self.db.execute("SELECT * FROM messages WHERE read_at IS NULL ORDER BY id"):
-            target = by_key.get(m["to_key"]) or next(
-                (r for r in online if r["name"] == m["to_name"]), None)
+        for m in self.db.execute("SELECT m.*, k.to_person FROM messages m LEFT JOIN knocks k"
+                                 " ON k.id=m.knock_id WHERE m.read_at IS NULL ORDER BY m.id"):
+            if m["kind"] == "knock":
+                target = by_key.get(m["to_key"]) or next(
+                    (r for r in online if r["person_id"] == m["to_person"]), None)
+            else:
+                target = by_key.get(m["to_key"]) or next(
+                    (r for r in online if r["name"] == m["to_name"]), None)
             if target is not None:
                 out.append((m, target))
         return out
+
+    def _bind(self, m, key):
+        """A held knock stays with the session it was handed to."""
+        if m["kind"] == "knock" and m["to_key"] != key:
+            self.db.execute("UPDATE messages SET to_key=? WHERE id=?", (key, m["id"]))
 
     def inbox(self, key: str) -> List[Message]:
         with self.lock:
@@ -718,8 +753,9 @@ class Store:
             rows = [m for m, t in self._deliverable(now) if t["key"] == key]
             for m in rows:
                 self.db.execute("UPDATE messages SET read_at=? WHERE id=?", (now, m["id"]))
+                self._bind(m, key)
             return [Message(m["id"], m["sender_name"], m["to_name"], m["text"], m["created"], True,
-                            m["sender_key"].startswith("web:")) for m in rows]
+                            m["sender_key"].startswith("web:"), kind=m["kind"]) for m in rows]
 
     def offer(self, machine: str) -> List[dict]:
         with self.lock:
@@ -732,8 +768,10 @@ class Store:
                 if state == "new" or (state == "offered" and now - m["offered_at"] >= LEASE_S):
                     self.db.execute("UPDATE messages SET push_state='offered', offered_at=?"
                                     " WHERE id=?", (now, m["id"]))
-                    out.append({"id": m["id"], "key": t["key"],
-                                "text": f"Kaptyorka message from {_sender(m)}:\n\n{m['text']}"})
+                    self._bind(m, t["key"])
+                    text = (f"Kaptyorka message from {_sender(m)}:\n\n{m['text']}"
+                            if m["kind"] == "message" else m["text"])  # knocks and doors: as written
+                    out.append({"id": m["id"], "key": t["key"], "text": text})
             return out
 
     def ack(self, msg_id: int, ok: bool) -> None:
@@ -750,8 +788,253 @@ class Store:
                                    (limit,)).fetchall()
             return [Message(m["id"], m["sender_name"], m["to_name"], m["text"], m["created"],
                             m["read_at"] is not None, m["sender_key"].startswith("web:"),
-                            (m["to_key"] or "").startswith("web:"))
+                            (m["to_key"] or "").startswith("web:"), m["kind"])
                     for m in reversed(rows)]
+
+    # doors and knocks
+
+    def _is_admin(self, person_id) -> bool:
+        p = self.db.execute("SELECT role FROM people WHERE id=?", (person_id,)).fetchone()
+        return p is not None and p["role"] == "admin"
+
+    def _person_name(self, person_id) -> str:
+        p = self.db.execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
+        return p["name"] if p else ""
+
+    def _may_message(self, sender, target) -> bool:
+        """Same person, an admin sender, or an open door: one between these two sessions, or a
+        group door between their two people. A session of no person reaches only the admin."""
+        sp, tp = sender["person_id"], target["person_id"]
+        if sp is not None and sp == tp:
+            return True
+        if sp is not None and self._is_admin(sp):
+            return True
+        if sp is None or tp is None:
+            return False
+        return self.db.execute(
+            "SELECT 1 FROM doors WHERE closed_at IS NULL AND ("
+            "(scope='session' AND ((a_key=? AND b_key=?) OR (a_key=? AND b_key=?))) OR"
+            " (scope='group' AND ((a_person=? AND b_person=?) OR (a_person=? AND b_person=?))))",
+            (sender["key"], target["key"], target["key"], sender["key"],
+             sp, tp, tp, sp)).fetchone() is not None
+
+    def may_message(self, sender_key: str, target_key: str) -> bool:
+        with self.lock:
+            s = self.db.execute("SELECT * FROM agents WHERE key=?", (sender_key,)).fetchone()
+            t = self.db.execute("SELECT * FROM agents WHERE key=?", (target_key,)).fetchone()
+            return s is not None and t is not None and self._may_message(s, t)
+
+    def _expire_doors(self, now):
+        """A session door lasts while both sessions are online."""
+        self.db.execute(
+            "UPDATE doors SET closed_at=? WHERE closed_at IS NULL AND scope='session' AND"
+            " (a_key NOT IN (SELECT key FROM agents WHERE last_seen > ?)"
+            " OR b_key NOT IN (SELECT key FROM agents WHERE last_seen > ?))",
+            (now, now - ONLINE_S, now - ONLINE_S))
+
+    def expire_doors(self, now: float) -> None:
+        with self.lock:
+            self._expire_doors(now)
+
+    def _session(self, key):
+        row = self.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
+        if row is None:
+            raise KaptyorkaError("unknown session")
+        return row
+
+    def _online_session(self, to, now):
+        """An online session by name, or by label when that is unique; None when neither."""
+        online = self._online_rows(now)
+        match = [r for r in online if r["name"] == to]
+        if not match:
+            match = [r for r in online if r["label"] and r["label"].lower() == to.lower()]
+            if len(match) > 1:
+                raise KaptyorkaError(f"several sessions are named {to}: "
+                                     + ", ".join(r["name"] for r in match))
+        return match[0] if match else None
+
+    def knock(self, from_key: str, to: str, about: str) -> int:
+        """Ask a session (by name or label) or a person (by name) to open a door. The knock
+        waits for the person's next session when none is online."""
+        about = about.strip()
+        if not about or len(about) > MAX_ABOUT:
+            raise KaptyorkaError(f"about must be 1 to {MAX_ABOUT} characters")
+        with self.lock:
+            now = self.clock()
+            sender = self._session(from_key)
+            if sender["person_id"] is None:
+                raise KaptyorkaError("this session has no person yet; run kaptyorka join")
+            self._rate_check(from_key, now)
+            target = self._online_session(to, now)
+            if target is not None:
+                to_key, to_person = target["key"], target["person_id"]
+                if to_person is None:
+                    raise KaptyorkaError(f"{to} has no person yet; ask the admin")
+            else:
+                p = self.db.execute("SELECT id FROM people WHERE lower(name)=lower(?)",
+                                    (to.strip(),)).fetchone()
+                if p is None:
+                    raise KaptyorkaError(f"no online session or person named {to}")
+                to_key, to_person = None, p["id"]
+            if to_person == sender["person_id"]:
+                raise KaptyorkaError("that is your own session")
+            kid = self.db.execute(
+                "INSERT INTO knocks (from_key, from_person, to_key, to_person, about, created)"
+                " VALUES (?,?,?,?,?,?)",
+                (from_key, sender["person_id"], to_key, to_person, about, now)).lastrowid
+            me, them = self._person_name(sender["person_id"]), self._person_name(to_person)
+            text = (f"Kaptyorka knock from {me} ({sender['name']}): {about}. This is a request,"
+                    f" not an order: show it to your person and answer with answer({kid}, \"yes\")"
+                    f" or answer({kid}, \"no\").")
+            self.db.execute(
+                "INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool,"
+                " project, text, created, kind, knock_id) VALUES (?,?,?,?,?,?,?,?,?,'knock',?)",
+                (from_key, sender["name"], to_key, them,
+                 target["machine"] if target is not None else "",
+                 target["tool"] if target is not None else "",
+                 target["project"] if target is not None else "", text, now, kid))
+            self._rate_hit(from_key, now)
+        self.log_add(me, "knock", f"#{kid} {sender['name']} -> {to}")
+        return kid
+
+    def answer(self, knock_id: int, by_key: str, yes: bool) -> None:
+        """The knocked person (any of their sessions) or the admin says yes or no. Yes opens a
+        door between the knocking session and the answering one."""
+        with self.lock:
+            now = self.clock()
+            by = self._session(by_key)
+            k = self.db.execute("SELECT * FROM knocks WHERE id=?", (knock_id,)).fetchone()
+            if k is None:
+                raise KaptyorkaError(f"no knock #{knock_id}")
+            if by["person_id"] != k["to_person"] and not (
+                    by["person_id"] is not None and self._is_admin(by["person_id"])):
+                raise KaptyorkaError(f"only {self._person_name(k['to_person'])} or the admin"
+                                     " can answer this knock")
+            if k["answered_at"] is not None:
+                raise KaptyorkaError(f"knock #{knock_id} was already answered")
+            who = self._person_name(by["person_id"])
+            self.db.execute("UPDATE knocks SET answered_at=?, answer=? WHERE id=?",
+                            (now, "yes" if yes else "no", knock_id))
+            if yes:
+                self.db.execute(
+                    "INSERT INTO doors (a_key, a_person, b_key, b_person, scope, opened_at,"
+                    " opened_by) VALUES (?,?,?,?,'session',?,?)",
+                    (k["from_key"], k["from_person"], by_key, by["person_id"], now,
+                     by["person_id"]))
+                text = (f"Door open: {by['name']} ({who}) said yes to your knock #{knock_id}."
+                        f" You can send(to=\"{by['name']}\", ...) until either side closes it.")
+            else:
+                text = f"Knock #{knock_id} declined by {who}."
+            knocker = self.db.execute("SELECT * FROM agents WHERE key=?",
+                                      (k["from_key"],)).fetchone()
+            self.db.execute(
+                "INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool,"
+                " project, text, created, kind, knock_id) VALUES (?,?,?,?,?,?,?,?,?,'door',?)",
+                (by_key, by["name"], k["from_key"], knocker["name"] if knocker else "",
+                 knocker["machine"] if knocker else "", knocker["tool"] if knocker else "",
+                 knocker["project"] if knocker else "", text, now, knock_id))
+        self.log_add(who, "knock_answer", f"#{knock_id} {'yes' if yes else 'no'} by {by['name']}")
+
+    def door_close(self, by_key: str, to: str) -> None:
+        """Close every open door between this session and the one named `to`."""
+        with self.lock:
+            now = self.clock()
+            by = self._session(by_key)
+            other = self._online_session(to, now) or self.db.execute(
+                "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1",
+                (to,)).fetchone()
+            cur = None
+            if other is not None:
+                cur = self.db.execute(
+                    "UPDATE doors SET closed_at=? WHERE closed_at IS NULL AND scope='session' AND"
+                    " ((a_key=? AND b_key=?) OR (a_key=? AND b_key=?))",
+                    (now, by_key, other["key"], other["key"], by_key))
+            if cur is None or not cur.rowcount:
+                raise KaptyorkaError(f"no open door to {to}")
+            who = self._person_name(by["person_id"]) or by["name"]
+        self.log_add(who, "door_close", f"{by['name']} -> {other['name']}")
+
+    def _door_row(self, d, key=None, person_id=None) -> dict:
+        """A door as seen from one side (`key`'s session or `person_id`'s group)."""
+        mine_a = d["a_key"] == key if d["scope"] == "session" else d["a_person"] == person_id
+        other_key, other_person = (d["b_key"], d["b_person"]) if mine_a else (d["a_key"], d["a_person"])
+        other = self.db.execute("SELECT name FROM agents WHERE key=?", (other_key,)).fetchone()
+        return {"id": d["id"], "with": other["name"] if other else "",
+                "person": self._person_name(other_person), "scope": d["scope"],
+                "opened_at": d["opened_at"]}
+
+    def doors_for(self, key: str) -> List[dict]:
+        """Open doors of a session: its own session doors and its person's group doors."""
+        with self.lock:
+            self._expire_doors(self.clock())
+            row = self.db.execute("SELECT person_id FROM agents WHERE key=?", (key,)).fetchone()
+            pid = row["person_id"] if row else None
+            rows = self.db.execute(
+                "SELECT * FROM doors WHERE closed_at IS NULL AND ((scope='session' AND"
+                " (a_key=? OR b_key=?)) OR (scope='group' AND (a_person=? OR b_person=?)))"
+                " ORDER BY id", (key, key, pid, pid)).fetchall()
+            return [self._door_row(d, key, pid) for d in rows]
+
+    def doors(self) -> List[dict]:
+        """Every open door, for the admin."""
+        with self.lock:
+            self._expire_doors(self.clock())
+            out = []
+            for d in self.db.execute("SELECT * FROM doors WHERE closed_at IS NULL ORDER BY id"):
+                a = self.db.execute("SELECT name FROM agents WHERE key=?", (d["a_key"],)).fetchone()
+                b = self.db.execute("SELECT name FROM agents WHERE key=?", (d["b_key"],)).fetchone()
+                out.append({"id": d["id"], "scope": d["scope"], "opened_at": d["opened_at"],
+                            "a_person": self._person_name(d["a_person"]),
+                            "b_person": self._person_name(d["b_person"]),
+                            "a_session": a["name"] if a else "", "b_session": b["name"] if b else "",
+                            "opened_by": self._person_name(d["opened_by"])})
+            return out
+
+    def open_door_group(self, a_person: int, b_person: int, by_person: str) -> int:
+        """A door between two people: all their sessions may message each other. Admin only
+        (checked by the hub)."""
+        with self.lock:
+            a, b = self._person_name(a_person), self._person_name(b_person)
+            if not a or not b:
+                raise KaptyorkaError("no such person")
+            if a_person == b_person:
+                raise KaptyorkaError("a group door needs two different people")
+            have = self.db.execute(
+                "SELECT id FROM doors WHERE closed_at IS NULL AND scope='group' AND"
+                " ((a_person=? AND b_person=?) OR (a_person=? AND b_person=?))",
+                (a_person, b_person, b_person, a_person)).fetchone()
+            if have is not None:
+                return have["id"]
+            by = self.db.execute("SELECT id FROM people WHERE name=?", (by_person,)).fetchone()
+            did = self.db.execute(
+                "INSERT INTO doors (a_key, a_person, b_key, b_person, scope, opened_at, opened_by)"
+                " VALUES ('',?,'',?,'group',?,?)",
+                (a_person, b_person, self.clock(), by["id"] if by else 0)).lastrowid
+        self.log_add(by_person, "door_open", f"group #{did} {a} <-> {b}")
+        return did
+
+    def close_door(self, door_id: int, by_person: str) -> None:
+        """Close one door by id. Admin only (checked by the hub)."""
+        with self.lock:
+            cur = self.db.execute("UPDATE doors SET closed_at=? WHERE id=? AND closed_at IS NULL",
+                                  (self.clock(), door_id))
+        if not cur.rowcount:
+            raise KaptyorkaError(f"no open door #{door_id}")
+        self.log_add(by_person, "door_close", f"#{door_id}")
+
+    def knocks(self, principal: Principal) -> List[dict]:
+        """Unanswered knocks: all for the admin, else the ones to or from the principal."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT k.*, s.name AS from_session FROM knocks k LEFT JOIN agents s"
+                " ON s.key=k.from_key WHERE k.answered_at IS NULL ORDER BY k.id").fetchall()
+            return [{"id": k["id"], "from": self._person_name(k["from_person"]),
+                     "from_session": k["from_session"] or "",
+                     "to": self._person_name(k["to_person"]), "about": k["about"],
+                     "created": k["created"]}
+                    for k in rows
+                    if principal.is_admin()
+                    or principal.person_id in (k["from_person"], k["to_person"])]
 
     # notes
 

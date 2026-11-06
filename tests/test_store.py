@@ -1,6 +1,18 @@
+import functools
+
 import pytest
+from helpers import person
 
 from kaptyorka.store import KaptyorkaError, Store
+
+
+def one_person(s):
+    """Sessions seen without a principal belong to one person, so they may message each other."""
+    _, token = person(s, "me")
+    me = s.authenticate(token)
+    s.seen = functools.partial(s.seen, principal=me)
+    s.heartbeat = functools.partial(s.heartbeat, principal=me)
+    return s
 
 
 class Clock:
@@ -18,7 +30,7 @@ def clock():
 
 @pytest.fixture
 def store(tmp_path, clock):
-    s = Store(tmp_path / "hub.db", clock=clock)
+    s = one_person(Store(tmp_path / "hub.db", clock=clock))
     yield s
     s.close()
 
@@ -128,7 +140,7 @@ def test_notes_keep_history(store):
 
 def test_survives_reopen(tmp_path):
     path = tmp_path / "hub.db"
-    s = Store(path)
+    s = one_person(Store(path))
     s.seen("a", "pc", "codex", "x"); s.seen("b", "dgx", "codex", "y")
     s.notes_write("a", "api", "v1")
     s.send("a", "dgx/codex/y", "hi")

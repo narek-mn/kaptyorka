@@ -30,7 +30,10 @@ INVITE_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='
 
 INSTRUCTIONS = (
     "kaptyorka connects you with the other coding agents on this team. "
-    "who() lists online sessions; send(to, text) messages one by name or 'all'; "
+    "who() lists online sessions; send(to, text) messages one by name or 'all'. "
+    "You may message your own person's sessions; for anyone else, knock(to, about) first "
+    "and wait for a yes; answer(knock_id, 'yes' or 'no') replies to a knock, only after "
+    "asking your person; door_close(to) ends a door; "
     "inbox() reads your messages; status(text) says what you are working on; "
     "notes_list/notes_read/notes_write share a team board, one text per topic; "
     "pass project to use that project's notes. projects() lists the projects you have a role in."
@@ -132,6 +135,8 @@ def build_app(store: Store) -> Starlette:
             if not mine and store.project_role(a.project, principal.person_id) is None:
                 row["project"] = "(private)"
                 row["name"] = _private_name(a)
+            if mine:
+                row["doors"] = [d["with"] or d["person"] for d in store.doors_for(a.key)]
             rows.append(row)
         return rows
 
@@ -149,9 +154,36 @@ def build_app(store: Store) -> Starlette:
 
     @server.tool()
     @_tool_errors
+    async def knock(to: str, about: str, ctx: Context) -> str:
+        """Ask another person's session (name or label), or the person by name, to open a door
+        so you can message it. Say in about what you want."""
+        kid = store.knock(me(ctx).key, to, about)
+        wake_bridges()
+        return f"knocked (#{kid}); waiting for an answer"
+
+    @server.tool()
+    @_tool_errors
+    async def answer(knock_id: int, answer: str, ctx: Context) -> str:
+        """Answer a knock with "yes" (opens a door with this session) or "no". Ask your person
+        first."""
+        if answer not in ("yes", "no"):
+            raise KaptyorkaError('answer must be "yes" or "no"')
+        store.answer(knock_id, me(ctx).key, answer == "yes")
+        wake_bridges()
+        return "door open" if answer == "yes" else "knock declined"
+
+    @server.tool()
+    @_tool_errors
+    def door_close(to: str, ctx: Context) -> str:
+        """Close the door between this session and another one."""
+        store.door_close(me(ctx).key, to)
+        return f"door to {to} closed"
+
+    @server.tool()
+    @_tool_errors
     def inbox(ctx: Context) -> List[dict]:
         """Your unread messages; reading marks them read."""
-        return [{"from": m.sender, "text": m.text, "time": m.created}
+        return [{"from": m.sender, "text": m.text, "time": m.created, "kind": m.kind}
                 for m in store.inbox(me(ctx).key)]
 
     @server.tool()
@@ -233,7 +265,8 @@ def build_app(store: Store) -> Starlette:
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         unread = store.inbox(agent.key)
-        parts = [f"Kaptyorka message from {m.sender}{' (web page)' if m.from_web else ''}:\n\n{m.text}"
+        parts = [m.text if m.kind != "message" else
+                 f"Kaptyorka message from {m.sender}{' (web page)' if m.from_web else ''}:\n\n{m.text}"
                  for m in unread]
         if request.query_params.get("event") == "start":
             others = [a for a in store.online() if a.key != agent.key]
@@ -435,6 +468,49 @@ def build_app(store: Store) -> Starlette:
     @_bad_request
     async def api_project_revoke(request: Request) -> Response:
         return await project_grant(request, False)
+
+    @server.custom_route("/api/doors", methods=["GET"])
+    async def api_doors(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        return JSONResponse(store.doors())
+
+    @server.custom_route("/api/doors", methods=["POST"])
+    @_bad_request
+    async def api_door_open(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        a, b = store.person_by_name(str(body["a_person"])), store.person_by_name(str(body["b_person"]))
+        try:
+            if a is None or b is None:
+                raise KaptyorkaError("no such person")
+            did = store.open_door_group(a["id"], b["id"],
+                                        request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return JSONResponse({"id": did})
+
+    @server.custom_route("/api/doors/{door_id:int}/close", methods=["POST"])
+    async def api_door_close(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        try:
+            store.close_door(request.path_params["door_id"],
+                             request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=404)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/knocks", methods=["GET"])
+    async def api_knocks(request: Request) -> Response:
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None:
+            return PlainTextResponse("unauthorized", status_code=401)
+        return JSONResponse(store.knocks(principal))
 
     @server.custom_route("/i/{code}", methods=["GET"])
     async def invite_page(request: Request) -> Response:
