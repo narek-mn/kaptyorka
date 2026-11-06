@@ -1047,8 +1047,9 @@ class Store:
                     targets = [t for t in targets if self._may_message(me, self._as_target(t))]
                 elif not all(self._may_message(me, self._as_target(t)) for t in targets):
                     raise KaptyorkaError(f"no door to {to}: knock(to, about) first")
-                for t in targets:  # so the session can always reply to the page
-                    self._web_door(key, person_id, t, now)
+                if to != "all":  # so the session can reply to the page; a broadcast is one-way
+                    for t in targets:
+                        self._web_door(key, person_id, t, now)
             return self._insert(key, name, targets, text, now)
 
     def _as_target(self, t) -> dict:
@@ -1507,8 +1508,9 @@ class Store:
                 " ORDER BY id", (key, key, pid, pid)).fetchall()
             return [self._door_row(d, key, pid) for d in rows]
 
-    def doors(self) -> List[dict]:
-        """Every open door, for the admin."""
+    def doors(self, sides: bool = False) -> List[dict]:
+        """Every open door, for the admin. With `sides`, each also has `_a` and `_b`: its two
+        sessions (see `_side`), for masking."""
         with self.lock:
             self._expire_doors(self.clock())
             out = []
@@ -1520,7 +1522,15 @@ class Store:
                             "b_person": self._person_name(d["b_person"]),
                             "a_session": a["name"] if a else "", "b_session": b["name"] if b else "",
                             "opened_by": self._person_name(d["opened_by"])})
+                if sides:
+                    out[-1].update(_a=self._side(d["a_key"]), _b=self._side(d["b_key"]))
             return out
+
+    def _side(self, key) -> Optional[dict]:
+        """A session's {person_id, machine, tool, project}, or None (no such session, a page)."""
+        r = self.db.execute("SELECT person_id, machine, tool, project FROM agents WHERE key=?",
+                            (key,)).fetchone()
+        return dict(r) if r else None
 
     def open_door_group(self, a_person: int, b_person: int, by_person: str) -> int:
         """A door between two people: all their sessions may message each other. Admin only
@@ -1557,8 +1567,9 @@ class Store:
             raise KaptyorkaError(f"no open door #{door_id}")
         self.log_add(by_person, "door_close", f"#{door_id}")
 
-    def knocks(self, principal: Principal) -> List[dict]:
-        """Unanswered knocks: all for the admin, else the ones to or from the principal."""
+    def knocks(self, principal: Principal, sides: bool = False) -> List[dict]:
+        """Unanswered knocks: all for the admin, else the ones to or from the principal. With
+        `sides`, each also has `_from`: the knocking session (see `_side`), for masking."""
         with self.lock:
             rows = self.db.execute(
                 "SELECT k.*, s.name AS from_session FROM knocks k LEFT JOIN agents s"
@@ -1566,7 +1577,8 @@ class Store:
             return [{"id": k["id"], "from": self._person_name(k["from_person"]),
                      "from_session": k["from_session"] or "",
                      "to": self._person_name(k["to_person"]), "about": k["about"],
-                     "created": k["created"]}
+                     "created": k["created"],
+                     **({"_from": self._side(k["from_key"])} if sides else {})}
                     for k in rows
                     if principal.is_admin()
                     or principal.person_id in (k["from_person"], k["to_person"])]

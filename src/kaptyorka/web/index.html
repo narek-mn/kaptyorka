@@ -153,6 +153,7 @@ tr.mine td:first-child { box-shadow: inset 2px 0 0 var(--blue-deep); }
 .att { display: block; max-width: min(360px, 100%); max-height: 260px; margin-top: 7px; border: 1px solid var(--line); border-radius: 3px; background: var(--canvas); }
 .file { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--blue); font-size: 12px; text-decoration: none; }
 .file:hover { text-decoration: underline; }
+.file.failed { color: var(--red); }
 .file small { color: var(--faint); font-size: 12px; }
 .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #log { flex: 1; min-height: 0; overflow-y: auto; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
@@ -752,12 +753,26 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
     return any("machine") && any("project");
   }
 
+  /* an <img> cannot send a header, so images take ?t=; any other file is fetched with the
+     header and saved from a blob, so no link carrying the token can be copied */
   function attachment(f) {
-    var url = "/api/files/" + f.id + "?t=" + encodeURIComponent(token);
     if (/\.(png|jpe?g|gif|webp|svg)$/i.test(f.name)) {
-      return el("img", { "class": "att", src: url, alt: f.name, title: f.name + " (" + size(f.size) + ")", loading: "lazy" });
+      return el("img", { "class": "att", src: "/api/files/" + f.id + "?t=" + encodeURIComponent(token),
+                         alt: f.name, title: f.name + " (" + size(f.size) + ")", loading: "lazy" });
     }
-    return el("a", { "class": "file", href: url, download: f.name }, [icon("i-clip", 13), f.name, el("small", { text: size(f.size) })]);
+    var b = el("button", { "class": "file", type: "button", title: "Download " + f.name },
+               [icon("i-clip", 13), f.name, el("small", { text: size(f.size) })]);
+    b.addEventListener("click", function () {
+      fetch("/api/files/" + f.id, { cache: "no-store", headers: { Authorization: "Bearer " + token } })
+        .then(checked).then(function (r) { return r.blob(); })
+        .then(function (blob) {
+          var url = URL.createObjectURL(blob), a = el("a", { href: url, download: f.name });
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        })
+        .catch(function (e) { b.title = e.message; b.classList.add("failed"); });
+    });
+    return b;
   }
 
   function renderMessages(jump) {

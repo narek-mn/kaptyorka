@@ -39,12 +39,21 @@ def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: 
     return row
 
 
-def _message(store: Store, principal: Principal, m: dict) -> dict:
-    for side, field in (("_from", "sender"), ("_to", "to")):
-        s = m.pop(side)
+def masked(store: Store, principal: Principal, row: dict, sides) -> dict:
+    """Pop each (side key, name field) pair's session from `row` and hide its project in the
+    name when the viewer may not see it."""
+    for side, field in sides:
+        s = row.pop(side)
         if s is not None and not visible(store, principal, s["person_id"], s["project"]):
-            m[field] = private_name(m[field], s["machine"], s["tool"], s["project"])
-    return m
+            row[field] = private_name(row[field], s["machine"], s["tool"], s["project"])
+    return row
+
+
+def knocks(store: Store, principal: Principal, to_me_only: bool = False) -> list:
+    """Pending knocks the viewer may see, the knocking session masked."""
+    return [masked(store, principal, k, (("_from", "from_session"),))
+            for k in store.knocks(principal, sides=True)
+            if not to_me_only or principal.is_admin() or k["to"] == principal.person_name]
 
 
 def _notes(store: Store, principal: Principal) -> list:
@@ -63,12 +72,14 @@ def feed(store: Store, principal: Principal) -> dict:
     names = {p["id"]: p["name"] for p in people}
     admin = principal.is_admin()
     me = principal.person_name
-    doors = [d for d in store.doors() if admin or me in (d["a_person"], d["b_person"])]
+    doors = [masked(store, principal, d, (("_a", "a_session"), ("_b", "b_session")))
+             for d in store.doors(sides=True) if admin or me in (d["a_person"], d["b_person"])]
     out = {
         "agents": [session_row(store, a, principal, names, now) for a in store.online()],
-        "messages": [_message(store, principal, m) for m in store.messages_for(principal, 500)],
+        "messages": [masked(store, principal, m, (("_from", "sender"), ("_to", "to")))
+                     for m in store.messages_for(principal, 500)],
         "notes": _notes(store, principal),
-        "knocks": [k for k in store.knocks(principal) if admin or k["to"] == me],
+        "knocks": knocks(store, principal, to_me_only=True),
         "doors": doors,
     }
     if admin:

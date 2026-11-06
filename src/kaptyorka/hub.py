@@ -19,6 +19,7 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 
 from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.hub_feed import feed, session_row
+from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.store import MAX_FILE, Agent, KaptyorkaError, Principal, Store
 
 MAX_WAIT_S = 25
@@ -695,7 +696,7 @@ def build_app(store: Store) -> Starlette:
         principal = request.scope.get("state", {}).get("principal")
         if principal is None:
             return PlainTextResponse("unauthorized", status_code=401)
-        return JSONResponse(store.knocks(principal))
+        return JSONResponse(hub_knocks(store, principal))
 
     @server.custom_route("/api/knocks/{kid:int}/answer", methods=["POST"])
     @_bad_request

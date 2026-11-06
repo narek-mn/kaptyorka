@@ -298,3 +298,35 @@ def test_admin_actions_log_the_admin(app):
                    ("boss", "device_shared", "device ann-laptop of ann on"),
                    ("boss", "invite", "invite for zed"),
                    ("boss", "person", "zed created as member")]
+
+
+def test_knock_and_door_sessions_masked(app):
+    s = app.store
+    a1 = online(app, "ann", "a1", "pc", "mine")
+    b1 = online(app, "ben", "b1", "box-2", "secret")
+    kid = s.knock(b1.key, "ann", "a question")
+    assert get(app, "ann", "/api/feed")["knocks"][0]["from_session"] == "box-2/codex/(private)"
+    assert get(app, "ann", "/api/knocks")[0]["from_session"] == "box-2/codex/(private)"
+    assert get(app, "boss", "/api/feed")["knocks"][0]["from_session"] == b1.name
+    s.answer(kid, a1.key, True)
+    door = get(app, "ann", "/api/feed")["doors"][0]
+    assert {door["a_session"], door["b_session"]} == {"box-2/codex/(private)", a1.name}
+    assert not any(k.startswith("_") for k in door)
+    door = get(app, "ben", "/api/feed")["doors"][0]
+    assert {door["a_session"], door["b_session"]} == {b1.name, "pc/codex/(private)"}
+
+
+def test_page_broadcast_opens_no_doors(app):
+    s = app.store
+    online(app, "ann", "a1", "pc")
+    b1 = online(app, "ben", "b1", "box-2")
+    assert post(app, "boss", "/api/send", {"to": "all", "text": "news"}) == (200, {"sent": 2})
+    assert s.doors() == []  # a broadcast is one-way
+    with pytest.raises(KaptyorkaError, match="no door to boss"):
+        s.send(b1.key, "boss", "reply to the news")
+
+
+def test_page_downloads_files_without_token_links(app):
+    status, html = http.request("GET", app.url + "/", "")
+    assert "URL.createObjectURL" in html and "revokeObjectURL" in html
+    assert html.count('?t=" + encodeURIComponent(token)') == 1  # images only
