@@ -57,7 +57,7 @@ class ClaudeAdapter:
             name = data.get("name")
             label = name if isinstance(name, str) else ""
             out.append(Session(f"claude:{session_id}", self.tool, os.path.basename(cwd.rstrip("/")),
-                               data.get("status", ""), label))
+                               data.get("status", ""), label, cwd))
         return out
 
     def _find(self, key: str):

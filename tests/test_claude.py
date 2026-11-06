@@ -92,7 +92,7 @@ def test_sessions_from_folder(home, tmp_path):
     write_session_file(home, pid=os.getpid(), cwd="/w/proj-a", status="idle", sock=live_sock(tmp_path))
     write_session_file(home, pid=dead_pid(), cwd="/w/gone", sock=live_sock(tmp_path))
     assert ClaudeAdapter(home).sessions() == [
-        Session(f"claude:sid-{os.getpid()}", "claude-code", "proj-a", "idle")]
+        Session(f"claude:sid-{os.getpid()}", "claude-code", "proj-a", "idle", cwd="/w/proj-a")]
 
 
 def test_socket_push_multiline_text(home, sock_dir):
@@ -253,3 +253,8 @@ def test_resumed_session_keeps_key_and_deliver_follows_new_pid(home, sock_dir):
     assert [s.key for s in a.sessions()] == ["claude:S1"]
     a.deliver("claude:S1", "hi")
     assert json.loads(srv.lines()[0])["message"]["content"] == "hi"
+
+
+def test_sessions_carry_cwd(home, tmp_path):
+    write_session_file(home, pid=os.getpid(), cwd="/w/proj-a", sock=live_sock(tmp_path))
+    assert ClaudeAdapter(home).sessions()[0].cwd == "/w/proj-a"

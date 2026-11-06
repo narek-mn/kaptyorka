@@ -4,6 +4,8 @@ import socket
 import threading
 import time
 
+import pytest
+
 from kaptyorka import bridge as bridge_mod
 from kaptyorka.adapters.base import DeliveryError, Session, merge_json
 from kaptyorka.bridge import Bridge, joined_adapters
@@ -33,6 +35,15 @@ class FakeAdapter:
 
     def configure(self, kaptyorka):
         return []
+
+
+@pytest.fixture(autouse=True)
+def no_real_commands(monkeypatch):
+    """No tool is on PATH, so the facts run no `--version`; git is only asked for session folders."""
+    from kaptyorka import facts
+
+    facts._cache.clear()
+    monkeypatch.setattr(facts.shutil, "which", lambda n: None)
 
 
 def cfg(hub):
@@ -263,8 +274,8 @@ def test_heartbeat_sends_facts(hub, home, monkeypatch):
     monkeypatch.setattr(bridge_mod.http, "request", spy)
     Bridge(cfg(hub), [fake_codex()], bridge_mod.log).heartbeat()
     facts = sent[0]["facts"]
-    assert facts == {"host": socket.gethostname().split(".")[0], "os_user": getpass.getuser(),
-                     "version": kaptyorka.__version__}
+    assert facts["host"] == socket.gethostname().split(".")[0]
+    assert facts["os_user"] == getpass.getuser() and facts["version"] == kaptyorka.__version__
 
 
 def test_bridge_applies_rekey_and_saves_config(hub, home, monkeypatch):
@@ -345,3 +356,25 @@ def test_rekey_confirm_hub_down_does_not_escape_poll(hub, home, monkeypatch):
     assert bridge.poll_once(0) == 0
     assert bridge.pending_confirm
     assert lines == ["hub unreachable when confirming the new token"]
+
+
+def test_heartbeat_sends_facts_and_reads_answer(hub, home, tmp_path, monkeypatch):
+    from helpers import person
+    from kaptyorka import facts as facts_mod
+    from kaptyorka.workers import WorkerStore
+
+    facts_mod._cache.clear()
+    pid, token = person(hub.store, "alice")
+    device = hub.store.authenticate(token).device_id
+    a = FakeAdapter(sessions=[Session("codex:1", "codex", "proj-a", cwd="/w/proj-a")])
+    bridge = Bridge({**cfg(hub), "token": token}, [a], bridge_mod.log)
+    assert bridge.hub == {}
+    bridge.heartbeat()
+    assert bridge.hub["you"] == "alice" and "projects" in bridge.hub
+    bridge.hub["projects"] = ["proj-a"]
+    bridge.heartbeat()
+    f = WorkerStore(hub.store).facts(device)
+    assert f["os_user"] and f["cpus"] >= 1 and f["tools"] == {"codex": ""}
+    assert WorkerStore(hub.store).folders(device) == {"proj-a": "/w/proj-a"}
+    row = hub.store.db.execute("SELECT cwd FROM agents WHERE key='codex:1'").fetchone()
+    assert row["cwd"] == "/w/proj-a"

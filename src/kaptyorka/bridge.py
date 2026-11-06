@@ -1,17 +1,20 @@
 """Per-machine bridge: reports running sessions and pushes messages through each tool's door."""
+import subprocess
 import sys
 import threading
 import time
 from dataclasses import asdict
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import http, identity, paths
+from kaptyorka import facts, http, identity, paths
 from kaptyorka.adapters.base import Adapter
 
 HEARTBEAT_S = 10
 WAIT_S = 25
 RETRY_S = 5
+FACTS_S = 60
 COMPLETE = {"claude-code"}  # the only tool whose session list is complete; the rest may miss live ones
 
 
@@ -29,11 +32,15 @@ def joined_adapters(cfg: dict, adapters: List[Adapter]) -> List[Adapter]:
 
 
 class Bridge:
-    def __init__(self, cfg: dict, adapters: List[Adapter], log: Callable[[str], None]):
+    def __init__(self, cfg: dict, adapters: List[Adapter], log: Callable[[str], None], run=None):
         self.cfg, self.adapters, self.log = cfg, adapters, log
+        self.runner = run or subprocess.run
         self.stop = threading.Event()
         self._problems: Dict[str, Optional[str]] = {}
         self.pending_confirm = False  # a new token is saved but the hub has not confirmed it
+        self.hub: dict = {}  # the hub's last JSON answer to a heartbeat; {} before one or on 204
+        self._facts: dict = {}
+        self._facts_at = 0.0
 
     def _report(self, area: str, problem: Optional[str]) -> None:
         """Log a problem once per area until that area succeeds (problem None) again."""
@@ -41,21 +48,40 @@ class Bridge:
             self.log(problem)
         self._problems[area] = problem
 
+    def _machine_facts(self, sessions: list) -> dict:
+        """Machine facts and git state per session folder, rebuilt at most once a minute."""
+        if time.monotonic() - self._facts_at >= FACTS_S or not self._facts:
+            repos = {}
+            for cwd in {s.cwd for s in sessions if s.cwd}:
+                info = facts.git(cwd, self.runner)
+                if info:
+                    repos[cwd] = info
+            self._facts = {**identity.facts(), **facts.machine(self.adapters, self.runner), "git": repos}
+            self._facts_at = time.monotonic()
+        return self._facts
+
     def heartbeat(self) -> None:
-        sessions, tools = [], []
+        sessions, tools, objs = [], [], []
         for a in self.adapters:
             try:
-                found = [asdict(s) for s in a.sessions()]
+                got = list(a.sessions())
+                found = [asdict(s) for s in got]
                 problem = None
             except Exception as e:  # one broken adapter must not hide the others
                 found, problem = [], f"{a.tool} sessions failed: {e}"
             self._report("sessions:" + a.prefix, problem)
             sessions += found
+            objs += got if problem is None else []
             if problem is None and a.tool in COMPLETE:
                 tools.append(a.tool)  # this list is complete for it
-        status, _ = http.request("POST", self.cfg["hub"] + "/bridge/heartbeat", self.cfg["token"],
-                                 {"machine": self.cfg["machine"], "sessions": sessions,
-                                  "tools": tools, "facts": identity.facts()})
+        projects = self.hub.get("projects", [])
+        status, answer = http.request(
+            "POST", self.cfg["hub"] + "/bridge/heartbeat", self.cfg["token"],
+            {"machine": self.cfg["machine"], "sessions": sessions, "tools": tools,
+             "facts": self._machine_facts(objs),
+             "folders": facts.folders(projects if isinstance(projects, list) else [], objs,
+                                      Path.home() / "workspace" / "projects")})
+        self.hub = answer if status == 200 and isinstance(answer, dict) else {}
         self._report("heartbeat", None if status in (200, 204)
                      else f"hub answered {status} to heartbeat")
 

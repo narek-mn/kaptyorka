@@ -52,7 +52,7 @@ def test_opencode_key_matches_shim_and_bridge(fake_opencode):
     key = identity.RESOLVERS["opencode"](os.getpid(), CWD)
     assert key == f"opencode:{NEWEST}"
     assert adapter(fake_opencode).sessions() == [
-        Session(key, "opencode", os.path.basename(CWD), "")]
+        Session(key, "opencode", os.path.basename(CWD), "", cwd=CWD)]
 
 
 def test_resolver_none_before_first_prompt(fake_opencode):
@@ -246,7 +246,7 @@ def fake_v2(monkeypatch):
 
 def test_v2_sessions_from_service(fake_v2):
     a = OpenCodeAdapter(find_ports=lambda: pytest.fail("no V1 port scan on V2"))
-    assert a.sessions() == [Session("opencode:ses_v2new", "opencode", os.path.basename(CWD), "")]
+    assert a.sessions() == [Session("opencode:ses_v2new", "opencode", os.path.basename(CWD), "", cwd=CWD)]
     method, path, _ = fake_v2.requests[-1]
     assert method == "GET" and path.startswith("/api/session?") and "directory=" in path
 

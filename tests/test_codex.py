@@ -53,9 +53,9 @@ def no_daemon_start(monkeypatch):
 
 def test_sessions_from_loaded_threads(fake_codex):
     project = os.path.basename(CWD)
-    assert CodexAdapter().sessions() == [Session("codex:th-a", "codex", project, ""),
-                                         Session("codex:th-b", "codex", "beta", ""),
-                                         Session("codex:th-old", "codex", project, "")]
+    assert CodexAdapter().sessions() == [Session("codex:th-a", "codex", project, "", cwd=CWD),
+                                         Session("codex:th-b", "codex", "beta", "", cwd="/p/beta"),
+                                         Session("codex:th-old", "codex", project, "", cwd=CWD)]
     assert [c[0] for c in fake_codex.calls[:2]] == ["initialize", "initialized"]
 
 

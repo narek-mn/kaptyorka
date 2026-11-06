@@ -225,7 +225,7 @@ class CodexAdapter:
             self._start_daemon()  # the bridge keeps the daemon running
             return []
         self._state("up")
-        return [Session(f"codex:{t['id']}", self.tool, os.path.basename(t["cwd"].rstrip("/")), "")
+        return [Session(f"codex:{t['id']}", self.tool, os.path.basename(t["cwd"].rstrip("/")), "", cwd=t["cwd"])
                 for t in threads]
 
     def deliver(self, key: str, text: str) -> None:

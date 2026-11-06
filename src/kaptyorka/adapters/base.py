@@ -26,6 +26,7 @@ class Session:
     project: str
     activity: str = ""
     label: str = ""  # the session name Claude Code shows, if any
+    cwd: str = ""  # the folder the session runs in; "" when unknown
 
 
 class DeliveryError(Exception):

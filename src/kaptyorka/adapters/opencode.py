@@ -337,7 +337,7 @@ class OpenCodeAdapter:
                     http.client.HTTPException, subprocess.SubprocessError):
                 continue  # TUI just exited
             if key:
-                out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), ""))
+                out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), "", cwd=cwd))
         return out
 
     def _v2_sessions(self, svc: Dict[str, str]) -> List[Session]:
@@ -353,7 +353,7 @@ class OpenCodeAdapter:
                 continue  # TUI just exited, or the service is restarting
             if key and key not in seen:
                 seen.add(key)
-                out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), ""))
+                out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), "", cwd=cwd))
         return out
 
     def deliver(self, key: str, text: str) -> None:
