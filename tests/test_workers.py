@@ -528,3 +528,86 @@ def test_told_column_added_to_an_old_workers_table(tmp_path, clock):
     ensure_schema(db)
     assert "told" in [r[1] for r in db.execute("PRAGMA table_info(workers)")]
     db.close()
+
+
+def test_shared_bridge_may_not_take_another_persons_key(store, ws, alice, bob):
+    own, own_token = device(store, alice, "box-1")
+    store.heartbeat("box-1", [{"key": "cursor:box-1:/home/alice/p", "tool": "cursor",
+                               "project": "p"}], principal=store.authenticate(own_token),
+                    facts={"host": "box-1", "os_user": "u"})
+    dev, token = shared_box(store, bob)
+    bob_bridge = store.authenticate(token)
+    store.heartbeat("box-2", [{"key": "cursor:box-1:/home/alice/p", "tool": "cursor",
+                               "project": "p"}], principal=bob_bridge,
+                    facts={"host": "box-2", "os_user": "u"})
+    row = store.db.execute("SELECT device_id, person_id, host FROM agents WHERE key=?",
+                           ("cursor:box-1:/home/alice/p",)).fetchone()
+    assert tuple(row) == (own, alice, "box-1")
+    with pytest.raises(KaptyorkaError):
+        store.seen("cursor:box-1:/home/alice/p", "box-2", "cursor", "p", principal=bob_bridge)
+
+
+def test_link_refuses_a_key_it_may_not_take(store, ws, alice, bob, alice_p, boss):
+    own, own_token = device(store, alice, "box-1")
+    store.heartbeat("box-1", [{"key": "claude:alice2", "tool": "claude-code",
+                               "project": "proj-a"}], principal=store.authenticate(own_token),
+                    facts={"host": "box-1", "os_user": "u"})
+    bob_p = principal(store, bob)
+    store.seen("claude:bob", "box-3", "claude-code", "proj-a", principal=bob_p)
+    bob_dev = device(store, bob, "box-3")[0]
+    ws.create(bob_p, "proj-a", "t", target(bob_dev, "box-3"), "claude-code", "claude:bob", None,
+              False)
+    assert ws.link("proj-a-w1", "claude:alice2", bob_dev) is False  # alice's session
+    assert store.agent("claude:alice2").person_id == alice
+    # a key another live worker already has
+    ws.create(alice_p, "proj-a", "t", target(own), "claude-code", boss, None, False)
+    ws.create(alice_p, "proj-a", "t", target(own), "claude-code", boss, None, False)
+    assert ws.link("proj-a-w2", "claude:w9", own) is True
+    assert ws.link("proj-a-w3", "claude:w9", own) is False
+    assert ws.by_name("proj-a-w3")["state"] == "starting"
+
+
+def test_web_boss_adopts_and_is_never_unattended(store, ws, alice, alice_p, boss, clock):
+    dev, token = linked(store, ws, alice, alice_p, boss, activity="permission_prompt")
+    with store.lock:
+        store.db.execute("UPDATE workers SET state='unattended'")
+    with pytest.raises(KaptyorkaError):
+        ws.adopt(alice_p, "proj-a-w1", "web:bob")
+    assert ws.adopt(alice_p, "proj-a-w1", "web:alice")["state"] == "up"
+    clock[0] += ONLINE_S + UNATTENDED_S + 10
+    worker_up(store, ws, dev, token, activity="permission_prompt")
+    notices = ws.tick(clock[0])
+    assert ws.by_name("proj-a-w1")["state"] == "up"
+    assert [n[0] for n in notices] == ["web:alice"]
+
+
+def test_close_before_start_cancels_the_launch(store, ws, alice_p, dev, boss):
+    launch(ws, alice_p, dev, boss)
+    w = ws.close(alice_p, "proj-a-w1")
+    assert w["state"] == "closed"
+    assert ws.offer(dev) == []
+    row = store.db.execute("SELECT done_at, ok, error FROM launches WHERE kind='launch'").fetchone()
+    assert row["done_at"] is not None and row["ok"] == 0 and row["error"] == "closed before start"
+    assert store.db.execute("SELECT COUNT(*) FROM launches WHERE kind='close'").fetchone()[0] == 0
+
+
+def test_hosting_bridge_delivers_to_a_worker_on_its_shared_box(store, ws, alice, bob, alice_p,
+                                                               boss):
+    dev, token = shared_box(store, bob)
+    bob_bridge = store.authenticate(token)
+    ws.create(alice_p, "proj-a", "t", target(dev, "box-2"), "claude-code", boss, None, False)
+    beat_box2(store, token)
+    assert ws.link("proj-a-w1", "claude:w1", dev)
+    store.send("claude:boss", store.agent("claude:w1").name, "hi")
+    items = store.offer("box-2", "0.3", principal=bob_bridge)
+    assert [(i["key"], i["text"].endswith("hi")) for i in items] == [("claude:w1", True)]
+    # alice's own session elsewhere is still not offered to bob's bridge
+    own, own_token = device(store, alice, "box-1")
+    store.heartbeat("box-1", [{"key": "claude:pc", "tool": "claude-code", "project": "proj-a"}],
+                    principal=store.authenticate(own_token), facts={"host": "box-1", "os_user": "u"})
+    store.send("claude:boss", store.agent("claude:pc").name, "private")
+    assert store.offer("box-1", "0.3", principal=bob_bridge) == []
+    # bob's bridge reporting the box empty marks the worker's session gone
+    store.heartbeat("box-2", [], tools=["claude-code"], principal=bob_bridge,
+                    facts={"host": "box-2", "os_user": "u"})
+    assert store.agent("claude:w1").online is False

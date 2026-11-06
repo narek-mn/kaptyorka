@@ -327,6 +327,17 @@ class WorkerStore:
             w = self._row(worker)
             if w is None or w["state"] != "starting" or w["device_id"] != device_id:
                 return False
+            row = self.db.execute("SELECT person_id, device_id FROM agents WHERE key=?",
+                                  (key,)).fetchone()
+            owner = self.db.execute("SELECT person_id FROM devices WHERE id=?",
+                                    (device_id,)).fetchone()
+            if row is not None and (
+                    row["person_id"] not in (None, owner["person_id"], w["boss_person"])
+                    or row["device_id"] not in (None, device_id)):
+                return False  # someone else's session
+            if self.db.execute("SELECT 1 FROM workers WHERE key=? AND state IN"
+                               " ('starting','up','unattended')", (key,)).fetchone():
+                return False  # another worker's session
             self.db.execute("UPDATE workers SET key=?, state='up', up_at=? WHERE name=?",
                             (key, self.clock(), worker))
             if self.db.execute("SELECT 1 FROM agents WHERE key=?", (key,)).fetchone() is None:
@@ -375,7 +386,8 @@ class WorkerStore:
                 " LEFT JOIN agents b ON b.key=w.boss_key"
                 " WHERE w.state IN ('up','unattended')").fetchall()
             for w in rows:
-                boss_online = w["boss_seen"] is not None and w["boss_seen"] > now - ONLINE_S
+                boss_online = w["boss_key"].startswith("web:") or (  # the page: always there
+                    w["boss_seen"] is not None and w["boss_seen"] > now - ONLINE_S)
                 own = w["own_seen"] if w["own_seen"] is not None else w["up_at"]
                 if own + ONLINE_S < now - GONE_S:
                     self.db.execute("UPDATE workers SET state='closed', error='session gone',"
@@ -402,9 +414,10 @@ class WorkerStore:
                                     f"worker `{w['name']}` is waiting for a permission; attach"
                                     f" with `{self._dict(w)['attach']}`"))
             for w in self.db.execute(
-                    "SELECT w.name, w.boss_key, w.error FROM workers w JOIN agents b"
+                    "SELECT w.name, w.boss_key, w.error FROM workers w LEFT JOIN agents b"
                     " ON b.key=w.boss_key WHERE w.state='failed' AND w.told IS NULL"
-                    " AND b.last_seen > ?", (now - ONLINE_S,)).fetchall():
+                    " AND (w.boss_key LIKE 'web:%' OR b.last_seen > ?)",
+                    (now - ONLINE_S,)).fetchall():
                 self.db.execute("UPDATE workers SET told=? WHERE name=?", (now, w["name"]))
                 notices.append((w["boss_key"],
                                 f"worker `{w['name']}` failed to start: {w['error']}"))
@@ -419,7 +432,8 @@ class WorkerStore:
                 raise KaptyorkaError(f"worker {name} is {w['state']}, not unattended")
             boss = self.db.execute("SELECT person_id FROM agents WHERE key=?",
                                    (new_boss_key,)).fetchone()
-            if boss is None or boss["person_id"] != principal.person_id:
+            web = new_boss_key == f"web:{self._person_name(principal.person_id)}"
+            if not web and (boss is None or boss["person_id"] != principal.person_id):
                 raise KaptyorkaError("the new boss must be a session of yours")
             self.db.execute("UPDATE workers SET boss_key=?, state='up', unattended_since=NULL"
                             " WHERE name=?", (new_boss_key, name))
@@ -437,9 +451,17 @@ class WorkerStore:
                 raise KaptyorkaError(f"no worker {name} of yours")
             if w["state"] in ("closed", "failed"):
                 raise KaptyorkaError(f"worker {name} is already {w['state']}")
-            self._queue(w["device_id"], name, "close", {
-                "issued": self.clock(), "worker": name, "tool": w["tool"], "key": w["key"]})
-            out = self._dict(w)
+            now = self.clock()
+            if w["state"] == "starting":  # nothing to kill yet: the launch is never sent
+                self.db.execute("UPDATE launches SET done_at=?, ok=0, error='closed before start'"
+                                " WHERE worker=? AND kind='launch' AND done_at IS NULL",
+                                (now, name))
+                self.db.execute("UPDATE workers SET state='closed', closed_at=? WHERE name=?",
+                                (now, name))
+            else:
+                self._queue(w["device_id"], name, "close", {
+                    "issued": now, "worker": name, "tool": w["tool"], "key": w["key"]})
+            out = self._dict(self._row(name))
             if w["worktree"]:
                 out["note"] = f"its worktree {w['folder']} stays in place"
             return out

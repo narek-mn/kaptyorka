@@ -154,8 +154,8 @@ def private_name(name: str, machine: str, tool: str, project: str) -> str:
 def _owns(row, principal) -> bool:
     """True when an agent row is the caller's: its person, and its device where one is set.
     No principal (an internal caller) owns everything."""
-    if principal is None:
-        return True
+    if principal is None or (row["device_id"] is not None and row["device_id"] == principal.device_id):
+        return True  # the hosting bridge delivers to the sessions on its box
     if row["person_id"] is not None and row["person_id"] != principal.person_id:
         return False
     if row["device_id"] is not None and row["device_id"] != principal.device_id:
@@ -1063,9 +1063,10 @@ class Store:
                     self.db.execute("UPDATE agents SET last_seen=? WHERE key=?",
                                     (now - ONLINE_S, r["key"]))
             for s in sessions:
-                held = self.db.execute("SELECT person_id FROM agents WHERE key=?",
+                held = self.db.execute("SELECT person_id, device_id FROM agents WHERE key=?",
                                        (s["key"],)).fetchone()
-                if principal is not None and held is not None and not principal.shared \
+                if principal is not None and held is not None and not (
+                        principal.shared and held["device_id"] == principal.device_id) \
                         and held["person_id"] not in (None, principal.person_id):
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],
