@@ -314,8 +314,12 @@ def test_retention_setting_store(tmp_path):
     s.close()
 
 
-def test_prune_loop_runs(tmp_path):
+def test_prune_loop_runs(tmp_path, monkeypatch):
     import threading
+
+    from kaptyorka import memory
+
+    monkeypatch.setattr(memory, "prune", lambda store, now: 0)  # Fake has no database
 
     from kaptyorka.retention import prune_loop
 

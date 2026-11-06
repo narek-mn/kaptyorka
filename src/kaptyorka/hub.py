@@ -22,6 +22,7 @@ from kaptyorka import __version__
 from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
+from kaptyorka.memory import MemoryStore
 from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, clean
 from kaptyorka.workers import WorkerStore, safe_name
 
@@ -121,6 +122,7 @@ def build_app(store: Store) -> Starlette:
     server = MCPServer("kaptyorka", instructions=INSTRUCTIONS)
     sent = {"event": asyncio.Event()}  # set and replaced after each send; wakes bridge polls
     ws = WorkerStore(store)
+    ms = MemoryStore(store)
 
     def principal_of(headers: Mapping) -> Principal:
         """The caller's principal from its bearer token (the Auth middleware already let it in)."""
@@ -399,6 +401,9 @@ def build_app(store: Store) -> Starlette:
         own = not principal.legacy
         if own and (isinstance(facts, dict) or isinstance(body.get("folders"), dict)):
             ws.facts_seen(principal.device_id, facts, body.get("folders"))
+            ms.git_seen(principal, principal.device_id,
+                        (facts.get("git") if isinstance(facts, dict) else None) or {},
+                        body.get("folders") if isinstance(body.get("folders"), dict) else {})
         return JSONResponse({"version": __version__,
                              "auto_update": own and ws.auto_update(principal.device_id),
                              "projects": [] if principal.legacy else
