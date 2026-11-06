@@ -22,12 +22,19 @@ def sign(order: dict, key: str) -> dict:
 
 
 def verify(order: dict, key: str, now: float, seen_ids: Collection[int]) -> Optional[str]:
-    if not all(f in order for f in ("sig", "id", "issued")):
+    if not isinstance(order, dict) or not all(f in order for f in ("sig", "id", "issued")):
+        return "malformed order"
+    issued = order["issued"]
+    if isinstance(issued, bool) or not isinstance(issued, (int, float)):
+        return "malformed order"
+    try:
+        hash(order["id"])
+    except TypeError:
         return "malformed order"
     body = {k: v for k, v in order.items() if k != "sig"}
     if not hmac.compare_digest(str(order["sig"]).encode(), _mac(body, key).encode()):
         return "bad signature"
-    if now - order["issued"] > MAX_AGE_S:
+    if abs(now - issued) > MAX_AGE_S:  # a future-dated order is as suspect as an old one
         return "order too old"
     if order["id"] in seen_ids:
         return "order already run"
