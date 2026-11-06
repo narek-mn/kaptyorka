@@ -4,7 +4,6 @@ import re
 import shutil
 import subprocess
 import sys
-import uuid
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Tuple
 
@@ -15,6 +14,9 @@ NAME = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 GONE = ("can't find session", "no server running", "can't find pane", "No job matching")
 CLAUDE_WAIT_S = 60  # `claude --bg` returns once the session runs
 TMUX_WAIT_S = 10  # `tmux new-session -d` returns at once
+# `claude --bg` ignores --session-id and prints the short id that `claude stop` takes (never
+# the name): the first 8 hex digits of the session id the session file shows
+BACKGROUNDED = re.compile(r"backgrounded · ([0-9a-f]{8})\b")
 
 
 class LaunchError(Exception):
@@ -84,10 +86,8 @@ class Launcher:
         if resume is not None:
             resume = _plain(resume, "resume id")
         if tool == "claude-code":
-            # claude refuses --session-id with --resume unless it forks; forking keeps the key known
-            sid = str(uuid.uuid4())
-            return ["claude", "--bg", "-n", name, "--session-id", sid,
-                    *(["--resume", resume, "--fork-session"] if resume else []), first]
+            return ["claude", "--bg", "-n", name, *(["--resume", resume] if resume else []),
+                    first]
         tmux = ["tmux", "new-session", "-d", "-s", name, "-c", folder]
         if tool == "codex":
             return [*tmux, "codex", *(["resume", resume] if resume else []), first]
@@ -96,8 +96,9 @@ class Launcher:
                     "--prompt", first]
         raise LaunchError(f"no worker support for {tool}")
 
-    def detach(self, argv: List[str], folder: str, name: str) -> None:
-        """Start argv outside the bridge's process group and service, output to its log."""
+    def detach(self, argv: List[str], folder: str, name: str) -> str:
+        """Start argv outside the bridge's process group and service, output to its log.
+        Returns what it printed."""
         logs = paths.home() / "workers"
         logs.mkdir(mode=0o700, parents=True, exist_ok=True)
         wait = CLAUDE_WAIT_S if argv[0] == "claude" else TMUX_WAIT_S
@@ -129,18 +130,37 @@ class Launcher:
                               " and accept")
         if code != 0:
             raise LaunchError(output.strip() or f"{argv[0]} exited with {code}")
+        return output
 
     def launch(self, order: dict, sessions: Iterable = ()) -> dict:
         name = self._name(order)
         folder, worktree = self.folder_for(order, sessions)
         argv = self.command(order, folder)
-        key = f"claude:{argv[5]}" if order.get("tool") == "claude-code" else None
-        self.detach(argv, folder, name)
-        return {"key": key, "folder": folder, "worktree": worktree, "needs_brief": False}
+        output = self.detach(argv, folder, name)
+        job = None
+        if order.get("tool") == "claude-code":
+            m = BACKGROUNDED.search(output)
+            if m is None:
+                raise LaunchError("claude --bg printed no session id; see"
+                                  f" ~/.kaptyorka/workers/{name}.log")
+            job = m.group(1)
+        return {"key": None, "job": job, "folder": folder, "worktree": worktree,
+                "needs_brief": False}
+
+    @staticmethod
+    def _job(order: dict) -> str:
+        """The short id `claude stop` takes: from the launch, else from the linked key."""
+        job = order.get("job")
+        if not job:
+            key = str(order.get("key") or "")
+            job = key.split(":", 1)[1][:8] if key.startswith("claude:") else ""
+        if not re.fullmatch(r"[0-9a-f]{8}", job):
+            raise LaunchError("no Claude Code session id to stop")
+        return job
 
     def close(self, order: dict) -> None:
         name = self._name(order)
-        argv = (["claude", "stop", name] if order.get("tool") == "claude-code"
+        argv = (["claude", "stop", self._job(order)] if order.get("tool") == "claude-code"
                 else ["tmux", "kill-session", "-t", name])
         try:
             r = self.run(argv, capture_output=True, text=True, timeout=30)
@@ -155,8 +175,11 @@ class Launcher:
 
     def find_key(self, order: dict, sessions: Iterable) -> Optional[str]:
         if order.get("tool") == "claude-code":
-            key = order.get("key")
-            return key if key and any(s.key == key for s in sessions) else None
+            key, job = order.get("key"), order.get("job")
+            for s in sessions:
+                if (key and s.key == key) or (job and s.key.startswith(f"claude:{job}")):
+                    return s.key
+            return None
         folder = str(order.get("folder") or "").rstrip("/")
         for s in sessions:
             if s.tool == order.get("tool") and (s.cwd or "").rstrip("/") == folder:

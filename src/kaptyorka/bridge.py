@@ -199,9 +199,11 @@ class Bridge:
         """Tell the hub each started worker's session key once it shows up, or that it never
         did (then stop what was started, so nothing is left running unwatched)."""
         for name, (order, result, started) in list(self.pending.items()):
+            # what the launch learned: the folder and, for Claude Code, the id to stop
+            order = {**order, "folder": result["folder"], "key": result["key"],
+                     "job": result.get("job")}
             try:
-                key = self.launcher.find_key({**order, "folder": result["folder"],
-                                              "key": result["key"]}, sessions)
+                key = self.launcher.find_key(order, sessions)
                 if key:
                     body = {"worker": name, "key": key}
                     if result.get("needs_brief"):

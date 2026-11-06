@@ -15,7 +15,7 @@ from kaptyorka.adapters.base import DeliveryError, Session, merge_json
 from kaptyorka.bridge import Bridge, joined_adapters
 from kaptyorka.launch import Launcher
 from helpers import call, run
-from test_launch import FakePopen, FakeRun as LaunchRun
+from test_launch import KEY, FakePopen, FakeRun as LaunchRun
 
 PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "proj-a"}
 
@@ -554,7 +554,7 @@ def test_crash_while_launching_is_acked_and_does_not_stop_the_poll(team, monkeyp
 def test_bridge_reports_worker_key_when_session_appears(team):
     team.work()
     team.bridge.poll_once(0)
-    key = "claude:" + team.popen.calls[0][0][5]
+    key = KEY
     team.bridge.heartbeat()
     assert team.worker()["state"] == "starting"  # not seen yet
     team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
@@ -575,7 +575,7 @@ def test_bridge_reports_timeout_after_two_minutes(team):
     assert w["error"] == ("the session did not show up within 2 minutes;"
                           " see ~/.kaptyorka/workers/proj-a-w1.log")
     assert team.bridge.pending == {}
-    assert team.run.calls == [["claude", "stop", "proj-a-w1"]]  # nothing left running
+    assert team.run.calls == [["claude", "stop", "ab12cd34"]]  # nothing left running
     assert "worker proj-a-w1 did not show up within 2 minutes; stopped its session" in team.lines
 
 
@@ -583,10 +583,10 @@ def test_worker_closed_while_starting_gets_its_session_closed(team):
     team.work()
     team.bridge.poll_once(0)
     run(call(team.client, BOSS, "close_worker", name="proj-a-w1"))
-    key = "claude:" + team.popen.calls[0][0][5]
+    key = KEY
     team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
     team.bridge.heartbeat()
-    assert team.run.calls == [["claude", "stop", "proj-a-w1"]]
+    assert team.run.calls == [["claude", "stop", "ab12cd34"]]
     assert "worker proj-a-w1 was closed while starting; stopped its session" in team.lines
     assert team.bridge.pending == {}
 
@@ -594,7 +594,7 @@ def test_worker_closed_while_starting_gets_its_session_closed(team):
 def test_lost_link_answer_is_retried_without_stopping_the_worker(team, monkeypatch):
     team.work()
     team.bridge.poll_once(0)
-    key = "claude:" + team.popen.calls[0][0][5]
+    key = KEY
     team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
     real, lost = bridge_mod.http.request, []
 
@@ -616,7 +616,7 @@ def test_lost_link_answer_is_retried_without_stopping_the_worker(team, monkeypat
 def test_unknown_worker_404_is_dropped_without_stopping(team):
     team.work()
     team.bridge.poll_once(0)
-    key = "claude:" + team.popen.calls[0][0][5]
+    key = KEY
     with team.hub.store.lock:  # the hub lost track of it (say, a restored database)
         team.hub.store.db.execute("DELETE FROM workers")
     team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
@@ -628,12 +628,12 @@ def test_unknown_worker_404_is_dropped_without_stopping(team):
 def test_close_order_stops_the_session_and_acks(team):
     team.work()
     team.bridge.poll_once(0)
-    key = "claude:" + team.popen.calls[0][0][5]
+    key = KEY
     team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
     team.bridge.heartbeat()
     run(call(team.client, BOSS, "close_worker", name="proj-a-w1"))
     team.bridge.poll_once(0)
-    assert team.run.calls == [["claude", "stop", "proj-a-w1"]]
+    assert team.run.calls == [["claude", "stop", "ab12cd34"]]
     assert team.acks[-1] == (team.order()["id"], True, True, "")
     assert team.worker()["state"] == "closed"
 
@@ -641,7 +641,7 @@ def test_close_order_stops_the_session_and_acks(team):
 def test_failed_close_is_acked_with_the_error(team):
     team.work()
     team.bridge.poll_once(0)
-    key = "claude:" + team.popen.calls[0][0][5]
+    key = KEY
     team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
     team.bridge.heartbeat()
     run(call(team.client, BOSS, "close_worker", name="proj-a-w1"))
@@ -655,11 +655,11 @@ def test_failed_close_is_acked_with_the_error(team):
 def test_close_of_a_gone_session_marks_the_worker_closed(team):
     team.work()
     team.bridge.poll_once(0)
-    key = "claude:" + team.popen.calls[0][0][5]
+    key = KEY
     team.claude._sessions.append(Session(key, "claude-code", "proj-a", cwd=team.folder))
     team.bridge.heartbeat()
     run(call(team.client, BOSS, "close_worker", name="proj-a-w1"))
-    team.run.rc, team.run.stderr = 1, "No job matching 'proj-a-w1'."
+    team.run.rc, team.run.stderr = 1, "No job matching 'ab12cd34'."
     team.bridge.poll_once(0)
     assert team.acks[-1] == (team.order()["id"], True, True, "")
     assert team.worker()["state"] == "closed"

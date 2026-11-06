@@ -1,7 +1,6 @@
 """The launcher: folders, worktrees, command lines and detaching, with fake run/popen."""
 import json
 import subprocess
-import uuid
 
 import pytest
 
@@ -9,6 +8,9 @@ from kaptyorka import launch as launch_mod
 from kaptyorka.adapters.base import Session
 from kaptyorka.launch import LaunchError, Launcher
 
+# what `claude --bg` prints: the short id that `claude stop` takes, a prefix of the session id
+BG = "Starting background service…\nbackgrounded · ab12cd34 · proj-a-w1\n"
+KEY = "claude:ab12cd34-0000-4000-8000-000000000000"
 FIRST = 'You are kaptyorka worker `proj-a-w1` for `box-1/codex/proj-a` (alice). Your task:\n\n'
 
 
@@ -40,7 +42,7 @@ class FakeProc:
 
 
 class FakePopen:
-    def __init__(self, rc=0, output=""):
+    def __init__(self, rc=0, output=BG):
         self.calls, self.rc, self.output = [], rc, output
 
     def __call__(self, argv, **kw):
@@ -76,16 +78,13 @@ def test_task_text_is_one_argument(launcher):
     argv = launcher.command(order(task=task), "/home/alice/proj-a")
     assert argv[-1] == FIRST + task and 'say "hi"' in argv[-1]
     assert argv[0] == "claude" and "--bg" in argv and "--dangerously-skip-permissions" not in argv
-    assert argv[1:5] == ["--bg", "-n", "proj-a-w1", "--session-id"]
-    uuid.UUID(argv[5])  # a real uuid, also the expected key
-    assert len(argv) == 7
+    assert argv[1:4] == ["--bg", "-n", "proj-a-w1"] and len(argv) == 5
 
 
-def test_claude_resume_forks_so_the_new_key_is_known(launcher):
+def test_claude_resume(launcher):
     argv = launcher.command(order(resume="abc-123"), "/w")
-    assert argv[:4] == ["claude", "--bg", "-n", "proj-a-w1"]
-    assert argv[argv.index("--resume") + 1] == "abc-123" and "--fork-session" in argv
-    assert "--session-id" in argv and argv[-1].startswith("You are")
+    assert argv[:6] == ["claude", "--bg", "-n", "proj-a-w1", "--resume", "abc-123"]
+    assert len(argv) == 7 and argv[-1].startswith("You are")
 
 
 def test_tmux_tools_command_lines(launcher):
@@ -195,20 +194,24 @@ def test_launch_returns_key_folder_and_brief_flag(home, no_systemd):
     popen = FakePopen()
     launcher = make(home, popen=popen)
     got = launcher.launch(order(folder=str(home / "proj-a")))
-    argv = popen.calls[0][0]
-    assert got == {"key": "claude:" + argv[5], "folder": str(home / "proj-a"),
+    assert got == {"key": None, "job": "ab12cd34", "folder": str(home / "proj-a"),
                    "worktree": False, "needs_brief": False}
     got = launcher.launch(order(tool="codex", folder=str(home / "proj-a")))
-    assert got["key"] is None and got["needs_brief"] is False
+    assert got["key"] is None and got["job"] is None and got["needs_brief"] is False
+    with pytest.raises(LaunchError, match="claude --bg printed no session id"):
+        make(home, popen=FakePopen(0, "")).launch(order(folder=str(home / "proj-a")))
 
 
 def test_close_commands(home):
     run = FakeRun()
     launcher = make(home, run=run)
-    launcher.close({"worker": "proj-a-w1", "tool": "claude-code", "key": "claude:u"})
+    launcher.close({"worker": "proj-a-w1", "tool": "claude-code", "key": KEY})  # the hub's order
+    launcher.close({"worker": "proj-a-w1", "tool": "claude-code", "job": "ffee0011"})  # the bridge's
     launcher.close({"worker": "proj-a-w1", "tool": "codex", "key": "codex:1"})
-    assert run.calls == [["claude", "stop", "proj-a-w1"],
+    assert run.calls == [["claude", "stop", "ab12cd34"], ["claude", "stop", "ffee0011"],
                          ["tmux", "kill-session", "-t", "proj-a-w1"]]
+    with pytest.raises(LaunchError, match="no Claude Code session id to stop"):
+        launcher.close({"worker": "proj-a-w1", "tool": "claude-code"})  # never `stop <name>`
     with pytest.raises(LaunchError, match="Permission denied"):
         make(home, run=FakeRun(1, "error connecting to /tmp/tmux-1000/default (Permission denied)")
              ).close({"worker": "proj-a-w1", "tool": "codex"})
@@ -218,8 +221,8 @@ def test_closing_a_gone_session_is_done(home):
     for tool, said in [("codex", "can't find session: proj-a-w1"),
                        ("opencode", "no server running on /tmp/tmux-1000/default"),
                        ("codex", "can't find pane: proj-a-w1"),
-                       ("claude-code", "No job matching 'proj-a-w1'. Run 'claude agents'")]:
-        make(home, run=FakeRun(1, said)).close({"worker": "proj-a-w1", "tool": tool})
+                       ("claude-code", "No job matching 'ab12cd34'. Run 'claude agents'")]:
+        make(home, run=FakeRun(1, said)).close({"worker": "proj-a-w1", "tool": tool, "key": KEY})
 
 
 def test_find_key(launcher):
@@ -232,3 +235,6 @@ def test_find_key(launcher):
     c = {**order(), "key": "claude:u1"}
     assert launcher.find_key(c, [Session("claude:u1", "claude-code", "proj-a")]) == "claude:u1"
     assert launcher.find_key(c, sessions) is None
+    j = {**order(), "key": None, "job": "ab12cd34"}  # just launched: only the short id is known
+    assert launcher.find_key(j, sessions + [Session(KEY, "claude-code", "proj-a")]) == KEY
+    assert launcher.find_key(j, sessions) is None
