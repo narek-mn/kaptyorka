@@ -469,3 +469,23 @@ def test_approve_never_lowers_role(hub):
     detail = hub.store.db.execute(
         "SELECT detail FROM log WHERE kind='request_decided'").fetchone()["detail"]
     assert detail.endswith("approved (already write)")
+
+
+def test_retention_setting(hub):
+    status, body = http.request("GET", hub.url + "/api/settings", ADMIN)
+    assert status == 200 and body == {"retention_days": 180}
+    status, _ = http.request("POST", hub.url + "/api/settings", ADMIN, {"retention_days": 30})
+    assert status == 200 and hub.store.retention_days() == 30
+    for bad in (0, 3651, "x"):
+        status, _ = http.request("POST", hub.url + "/api/settings", ADMIN, {"retention_days": bad})
+        assert status == 400
+    _, tok = person(hub.store, "ann")
+    for method, path in (("GET", "/api/settings"), ("GET", "/api/log")):
+        status, body = http.request(method, hub.url + path, tok)
+        assert status == 403
+    status, _ = http.request("POST", hub.url + "/api/settings", tok, {"retention_days": 5})
+    assert status == 403
+    status, rows = http.request("GET", hub.url + "/api/log?limit=5", ADMIN)
+    assert status == 200 and rows[0]["kind"] == "settings"
+    status, rows = http.request("GET", hub.url + "/api/log?person=nobody", ADMIN)
+    assert rows == []

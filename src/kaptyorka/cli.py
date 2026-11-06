@@ -8,6 +8,7 @@ import select
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -38,9 +39,12 @@ def _serve(args) -> int:
         import uvicorn
 
         from kaptyorka.hub import build_app
+        from kaptyorka.retention import prune_loop
         from kaptyorka.store import Store
 
         store = Store(paths.home() / "hub.db", legacy_token=token)
+        stop = threading.Event()
+        threading.Thread(target=prune_loop, args=(store, stop), daemon=True).start()
         uvicorn.run(build_app(store), host="0.0.0.0", port=args.port, log_level="warning",
                     timeout_graceful_shutdown=3)  # open agent streams must not hold up a stop
         return 0

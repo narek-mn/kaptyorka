@@ -410,6 +410,37 @@ def build_app(store: Store) -> Starlette:
     def hub_url(request: Request) -> str:
         return f"http://{request.headers.get('host') or request.url.netloc}"
 
+    @server.custom_route("/api/log", methods=["GET"])
+    @_bad_request
+    async def api_log(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        q = request.query_params
+        limit = max(1, min(int(q.get("limit") or 200), 1000))
+        return JSONResponse(store.log(limit, q.get("person") or None))
+
+    @server.custom_route("/api/settings", methods=["GET"])
+    async def api_settings(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        return JSONResponse({"retention_days": store.retention_days()})
+
+    @server.custom_route("/api/settings", methods=["POST"])
+    @_bad_request
+    async def api_settings_set(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        try:
+            store.set_retention_days(body.get("retention_days"),
+                                     request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return JSONResponse({"retention_days": store.retention_days()})
+
     @server.custom_route("/api/people", methods=["GET"])
     async def api_people(request: Request) -> Response:
         denied = admin_only(request)

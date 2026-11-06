@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from kaptyorka import paths
+from kaptyorka.secrets_check import check_secrets
 
 ONLINE_S = 30
 LEASE_S = 60
@@ -661,6 +662,56 @@ class Store:
             self.db.execute("INSERT INTO log (time, person, kind, detail) VALUES (?,?,?,?)",
                             (self.clock(), person, kind, detail))
 
+    def log(self, limit: int = 200, person: Optional[str] = None) -> List[dict]:
+        """Newest first."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT id, time, person, kind, detail FROM log WHERE (? IS NULL OR person=?)"
+                " ORDER BY id DESC LIMIT ?", (person, person, limit)).fetchall()
+            return [dict(r) for r in rows]
+
+    # retention
+
+    def retention_days(self) -> int:
+        with self.lock:
+            row = self.db.execute("SELECT value FROM settings WHERE key='retention_days'").fetchone()
+            return int(row["value"]) if row else 180
+
+    def retention_s(self) -> int:
+        return self.retention_days() * 86400
+
+    def set_retention_days(self, days: int, by: str) -> None:
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 3650:
+            raise KaptyorkaError("retention_days must be a whole number from 1 to 3650")
+        with self.lock:
+            self.db.execute("INSERT INTO settings (key, value) VALUES ('retention_days', ?)"
+                            " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(days),))
+        self.log_add(by, "settings", f"retention_days={days}")
+
+    def prune(self, now: float) -> dict:
+        """Delete old messages and their files, and unsent uploads older than a day.
+        Notes, the log, requests, doors and knocks are never touched."""
+        cutoff = now - self.retention_s()
+        with self.lock:
+            old = [r["id"] for r in self.db.execute(
+                "SELECT id FROM messages WHERE created < ?", (cutoff,))]
+            file_ids = set()
+            for i in range(0, len(old), 500):
+                chunk = old[i:i + 500]
+                marks = ",".join("?" * len(chunk))
+                file_ids.update(r["id"] for r in self.db.execute(
+                    f"SELECT id FROM files WHERE message_id IN ({marks})", chunk))
+                self.db.execute(f"DELETE FROM messages WHERE id IN ({marks})", chunk)
+            file_ids.update(r["id"] for r in self.db.execute(
+                "SELECT id FROM files WHERE message_id IS NULL AND created < ?", (now - 86400,)))
+            for fid in file_ids:
+                self.db.execute("DELETE FROM files WHERE id=?", (fid,))
+                try:
+                    (paths.files_dir() / str(fid)).unlink()
+                except FileNotFoundError:
+                    pass
+            return {"messages": len(old), "files": len(file_ids)}
+
     # agents
 
     def _agent(self, row, now) -> Agent:
@@ -769,6 +820,7 @@ class Store:
     # messages
 
     def send(self, sender_key: str, to: str, text: str, file_id: Optional[int] = None) -> int:
+        check_secrets(text)
         with self.lock:
             now = self.clock()
             sender = self.db.execute("SELECT * FROM agents WHERE key=?", (sender_key,)).fetchone()
@@ -805,6 +857,7 @@ class Store:
     def send_from_web(self, name: str, to: str, text: str) -> int:
         """Send as a person on the web page, not an agent: sender key `web:<name>`."""
         name = _person(name)
+        check_secrets(text)
         with self.lock:
             _check_length(text)
             return self._deliver(f"web:{name}", name, to, text, self.clock())
@@ -1266,6 +1319,7 @@ class Store:
     def notes_write(self, key: str, topic: str, text: str, project: Optional[str] = None) -> None:
         """Write a note as a session; `project` None or "" is the team board."""
         project = project or None
+        check_secrets(text)
         with self.lock:
             row = self.db.execute("SELECT name, person_id FROM agents WHERE key=?", (key,)).fetchone()
             if row is None:
@@ -1281,6 +1335,7 @@ class Store:
         name, topic = _person(name), topic.strip()
         if not topic:
             raise KaptyorkaError("topic is empty")
+        check_secrets(text)
         with self.lock:
             self._note(topic, text, name, project or None)
 

@@ -4,7 +4,9 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from kaptyorka.store import Store
+import pytest
+
+from kaptyorka.store import KaptyorkaError, Store
 
 FAKES = Path(__file__).parent / "fakes"
 
@@ -57,8 +59,8 @@ def test_notes_filter_by_project(tmp_path):
 def test_log_add(tmp_path):
     s = Store(tmp_path / "hub.db", clock=lambda: 1234.0)
     s.log_add("alice", "invite", "bob")
-    row = s.db.execute("SELECT time, person, kind, detail FROM log").fetchone()
-    assert tuple(row) == (1234.0, "alice", "invite", "bob")
+    row = s.log()[0]
+    assert (row["time"], row["person"], row["kind"], row["detail"]) == (1234.0, "alice", "invite", "bob")
 
 
 def _member(s, name, role="member"):
@@ -202,3 +204,118 @@ def test_may_read_write_project(tmp_path):
         s.notes_write("k:nobody", "t", "x", project="lab")
     s.notes_write("k:nobody", "t", "team")  # team notes stay open
     s.close()
+
+
+SECRETS = ["-----BEGIN RSA PRIVATE KEY-----", "sk-" + "a" * 20, "ghp_" + "b" * 30,
+           "glpat-" + "c" * 20, "AKIA" + "A" * 16, "xoxb-" + "d" * 20]
+
+
+def test_secret_patterns_blocked_and_plain_text_ok(tmp_path):
+    import secrets as std
+
+    s = Store(tmp_path / "hub.db")
+    _, ta = _member(s, "u1", "admin")
+    s.heartbeat("m", [{"key": "k1", "tool": "codex", "project": "p", "activity": "x"}],
+                principal=s.authenticate(ta), facts=_facts("h1"))
+    keys = [r["key"] for r in s.db.execute("SELECT key FROM agents")]
+    assert keys
+    for bad in SECRETS:
+        with pytest.raises(KaptyorkaError, match="looks like a secret"):
+            s.send(keys[0], "all", f"here: {bad} ok")
+        with pytest.raises(KaptyorkaError, match="looks like a secret"):
+            s.notes_write(keys[0], "t", bad)
+        with pytest.raises(KaptyorkaError, match="looks like a secret"):
+            s.send_from_web("u1", "all", bad)
+        with pytest.raises(KaptyorkaError, match="looks like a secret"):
+            s.notes_write_from_web("u1", "t", bad)
+    with pytest.raises(KaptyorkaError) as e:
+        s.notes_write_from_web("u1", "t", "x ghp_" + "b" * 30)
+    assert str(e.value) == "looks like a secret: GitHub token"
+    assert s.db.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+    s.notes_write_from_web("u1", "t", "A normal sentence, with sk-short and " + std.token_urlsafe(32))
+    s.close()
+
+
+def test_grant_writes_log(tmp_path):
+    s = Store(tmp_path / "hub.db")
+    o, to = _member(s, "owner")
+    f, _ = _member(s, "friend")
+    s.heartbeat("m", [], principal=s.authenticate(to), facts=_facts("h1"))
+    s.grant_machine("h1", f, "root")
+    rows = [r for r in s.log() if r["kind"] == "grant"]
+    assert rows and rows[0]["person"] == "root"
+    assert s.log(person="root")[0]["kind"] == "grant"
+    assert s.log(person="nobody") == []
+    assert len(s.log(limit=1)) == 1
+    s.revoke_machine("h1", f, "root")
+    assert [r["kind"] for r in s.log()[:2]] == ["revoke", "grant"]  # newest first
+    s.close()
+
+
+def test_prune_deletes_old_messages_and_files_keeps_notes(tmp_path, home):
+    from kaptyorka import paths
+
+    clock = [1_000_000.0]
+    s = Store(tmp_path / "hub.db", clock=lambda: clock[0])
+    pid, ta = _member(s, "u1", "admin")
+    _, tb = _member(s, "u2")
+    s.heartbeat("m", [{"key": "k2", "tool": "codex", "project": "p", "activity": "x"}],
+                principal=s.authenticate(tb), facts=_facts("h1"))
+    s.notes_write_from_web("u1", "n", "keep me")
+    fid = s.file_add("a.png", b"abc", pid)
+    s.send_from_web("u1", "all", "old one")
+    with s.lock:
+        s.db.execute("UPDATE files SET message_id=(SELECT MAX(id) FROM messages) WHERE id=?", (fid,))
+        s.db.execute("UPDATE messages SET file_id=?", (fid,))
+    orphan_old = s.file_add("b.png", b"zz", pid)
+    clock[0] += 90_000  # a day and a bit later
+    orphan_new = s.file_add("c.png", b"yy", pid)
+    s.heartbeat("m", [{"key": "k2", "tool": "codex", "project": "p", "activity": "x"}],
+                principal=s.authenticate(tb), facts=_facts("h1"))
+    s.send_from_web("u1", "all", "new one")
+    assert s.prune(clock[0]) == {"messages": 0, "files": 1}  # only the stale unsent upload
+    assert not (paths.files_dir() / str(orphan_old)).exists()
+    assert (paths.files_dir() / str(orphan_new)).exists()
+    clock[0] += 180 * 86400 - 90_000 + 10  # the first message passes 180 days, the second not
+    assert s.retention_s() == 180 * 86400
+    (paths.files_dir() / str(fid)).unlink()  # a missing file on disk is fine
+    s.log_add("x", "keep", "d")
+    out = s.prune(clock[0])
+    assert out["messages"] >= 1 and out["files"] >= 1
+    texts = [r["text"] for r in s.db.execute("SELECT text FROM messages")]
+    assert "old one" not in texts and "new one" in texts
+    assert s.db.execute("SELECT COUNT(*) FROM files WHERE id=?", (fid,)).fetchone()[0] == 0
+    assert s.notes_read("n").text == "keep me"
+    assert [r["kind"] for r in s.log()] == ["keep"]
+    s.close()
+
+
+def test_retention_setting_store(tmp_path):
+    s = Store(tmp_path / "hub.db")
+    assert s.retention_days() == 180
+    s.set_retention_days(30, "root")
+    assert s.retention_days() == 30 and s.retention_s() == 30 * 86400
+    assert s.log()[0]["kind"] == "settings" and s.log()[0]["person"] == "root"
+    for bad in (0, 3651):
+        with pytest.raises(KaptyorkaError):
+            s.set_retention_days(bad, "root")
+    s.close()
+
+
+def test_prune_loop_runs(tmp_path):
+    import threading
+
+    from kaptyorka.retention import prune_loop
+
+    calls, lines, stop = [], [], threading.Event()
+
+    class Fake:
+        def prune(self, now):
+            calls.append(now)
+            if len(calls) == 3:
+                stop.set()
+            return {"messages": 1 if len(calls) == 1 else 0, "files": 0}
+
+    prune_loop(Fake(), stop, interval_s=0.01, report=lines.append)
+    assert len(calls) == 3
+    assert len(lines) == 1  # reported once, when something was deleted
