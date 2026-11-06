@@ -611,3 +611,55 @@ def test_hosting_bridge_delivers_to_a_worker_on_its_shared_box(store, ws, alice,
     store.heartbeat("box-2", [], tools=["claude-code"], principal=bob_bridge,
                     facts={"host": "box-2", "os_user": "u"})
     assert store.agent("claude:w1").online is False
+
+
+def _worker_row(store, name, device_id, host, state, created, **extra):
+    cols = {"name": name, "project": "proj-a", "task": "t", "boss_key": "web:1", "boss_person": 1,
+            "device_id": device_id, "host": host, "tool": "claude-code", "state": state,
+            "created": created, **extra}
+    store.db.execute(f"INSERT INTO workers ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                     list(cols.values()))
+
+
+def test_warnings_texts_and_order(store, ws, alice, bob, clock):
+    import time
+    a = device(store, alice, "box-1", "alice")[0]
+    b = device(store, bob, "box-2", "bob")[0]
+    c = device(store, bob, "box-3", "bob")[0]
+    store.device_set_shared(b, True)
+    ws.facts_seen(a, {"version": "0.2.9", "tmux": True, "hooks_ok": {"claude-code": False}}, {})
+    ws.facts_seen(b, {"version": "0.3.0", "tmux": False, "hooks_ok": {"claude-code": True}}, {})
+    ws.facts_seen(c, {"version": "0.3.0", "tmux": True}, {})
+    store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (clock[0] - 125 * 60, c))
+    since = clock[0] - 300
+    _worker_row(store, "w1", a, "box-1", "unattended", clock[0], unattended_since=since)
+    _worker_row(store, "w2", a, "box-1", "abandoned", clock[0])
+    _worker_row(store, "w3", b, "box-2", "failed", clock[0] - 3600, error="no tmux")
+    _worker_row(store, "w4", b, "box-2", "failed", clock[0] - 90000, error="old")
+    got = ws.warnings(clock[0], "0.3.0")
+    hhmm = time.strftime("%H:%M", time.localtime(since))
+    assert [w["text"] for w in got] == [
+        "worker w3 on box-2 failed to start: no tmux",
+        "bridge on box-3 (bob) has been offline for 125 minutes",
+        "box-1 (alice) runs kaptyorka 0.2.9; the hub runs 0.3.0",
+        "claude-code on box-1 (alice) is set up but its kaptyorka hooks are missing",
+        f"worker w1 on box-1 is unattended since {hhmm}",
+        "worker w2 on box-1 was abandoned",
+        "box-2 (bob) has no tmux: only Claude Code workers can run there",
+    ]
+    assert got[0]["person"] == "alice" and got[1]["person"] == "bob"
+    assert got[1]["host"] == "box-3" and got[1]["os_user"] == "bob"
+
+
+def test_warnings_none_when_healthy_and_skip_revoked_legacy(store, ws, alice, clock):
+    a = device(store, alice, "box-1")[0]
+    ws.facts_seen(a, {"version": "0.3.0", "tmux": True, "hooks_ok": {"claude-code": True}}, {})
+    assert ws.warnings(clock[0], "0.3.0") == []
+    ws.facts_seen(a, {"version": "0.1", "tmux": False, "hooks_ok": {"claude-code": False}}, {})
+    store.db.execute("UPDATE devices SET revoked_at=? WHERE id=?", (clock[0], a))
+    assert ws.warnings(clock[0], "0.3.0") == []
+    store.db.execute("UPDATE devices SET revoked_at=NULL, legacy=1 WHERE id=?", (a,))
+    assert ws.warnings(clock[0], "0.3.0") == []
+    ws.facts_seen(a, {"tmux": True}, {})  # no version: not warned
+    store.db.execute("UPDATE devices SET legacy=0 WHERE id=?", (a,))
+    assert ws.warnings(clock[0], "0.3.0") == []

@@ -2,6 +2,8 @@
 store.py; a WorkerStore shares the Store's database, lock and clock."""
 import json
 import math
+import re
+import time
 from typing import List, Optional, Tuple
 
 from kaptyorka.orders import sign
@@ -11,6 +13,7 @@ MAX_FACT = 200
 UNATTENDED_S = 120  # boss offline this long: the worker is unattended
 ABANDONED_S = 86400  # unattended this long: abandoned
 GONE_S = 600  # the worker's own session offline this long: closed
+OFFLINE_S = 600  # bridge silent this long: warn
 REOFFER_S = 60
 WAITING_S = 1800  # how often a boss hears that a worker waits for a permission
 WAITING = ("permission_prompt", "needs_input")
@@ -95,6 +98,10 @@ def clean_facts(facts: dict) -> dict:
         if key in facts:
             out[key] = _str_map(facts[key], kind)
     return out
+
+
+def _version_tuple(v: str) -> Tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", v))
 
 
 class WorkerStore:
@@ -465,3 +472,53 @@ class WorkerStore:
             if w["worktree"]:
                 out["note"] = f"its worktree {w['folder']} stays in place"
             return out
+
+    def warnings(self, now: float, hub_version: str) -> List[dict]:
+        """Things a person should look at: failed launches, offline bridges, old versions,
+        missing hooks or tmux, unattended or abandoned workers."""
+        failed, offline, rest = [], [], []
+        with self.lock:
+            devices = self.db.execute(
+                "SELECT d.id, d.host, d.os_user, d.shared, d.last_used, p.name AS person,"
+                " f.facts FROM devices d LEFT JOIN people p ON p.id=d.person_id"
+                " LEFT JOIN device_facts f ON f.device_id=d.id"
+                " WHERE d.revoked_at IS NULL AND d.legacy=0 ORDER BY d.id").fetchall()
+            workers = self.db.execute(
+                "SELECT w.*, p.name AS person, d.os_user FROM workers w"
+                " LEFT JOIN people p ON p.id=w.boss_person"
+                " LEFT JOIN devices d ON d.id=w.device_id"
+                " WHERE w.state IN ('unattended','abandoned')"
+                " OR (w.state='failed' AND w.created > ?) ORDER BY w.created",
+                (now - 86400,)).fetchall()
+        for d in devices:
+            host, user = d["host"], d["os_user"]
+            who = f"{host} ({user})"
+
+            def add(out, text):
+                out.append({"host": host, "os_user": user, "person": d["person"] or "",
+                            "text": text})
+            if d["last_used"] is not None and d["last_used"] < now - OFFLINE_S:
+                add(offline, f"bridge on {who} has been offline for"
+                    f" {int((now - d['last_used']) // 60)} minutes")
+            facts = json.loads(d["facts"]) if d["facts"] else {}
+            v = facts.get("version") or ""
+            if _version_tuple(v) and _version_tuple(v) < _version_tuple(hub_version):
+                add(rest, f"{who} runs kaptyorka {v}; the hub runs {hub_version}")
+            for tool, ok in (facts.get("hooks_ok") or {}).items():
+                if ok is False:
+                    add(rest, f"{tool} on {who} is set up but its kaptyorka hooks are missing")
+            if d["shared"] and facts.get("tmux") is False:
+                add(rest, f"{who} has no tmux: only Claude Code workers can run there")
+        for w in workers:
+            item = {"host": w["host"], "os_user": w["os_user"] or "", "person": w["person"] or ""}
+            if w["state"] == "failed":
+                failed.append({**item, "text": f"worker {w['name']} on {w['host']} failed to"
+                               f" start: {w['error']}"})
+            elif w["state"] == "abandoned":
+                rest.append({**item, "text": f"worker {w['name']} on {w['host']} was abandoned"})
+            else:
+                hhmm = time.strftime("%H:%M", time.localtime(w["unattended_since"]))
+                rest.append({**item, "text": f"worker {w['name']} on {w['host']} is unattended"
+                             f" since {hhmm}"})
+        rest.sort(key=lambda x: x["host"])
+        return failed + offline + rest
