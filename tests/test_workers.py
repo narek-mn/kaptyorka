@@ -178,3 +178,10 @@ def test_worker_tables_exist(store):
 def test_agents_cwd_is_stored(store):
     store.heartbeat("box-1", [{"key": "claude:1", "tool": "claude-code", "project": "proj-a", "cwd": "/home/alice/proj-a"}])
     assert store.db.execute("SELECT cwd FROM agents WHERE key='claude:1'").fetchone()[0] == "/home/alice/proj-a"
+
+
+def test_facts_drop_non_finite_load(ws, dev):
+    ws.facts_seen(dev, {"load": float("nan"), "cpus": 2}, {})
+    assert ws.facts(dev) == {"cpus": 2}
+    ws.facts_seen(dev, {"load": float("inf")}, {})
+    assert ws.facts(dev) == {}

@@ -502,14 +502,17 @@ class Store:
         """True for an admin, the machine's owner, or a grant. A device reporting the host is not
         enough: the host name is self-reported."""
         with self.lock:
-            p = self.db.execute("SELECT role FROM people WHERE id=?", (person_id,)).fetchone()
-            if p is not None and p["role"] == "admin":
-                return True
-            m = self.db.execute("SELECT owner_person_id FROM machines WHERE host=?",
-                                (host,)).fetchone()
-            if m is not None and m["owner_person_id"] == person_id:
-                return True
-            return self._granted(host, person_id)
+            return self._may_use(host, person_id)
+
+    def _may_use(self, host: str, person_id: int) -> bool:
+        p = self.db.execute("SELECT role FROM people WHERE id=?", (person_id,)).fetchone()
+        if p is not None and p["role"] == "admin":
+            return True
+        m = self.db.execute("SELECT owner_person_id FROM machines WHERE host=?",
+                            (host,)).fetchone()
+        if m is not None and m["owner_person_id"] == person_id:
+            return True
+        return self._granted(host, person_id)
 
     def _grant_change(self, host: str, person_id: int, grant: bool, by: str) -> None:
         with self.lock:

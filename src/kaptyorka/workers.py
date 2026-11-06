@@ -1,6 +1,7 @@
 """Workers: sessions a person asks the hub to start on one of their machines. Kept out of
 store.py; a WorkerStore shares the Store's database, lock and clock."""
 import json
+import math
 from typing import List, Optional, Tuple
 
 from kaptyorka.store import ONLINE_S, Principal, Store
@@ -75,7 +76,7 @@ def clean_facts(facts: dict) -> dict:
     if _bool(facts.get("tmux")) is not None:
         out["tmux"] = facts["tmux"]
     load = facts.get("load")
-    if isinstance(load, (int, float)) and not isinstance(load, bool):
+    if isinstance(load, (int, float)) and not isinstance(load, bool) and math.isfinite(load):
         out["load"] = float(load)
     cpus = facts.get("cpus")
     if isinstance(cpus, int) and not isinstance(cpus, bool):
@@ -143,16 +144,6 @@ class WorkerStore:
 
     # where a worker can run
 
-    def _may_use(self, host, person_id) -> bool:
-        """Store.may_use without the lock: admin, the machine's owner, or a grant."""
-        p = self.db.execute("SELECT role FROM people WHERE id=?", (person_id,)).fetchone()
-        if p is not None and p["role"] == "admin":
-            return True
-        m = self.db.execute("SELECT owner_person_id FROM machines WHERE host=?",
-                            (host,)).fetchone()
-        return (m is not None and m["owner_person_id"] == person_id) \
-            or self.store._granted(host, person_id)
-
     def candidates(self, principal: Principal, project: str,
                    machine: Optional[str]) -> Tuple[List[dict], List[str]]:
         """Devices this person may start a worker on, and one sentence per device skipped.
@@ -166,7 +157,7 @@ class WorkerStore:
                 if machine is not None and d["host"] != machine:
                     continue
                 if not (d["person_id"] == principal.person_id
-                        or (d["shared"] and self._may_use(d["host"], principal.person_id))):
+                        or (d["shared"] and self.store._may_use(d["host"], principal.person_id))):
                     continue
                 who = f"{d['host']} ({d['person']})"
                 if d["last_used"] is None or d["last_used"] <= now - ONLINE_S:
