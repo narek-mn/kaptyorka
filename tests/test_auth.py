@@ -6,6 +6,7 @@ from conftest import start_hub
 from helpers import call, person, run
 from kaptyorka import http
 from kaptyorka.store import ONLINE_S, Store
+from mcp.shared.exceptions import MCPError
 
 LEGACY = "old-shared-token"
 ANN = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
@@ -58,8 +59,12 @@ def test_revoked_device_401_and_sessions_vanish(app, store, clock):
     run(call(app.ben, BEN, "who"))
     store.device_revoke(device_id(store, app.ben.id))
     assert http.request("GET", app.url + "/api/feed", app.ben.token)[0] == 401
-    with pytest.raises(Exception):
+    with pytest.raises(BaseException) as err:  # an exception group on 3.11+, so match the leaf
         run(call(app.ben, BEN, "who"))
+    leaf = err.value
+    while getattr(leaf, "exceptions", None):
+        leaf = leaf.exceptions[0]
+    assert isinstance(leaf, MCPError) and "error response" in str(leaf)
     clock.now += ONLINE_S + 1
     names = [r["name"] for r in run(call(app.ann, ANN, "who"))]
     assert names == ["pc/claude-code/murmur"]
@@ -69,7 +74,14 @@ def test_ten_failures_then_429(app):
     for _ in range(10):
         assert http.request("GET", app.url + "/api/feed", "bad")[0] == 401
     assert http.request("GET", app.url + "/api/feed", "bad")[0] == 429
-    assert http.request("GET", app.url + "/api/feed", app.ann.token)[0] == 429
+
+
+def test_valid_token_not_blocked_by_bad_one(app):
+    for _ in range(11):
+        http.request("GET", app.url + "/api/feed", "bad")
+    assert http.request("GET", app.url + "/api/feed", "bad")[0] == 429
+    assert http.request("GET", app.url + "/api/feed", app.ann.token)[0] == 200
+    assert http.request("GET", app.url + "/api/feed", "other-bad")[0] == 401
 
 
 def test_open_routes_need_no_token(app):
@@ -93,6 +105,12 @@ def test_legacy_machine_mapped_to_person(app, store):
     p = store.authenticate(LEGACY, machine="pc")
     assert (p.person_id, p.person_name, p.legacy, p.device_name) == (app.ann.id, "ann", True, "pc")
     assert store.authenticate(LEGACY, machine="other").is_admin()
+    with store.lock:
+        store.db.execute("INSERT INTO settings (key, value) VALUES ('legacy:bad', 'x'),"
+                         " ('legacy:gone', '9999')")
+    assert store.authenticate(LEGACY, machine="bad").is_admin()
+    gone = store.authenticate(LEGACY, machine="gone")
+    assert gone.is_admin() and gone.device_name == "legacy"
     run(call(app.legacy, ANN, "who"))
     assert store.agent(ANN["key"]).person_id == app.ann.id
 

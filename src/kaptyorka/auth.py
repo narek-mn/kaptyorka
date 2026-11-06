@@ -1,6 +1,7 @@
 """ASGI auth: each device token resolves to a principal; failed tokens are rate-limited."""
+import hashlib
 import time
-from typing import Callable, Dict, List
+from typing import Callable, Dict, Hashable, List
 from urllib.parse import unquote
 
 from starlette.responses import PlainTextResponse
@@ -8,14 +9,14 @@ from starlette.websockets import WebSocketClose
 
 
 class RateLimiter:
-    """Counts failures per client address over a sliding window."""
+    """Counts failures per key (client address and token hash) over a sliding window."""
 
     def __init__(self, limit: int = 10, window_s: float = 60,
                  clock: Callable[[], float] = time.monotonic):
         self.limit, self.window_s, self.clock = limit, window_s, clock
-        self.failures: Dict[str, List[float]] = {}
+        self.failures: Dict[Hashable, List[float]] = {}
 
-    def _recent(self, addr: str) -> List[float]:
+    def _recent(self, addr: Hashable) -> List[float]:
         now = self.clock()
         recent = [t for t in self.failures.get(addr, []) if now - t < self.window_s]
         if recent:
@@ -24,10 +25,10 @@ class RateLimiter:
             self.failures.pop(addr, None)
         return recent
 
-    def blocked(self, addr: str) -> bool:
+    def blocked(self, addr: Hashable) -> bool:
         return len(self._recent(addr)) >= self.limit
 
-    def hit(self, addr: str) -> bool:
+    def hit(self, addr: Hashable) -> bool:
         """Record a failure; True when the address is still allowed."""
         recent = self._recent(addr)
         recent.append(self.clock())
@@ -62,24 +63,21 @@ class Auth:
         if scope["type"] == "lifespan" or self._open(scope):
             await self.app(scope, receive, send)
             return
-        client = scope.get("client")
-        addr = client[0] if client else "?"
-        principal = None
-        if not self.limiter.blocked(addr):
-            headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
-            token = bearer(headers)
-            if token:
-                machine = unquote(headers.get("x-kaptyorka-machine") or "") or None
-                principal = self.store.authenticate(token, machine=machine)
-            if principal is None:
-                self.limiter.hit(addr)
-                deny = (PlainTextResponse("unauthorized", status_code=401) if scope["type"] == "http"
-                        else WebSocketClose(1008))
-                await deny(scope, receive, send)
-                return
-        if principal is None:  # blocked before any lookup
-            deny = (PlainTextResponse("too many failed logins", status_code=429)
-                    if scope["type"] == "http" else WebSocketClose(1008))
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
+        token = bearer(headers)
+        machine = unquote(headers.get("x-kaptyorka-machine") or "") or None
+        principal = self.store.authenticate(token, machine=machine) if token else None
+        if principal is None:
+            # keyed by address and token, so one revoked device cannot lock out a shared host
+            client = scope.get("client")
+            key = (client[0] if client else "?", hashlib.sha256(token.encode()).hexdigest())
+            if self.limiter.blocked(key):
+                deny = (PlainTextResponse("too many failed logins", status_code=429)
+                        if scope["type"] == "http" else WebSocketClose(1008))
+            else:
+                self.limiter.hit(key)
+                deny = (PlainTextResponse("unauthorized", status_code=401)
+                        if scope["type"] == "http" else WebSocketClose(1008))
             await deny(scope, receive, send)
             return
         scope.setdefault("state", {})["principal"] = principal

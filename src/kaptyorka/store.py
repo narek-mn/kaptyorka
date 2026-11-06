@@ -249,13 +249,22 @@ class Store:
             if dev is None:
                 return None
             person_id, device_name = dev["person_id"], dev["name"]
+            who = None
             if dev["legacy"] and machine:
                 mapped = self.db.execute("SELECT value FROM settings WHERE key=?",
                                          (f"legacy:{machine}",)).fetchone()
-                if mapped is not None:
-                    person_id, device_name = int(mapped["value"]), machine
-            who = self.db.execute("SELECT name, role FROM people WHERE id=?",
-                                  (person_id,)).fetchone()
+                try:  # a bad value or a deleted person counts as unmapped
+                    mapped_id = int(mapped["value"]) if mapped is not None else None
+                except ValueError:
+                    mapped_id = None
+                if mapped_id is not None:
+                    who = self.db.execute("SELECT name, role FROM people WHERE id=?",
+                                          (mapped_id,)).fetchone()
+                    if who is not None:
+                        person_id, device_name = mapped_id, machine
+            if who is None:
+                who = self.db.execute("SELECT name, role FROM people WHERE id=?",
+                                      (person_id,)).fetchone()
             if who is None:
                 return None
             self.db.execute("UPDATE devices SET last_used=? WHERE id=?", (self.clock(), dev["id"]))
