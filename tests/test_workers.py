@@ -358,13 +358,58 @@ def test_boss_blip_is_not_unattended(store, ws, alice, alice_p, boss, clock):
     assert [w["state"] for w in ws.unattended_for(alice)] == ["abandoned"]
 
 
-def test_worker_session_gone_closes_it(store, ws, alice, alice_p, boss, clock):
-    linked(store, ws, alice, alice_p, boss)
-    ws.tick(clock[0] + ONLINE_S + 590)
+def bridge_beat(store, token, t, clock):
+    """The bridge reports at time t, without the worker's session."""
+    clock[0] = t
+    store.authenticate(token)
+
+
+def test_worker_session_gone_closes_it_and_back_reopens(store, ws, alice, alice_p, boss,
+                                                        clock):
+    dev, token = linked(store, ws, alice, alice_p, boss)
+    start = clock[0]
+    bridge_beat(store, token, start + ONLINE_S + 590, clock)
+    ws.tick(clock[0])
     assert ws.by_name("proj-a-w1")["state"] != "closed"
-    ws.tick(clock[0] + ONLINE_S + 601)
+    bridge_beat(store, token, start + ONLINE_S + 601, clock)
+    ws.tick(clock[0])
     w = ws.by_name("proj-a-w1")
     assert w["state"] == "closed" and w["error"] == "session gone"
+    worker_up(store, ws, dev, token)  # the session is reported again
+    assert ws.tick(clock[0]) == [("claude:boss", "worker `proj-a-w1` is back")]
+    w = ws.by_name("proj-a-w1")
+    assert w["state"] == "up" and w["error"] == ""
+    assert ws.tick(clock[0]) == []
+
+
+def test_bridge_offline_is_not_session_gone(store, ws, alice, alice_p, boss, clock):
+    linked(store, ws, alice, alice_p, boss)
+    ws.tick(clock[0] + 3600)  # the bridge is silent: nobody can say the session is gone
+    assert ws.by_name("proj-a-w1")["state"] in ("up", "unattended")
+
+
+def test_hub_down_is_not_session_gone(store, ws, alice, alice_p, boss, clock):
+    dev, token = linked(store, ws, alice, alice_p, boss)
+    clock[0] += 900  # the hub was down 15 minutes and starts again
+    again = WorkerStore(store)
+    store.authenticate(token)  # the bridge's first beat, before it lists sessions
+    again.tick(clock[0])
+    assert again.by_name("proj-a-w1")["state"] != "closed"
+    worker_up(store, again, dev, token)
+    bridge_beat(store, token, clock[0] + 119, clock)
+    again.tick(clock[0])
+    assert again.by_name("proj-a-w1")["state"] != "closed"
+
+
+def test_unattended_without_since_does_not_stop_the_tick(store, ws, alice, alice_p, boss,
+                                                         clock):
+    linked(store, ws, alice, alice_p, boss)
+    store.db.execute("UPDATE workers SET state='unattended', unattended_since=NULL")
+    later = clock[0] + ONLINE_S + 10  # the boss is offline: the worker stays unattended
+    assert any("is unattended" in x["text"] for x in ws.warnings(later, "0.0.1"))
+    ws.tick(later)
+    ws.tick(later + ABANDONED_S + 1)
+    assert ws.by_name("proj-a-w1")["state"] == "abandoned"
 
 
 def test_waiting_notice_once_per_half_hour(store, ws, alice, alice_p, boss, clock):

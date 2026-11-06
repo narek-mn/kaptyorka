@@ -14,6 +14,7 @@ MAX_FACT = 200
 UNATTENDED_S = 120  # boss offline this long: the worker is unattended
 ABANDONED_S = 86400  # unattended this long: abandoned
 GONE_S = 600  # the worker's own session offline this long: closed
+STARTUP_S = 120  # after the hub starts, bridges get this long to report before any is gone
 OFFLINE_S = 600  # bridge silent this long: warn
 REOFFER_S = 60
 WAITING_S = 1800  # how often a boss hears that a worker waits for a permission
@@ -110,11 +111,12 @@ def _version_tuple(v: str) -> Tuple[int, ...]:
 
 
 class WorkerStore:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, started: Optional[float] = None):
         self.store = store
         self.db = store.db
         self.lock = store.lock
         self.clock = store.clock
+        self.started = store.clock() if started is None else started  # the hub's start
 
     # device facts
 
@@ -508,15 +510,19 @@ class WorkerStore:
         notices = []
         with self.lock:
             rows = self.db.execute(
-                "SELECT w.*, a.last_seen AS own_seen, a.activity, b.last_seen AS boss_seen"
-                " FROM workers w LEFT JOIN agents a ON a.key=w.key"
-                " LEFT JOIN agents b ON b.key=w.boss_key"
+                "SELECT w.*, a.last_seen AS own_seen, a.activity, b.last_seen AS boss_seen,"
+                " d.last_used AS bridge_seen FROM workers w LEFT JOIN agents a ON a.key=w.key"
+                " LEFT JOIN agents b ON b.key=w.boss_key LEFT JOIN devices d ON d.id=w.device_id"
                 " WHERE w.state IN ('up','unattended')").fetchall()
+            # gone only when its bridge reports and still misses it; never just after a restart
+            judging = now >= self.started + STARTUP_S
             for w in rows:
                 boss_online = w["boss_key"].startswith("web:") or (  # the page: always there
                     w["boss_seen"] is not None and w["boss_seen"] > now - ONLINE_S)
                 own = w["own_seen"] if w["own_seen"] is not None else w["up_at"]
-                if own + ONLINE_S < now - GONE_S:
+                bridge_online = w["bridge_seen"] is not None and \
+                    w["bridge_seen"] > now - ONLINE_S
+                if judging and bridge_online and own + ONLINE_S < now - GONE_S:
                     self.db.execute("UPDATE workers SET state='closed', error='session gone',"
                                     " closed_at=? WHERE name=?", (now, w["name"]))
                     continue
@@ -529,6 +535,10 @@ class WorkerStore:
                     self.db.execute("UPDATE workers SET state='up', unattended_since=NULL"
                                     " WHERE name=?", (w["name"],))
                     continue
+                if w["state"] == "unattended" and w["unattended_since"] is None:
+                    self.db.execute("UPDATE workers SET unattended_since=? WHERE name=?",
+                                    (now, w["name"]))  # never NULL here: start its clock
+                    continue
                 if w["state"] == "unattended" and w["unattended_since"] < now - ABANDONED_S:
                     self.db.execute("UPDATE workers SET state='abandoned' WHERE name=?",
                                     (w["name"],))
@@ -540,6 +550,17 @@ class WorkerStore:
                     notices.append((w["boss_key"],
                                     f"worker `{w['name']}` is waiting for a permission; attach"
                                     f" with `{self._dict(w)['attach']}`"))
+            for w in self.db.execute(
+                    "SELECT w.name, w.key, w.boss_key FROM workers w JOIN agents a ON a.key=w.key"
+                    " WHERE w.state='closed' AND w.error='session gone' AND a.last_seen > ?",
+                    (now - ONLINE_S,)).fetchall():
+                if self.db.execute("SELECT 1 FROM workers WHERE key=? AND name!=? AND state IN"
+                                   f" ({','.join('?' * len(LIVE))})",
+                                   (w["key"], w["name"], *LIVE)).fetchone():
+                    continue  # the session is another worker's now
+                self.db.execute("UPDATE workers SET state='up', error='', closed_at=NULL,"
+                                " unattended_since=NULL WHERE name=?", (w["name"],))
+                notices.append((w["boss_key"], f"worker `{w['name']}` is back"))
             for w in self.db.execute(
                     "SELECT w.name, w.boss_key, w.error FROM workers w LEFT JOIN agents b"
                     " ON b.key=w.boss_key WHERE w.state='failed' AND w.told IS NULL"
@@ -639,7 +660,7 @@ class WorkerStore:
             elif w["state"] == "abandoned":
                 rest.append({**item, "text": f"worker {w['name']} on {w['host']} was abandoned"})
             else:
-                hhmm = time.strftime("%H:%M", time.localtime(w["unattended_since"]))
+                hhmm = time.strftime("%H:%M", time.localtime(w["unattended_since"] or now))
                 rest.append({**item, "text": f"worker {w['name']} on {w['host']} is unattended"
                              f" since {hhmm}"})
         rest.sort(key=lambda x: x["host"])
