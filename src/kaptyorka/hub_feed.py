@@ -1,5 +1,6 @@
 """What the page shows one viewer: the feed filtered by their person (the admin sees all)."""
 from dataclasses import asdict
+from typing import Optional
 
 from kaptyorka.store import PRIVATE, Agent, Principal, Store, private_name
 
@@ -18,13 +19,17 @@ def visible(store: Store, principal: Principal, person_id, project: str) -> bool
         store.project_role(project, principal.person_id) is not None
 
 
-def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: float) -> dict:
-    """One online session as the viewer may see it (the who() rule)."""
+def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: float,
+                workers: Optional[dict] = None) -> dict:
+    """One online session as the viewer may see it (the who() rule). `workers` maps the
+    sessions of live workers to their names; a worker's name shows only with its project."""
     mine = a.person_id == principal.person_id
     row = {**agent_row(a, now), "mine": mine, "person": names.get(a.person_id, "")}
     if not visible(store, principal, a.person_id, a.project):
         row["project"] = PRIVATE
         row["name"] = private_name(a.name, a.machine, a.tool, a.project)
+    elif workers and a.key in workers:
+        row["worker"] = workers[a.key]
     if mine:
         row["doors"] = [d["with"] or d["person"] for d in store.doors_for(a.key)]
     return row

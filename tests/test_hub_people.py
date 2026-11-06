@@ -146,7 +146,7 @@ def test_machines_route_filtered(hub):
     for t, host in ((ta, "h-a"), (tb, "h-b")):
         facts = {"host": host, "os_user": "u", "version": "0.2.0"}
         assert http.request("POST", hub.url + "/bridge/heartbeat", t,
-                            {"machine": host, "sessions": [], "facts": facts})[0] == 204
+                            {"machine": host, "sessions": [], "facts": facts})[0] == 200
     status, rows = http.request("GET", hub.url + "/api/machines", ADMIN)
     assert status == 200 and sorted(r["host"] for r in rows) == ["h-a", "h-b"]
     _, rows = http.request("GET", hub.url + "/api/machines", ta)
@@ -360,7 +360,7 @@ def setup_access(hub):
     assert http.request("POST", hub.url + "/api/projects", ADMIN, {"name": "shop"})[0] == 204
     facts = {"host": "h-b", "os_user": "u", "version": "0.2.0"}
     assert http.request("POST", hub.url + "/bridge/heartbeat", tb,
-                        {"machine": "h-b", "sessions": [], "facts": facts})[0] == 204
+                        {"machine": "h-b", "sessions": [], "facts": facts})[0] == 200
     return ta, as_person(hub, ta), ident("k:a", "x")
 
 

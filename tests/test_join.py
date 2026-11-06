@@ -156,10 +156,10 @@ def test_redeem_returns_hub_token_secret(monkeypatch):
 
     def fake(method, url, token, body=None, **kw):
         seen.update(method=method, url=url, body=body)
-        return 200, {"token": "tok", "secret": "sec", "hub": "http://h:1"}
+        return 200, {"token": "tok", "secret": "sec", "hub": "http://h:1", "person": "alice"}
 
     monkeypatch.setattr("kaptyorka.http.request", fake)
-    assert join.redeem("http://h:1/i/CODE123", "pc") == ("http://h:1", "tok", "sec")
+    assert join.redeem("http://h:1/i/CODE123", "pc") == ("http://h:1", "tok", "sec", "alice")
     assert seen["method"] == "POST" and seen["url"] == "http://h:1/i/CODE123"
     assert seen["body"]["device_name"] == "pc" and seen["body"]["host"] and seen["body"]["os_user"]
 
@@ -183,3 +183,19 @@ def test_join_keeps_saved_secret_for_same_token(hub, home):
     paths.save_config({"hub": hub.url, "token": "T", "machine": "pc", "secret": "s3"})
     assert main(hub.url, "T", "pc", adapters=[FakeAdapter("a")], install=no_service([])) == 0
     assert paths.load_config()["secret"] == "s3"
+
+
+def test_join_saves_person(hub, home):
+    from kaptyorka import http, join
+
+    assert http.request("POST", hub.url + "/api/people", "T", {"name": "alice"})[0] == 200
+    _, inv = http.request("POST", hub.url + "/api/invites", "T", {"person": "alice"})
+    got = join.redeem(inv["url"], "box-1")
+    assert got is not None and got[3] == "alice"
+    hub_url, token, secret, person = got
+    assert main(hub_url, token, "box-1", adapters=[FakeAdapter("a")], install=no_service([]),
+                secret=secret, person=person) == 0
+    assert paths.load_config()["person"] == "alice"
+    # a plain rejoin with the same token keeps it
+    assert main(hub_url, token, "box-1", adapters=[FakeAdapter("a")], install=no_service([])) == 0
+    assert paths.load_config()["person"] == "alice"

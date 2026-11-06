@@ -18,6 +18,7 @@ REOFFER_S = 60
 WAITING_S = 1800  # how often a boss hears that a worker waits for a permission
 WAITING = ("permission_prompt", "needs_input")
 LIVE = ("starting", "up", "unattended", "abandoned")
+HUB_KEY, HUB_NAME = "hub:workers", "hub"  # the sender of worker notices; not a session
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS workers (
@@ -356,6 +357,89 @@ class WorkerStore:
                             (w["boss_person"], device_id, key))
             return True
 
+    def fail(self, worker: str, error: str, device_id: int) -> bool:
+        """The bridge could not start a worker it took: it fails with the bridge's error."""
+        error = (error or "")[:MAX_FACT] or "launch failed"
+        with self.lock:
+            w = self._row(worker)
+            if w is None or w["state"] != "starting" or w["device_id"] != device_id:
+                return False
+            now = self.clock()
+            self.db.execute("UPDATE workers SET state='failed', error=?, closed_at=? WHERE name=?",
+                            (error, now, worker))
+            self.db.execute("UPDATE launches SET done_at=?, ok=0, error=? WHERE worker=?"
+                            " AND kind='launch' AND done_at IS NULL", (now, error, worker))
+            return True
+
+    def notify(self, to_key: str, text: str) -> bool:
+        """A notice from the hub to a boss: a session, or `web:<person>` (the person's page).
+        Written straight in: the hub belongs to no person, so send()'s door rule would refuse
+        it, and a page cannot be named as a target."""
+        with self.lock:
+            now = self.clock()
+            if to_key.startswith("web:"):
+                t = {"name": to_key[4:], "machine": "", "tool": "", "project": ""}
+                read_at = now  # a person reads it on the page
+            else:
+                t = self.db.execute("SELECT * FROM agents WHERE key=?", (to_key,)).fetchone()
+                if t is None:
+                    return False
+                read_at = None
+            self.db.execute(
+                "INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool,"
+                " project, text, created, read_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (HUB_KEY, HUB_NAME, to_key, t["name"], t["machine"], t["tool"],
+                 t["project"], text, now, read_at))
+            return True
+
+    def boss_key(self, name: str) -> Optional[str]:
+        with self.lock:
+            row = self._row(name)
+            return row["boss_key"] if row else None
+
+    def live_keys(self) -> dict:
+        """{session key: worker name} for the sessions of live workers."""
+        with self.lock:
+            return {r["key"]: r["name"] for r in self.db.execute(
+                "SELECT key, name FROM workers WHERE key IS NOT NULL AND state IN"
+                f" ({','.join('?' * len(LIVE))})", LIVE)}
+
+    def first_message(self, name: str) -> str:
+        with self.lock:
+            row = self.db.execute("SELECT body FROM launches WHERE worker=? AND kind='launch'"
+                                  " ORDER BY id DESC", (name,)).fetchone()
+            return json.loads(row["body"]).get("first_message", "") if row else ""
+
+    def folder_people(self, host: str, os_user: str, folder: str, now: float) -> List[str]:
+        """Names of the people with an online session in that folder ("" for none known)."""
+        with self.lock:
+            return [r["name"] or "" for r in self.db.execute(
+                "SELECT p.name FROM agents a LEFT JOIN people p ON p.id=a.person_id"
+                " WHERE a.host=? AND a.os_user=? AND a.cwd=? AND a.last_seen>?",
+                (host, os_user, folder, now - ONLINE_S))]
+
+    def invite_person(self, code: str) -> str:
+        """The name of the person an invite is for ("" when there is no such invite)."""
+        with self.lock:
+            row = self.db.execute("SELECT p.name FROM invites i JOIN people p ON p.id=i.person_id"
+                                  " WHERE i.code=?", (code,)).fetchone()
+            return row["name"] if row else ""
+
+    def registered(self, project: str) -> bool:
+        with self.lock:
+            return self.store._registered(project)
+
+    def auto_update(self, device_id: int) -> bool:
+        """The device's setting; unset, on for a member's device and off for the admin's."""
+        with self.lock:
+            s = self.db.execute(
+                "SELECT s.auto_update, p.role FROM devices d JOIN people p ON p.id=d.person_id"
+                " LEFT JOIN device_settings s ON s.device_id=d.id WHERE d.id=?",
+                (device_id,)).fetchone()
+            if s is None:
+                return False
+            return bool(s["auto_update"]) if s["auto_update"] is not None else s["role"] != "admin"
+
     def by_key(self, key: str) -> Optional[dict]:
         with self.lock:
             row = self.db.execute("SELECT * FROM workers WHERE key=? ORDER BY created DESC",
@@ -444,11 +528,13 @@ class WorkerStore:
                 raise KaptyorkaError("the new boss must be a session of yours")
             self.db.execute("UPDATE workers SET boss_key=?, state='up', unattended_since=NULL"
                             " WHERE name=?", (new_boss_key, name))
+            moved = 0
             if w["key"] is not None:
-                self.db.execute("UPDATE messages SET to_key=?, push_state='new' WHERE to_key=?"
-                                " AND sender_key=? AND read_at IS NULL",
-                                (new_boss_key, w["boss_key"], w["key"]))
-            return self._dict(self._row(name))
+                moved = self.db.execute(
+                    "UPDATE messages SET to_key=?, push_state='new' WHERE to_key=?"
+                    " AND sender_key=? AND read_at IS NULL",
+                    (new_boss_key, w["boss_key"], w["key"])).rowcount
+            return {**self._dict(self._row(name)), "delivered": moved}
 
     def close(self, principal: Principal, name: str) -> dict:
         with self.lock:

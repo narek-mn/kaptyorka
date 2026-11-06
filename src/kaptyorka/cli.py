@@ -353,10 +353,13 @@ def _join(args) -> int:
         got = join.redeem(args.invite, args.name)
         if got is None:
             return 1
-        hub, token, secret = got
+        hub, token, secret, person = got
         # the invite is spent: keep the token so a plain `kaptyorka join` can retry
-        paths.save_config({"hub": hub, "token": token, "machine": args.name, "secret": secret})
-        return join.main(hub, token, args.name, only=args.only, secret=secret)
+        cfg = {"hub": hub, "token": token, "machine": args.name, "secret": secret}
+        if person:
+            cfg["person"] = person
+        paths.save_config(cfg)
+        return join.main(hub, token, args.name, only=args.only, secret=secret, person=person)
     if not args.hub and not args.token:  # no flags: the previous arguments, saved by the last join
         cfg = paths.load_config()
         if not cfg.get("hub") or not cfg.get("token"):

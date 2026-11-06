@@ -56,7 +56,8 @@ class Bridge:
         status, _ = http.request("POST", self.cfg["hub"] + "/bridge/heartbeat", self.cfg["token"],
                                  {"machine": self.cfg["machine"], "sessions": sessions,
                                   "tools": tools, "facts": identity.facts()})
-        self._report("heartbeat", None if status == 204 else f"hub answered {status} to heartbeat")
+        self._report("heartbeat", None if status in (200, 204)
+                     else f"hub answered {status} to heartbeat")
 
     def _ack(self, msg_id: int, ok: bool) -> None:
         url, body = self.cfg["hub"] + "/bridge/ack", {"id": msg_id, "ok": ok}

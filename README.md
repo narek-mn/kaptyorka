@@ -129,6 +129,10 @@ Push means a running session gets a message without anyone typing. Pull only mea
 | `notes_list` | List notes (team notes, or a project's with `project=`) |
 | `notes_read` | Read a note |
 | `notes_write` | Write a note. Notes outlive sessions |
+| `work` | Start a worker session for you on another machine |
+| `workers` | List your workers |
+| `adopt` | Take over one of your unattended workers |
+| `close_worker` | End one of your workers |
 
 Rename a Claude Code session with `/rename <name>` and agents can reach it by that name: `send(to="<name>", ...)`.
 

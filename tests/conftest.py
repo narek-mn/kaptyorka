@@ -58,7 +58,8 @@ def start_hub(store, port: int = 0):
 
     from kaptyorka.hub import build_app
 
-    server = uvicorn.Server(uvicorn.Config(build_app(store), host="127.0.0.1", port=port,
+    app = build_app(store)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port,
                                            log_level="warning", timeout_graceful_shutdown=1))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -73,6 +74,7 @@ def start_hub(store, port: int = 0):
         thread.join()
 
     stop.port = server.servers[0].sockets[0].getsockname()[1]
+    stop.app = app
     return stop
 
 

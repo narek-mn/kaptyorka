@@ -21,7 +21,8 @@ HEARTBEAT_S = 10
 OPENCODE_META = "ai.opencode/sessionID"  # OpenCode V2 tags each tool call with its session
 TRANSPORT_ERRORS = (types.CONNECTION_CLOSED, types.REQUEST_TIMEOUT)  # the client's, not the hub's
 FALLBACK_TOOLS = ["who", "send", "inbox", "status", "notes_list", "notes_read", "notes_write",
-                  "projects", "knock", "answer", "door_close", "request_access", "fetch_file"]
+                  "projects", "knock", "answer", "door_close", "request_access", "fetch_file",
+                  "work", "workers", "adopt", "close_worker"]
 
 
 class Relay:

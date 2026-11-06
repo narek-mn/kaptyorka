@@ -1,5 +1,6 @@
 """The hub app: MCP tools and plain routes over HTTP behind per-device tokens."""
 import asyncio
+import contextlib
 import functools
 import html
 import importlib.resources
@@ -8,7 +9,7 @@ import math
 import mimetypes
 import re
 from dataclasses import asdict
-from typing import Dict, List, Mapping, Union
+from typing import Dict, List, Mapping, Optional, Union
 from urllib.parse import unquote
 
 from mcp.server.mcpserver import Context, MCPServer
@@ -17,12 +18,16 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
+from kaptyorka import __version__
 from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, clean
+from kaptyorka.workers import WorkerStore
 
 MAX_WAIT_S = 25
+TICK_S = 15
+WORKER_BRIEF_S = 300  # a worker session this young hears its task in the start brief
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
        "style-src 'unsafe-inline'; img-src 'self' data:")
 
@@ -45,7 +50,9 @@ INSTRUCTIONS = (
     "asking your person; door_close(to) ends a door; "
     "inbox() reads your messages; status(text) says what you are working on; "
     "notes_list/notes_read/notes_write share a team board, one text per topic; "
-    "pass project to use that project's notes. projects() lists the projects you have a role in."
+    "pass project to use that project's notes. projects() lists the projects you have a role in. "
+    "work(project, task) starts a worker session for you on another machine; workers() lists "
+    "yours; adopt(name) takes over an unattended one; close_worker(name) ends one."
 )
 
 
@@ -110,6 +117,7 @@ def _tool_errors(fn):
 def build_app(store: Store) -> Starlette:
     server = MCPServer("kaptyorka", instructions=INSTRUCTIONS)
     sent = {"event": asyncio.Event()}  # set and replaced after each send; wakes bridge polls
+    ws = WorkerStore(store)
 
     def principal_of(headers: Mapping) -> Principal:
         """The caller's principal from its bearer token (the Auth middleware already let it in)."""
@@ -142,12 +150,29 @@ def build_app(store: Store) -> Starlette:
         agent, principal = caller(ctx)
         now = store.clock()
         names = {p["id"]: p["name"] for p in store.people()}
-        return [{**session_row(store, a, principal, names, now), "you": a.key == agent.key}
-                for a in store.online()]
+        live = ws.live_keys()
+        mine = ws.by_key(agent.key) if agent.key in live else None
+        boss = ws.boss_key(mine["name"]) if mine else None  # a worker sees its boss marked
+        rows = []
+        for a in store.online():
+            row = {**session_row(store, a, principal, names, now, live), "you": a.key == agent.key}
+            if a.key == boss:
+                row["boss"] = True
+            rows.append(row)
+        return rows
 
     def wake_bridges():
         sent["event"].set()
         sent["event"] = asyncio.Event()
+
+    def tell(to_key: str, text: str) -> None:
+        if ws.notify(to_key, text):
+            wake_bridges()
+
+    def tick() -> None:
+        """Move workers on; deliver what the bosses hear."""
+        for to_key, text in ws.tick(store.clock()):
+            tell(to_key, text)
 
     @server.tool()
     @_tool_errors
@@ -254,6 +279,74 @@ def build_app(store: Store) -> Starlette:
         rid = store.request_access(principal.person_id, kind, target, why)
         return f"requested #{rid}; the admin sees it on the page"
 
+    def no_machine(project: str, machine: Optional[str], tool: str, usable: List[dict],
+                   reasons: List[str]) -> str:
+        if machine is not None and not usable and not reasons:
+            reasons = [f"no machine named {machine} that you may use"]
+        for c in usable:
+            who = f"{c['host']} ({c['os_user']})"
+            if not c.get("folder"):
+                reasons.append(f"{who}: no folder for {project}")
+            elif tool != "claude-code" and not c.get("tmux"):
+                reasons.append(f"{who}: no tmux (only Claude Code workers can run there)")
+        return f"no machine can take {project}: " + ("; ".join(reasons)
+                                                     or "no machine you may use is joined")
+
+    @server.tool()
+    @_tool_errors
+    async def work(project: str, task: str, ctx: Context, machine: str = "",
+                   tool: str = "claude-code", resume: str = "") -> str:
+        """Start a worker session for you on another machine: in project's folder there, with
+        task as its first message. machine: one host by name; tool: claude-code (default),
+        codex or opencode; resume: a session id to continue."""
+        agent, principal = caller(ctx)
+        if not (store.may_write_project(project, principal)
+                or (agent.project == project and not ws.registered(project))):
+            raise KaptyorkaError(f"you may not start workers in {project}: that takes the write"
+                                 " role (or your own unregistered folder)")
+        tool = clean(tool, MAX_IDENT) or "claude-code"
+        usable, reasons = ws.candidates(principal, project, machine or None)
+        chosen = ws.choose(usable, project, tool, store.clock())
+        if chosen is None:
+            return no_machine(project, machine or None, tool, usable, reasons)
+        if chosen["occupied"]:
+            others = [n for n in ws.folder_people(chosen["host"], chosen["os_user"],
+                                                  chosen["folder"], store.clock())
+                      if n and n != principal.person_name]
+            if others:  # the manager handles this later; for now the asker picks again
+                return (f"busy: {chosen['host']} has {others[0]}'s session in that folder;"
+                        " ask again later or name another machine")
+        w = ws.create(principal, project, task, chosen, tool, agent.key, resume or None,
+                      chosen["occupied"])
+        wake_bridges()
+        return (f"starting `{w['name']}` on {w['host']} ({w['os_user']})"
+                + (" in a worktree, the folder is busy" if w["worktree"] else ""))
+
+    @server.tool()
+    @_tool_errors
+    def workers(ctx: Context) -> List[dict]:
+        """Your workers (the admin: everyone's): name, project, host, state, attach line."""
+        _, principal = caller(ctx)
+        return ws.list(principal)
+
+    @server.tool()
+    @_tool_errors
+    async def adopt(name: str, ctx: Context) -> str:
+        """Become the boss of one of your unattended workers; its held messages come to you."""
+        agent, principal = caller(ctx)
+        w = ws.adopt(principal, name, agent.key)
+        wake_bridges()
+        return f"you are now the boss of `{name}`; {w['delivered']} held messages delivered"
+
+    @server.tool()
+    @_tool_errors
+    async def close_worker(name: str, ctx: Context) -> str:
+        """End one of your workers (its session on that machine is stopped)."""
+        _, principal = caller(ctx)
+        w = ws.close(principal, name)
+        wake_bridges()
+        return f"closing `{name}`" + (f"; {w['note']}" if w.get("note") else "")
+
     @server.custom_route("/bridge/heartbeat", methods=["POST"])
     @_bad_request
     async def bridge_heartbeat(request: Request) -> Response:
@@ -266,7 +359,15 @@ def build_app(store: Store) -> Starlette:
                                            machine=str(body["machine"])) or principal
         store.heartbeat(body["machine"], body["sessions"], body.get("tools", ()),
                         principal=principal, facts=facts if isinstance(facts, dict) else None)
-        return Response(status_code=204)
+        if principal is None:
+            return Response(status_code=204)
+        own = not principal.legacy
+        if own and (isinstance(facts, dict) or isinstance(body.get("folders"), dict)):
+            ws.facts_seen(principal.device_id, facts, body.get("folders"))
+        return JSONResponse({"version": __version__,
+                             "auto_update": own and ws.auto_update(principal.device_id),
+                             "projects": [p["name"] for p in store.projects_for(principal)],
+                             "you": principal.person_name, "shared": principal.shared})
 
     @server.custom_route("/bridge/poll", methods=["GET"])
     @_bad_request
@@ -279,11 +380,14 @@ def build_app(store: Store) -> Starlette:
         event = sent["event"]  # taken before offer, so a send after offer still wakes us
         principal = request.scope["state"]["principal"]
         version = store.bridge_version(principal, machine)
-        items = store.offer(machine, version, principal)
+
+        def offer():
+            return store.offer(machine, version, principal) + ws.offer(principal.device_id)
+        items = offer()
         if not items and wait:
             try:
                 await asyncio.wait_for(event.wait(), wait)
-                items = store.offer(machine, version, principal)
+                items = offer()
             except asyncio.TimeoutError:
                 pass
         return JSONResponse(items)
@@ -292,8 +396,33 @@ def build_app(store: Store) -> Starlette:
     @_bad_request
     async def bridge_ack(request: Request) -> Response:
         body = await request.json()
-        if not store.ack(int(body["id"]), body["ok"] is True, request.scope["state"]["principal"]):
+        principal = request.scope["state"]["principal"]
+        if body.get("launch") is True:
+            if not ws.ack(int(body["id"]), body["ok"] is True, str(body.get("error") or ""),
+                          principal.device_id):
+                return PlainTextResponse("no such launch", status_code=404)
+            return Response(status_code=204)
+        if not store.ack(int(body["id"]), body["ok"] is True, principal):
             return PlainTextResponse("no such message", status_code=404)
+        return Response(status_code=204)
+
+    @server.custom_route("/bridge/worker", methods=["POST"])
+    @_bad_request
+    async def bridge_worker(request: Request) -> Response:
+        """The bridge started a worker (its session key) or could not (the error)."""
+        body = await request.json()
+        device_id = request.scope["state"]["principal"].device_id
+        name = str(body["worker"])
+        if "key" not in body:
+            if not ws.fail(name, str(body["error"]), device_id):
+                return PlainTextResponse("no such starting worker here", status_code=404)
+            tick()  # the boss hears it now
+            return Response(status_code=204)
+        if not ws.link(name, str(body["key"]), device_id):
+            return PlainTextResponse("no such starting worker here", status_code=404)
+        w = ws.by_name(name)
+        tell(ws.boss_key(name), f"worker `{name}` is up on {w['host']}; attach with"
+                                f" `{w['attach']}`")
         return Response(status_code=204)
 
     @server.custom_route("/bridge/rekeyed", methods=["POST"])
@@ -316,6 +445,8 @@ def build_app(store: Store) -> Starlette:
                  for m in unread]
         if request.query_params.get("event") == "start":
             principal = request.scope.get("state", {}).get("principal")
+            worker = ws.by_key(agent.key)
+            young = agent.started is not None and agent.started > store.clock() - WORKER_BRIEF_S
             others = [a for a in store.online() if a.key != agent.key]
             line = f"Kaptyorka: you are `{_titled(agent)}`. "
             if others:
@@ -334,7 +465,21 @@ def build_app(store: Store) -> Starlette:
             if principal is not None and principal.is_admin() and store.legacy_ready_to_disable():
                 line += (" All old machines have their own tokens;"
                          " switch the shared token off on the page.")
+            if principal is not None:
+                waiting = ws.unattended_for(principal.person_id)
+                if waiting:
+                    line += (" Unattended workers: "
+                             + ", ".join(f"{w['name']} ({w['host']})" for w in waiting)
+                             + "; adopt(name) takes one over.")
+                if principal.is_admin():
+                    warned = ws.warnings(store.clock(), __version__)[:3]
+                    if warned:
+                        line += " Warnings: " + "; ".join(w["text"] for w in warned) + "."
             parts.insert(0, line)
+            if worker is not None and young:  # some tools cannot take it on the command line
+                first = ws.first_message(worker["name"])
+                if first:
+                    parts.insert(0, first)
         return PlainTextResponse("\n\n".join(parts))
 
     @server.custom_route("/api/me", methods=["GET"])
@@ -562,12 +707,60 @@ def build_app(store: Store) -> Starlette:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
 
+    @server.custom_route("/api/devices/{device_id:int}/auto_update", methods=["POST"])
+    @_bad_request
+    async def api_device_auto_update(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        if body["on"] is not None and not isinstance(body["on"], bool):
+            raise ValueError("on must be true, false or null")
+        ws.set_auto_update(request.path_params["device_id"], body["on"])
+        return Response(status_code=204)
+
+    @server.custom_route("/api/workers", methods=["GET"])
+    async def api_workers(request: Request) -> Response:
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None:
+            return PlainTextResponse("unauthorized", status_code=401)
+        return JSONResponse(ws.list(principal))
+
+    async def worker_action(request: Request, close: bool) -> Response:
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None:
+            return PlainTextResponse("unauthorized", status_code=401)
+        name = request.path_params["name"]
+        try:
+            # the page acts as the person: a web boss hears its notices on the page
+            w = (ws.close(principal, name) if close
+                 else ws.adopt(principal, name, f"web:{principal.person_name}"))
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        wake_bridges()
+        return JSONResponse(w)
+
+    @server.custom_route("/api/workers/{name}/close", methods=["POST"])
+    async def api_worker_close(request: Request) -> Response:
+        return await worker_action(request, True)
+
+    @server.custom_route("/api/workers/{name}/adopt", methods=["POST"])
+    async def api_worker_adopt(request: Request) -> Response:
+        return await worker_action(request, False)
+
+    @server.custom_route("/api/warnings", methods=["GET"])
+    async def api_warnings(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        return JSONResponse(ws.warnings(store.clock(), __version__))
+
     @server.custom_route("/api/machines", methods=["GET"])
     async def api_machines(request: Request) -> Response:
         principal = request.scope.get("state", {}).get("principal")
         if principal is None:
             return PlainTextResponse("unauthorized", status_code=401)
-        return JSONResponse(store.machines(principal))
+        return JSONResponse(ws.machine_rows(principal))
 
     async def machine_grant(request: Request, grant: bool) -> Response:
         denied = admin_only(request)
@@ -772,6 +965,7 @@ def build_app(store: Store) -> Starlette:
         if limiter.blocked(key):
             return PlainTextResponse("too many failed attempts", status_code=429)
         body = await request.json()
+        person = ws.invite_person(code)  # read first: authenticating would mark the bridge seen
         try:
             token, secret = store.invite_redeem(code, str(body["device_name"]),
                                                 str(body.get("host", "")),
@@ -779,7 +973,8 @@ def build_app(store: Store) -> Starlette:
         except KaptyorkaError as e:
             limiter.hit(key)
             return PlainTextResponse(str(e), status_code=400)
-        return JSONResponse({"token": token, "secret": secret, "hub": hub_url(request)},
+        return JSONResponse({"token": token, "secret": secret, "hub": hub_url(request),
+                             "person": person},
                             headers={"Cache-Control": "no-store"})
 
     @server.custom_route("/i/{code}/web", methods=["POST"])
@@ -805,6 +1000,26 @@ def build_app(store: Store) -> Starlette:
         html = (importlib.resources.files("kaptyorka") / "web/index.html").read_text("utf-8")
         return HTMLResponse(html, headers={"Cache-Control": "no-store", "Content-Security-Policy": CSP})
 
+    async def tick_loop() -> None:
+        while True:
+            try:
+                tick()
+            except Exception as e:  # one bad tick must not stop the workers' clock
+                print(f"kaptyorka: worker tick failed: {e}", flush=True)
+            await asyncio.sleep(TICK_S)
+
     app = server.streamable_http_app(host="0.0.0.0")
     app.add_middleware(Auth, store=store, limiter=limiter)
+    app.state.tick = tick  # tests run a tick by hand
+    inner = app.router.lifespan_context
+
+    @contextlib.asynccontextmanager
+    async def lifespan(a):
+        async with inner(a) as state:
+            loop = asyncio.create_task(tick_loop())
+            try:
+                yield state
+            finally:
+                loop.cancel()
+    app.router.lifespan_context = lifespan
     return app

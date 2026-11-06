@@ -61,13 +61,13 @@ def feed(hub):
 
 def box2_online(hub, activity="idle"):
     assert heartbeat(hub, "box-2", [{"key": BOX2["key"], "tool": "claude-code",
-                                   "project": "proj-b", "activity": activity}]) == 204
+                                   "project": "proj-b", "activity": activity}]) == 200
 
 
 def test_heartbeat_makes_sessions_online(hub):
     assert heartbeat(hub, "box-2", [
         {"key": "claude:2", "tool": "claude-code", "project": "proj-b", "activity": "busy"},
-        {"key": "codex:3", "tool": "codex", "project": "proj-b", "activity": "idle"}]) == 204
+        {"key": "codex:3", "tool": "codex", "project": "proj-b", "activity": "idle"}]) == 200
     agents = feed(hub)["agents"]
     assert {a["name"] for a in agents} == {"box-2/claude-code/proj-b", "box-2/codex/proj-b"}
     assert {a["activity"] for a in agents} == {"busy", "idle"}
@@ -247,7 +247,7 @@ def test_brief_stop_and_tool_are_unread_only(hub, event):
 def test_label_in_feed_brief_and_cli_rows(hub):
     assert heartbeat(hub, "box-2", [{"key": "claude:2", "tool": "claude-code",
                                    "project": "proj-b", "label": "api-dev"},
-                                  {"key": "codex:3", "tool": "codex", "project": "proj-b"}]) == 204
+                                  {"key": "codex:3", "tool": "codex", "project": "proj-b"}]) == 200
     labels = {a["name"]: a["label"] for a in feed(hub)["agents"]}
     assert labels == {"box-2/claude-code/proj-b": "api-dev", "box-2/codex/proj-b": ""}
     ident = {"key": "codex:3", "machine": "box-2", "tool": "codex", "project": "proj-b"}

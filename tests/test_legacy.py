@@ -65,7 +65,7 @@ def beat(app, machine=MACHINE, facts=NEW, token=LEGACY, key="codex:1"):
                              {"machine": machine, "sessions": [
                                  {"key": key, "tool": "codex", "project": "proj"}],
                               "facts": facts})
-    assert status == 204
+    assert status == 200
 
 
 def poll(app, machine=MACHINE, token=LEGACY):

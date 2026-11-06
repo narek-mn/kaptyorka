@@ -23,8 +23,9 @@ def install_bridge(exe: str, install=None) -> bool:
     return True
 
 
-def redeem(url: str, name: str) -> Optional[Tuple[str, str, str]]:
-    """Use an invite link: (hub, token, secret), or None after printing why it failed."""
+def redeem(url: str, name: str) -> Optional[Tuple[str, str, str, str]]:
+    """Use an invite link: (hub, token, secret, person), or None after printing why it
+    failed."""
     m = re.fullmatch(r"(https?://[^/\s]+)/i/([\w-]+)/?", url.strip())
     if not m:
         print("that is not an invite link (expected http://<hub>/i/<code>)", file=sys.stderr)
@@ -44,12 +45,12 @@ def redeem(url: str, name: str) -> Optional[Tuple[str, str, str]]:
     if status != 200 or not isinstance(body, dict):
         print(f"invite failed: {body if isinstance(body, str) else status}", file=sys.stderr)
         return None
-    return body.get("hub") or base, body["token"], body["secret"]
+    return body.get("hub") or base, body["token"], body["secret"], str(body.get("person") or "")
 
 
 def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
          install=service.install, only: Optional[List[str]] = None,
-         secret: Optional[str] = None) -> int:
+         secret: Optional[str] = None, person: Optional[str] = None) -> int:
     hub = hub.strip()
     hub = (hub if "://" in hub else "http://" + hub).rstrip("/")
     token = token.strip().strip("'\"")
@@ -80,6 +81,10 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     secret = secret or (saved.get("secret") if saved.get("token") == token else None)
     if secret:
         cfg["secret"] = secret
+    # the person this device belongs to, from the invite: kept like the secret
+    person = person or (saved.get("person") if saved.get("token") == token else None)
+    if person:
+        cfg["person"] = person
     if only:
         # the bridge drives only these; a later --only adds to the earlier ones
         cfg["tools"] = sorted(set(only) | set(paths.load_config().get("tools", [])))
