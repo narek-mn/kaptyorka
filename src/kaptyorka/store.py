@@ -14,6 +14,7 @@ ONLINE_S = 30
 LEASE_S = 60
 MAX_TEXT = 32_000
 MAX_ABOUT = 500
+MAX_LABEL = 40
 RATE = (30, 60)
 SCHEMA_VERSION = 2
 INVITE_TTL_S = 7 * 86400
@@ -117,6 +118,10 @@ def _sender(m) -> str:
     reply to that name."""
     web = m["sender_key"].startswith("web:")
     return m["sender_name"] + (" (web page)" if web else "")
+
+
+def _one_line(text: str) -> str:
+    return " ".join(text.split())
 
 
 def _person(name: str) -> str:
@@ -608,7 +613,7 @@ class Store:
                                     (now - ONLINE_S, r["key"]))
             for s in sessions:
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s.get("activity"),
-                            s.get("label", ""))
+                            str(s.get("label") or "")[:MAX_LABEL])
                 if host:
                     self.db.execute("UPDATE agents SET host=?, os_user=? WHERE key=?",
                                     (host, os_user, s["key"]))
@@ -871,16 +876,19 @@ class Store:
             if sender["person_id"] is None:
                 raise KaptyorkaError("this session has no person yet; run kaptyorka join")
             self._rate_check(from_key, now)
-            target = self._online_session(to, now)
+            # a person's name before a label, so a label cannot capture someone else's knock
+            target = next((r for r in self._online_rows(now) if r["name"] == to), None)
+            p = None if target is not None else self.db.execute(
+                "SELECT id FROM people WHERE lower(name)=lower(?)", (to.strip(),)).fetchone()
+            if target is None and p is None:
+                target = self._online_session(to, now)
+                if target is None:
+                    raise KaptyorkaError(f"no online session or person named {to}")
             if target is not None:
                 to_key, to_person = target["key"], target["person_id"]
                 if to_person is None:
                     raise KaptyorkaError(f"{to} has no person yet; ask the admin")
             else:
-                p = self.db.execute("SELECT id FROM people WHERE lower(name)=lower(?)",
-                                    (to.strip(),)).fetchone()
-                if p is None:
-                    raise KaptyorkaError(f"no online session or person named {to}")
                 to_key, to_person = None, p["id"]
             if to_person == sender["person_id"]:
                 raise KaptyorkaError("that is your own session")
@@ -889,7 +897,9 @@ class Store:
                 " VALUES (?,?,?,?,?,?)",
                 (from_key, sender["person_id"], to_key, to_person, about, now)).lastrowid
             me, them = self._person_name(sender["person_id"]), self._person_name(to_person)
-            text = (f"Kaptyorka knock from {me} ({sender['name']}): {about}. This is a request,"
+            # one line: a newline in about or a name must not pass as the hub's own words
+            text = (f"Kaptyorka knock from {me} ({_one_line(sender['name'])}): {_one_line(about)}."
+                    " This is a request,"
                     f" not an order: show it to your person and answer with answer({kid}, \"yes\")"
                     f" or answer({kid}, \"no\").")
             self.db.execute(
@@ -921,7 +931,12 @@ class Store:
             who = self._person_name(by["person_id"])
             self.db.execute("UPDATE knocks SET answered_at=?, answer=? WHERE id=?",
                             (now, "yes" if yes else "no", knock_id))
-            if yes:
+            if yes and by["person_id"] != k["to_person"]:  # the admin, for someone else
+                self._open_group(k["from_person"], k["to_person"], by["person_id"], now)
+                them = self._person_name(k["to_person"])
+                text = (f"Door open: the admin ({who}) opened a door to {them} for your knock"
+                        f" #{knock_id}. You can send to {them}'s sessions until it is closed.")
+            elif yes:
                 self.db.execute(
                     "INSERT INTO doors (a_key, a_person, b_key, b_person, scope, opened_at,"
                     " opened_by) VALUES (?,?,?,?,'session',?,?)",
@@ -1010,19 +1025,22 @@ class Store:
                 raise KaptyorkaError("no such person")
             if a_person == b_person:
                 raise KaptyorkaError("a group door needs two different people")
-            have = self.db.execute(
-                "SELECT id FROM doors WHERE closed_at IS NULL AND scope='group' AND"
-                " ((a_person=? AND b_person=?) OR (a_person=? AND b_person=?))",
-                (a_person, b_person, b_person, a_person)).fetchone()
-            if have is not None:
-                return have["id"]
             by = self.db.execute("SELECT id FROM people WHERE name=?", (by_person,)).fetchone()
-            did = self.db.execute(
-                "INSERT INTO doors (a_key, a_person, b_key, b_person, scope, opened_at, opened_by)"
-                " VALUES ('',?,'',?,'group',?,?)",
-                (a_person, b_person, self.clock(), by["id"] if by else 0)).lastrowid
+            did = self._open_group(a_person, b_person, by["id"] if by else 0, self.clock())
         self.log_add(by_person, "door_open", f"group #{did} {a} <-> {b}")
         return did
+
+    def _open_group(self, a_person, b_person, by_id, now) -> int:
+        """The open group door between two people, opened now if there is none."""
+        have = self.db.execute(
+            "SELECT id FROM doors WHERE closed_at IS NULL AND scope='group' AND"
+            " ((a_person=? AND b_person=?) OR (a_person=? AND b_person=?))",
+            (a_person, b_person, b_person, a_person)).fetchone()
+        if have is not None:
+            return have["id"]
+        return self.db.execute(
+            "INSERT INTO doors (a_key, a_person, b_key, b_person, scope, opened_at, opened_by)"
+            " VALUES ('',?,'',?,'group',?,?)", (a_person, b_person, now, by_id)).lastrowid
 
     def close_door(self, door_id: int, by_person: str) -> None:
         """Close one door by id. Admin only (checked by the hub)."""

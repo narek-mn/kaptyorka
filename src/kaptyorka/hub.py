@@ -19,6 +19,7 @@ from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.store import Agent, KaptyorkaError, Principal, Store
 
 MAX_WAIT_S = 25
+MAX_IDENT = 100
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
        "style-src 'unsafe-inline'; img-src 'self' data:")
 
@@ -106,6 +107,7 @@ def build_app(store: Store) -> Starlette:
     def identify(h, principal: "Principal | None" = None) -> Agent:
         # values are percent-encoded by Identity.headers(), since headers must be ASCII
         ident = [unquote(h.get(f"x-kaptyorka-{k}") or "") for k in ("key", "machine", "tool", "project")]
+        ident[1:] = [v[:MAX_IDENT] for v in ident[1:]]  # they go into session names and push texts
         if not all(ident):
             raise KaptyorkaError("no kaptyorka identity; run kaptyorka join")
         return store.seen(*ident, principal=principal or principal_of(h))
@@ -174,9 +176,10 @@ def build_app(store: Store) -> Starlette:
 
     @server.tool()
     @_tool_errors
-    def door_close(to: str, ctx: Context) -> str:
+    async def door_close(to: str, ctx: Context) -> str:
         """Close the door between this session and another one."""
         store.door_close(me(ctx).key, to)
+        wake_bridges()
         return f"door to {to} closed"
 
     @server.tool()
