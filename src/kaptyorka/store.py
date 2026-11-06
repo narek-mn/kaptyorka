@@ -132,6 +132,18 @@ def _one_line(text: str) -> str:
     return " ".join(text.split())
 
 
+def _owns(row, principal) -> bool:
+    """True when an agent row is the caller's: its person, and its device where one is set.
+    No principal (an internal caller) owns everything."""
+    if principal is None:
+        return True
+    if row["person_id"] is not None and row["person_id"] != principal.person_id:
+        return False
+    if row["device_id"] is not None and row["device_id"] != principal.device_id:
+        return False
+    return row["person_id"] is not None or row["device_id"] is not None
+
+
 def _version_at_least(version: str, floor: Tuple[int, int]) -> bool:
     m = re.match(r"(\d+)\.(\d+)", version or "")
     return m is not None and (int(m.group(1)), int(m.group(2))) >= floor
@@ -712,6 +724,10 @@ class Store:
         if not self._is_rekey_device(dev):
             return False
         self.db.execute("DELETE FROM rekeys WHERE device_name=?", (dev["name"],))
+        # the machine's sessions now belong to its new device (see _owns), not the shared one
+        self.db.execute("UPDATE agents SET device_id=? WHERE machine=? AND person_id=? AND"
+                        " device_id IN (SELECT id FROM devices WHERE legacy=1)",
+                        (dev["id"], dev["name"], dev["person_id"]))
         return True
 
     def _legacy_used(self, machine: str) -> bool:
@@ -920,6 +936,12 @@ class Store:
              principal: Optional[Principal] = None) -> Agent:
         with self.lock:
             now = self.clock()
+            if principal is not None:
+                held = self.db.execute("SELECT person_id, last_seen FROM agents WHERE key=?",
+                                       (key,)).fetchone()
+                if held is not None and held["person_id"] not in (None, principal.person_id) \
+                        and now - held["last_seen"] < ONLINE_S:
+                    raise KaptyorkaError("session key in use by another person")
             self._touch(key, machine, tool, project, now)
             if principal is not None:
                 # every call, so a legacy machine handed to another person moves at once
@@ -949,10 +971,16 @@ class Store:
                         if principal is not None and principal.legacy else None)
             seen = {s["key"] for s in sessions}
             for r in self._online_rows(now):
-                if r["machine"] == machine and r["tool"] in tools and r["key"] not in seen:
+                if r["machine"] == machine and r["tool"] in tools and r["key"] not in seen \
+                        and _owns(r, principal):
                     self.db.execute("UPDATE agents SET last_seen=? WHERE key=?",
                                     (now - ONLINE_S, r["key"]))
             for s in sessions:
+                held = self.db.execute("SELECT person_id FROM agents WHERE key=?",
+                                       (s["key"],)).fetchone()
+                if principal is not None and held is not None \
+                        and held["person_id"] not in (None, principal.person_id):
+                    continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s.get("activity"),
                             str(s.get("label") or "")[:MAX_LABEL])
                 if host:
@@ -1138,9 +1166,11 @@ class Store:
                 target = by_key.get(m["to_key"])
                 if target is None:  # held: the name may now belong to another person's session
                     target = next((r for r in online if r["name"] == m["to_name"]), None)
-                    if target is not None and not m["sender_key"].startswith("web:"):
-                        sender = self.db.execute("SELECT * FROM agents WHERE key=?",
-                                                 (m["sender_key"],)).fetchone()
+                    if target is not None:
+                        sender = (self._as_target({"key": m["sender_key"], "person_id": None})
+                                  if m["sender_key"].startswith("web:") else self.db.execute(
+                                      "SELECT * FROM agents WHERE key=?",
+                                      (m["sender_key"],)).fetchone())
                         if sender is None or not self._may_message(sender, target):
                             target = None
             if target is not None:
@@ -1163,36 +1193,51 @@ class Store:
                             m["sender_key"].startswith("web:"), kind=m["kind"],
                             file=self._file_info(m["file_id"])) for m in rows]
 
-    def offer(self, machine: str, version: str = "") -> List[dict]:
+    def offer(self, machine: str, version: str = "",
+              principal: Optional[Principal] = None) -> List[dict]:
         """Items for a machine's bridge: a pending rekey first, when the bridge's `version` is
-        0.2 or later (0.1.9 reads every item as a message and would crash), then messages."""
+        0.2 or later (0.1.9 reads every item as a message and would crash), then messages.
+        With `principal`, only what is the caller's: messages to its own sessions (see _owns),
+        and a rekey only for the shared token speaking for the machine's assigned person."""
         with self.lock:
             now = self.clock()
             out = []
             rekey = self.db.execute("SELECT token, secret FROM rekeys WHERE device_name=?",
                                     (machine,)).fetchone()
+            if rekey is not None and principal is not None:
+                dev = self._assigned_device(machine, principal.person_id)
+                if not principal.legacy or dev is None:
+                    rekey = None
             if rekey is not None and _version_at_least(version, (0, 2)):
                 out.append({"kind": "rekey", "token": rekey["token"], "secret": rekey["secret"]})
             for m, t in self._deliverable(now):
-                if t["machine"] != machine:
+                if t["machine"] != machine or not _owns(t, principal):
                     continue
                 state = m["push_state"]
                 if state == "new" or (state == "offered" and now - m["offered_at"] >= LEASE_S):
                     self.db.execute("UPDATE messages SET push_state='offered', offered_at=?"
                                     " WHERE id=?", (now, m["id"]))
                     self._bind(m, t["key"])
-                    text = (f"Kaptyorka message from {_sender(m)}:\n\n{m['text']}"
+                    text = (f"Kaptyorka message from {_one_line(_sender(m))}:\n\n{m['text']}"
                             if m["kind"] == "message" else m["text"])  # knocks and doors: as written
                     out.append({"kind": "message", "id": m["id"], "key": t["key"], "text": text})
             return out
 
-    def ack(self, msg_id: int, ok: bool) -> None:
+    def ack(self, msg_id: int, ok: bool, principal: Optional[Principal] = None) -> bool:
+        """Mark a pushed message done or failed. With `principal`, only a message to one of the
+        caller's own sessions; False (nothing changed) otherwise."""
         with self.lock:
+            if principal is not None:
+                row = self.db.execute("SELECT a.person_id, a.device_id FROM messages m JOIN agents a"
+                                      " ON a.key=m.to_key WHERE m.id=?", (msg_id,)).fetchone()
+                if row is None or not _owns(row, principal):
+                    return False
             if ok:
                 self.db.execute("UPDATE messages SET read_at=?, push_state='pushed' WHERE id=?",
                                 (self.clock(), msg_id))
             else:
                 self.db.execute("UPDATE messages SET push_state='failed' WHERE id=?", (msg_id,))
+            return True
 
     def messages_for(self, principal: Principal, limit: int = 500) -> List[dict]:
         """Messages the principal's person sent or received (an admin: all), oldest first. Each

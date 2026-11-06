@@ -105,7 +105,7 @@ def test_inbox_carries_file(hub, home):
     assert info == {"id": fid, "name": "pic.png", "size": 3, "url": f"/api/files/{fid}"}
     assert run(call(hub, ib, "inbox")) == []
     hub.token = ADMIN
-    assert run(call(hub, ia, "send", to=bname, text="plain")) == "sent to 1 session"
+    assert run(call(hub, ident("claude:adm"), "send", to=bname, text="plain")) == "sent to 1 session"
     hub.token = bob_t
     assert run(call(hub, ib, "inbox"))[0]["file"] is None
     cat, cat_t = person(hub.store, "cat")

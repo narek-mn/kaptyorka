@@ -5,7 +5,8 @@ Session keys, one per tool, identical in shim, hook and bridge:
                            project = basename of the session file's cwd
   opencode:<session id>
   codex:<thread id>
-  cursor:<workspace path>  workspace = the --workspace argument, else the shim's cwd
+  cursor:<machine>:<path>  path = the --workspace argument, else the shim's cwd; the machine
+                           keeps two people on the same path on different machines apart
 """
 import getpass
 import json
@@ -83,7 +84,6 @@ RESOLVERS: Dict[str, Callable[[int, str], Optional[str]]] = {
     "claude-code": lambda pid, cwd: "claude:" + json.loads(_session_file(pid).read_text())["sessionId"],
     "opencode": _opencode_key,
     "codex": _codex_key,
-    "cursor": lambda pid, cwd: f"cursor:{cwd}",
 }
 
 
@@ -134,8 +134,11 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
         cwd = os.getcwd()  # under the daemon the parent is the daemon, not the TUI in the project
     else:
         cwd = proc_cwd(tool_pid)
-    resolve = RESOLVERS.get(tool)
-    key = resolve(tool_pid, cwd) if resolve else None
+    if tool == "cursor":
+        key = f"cursor:{machine}:{cwd}"
+    else:
+        resolve = RESOLVERS.get(tool)
+        key = resolve(tool_pid, cwd) if resolve else None
     project = os.path.basename(cwd.rstrip("/"))
     if not key or not project:
         return None

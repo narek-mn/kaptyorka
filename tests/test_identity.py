@@ -22,13 +22,13 @@ def test_identify_uses_resolver(home, monkeypatch):
 
 def test_identify_cursor_workspace(home, monkeypatch):
     monkeypatch.setattr(identity, "ancestors", lambda pid: [(5, "Cursor")])
-    assert identify("pc", pid=1, workspace="/w/app") == Identity("cursor:/w/app", "pc", "cursor", "app")
+    assert identify("pc", pid=1, workspace="/w/app") == Identity("cursor:pc:/w/app", "pc", "cursor", "app")
 
 
 def test_identify_cursor_defaults_to_own_cwd(home, monkeypatch, tmp_path):
     monkeypatch.setattr(identity, "ancestors", lambda pid: [(5, "cursor-agent")])
     monkeypatch.chdir(tmp_path)
-    assert identify("pc", pid=1) == Identity(f"cursor:{tmp_path}", "pc", "cursor", tmp_path.name)
+    assert identify("pc", pid=1) == Identity(f"cursor:pc:{tmp_path}", "pc", "cursor", tmp_path.name)
 
 
 def test_identify_none_outside_a_tool(home, monkeypatch):
@@ -81,3 +81,10 @@ def test_ancestors_real_process():
 
 def test_proc_cwd_real_process():
     assert identity.proc_cwd(os.getpid()) == os.getcwd()
+
+
+def test_cursor_keys_differ_across_machines(home, monkeypatch):
+    monkeypatch.setattr(identity, "ancestors", lambda pid: [(5, "Cursor")])
+    a = identify("alice@pc", pid=1, workspace="/w/app")
+    b = identify("bob@box-1", pid=1, workspace="/w/app")
+    assert a.key != b.key and a.key == "cursor:alice@pc:/w/app"

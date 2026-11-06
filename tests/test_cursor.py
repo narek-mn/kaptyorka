@@ -81,7 +81,7 @@ def test_cursor_key_matches_shim_and_hook(home, monkeypatch, capsys):
     assert hook.main("cursor", "stop", '{"workspace_roots":["/w/app"]}') == 0
     assert json.loads(capsys.readouterr().out) == {"followup_message": "hello"}
     ident = identity.identify("pc", workspace="/w/app")
-    assert ident.key == "cursor:/w/app"
+    assert ident.key == "cursor:pc:/w/app"
     assert seen == ident.headers()
 
 

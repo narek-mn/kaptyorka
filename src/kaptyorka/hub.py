@@ -277,12 +277,13 @@ def build_app(store: Store) -> Starlette:
             raise ValueError("wait must be a finite number")
         wait = min(max(wait, 0), MAX_WAIT_S)
         event = sent["event"]  # taken before offer, so a send after offer still wakes us
-        version = store.bridge_version(request.scope.get("state", {}).get("principal"), machine)
-        items = store.offer(machine, version)
+        principal = request.scope["state"]["principal"]
+        version = store.bridge_version(principal, machine)
+        items = store.offer(machine, version, principal)
         if not items and wait:
             try:
                 await asyncio.wait_for(event.wait(), wait)
-                items = store.offer(machine, version)
+                items = store.offer(machine, version, principal)
             except asyncio.TimeoutError:
                 pass
         return JSONResponse(items)
@@ -291,7 +292,8 @@ def build_app(store: Store) -> Starlette:
     @_bad_request
     async def bridge_ack(request: Request) -> Response:
         body = await request.json()
-        store.ack(int(body["id"]), body["ok"] is True)
+        if not store.ack(int(body["id"]), body["ok"] is True, request.scope["state"]["principal"]):
+            return PlainTextResponse("no such message", status_code=404)
         return Response(status_code=204)
 
     @server.custom_route("/bridge/rekeyed", methods=["POST"])

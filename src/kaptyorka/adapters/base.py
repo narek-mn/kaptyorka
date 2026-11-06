@@ -5,7 +5,7 @@ Session keys, one per tool, identical in shim, hook and bridge:
                            project = basename of the session file's cwd
   opencode:<session id>
   codex:<thread id>
-  cursor:<workspace path>  workspace = the --workspace argument, else the shim's cwd
+  cursor:<machine>:<path>  path = the --workspace argument, else the shim's cwd
 """
 import json
 import os

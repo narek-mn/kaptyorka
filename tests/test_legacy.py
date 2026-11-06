@@ -196,8 +196,8 @@ def test_legacy_routes(app, store):
 READY = "All old machines have their own tokens; switch the shared token off on the page."
 
 
-def start_brief(app, token):
-    h = {"X-Kaptyorka-Key": "claude:7", "X-Kaptyorka-Machine": "admin-pc",
+def start_brief(app, token, key="claude:7"):
+    h = {"X-Kaptyorka-Key": key, "X-Kaptyorka-Machine": "admin-pc",
          "X-Kaptyorka-Tool": "claude-code", "X-Kaptyorka-Project": "proj"}
     status, text = http.request("GET", app.url + "/api/brief?event=start", token, headers=h)
     assert status == 200
@@ -222,7 +222,7 @@ def test_legacy_accepted_until_switched_off(app, store):
     assert ready(app)
     assert store.authenticate(LEGACY, machine="m1") is not None  # never switched off by itself
     assert READY in start_brief(app, app.admin)
-    assert READY not in start_brief(app, app.kim_token)
+    assert READY not in start_brief(app, app.kim_token, "claude:8")
     beat(app, machine="m3", key="codex:3")
     assert not ready(app)
     assert assign(app, machine="m3")[0] == 204
