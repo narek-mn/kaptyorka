@@ -120,24 +120,38 @@ def test_choose_prefers_free_folder_then_low_load(store, ws, alice, clock):
                                "cwd": "/w/proj-a"}], facts={"host": "box-1", "os_user": "u"})
     usable, _ = ws.candidates(principal(store, alice), "proj-a", None)
     now = clock[0]
-    got = ws.choose(usable, "proj-a", "claude-code", now)
+    got = ws.choose(usable, "proj-a", "claude-code", now, alice)
     assert got["host"] == "box-2" and got["occupied"] is False
     # once box-1's session is gone, its lower load wins
-    got = ws.choose(usable, "proj-a", "claude-code", now + ONLINE_S + 1)
+    got = ws.choose(usable, "proj-a", "claude-code", now + ONLINE_S + 1, alice)
     assert got["host"] == "box-1" and got["occupied"] is False
     # every folder busy: the lowest load, marked occupied
     store.heartbeat("box-2", [{"key": "claude:2", "tool": "claude-code", "project": "proj-a",
                                "cwd": "/w/proj-a"}], facts={"host": "box-2", "os_user": "u"})
-    got = ws.choose(usable, "proj-a", "claude-code", now)
+    got = ws.choose(usable, "proj-a", "claude-code", now, alice)
     assert got["host"] == "box-1" and got["occupied"] is True
+
+
+def test_choose_prefers_own_account_and_skips_shared_beside_it(ws):
+    def c(host, person, load):
+        return {"device_id": 1, "host": host, "os_user": f"u{person}", "person_id": person,
+                "tmux": True, "folder": "/x", "load": load, "cpus": 1, "tools": {}}
+    # bob's shared box-1 is idle, alice's own box-2 is loaded: her own account wins
+    got = ws.choose([c("box-1", 2, 0.0), c("box-2", 1, 3.0)], "p", "claude-code", 0, 1)
+    assert got["host"] == "box-2"
+    # alice has her own account on box-1 too, without the folder: bob's there is never used
+    own = {**c("box-1", 1, 0.0), "folder": None}
+    assert ws.choose([c("box-1", 2, 0.0), own], "p", "claude-code", 0, 1) is None
+    assert ws.choose([c("box-1", 2, 0.0), c("box-3", 3, 1.0)], "p", "claude-code", 0,
+                     1)["host"] == "box-1"  # no own account anywhere: the lower load
 
 
 def test_choose_needs_tmux_for_non_claude(ws):
     c = {"device_id": 1, "host": "box-1", "os_user": "u", "person_id": 1, "tmux": False,
          "folder": "/x", "load": 0, "cpus": 1, "tools": {}}
-    assert ws.choose([c], "p", "codex", 0) is None
-    assert ws.choose([c], "p", "claude-code", 0)["host"] == "box-1"
-    assert ws.choose([{**c, "folder": None}], "p", "claude-code", 0) is None
+    assert ws.choose([c], "p", "codex", 0, 1) is None
+    assert ws.choose([c], "p", "claude-code", 0, 1)["host"] == "box-1"
+    assert ws.choose([{**c, "folder": None}], "p", "claude-code", 0, 1) is None
 
 
 def test_effective_auto_update_default_by_role(store, ws):
@@ -273,7 +287,7 @@ def test_second_launch_in_same_folder_gets_worktree(store, ws, alice, alice_p, b
     ws.facts_seen(dev, {"tmux": True, "load": 0.1, "cpus": 2}, {"proj-a": FOLDER})
     worker_up(store, ws, dev, token, key="claude:other")  # a session already in the folder
     usable, _ = ws.candidates(alice_p, "proj-a", None)
-    got = ws.choose(usable, "proj-a", "claude-code", clock[0])
+    got = ws.choose(usable, "proj-a", "claude-code", clock[0], alice)
     assert got["occupied"] is True
     w = ws.create(alice_p, "proj-a", "t", got, "claude-code", boss, None, got["occupied"])
     assert w["worktree"] is True

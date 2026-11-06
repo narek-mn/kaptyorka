@@ -330,7 +330,7 @@ def build_app(store: Store) -> Starlette:
                                  " role (or your own unregistered folder)")
         tool = clean(tool, MAX_IDENT) or "claude-code"
         usable, reasons = ws.candidates(principal, project, machine or None)
-        chosen = ws.choose(usable, project, tool, store.clock())
+        chosen = ws.choose(usable, project, tool, store.clock(), principal.person_id)
         if chosen is None:
             return no_machine(project, machine or None, tool, usable, reasons)
         if chosen["occupied"]:

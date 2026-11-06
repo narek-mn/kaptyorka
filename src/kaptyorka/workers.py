@@ -203,12 +203,16 @@ class WorkerStore:
                                "tools": facts.get("tools", {}), "folder": folders.get(project)})
         return usable, reasons
 
-    def choose(self, usable: List[dict], project: str, tool: str,
-               now: float) -> Optional[dict]:
+    def choose(self, usable: List[dict], project: str, tool: str, now: float,
+               person_id: int) -> Optional[dict]:
         """The best device: it has a folder for the project (and tmux unless the tool is
-        Claude Code); a folder with no online session first, then the lowest load per cpu."""
+        Claude Code); the person's own account first, then a folder with no online session,
+        then the lowest load per cpu. A shared account on a host where the person has an own
+        online one is never chosen."""
+        own_hosts = {c["host"] for c in usable if c.get("person_id") == person_id}
         fits = [c for c in usable if c.get("folder")
-                and (tool == "claude-code" or c.get("tmux"))]
+                and (tool == "claude-code" or c.get("tmux"))
+                and (c.get("person_id") == person_id or c["host"] not in own_hosts)]
         if not fits:
             return None
         with self.lock:
@@ -219,7 +223,8 @@ class WorkerStore:
 
         def rank(i):
             c = fits[i]
-            return (busy[i], (c.get("load") or 0.0) / max(c.get("cpus") or 1, 1))
+            return (c.get("person_id") != person_id, busy[i],
+                    (c.get("load") or 0.0) / max(c.get("cpus") or 1, 1))
 
         best = min(range(len(fits)), key=rank)
         return {**fits[best], "occupied": busy[best]}
