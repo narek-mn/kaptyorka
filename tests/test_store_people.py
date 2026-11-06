@@ -335,3 +335,35 @@ def test_prune_loop_runs(tmp_path, monkeypatch):
     prune_loop(Fake(), stop, interval_s=0.01, report=lines.append)
     assert len(calls) == 3
     assert len(lines) == 1  # reported once, when something was deleted
+
+
+def test_prune_loop_one_failure_does_not_skip_the_other(monkeypatch):
+    import threading
+
+    from kaptyorka import memory
+    from kaptyorka.retention import prune_loop
+
+    for store_fails in (True, False):
+        ran, lines, stop = [], [], threading.Event()
+
+        class Fake:
+            def prune(self, now):
+                ran.append("store")
+                if store_fails:
+                    raise RuntimeError("store boom")
+                return {"messages": 0, "files": 0}
+
+        def mem(store, now):
+            ran.append("memory")
+            stop.set()
+            if not store_fails:
+                raise RuntimeError("memory boom")
+            return 2
+
+        monkeypatch.setattr(memory, "prune", mem)
+        prune_loop(Fake(), stop, interval_s=0.01, report=lines.append)
+        assert ran == ["store", "memory"]
+        if store_fails:
+            assert len(lines) == 2 and "store boom" in lines[0] and "2 git facts" in lines[1]
+        else:
+            assert len(lines) == 1 and "memory boom" in lines[0]

@@ -76,7 +76,8 @@ class MemoryStore:
             for cwd, g in git.items():
                 if not isinstance(g, dict):
                     continue
-                branch, subject, dirty = g.get("branch", ""), g.get("subject", ""), _dirty(g.get("dirty"))
+                branch, subject = g.get("branch") or "", g.get("subject") or ""
+                dirty = _dirty(g.get("dirty"))
                 last = self.db.execute(
                     "SELECT branch, dirty, subject FROM git_facts WHERE host=? AND os_user=?"
                     " AND cwd=? ORDER BY id DESC LIMIT 1", (host, os_user, cwd)).fetchone()

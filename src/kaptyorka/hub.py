@@ -8,6 +8,7 @@ import inspect
 import math
 import mimetypes
 import re
+import sys
 from dataclasses import asdict, replace
 from typing import Dict, List, Mapping, Optional, Union
 from urllib.parse import unquote
@@ -401,9 +402,12 @@ def build_app(store: Store) -> Starlette:
         own = not principal.legacy
         if own and (isinstance(facts, dict) or isinstance(body.get("folders"), dict)):
             ws.facts_seen(principal.device_id, facts, body.get("folders"))
-            ms.git_seen(principal, principal.device_id,
-                        (facts.get("git") if isinstance(facts, dict) else None) or {},
-                        body.get("folders") if isinstance(body.get("folders"), dict) else {})
+            try:  # history is a bonus: a bad git payload must not fail the heartbeat
+                ms.git_seen(principal, principal.device_id,
+                            (facts.get("git") if isinstance(facts, dict) else None) or {},
+                            body.get("folders") if isinstance(body.get("folders"), dict) else {})
+            except Exception as e:
+                print(f"memory: git facts skipped: {e}", file=sys.stderr, flush=True)
         return JSONResponse({"version": __version__,
                              "auto_update": own and ws.auto_update(principal.device_id),
                              "projects": [] if principal.legacy else

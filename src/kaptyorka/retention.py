@@ -14,10 +14,14 @@ def prune_loop(store, stop: threading.Event, interval_s: float = 86400, report=_
     while not stop.is_set():
         try:
             out = store.prune(time.time())
-            git = memory.prune(store, time.time())
-            if out["messages"] or out["files"] or git:
-                report(f"retention: deleted {out['messages']} messages, {out['files']} files,"
-                       f" {git} git facts")
+            if out["messages"] or out["files"]:
+                report(f"retention: deleted {out['messages']} messages, {out['files']} files")
         except Exception as e:  # a failed prune must not stop the next one
             report(f"retention: prune failed: {e}")
+        try:
+            git = memory.prune(store, time.time())
+            if git:
+                report(f"retention: deleted {git} git facts")
+        except Exception as e:
+            report(f"retention: git facts prune failed: {e}")
         stop.wait(interval_s)

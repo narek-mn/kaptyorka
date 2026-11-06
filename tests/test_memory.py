@@ -147,3 +147,26 @@ def test_heartbeat_feeds_git_facts(tmp_path, clock):
     finally:
         stop()
         store.close()
+
+
+def test_null_git_fields_do_not_fail(ms, p, dev):
+    ms.git_seen(p, dev, {A: {"branch": None, "dirty": None, "subject": None}}, F)
+    assert ms.git_recent("proj-a")[0]["subject"] == ""
+
+
+def test_bad_git_payload_does_not_fail_the_heartbeat(tmp_path, clock, monkeypatch):
+    store = Store(tmp_path / "hub.db", clock=lambda: clock[0], legacy_token="T")
+    stop = start_hub(store)
+    try:
+        pid = person(store, "alice")[0]
+        token, _ = store.invite_redeem(store.invite_create(pid), "box-1", host="box-1", os_user="u")
+        body = {"machine": "box-1", "sessions": [], "tools": [],
+                "facts": {"host": "box-1", "os_user": "u", "git": {A: {"subject": None}}},
+                "folders": F}
+        url = f"http://127.0.0.1:{stop.port}/bridge/heartbeat"
+        assert http.request("POST", url, token, body)[0] == 200
+        monkeypatch.setattr(MemoryStore, "git_seen", lambda *a: 1 / 0)
+        assert http.request("POST", url, token, body)[0] == 200
+    finally:
+        stop()
+        store.close()
