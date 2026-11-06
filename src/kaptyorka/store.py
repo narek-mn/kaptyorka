@@ -536,6 +536,19 @@ class Store:
                         (host, person_id))
         return who["name"]
 
+    def set_machine_owner(self, host: str, person_id: Optional[int], by: str) -> None:
+        """The admin names a machine's owner (None: no owner)."""
+        with self.lock:
+            if self.db.execute("SELECT 1 FROM machines WHERE host=?", (host,)).fetchone() is None:
+                raise KaptyorkaError(f"no such machine: {host}")
+            who = None
+            if person_id is not None:
+                who = self.db.execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
+                if who is None:
+                    raise KaptyorkaError("no such person")
+            self.db.execute("UPDATE machines SET owner_person_id=? WHERE host=?", (person_id, host))
+        self.log_add(by, "machine_owner", f"{host} -> {who['name'] if who else 'nobody'}")
+
     def revoke_machine(self, host: str, person_id: int, by: str) -> None:
         self._grant_change(host, person_id, False, by)
 
@@ -1058,9 +1071,9 @@ class Store:
                     self.db.execute("UPDATE agents SET person_id=COALESCE(person_id, ?)"
                                     " WHERE key=?", (principal.person_id, s["key"]))
             if host:
+                # no owner on first sight: the host name is self-reported; the admin sets one
                 self.db.execute("INSERT OR IGNORE INTO machines (host, owner_person_id, first_seen)"
-                                " VALUES (?,?,?)",
-                                (host, principal.person_id if principal else None, now))
+                                " VALUES (?,NULL,?)", (host, now))
                 device_id = (assigned["id"] if assigned is not None else
                              principal.device_id if principal is not None and not principal.legacy
                              else None)

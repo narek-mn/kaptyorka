@@ -188,3 +188,21 @@ def test_cli_grant_prints_hub_error(monkeypatch, home, capsys):
     monkeypatch.setattr(http, "request", lambda *a, **k: (400, "no project named shop"))
     assert entry_with_exit(["grant", "ann", "shop:read"]) == 1
     assert "no project named shop" in capsys.readouterr().err
+
+
+def test_cli_machine_owner(monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    calls = []
+    monkeypatch.setattr(http, "request",
+                        lambda method, url, token, body=None, **kw: calls.append((method, url, body))
+                        or (204, None))
+    assert entry_with_exit(["machine", "owner", "box 1", "ann"]) == 0
+    assert calls == [("POST", "http://h:1/api/machines/box%201/owner", {"person": "ann"})]
+    assert capsys.readouterr().out == "box 1 owned by ann\n"
+
+
+def test_metavar_lists_user_commands(capsys):
+    with pytest.raises(SystemExit):
+        entry_with(["--help"])
+    assert ("{start,join,leave,stop,update,remove,invite,people,project,grant,revoke,machine,who}"
+            in capsys.readouterr().out)

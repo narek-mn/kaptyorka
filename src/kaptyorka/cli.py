@@ -239,6 +239,11 @@ def _revoke(args) -> int:
     return _admin_do("POST", path, {"person": args.person}, f"revoked {args.person} {args.target}")
 
 
+def _machine_owner(args) -> int:
+    return _admin_do("POST", f"/api/machines/{quote(args.host, safe='')}/owner",
+                     {"person": args.person}, f"{args.host} owned by {args.person}")
+
+
 def _project_add(args) -> int:
     return _admin_do("POST", "/api/projects",
                      {"name": args.name, "repo": args.repo, "description": args.desc},
@@ -368,7 +373,7 @@ def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove,invite,people,"
-                            "project,grant,revoke,who}")
+                            "project,grant,revoke,machine,who}")
     hide = argparse.SUPPRESS  # subparsers are hidden by giving them no help text
     s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
     s.add_argument("--port", type=int, help="hub port (default 8765)")
@@ -409,6 +414,11 @@ def entry() -> None:
     pa.add_argument("--repo", default="")
     pa.add_argument("--desc", default="")
     pa.set_defaults(run=_project_add)
+    mc = sub.add_parser("machine").add_subparsers(dest="machine_cmd", required=True)
+    mo = mc.add_parser("owner")
+    mo.add_argument("host")
+    mo.add_argument("person")
+    mo.set_defaults(run=_machine_owner)
     sub.add_parser("who").set_defaults(run=_who)
     m = sub.add_parser("mcp")
     m.add_argument("--workspace")

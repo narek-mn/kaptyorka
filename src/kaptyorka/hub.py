@@ -591,6 +591,24 @@ def build_app(store: Store) -> Starlette:
     async def api_machine_grant(request: Request) -> Response:
         return await machine_grant(request, True)
 
+    @server.custom_route("/api/machines/{host}/owner", methods=["POST"])
+    @_bad_request
+    async def api_machine_owner(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        name = str(body.get("person") or "")
+        person = store.person_by_name(name) if name else None
+        try:
+            if name and person is None:
+                raise KaptyorkaError("no such person")
+            store.set_machine_owner(request.path_params["host"], person["id"] if person else None,
+                                    request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return Response(status_code=204)
+
     @server.custom_route("/api/machines/{host}/revoke", methods=["POST"])
     @_bad_request
     async def api_machine_revoke(request: Request) -> Response:

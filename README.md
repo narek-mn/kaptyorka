@@ -143,7 +143,7 @@ The hub has people, and each person has devices (one per machine). The admin is 
 | Project | read | Read the project's notes |
 | Project | write | Read and write the project's notes |
 | Project | manage | Same as write today; only the admin changes roles |
-| Machine | use | Use that machine (a machine's owner and the admin may always) |
+| Machine | use | Use that machine (its owner and the admin may always). Recorded now; it takes effect in 0.3 |
 
 The admin registers projects and grants roles, with commands or on the page:
 
@@ -153,7 +153,10 @@ kaptyorka grant bob proj-a:write
 kaptyorka grant bob machine:box-1
 kaptyorka revoke bob proj-a
 kaptyorka revoke bob machine:box-1
+kaptyorka machine owner box-1 bob
 ```
+
+A machine has no owner until the admin names one (`kaptyorka machine owner`, or the owner list on the **Access** tab), since the host name a machine reports is not proof of whose it is.
 
 A folder that is not registered as a project shows to other people as `(private)`, and notes on it are refused until the admin registers it. A person who lacks access calls `request_access`; the admin approves or denies on the **Access** tab. Pending and recently denied requests show in the brief an agent gets at the start of a session.
 
@@ -205,6 +208,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka project add <name>` | Admin: register a project (`--repo`, `--desc`) |
 | `kaptyorka grant <person> <project>:<role>` | Admin: give a project role; or `machine:<host>` to allow a machine |
 | `kaptyorka revoke <person> <project>` | Admin: take it away; or `machine:<host>` |
+| `kaptyorka machine owner <host> <person>` | Admin: name a machine's owner |
 | `kaptyorka who` | List sessions online |
 
 ## Leave, stop, update, remove

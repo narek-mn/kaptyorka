@@ -79,7 +79,7 @@ def test_heartbeat_without_facts_is_fine(tmp_path):
     s.close()
 
 
-def test_heartbeat_records_host_and_owner(tmp_path):
+def test_heartbeat_records_host_without_owner(tmp_path):
     s = Store(tmp_path / "hub.db")
     pid, token = _member(s, "u1")
     p = s.authenticate(token)
@@ -87,8 +87,10 @@ def test_heartbeat_records_host_and_owner(tmp_path):
                 facts=_facts("h1", "osu", "0.2.0"))
     a = s.agent("k:1")
     assert (a.host, a.os_user) == ("h1", "osu")
-    [m] = s.machines(p)
-    assert m["host"] == "h1" and m["owner_person_id"] == pid and m["owner"] == "u1"
+    root, tr = _member(s, "root", "admin")
+    assert s.machines(p) != []  # u1 has a device there
+    [m] = s.machines(s.authenticate(tr))
+    assert m["host"] == "h1" and m["owner_person_id"] is None and m["owner"] is None
     assert m["online"] == 1
     d = m["devices"][0]
     assert d["name"] == "u1-laptop" and d["os_user"] == "osu" and d["version"] == "0.2.0"
@@ -103,7 +105,15 @@ def test_two_devices_one_host(tmp_path):
         s.heartbeat("m", [], principal=s.authenticate(t), facts=_facts("h1"))
     admin, ta = _member(s, "root", "admin")
     [m] = s.machines(s.authenticate(ta))
-    assert m["owner_person_id"] == p1  # first sight owns it
+    assert m["owner_person_id"] is None  # first sight owns nothing; the admin names an owner
+    s.set_machine_owner("h1", p2, "root")
+    [m] = s.machines(s.authenticate(ta))
+    assert (m["owner_person_id"], m["owner"]) == (p2, "u2")
+    assert s.may_use("h1", p2) and not s.may_use("h1", p1)
+    assert [(r["person"], r["detail"]) for r in s.log() if r["kind"] == "machine_owner"] == [
+        ("root", "h1 -> u2")]
+    s.set_machine_owner("h1", None, "root")
+    assert not s.may_use("h1", p2)
     assert sorted(d["person"] for d in m["devices"]) == ["u1", "u2"]
     s.close()
 
@@ -115,7 +125,9 @@ def test_may_use_owner_admin_grant(tmp_path):
     friend, _ = _member(s, "friend")
     root, _ = _member(s, "root", "admin")
     s.heartbeat("m", [], principal=s.authenticate(to), facts=_facts("h1"))
-    assert s.may_use("h1", o) and s.may_use("h1", root)
+    assert not s.may_use("h1", o) and s.may_use("h1", root)  # reporting a host is not owning it
+    s.set_machine_owner("h1", o, "root")
+    assert s.may_use("h1", o)
     assert not s.may_use("h1", other)
     s.grant_machine("h1", friend, "root")
     assert s.may_use("h1", friend)

@@ -252,7 +252,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 .admin .err { padding: 8px 14px; }
 .cell-list { display: flex; flex-direction: column; gap: 5px; }
 .cell-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.cell-tags select { height: 24px; padding: 0 6px; font-size: 12px; }
+.cell-tags select, select.own { height: 24px; padding: 0 6px; font-size: 12px; }
 .dev { display: flex; align-items: center; gap: 10px; min-height: 24px; }
 .dev span { color: var(--text); }
 .dev small { color: var(--faint); font-size: 12px; }
@@ -1104,10 +1104,15 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
         });
         tags.appendChild(add);
       }
+      var owner = el("select", { "class": "own", "aria-label": "Owner of " + m.host });
+      options(owner, [["", "—"]].concat(personNames(false)), m.owner || "");
+      owner.addEventListener("change", function () {
+        quiet(act("machine-err", "/api/machines/" + encodeURIComponent(m.host) + "/owner", { person: owner.value }));
+      });
       mb.appendChild(el("tr", null, [
         el("td", null, [el("span", { "class": "dev" }, [icon("i-machine", 14), el("b", { text: m.host })]),
                         el("div", { "class": "hint", text: m.online + " online" })]),
-        el("td", { "class": "c-plain", text: m.owner || "—" }),
+        el("td", null, [owner]),
         el("td", null, [devs]),
         el("td", null, [tags])
       ]));
