@@ -349,7 +349,11 @@ def _hook(args) -> int:
 def _join(args) -> int:
     from kaptyorka import join
 
-    extra = {"env": join.read_env(sys.stdin.read())} if args.env_stdin else {}
+    try:
+        extra = {"env": join.read_env(sys.stdin.read())} if args.env_stdin else {}
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 1
     if args.invite:
         got = join.redeem(args.invite, args.name)
         if got is None:
@@ -388,7 +392,9 @@ def _fleet_add(args) -> int:
     try:
         lines = fleet.add(args.targets, args.person, Path(args.key_from) if args.key_from else None,
                           cfg.get("hub", ""), invite, run=subprocess.run)
-    except (RuntimeError, OSError) as e:
+    except (RuntimeError, OSError, ValueError) as e:
+        for line in getattr(e, "lines", []):
+            print(line)
         print(e, file=sys.stderr)
         return 1
     for line in lines:

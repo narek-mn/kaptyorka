@@ -212,4 +212,24 @@ def test_join_env_stdin_reaches_service_env(hub, home):
                 env={"API_KEY": "sk-x"}) == 0
     assert seen[0]["API_KEY"] == "sk-x" and "PATH" in seen[0]
     from kaptyorka.join import read_env
-    assert read_env("A=1\n\nbad line\nB=x=y\n") == {"A": "1", "B": "x=y"}
+    assert read_env("A=1\nB= x=y \n") == {"A": "1", "B": " x=y "}
+
+
+def test_read_env_refuses_bad_input():
+    import pytest
+    from kaptyorka.join import read_env
+    for bad in ("", "\n", "A=1\n\nB=2\n", "bad line\n", "1A=x\n", "sk-secret\n"):
+        with pytest.raises(ValueError, match="bad --env-stdin line") as e:
+            read_env(bad)
+        assert "secret" not in str(e.value)
+
+
+def test_join_env_stdin_bad_line_exits_1(monkeypatch, home, capsys):
+    import io
+    from kaptyorka import cli
+    monkeypatch.setattr("sys.stdin", io.StringIO("oops\n"))
+    monkeypatch.setattr("sys.argv", ["kaptyorka", "join", "--hub", "h", "--token", "t", "--env-stdin"])
+    import pytest
+    with pytest.raises(SystemExit) as e:
+        cli.entry()
+    assert e.value.code == 1 and "bad --env-stdin line 1" in capsys.readouterr().err

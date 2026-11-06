@@ -23,13 +23,23 @@ def install_bridge(exe: str, install=None, extra_env: Optional[dict] = None) -> 
     return True
 
 
+ENV_LINE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.S)
+
+
 def read_env(text: str) -> dict:
-    """NAME=value lines (from stdin) as a dict; blank lines and bad names are skipped."""
+    """NAME=value lines (from stdin) as a dict. Anything else is refused with ValueError;
+    the message names the line number only, never the text (it may be a secret)."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
     out = {}
-    for line in text.splitlines():
-        k, eq, v = line.partition("=")
-        if eq and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k.strip()):
-            out[k.strip()] = v.strip()
+    for n, line in enumerate(lines, 1):
+        m = ENV_LINE.fullmatch(line)
+        if not m:
+            raise ValueError(f"bad --env-stdin line {n}")
+        out[m.group(1)] = m.group(2)
+    if not out:
+        raise ValueError("bad --env-stdin line: nothing on stdin")
     return out
 
 

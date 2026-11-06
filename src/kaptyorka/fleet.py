@@ -1,3 +1,4 @@
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -7,9 +8,17 @@ PATH_FIX = 'export PATH="$HOME/.local/bin:$PATH"; '
 TOOL_NAMES = {"claude": "claude-code", "codex": "codex", "opencode": "opencode"}
 
 
+def read_key(key_file: Path) -> str:
+    """The key file's one NAME=value line, with a newline; ValueError (no secret in it) otherwise."""
+    lines = Path(key_file).read_text().splitlines()
+    if len(lines) != 1 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.+", lines[0]):
+        raise ValueError(f"{key_file}: expected one NAME=value line")
+    return lines[0] + "\n"
+
+
 def _ssh(target: str, command: str) -> List[str]:
     # the remote command is a shell line by necessity: every value in it is shlex-quoted
-    return ["ssh", "-o", "BatchMode=yes", target, command]
+    return ["ssh", "-o", "BatchMode=yes", "--", target, command]
 
 
 def _first_line(text: str) -> str:
@@ -21,11 +30,18 @@ def add(targets: List[str], person: str, key_file: Optional[Path], hub_url: str,
         invite: Callable[[str], str], run=subprocess.run) -> List[str]:
     """Set up kaptyorka on each target over ssh; one result line per target.
     The API key (one NAME=value line) goes only on the stdin of the join step."""
-    key_line = (Path(key_file).read_text().strip() + "\n") if key_file else None
+    key_line = read_key(key_file) if key_file else None  # before any ssh
     lines = []
     for target in targets:
         name = target
-        url = invite(person)
+        if target.startswith("-") or re.search(r"\s", target):
+            lines.append(f"{target}: not a user@host")
+            continue
+        try:
+            url = invite(person)
+        except RuntimeError as e:
+            e.lines = lines
+            raise
         join_cmd = f"kaptyorka join {shlex.quote(url)} --name {shlex.quote(name)}"
         if key_line:
             join_cmd += " --env-stdin"
@@ -34,12 +50,14 @@ def add(targets: List[str], person: str, key_file: Optional[Path], hub_url: str,
             ("install", PATH_FIX + "pipx install kaptyorka || pipx upgrade kaptyorka", None),
             ("join", PATH_FIX + join_cmd, key_line),
         ]
+        by_hand = (f"cat {shlex.quote(str(key_file))} | ssh -- {shlex.quote(target)} "
+                   f"{shlex.quote(PATH_FIX + join_cmd)}") if key_line else None
         failed = None
         for step, command, stdin in steps:
             kw = {"input": stdin} if stdin else {}
             r = run(_ssh(target, command), capture_output=True, text=True, **kw)
             if r.returncode != 0:
-                failed = f"{target}: failed at {step}: {_first_line(r.stderr)}; run by hand: {command}"
+                failed = f"{target}: failed at {step}: {_first_line(r.stderr)}; run by hand: {by_hand if step == 'join' and by_hand else command}"
                 break
         if failed:
             lines.append(failed)

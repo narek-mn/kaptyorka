@@ -15,6 +15,14 @@ class ServiceError(Exception):
     pass
 
 
+def _write_private(path: Path, text: str) -> None:
+    """Write the file readable by this user only (it may hold an API key), even if it existed."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        os.fchmod(f.fileno(), 0o600)
+        f.write(text)
+
+
 def _systemd_env(k: str, v: str) -> str:
     v = v.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
     return f'Environment="{k}={v}"'
@@ -159,7 +167,7 @@ def install(name: str, argv: List[str], run: Callable = subprocess.run,
     if platform == "darwin":
         plist = Path.home() / "Library/LaunchAgents" / f"io.kaptyorka.{name}.plist"
         plist.parent.mkdir(parents=True, exist_ok=True)
-        plist.write_text(unit_text(name, argv, "darwin", env))
+        _write_private(plist, unit_text(name, argv, "darwin", env))
         domain = f"gui/{os.getuid()}"
         sh("launchctl", "enable", f"{domain}/io.kaptyorka.{name}")  # bootstrap fails if disabled
         sh("launchctl", "bootout", domain, str(plist))
@@ -174,7 +182,7 @@ def install(name: str, argv: List[str], run: Callable = subprocess.run,
         return [f"installed {plist}"]
     unit = Path.home() / ".config/systemd/user" / f"{name}.service"
     unit.parent.mkdir(parents=True, exist_ok=True)
-    unit.write_text(unit_text(name, argv, "linux", env))
+    _write_private(unit, unit_text(name, argv, "linux", env))
     lines = [f"installed {unit}"]
     sh("systemctl", "--user", "daemon-reload", must=True)
     active = sh("systemctl", "--user", "is-active", "--quiet", name)

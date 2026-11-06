@@ -485,3 +485,19 @@ def test_start_without_saved_settings_keeps_port_of_older_hub_unit(home, capsys,
     with pytest.raises(SystemExit):
         run_cli(["start"])
     assert seen[0][-2:] == ["--port", "9001"]
+
+
+def test_service_unit_files_are_private_even_when_they_existed(home):
+    import stat
+    from types import SimpleNamespace
+    from kaptyorka import service
+    ok = lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr="")  # noqa: E731
+    unit = home / ".config/systemd/user/svc.service"
+    unit.parent.mkdir(parents=True)
+    unit.write_text("old")
+    unit.chmod(0o644)
+    service.install("svc", ["x"], run=ok, platform="linux", sleep=lambda s: None, env={"K": "sk-1"})
+    assert stat.S_IMODE(unit.stat().st_mode) == 0o600 and "sk-1" in unit.read_text()
+    service.install("svc", ["x"], run=ok, platform="darwin", sleep=lambda s: None, env={"K": "sk-1"})
+    plist = home / "Library/LaunchAgents/io.kaptyorka.svc.plist"
+    assert stat.S_IMODE(plist.stat().st_mode) == 0o600
