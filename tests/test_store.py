@@ -253,25 +253,25 @@ def test_session_missing_from_heartbeat_frees_its_name(store, clock):
 
 def test_send_from_web_lands_in_inbox_and_is_pushed(store):
     store.seen("k", "pc", "codex", "nav")
-    assert store.send_from_web("Narek", "pc/codex/nav", "hello") == 1
-    assert [(m.sender, m.text) for m in store.inbox("k")] == [("Narek", "hello")]
-    store.send_from_web("Narek", "pc/codex/nav", "again")
-    assert store.offer("pc")[0]["text"] == "Kaptyorka message from Narek (web page):\n\nagain"
+    assert store.send_from_web("alice", "pc/codex/nav", "hello") == 1
+    assert [(m.sender, m.text) for m in store.inbox("k")] == [("alice", "hello")]
+    store.send_from_web("alice", "pc/codex/nav", "again")
+    assert store.offer("pc")[0]["text"] == "Kaptyorka message from alice (web page):\n\nagain"
     assert [m.from_web for m in store.messages()] == [True, True]
 
 
 def test_send_from_web_to_all_and_no_rate_limit(store):
     store.seen("a", "pc", "codex", "nav")
     store.seen("b", "box-2", "codex", "nav")
-    assert store.send_from_web("Narek", "all", "hi") == 2
+    assert store.send_from_web("alice", "all", "hi") == 2
     for _ in range(40):
-        store.send_from_web("Narek", "pc/codex/nav", "x")
+        store.send_from_web("alice", "pc/codex/nav", "x")
 
 
 def test_send_from_web_errors(store):
     store.seen("a", "pc", "codex", "nav")
     with pytest.raises(KaptyorkaError, match="no session named"):
-        store.send_from_web("Narek", "nobody", "hi")
+        store.send_from_web("alice", "nobody", "hi")
     with pytest.raises(KaptyorkaError, match="name"):
         store.send_from_web("  ", "pc/codex/nav", "hi")
 
@@ -279,18 +279,18 @@ def test_send_from_web_errors(store):
 def test_notes_write_from_web(store):
     store.seen("a", "pc", "codex", "nav")
     store.notes_write("a", "api", "v1")
-    store.notes_write_from_web("Narek", "api", "v2")
-    assert [(n.author, n.text) for n in store.note_history("api")] == [("Narek", "v2"), ("me", "v1")]
+    store.notes_write_from_web("alice", "api", "v2")
+    assert [(n.author, n.text) for n in store.note_history("api")] == [("alice", "v2"), ("me", "v1")]
     with pytest.raises(KaptyorkaError, match="topic"):
-        store.notes_write_from_web("Narek", " ", "x")
+        store.notes_write_from_web("alice", " ", "x")
 
 
 def test_agent_replies_to_web_sender(store):
     store.seen("a", "pc", "codex", "nav")
-    store.send_from_web("Narek", "pc/codex/nav", "hi")
+    store.send_from_web("alice", "pc/codex/nav", "hi")
     store.inbox("a")
-    with pytest.raises(KaptyorkaError, match="no door to narek"):  # a page name of no person
-        store.send("a", "narek", "hello back")
+    with pytest.raises(KaptyorkaError, match="no door to alice"):  # a page name of no person
+        store.send("a", "alice", "hello back")
     store.send_from_web("me", "pc/codex/nav", "hi", person_id=store.person_by_name("me")["id"])
     store.inbox("a")
     assert store.send("a", "me", "hello back") == 1  # the session's own person
@@ -301,6 +301,6 @@ def test_agent_replies_to_web_sender(store):
 
 def test_unknown_name_lists_people(store):
     store.seen("a", "pc", "codex", "nav")
-    store.send_from_web("Narek", "pc/codex/nav", "hi")
-    with pytest.raises(KaptyorkaError, match="online: pc/codex/nav; people: Narek"):
+    store.send_from_web("alice", "pc/codex/nav", "hi")
+    with pytest.raises(KaptyorkaError, match="online: pc/codex/nav; people: alice"):
         store.send("a", "Bob", "hi")

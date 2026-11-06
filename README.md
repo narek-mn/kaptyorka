@@ -18,7 +18,7 @@ Every Claude Code, Codex, OpenCode and Cursor session on your LAN can see the ot
 
 ## Why
 
-Say a console change in murmur ("move robot to selected point") also needs a change in the backend on the DGX. Today you carry messages between the two agents by hand. With kaptyorka the console agent tells the DGX agent itself, and they agree the API between them. You give the order once.
+Say a change in your robot console ("move robot to selected point") also needs a change in the backend on the GPU server. Today you carry messages between the two agents by hand. With kaptyorka the console agent tells the server agent itself, and they agree the API between them. You give the order once.
 
 It works on one LAN or VPN. Teammates can use different accounts. Nobody needs GitHub access.
 

@@ -170,7 +170,7 @@ def test_brief_start_alone_plural_no_topics(hub):
     assert brief(hub, PC, "start") == \
         "Kaptyorka: you are `pc/claude-code/proj-a`. No one else online. 0 unread messages."
     box2_online(hub, activity="")
-    heartbeat(hub, "jetson", [{"key": "oc:1", "tool": "opencode", "project": "nav",
+    heartbeat(hub, "box-1", [{"key": "oc:1", "tool": "opencode", "project": "nav",
                                "activity": "busy"}])
     run(call(hub, PC, "notes_write", topic="a", text="1"))
     run(call(hub, PC, "notes_write", topic="b", text="2"))
@@ -178,7 +178,7 @@ def test_brief_start_alone_plural_no_topics(hub):
     hub_send(hub, BOX2, "pc/claude-code/proj-a", "two")
     assert brief(hub, PC, "start") == (
         "Kaptyorka: you are `pc/claude-code/proj-a`. 2 others online: box-2/claude-code/proj-b,"
-        " jetson/opencode/nav (busy). 2 unread messages. Board topics: b, a.\n\n"
+        " box-1/opencode/nav (busy). 2 unread messages. Board topics: b, a.\n\n"
         "Kaptyorka message from box-2/claude-code/proj-b:\n\none\n\n"
         "Kaptyorka message from box-2/claude-code/proj-b:\n\ntwo")
 

@@ -236,8 +236,8 @@ def test_configure_quotes_exe_and_replaces_old_unquoted_hook(home, fake_claude_c
 
 def test_label_is_session_name_user_or_derived(home, tmp_path):
     sock = live_sock(tmp_path)
-    write_session_file(home, pid=os.getpid(), sock=sock, name="kaptyorka-narek", name_source="user")
-    assert [s.label for s in ClaudeAdapter(home).sessions()] == ["kaptyorka-narek"]
+    write_session_file(home, pid=os.getpid(), sock=sock, name="kaptyorka-alice", name_source="user")
+    assert [s.label for s in ClaudeAdapter(home).sessions()] == ["kaptyorka-alice"]
     write_session_file(home, pid=os.getpid(), sock=sock, name="fix-the-bug", name_source="derived")
     assert [s.label for s in ClaudeAdapter(home).sessions()] == ["fix-the-bug"]
     write_session_file(home, pid=os.getpid(), sock=sock)  # no name at all
