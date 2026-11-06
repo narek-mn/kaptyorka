@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS workers (
     key TEXT,
     state TEXT NOT NULL CHECK(state IN ('starting','up','unattended','abandoned','closed','failed')),
     error TEXT NOT NULL DEFAULT '', created REAL NOT NULL, up_at REAL, unattended_since REAL,
-    closed_at REAL, waiting_told REAL, told REAL);
+    closed_at REAL, waiting_told REAL, told REAL, needs_brief INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS launches (
     id INTEGER PRIMARY KEY AUTOINCREMENT, device_id INTEGER NOT NULL, worker TEXT NOT NULL,
     kind TEXT NOT NULL CHECK(kind IN ('launch','close')), body TEXT NOT NULL,
@@ -43,8 +43,11 @@ CREATE TABLE IF NOT EXISTS device_settings (device_id INTEGER PRIMARY KEY, auto_
 
 def ensure_schema(db) -> None:
     db.executescript(SCHEMA)
-    if "told" not in [r[1] for r in db.execute("PRAGMA table_info(workers)")]:
+    cols = [r[1] for r in db.execute("PRAGMA table_info(workers)")]
+    if "told" not in cols:
         db.execute("ALTER TABLE workers ADD COLUMN told REAL")  # a Task 2 database
+    if "needs_brief" not in cols:
+        db.execute("ALTER TABLE workers ADD COLUMN needs_brief INTEGER NOT NULL DEFAULT 0")
 
 
 def _cut(value) -> Optional[str]:
@@ -330,7 +333,9 @@ class WorkerStore:
                                 (now, row["worker"]))
             return True
 
-    def link(self, worker: str, key: str, device_id: int) -> bool:
+    def link(self, worker: str, key: str, device_id: int, needs_brief: bool = False) -> bool:
+        """`needs_brief`: the tool could not take the first message on its command line, so
+        the session's start brief carries it."""
         with self.lock:
             w = self._row(worker)
             if w is None or w["state"] != "starting" or w["device_id"] != device_id:
@@ -346,8 +351,8 @@ class WorkerStore:
             if self.db.execute("SELECT 1 FROM workers WHERE key=? AND state IN"
                                " ('starting','up','unattended')", (key,)).fetchone():
                 return False  # another worker's session
-            self.db.execute("UPDATE workers SET key=?, state='up', up_at=? WHERE name=?",
-                            (key, self.clock(), worker))
+            self.db.execute("UPDATE workers SET key=?, state='up', up_at=?, needs_brief=?"
+                            " WHERE name=?", (key, self.clock(), int(bool(needs_brief)), worker))
             if self.db.execute("SELECT 1 FROM agents WHERE key=?", (key,)).fetchone() is None:
                 dev = self.db.execute("SELECT name FROM devices WHERE id=?",
                                       (device_id,)).fetchone()
@@ -405,7 +410,11 @@ class WorkerStore:
                 f" ({','.join('?' * len(LIVE))})", LIVE)}
 
     def first_message(self, name: str) -> str:
+        """The worker's first message, when its start brief must carry it; "" otherwise."""
         with self.lock:
+            w = self._row(name)
+            if w is None or not w["needs_brief"]:
+                return ""
             row = self.db.execute("SELECT body FROM launches WHERE worker=? AND kind='launch'"
                                   " ORDER BY id DESC", (name,)).fetchone()
             return json.loads(row["body"]).get("first_message", "") if row else ""
@@ -428,6 +437,11 @@ class WorkerStore:
     def registered(self, project: str) -> bool:
         with self.lock:
             return self.store._registered(project)
+
+    def device_exists(self, device_id: int) -> bool:
+        with self.lock:
+            return self.db.execute("SELECT 1 FROM devices WHERE id=?",
+                                   (device_id,)).fetchone() is not None
 
     def auto_update(self, device_id: int) -> bool:
         """The device's setting; unset, on for a member's device and off for the admin's."""

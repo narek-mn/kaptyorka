@@ -86,7 +86,7 @@ def inbox_texts(client, who):
 BOSS = ident("k:boss")
 
 
-def start_worker(hub, alice, **kw):
+def start_worker(hub, alice, needs_brief=False, **kw):
     """alice's boss session asks for a worker; the bridge on box-1 takes and links it."""
     pid, client = alice
     b = bridge(hub, pid)
@@ -96,7 +96,8 @@ def start_worker(hub, alice, **kw):
     http.request("POST", hub.url + "/bridge/ack", b.token,
                  {"id": item["id"], "ok": True, "launch": True})
     assert http.request("POST", hub.url + "/bridge/worker", b.token,
-                        {"worker": "proj-a-w1", "key": "claude:w1"})[0] == 204
+                        {"worker": "proj-a-w1", "key": "claude:w1",
+                         "needs_brief": needs_brief})[0] == 204
     return b
 
 
@@ -120,7 +121,7 @@ def test_heartbeat_answers_json_with_projects_and_version(hub, alice):
     status, body = http.request("POST", hub.url + "/bridge/heartbeat", ADMIN,
                                 {"machine": "old", "sessions": []})
     assert status == 200 and body["auto_update"] is False and body["shared"] is False
-    assert sorted(body["projects"]) == ["proj-a", "proj-b"]  # the admin reads every project
+    assert body["projects"] == []  # the shared token is nobody's: no project list
 
 
 def test_poll_carries_signed_launch_and_ack_links_worker(hub, alice):
@@ -187,16 +188,21 @@ def test_legacy_device_cannot_host_workers(hub, alice):
                              " token")
 
 
+def admin_id(hub):
+    return next(p["id"] for p in hub.store.people() if p["role"] == "admin")
+
+
 def test_admin_cannot_use_members_private_device(hub, alice):
     pid, _ = alice
     bridge(hub, pid)
-    admin = as_token(hub, ADMIN)
+    admin_token = hub.store.device_add(admin_id(hub), "admin-own")
+    admin = as_token(hub, admin_token)
     answer = run(call(admin, ident("k:x", machine="hubbox"), "work", project="proj-a",
                       task="x", machine="box-1"))
     assert answer == "no machine can take proj-a: no machine named box-1 that you may use"
     answer = run(call(admin, ident("k:x", machine="hubbox"), "work", project="proj-a", task="x"))
     assert answer.startswith("no machine can take proj-a: ")
-    assert hub.ws.list(hub.store.authenticate(ADMIN)) == []
+    assert hub.ws.list(hub.store.authenticate(admin_token)) == []
 
 
 def test_reasons_for_folder_and_tmux(hub, alice):
@@ -248,7 +254,7 @@ def brief(hub, token, who):
 
 
 def test_worker_brief_starts_with_task(hub, alice, clock):
-    b = start_worker(hub, alice)
+    b = start_worker(hub, alice, needs_brief=True)
     worker = ident("claude:w1", machine="box-1", tool="claude-code")
     text = brief(hub, b.token, worker)
     assert text.startswith("You are kaptyorka worker `proj-a-w1` for `laptop/codex/proj-a`"
@@ -256,6 +262,38 @@ def test_worker_brief_starts_with_task(hub, alice, clock):
     assert "Kaptyorka: you are `box-1/claude-code/proj-a`." in text
     clock[0] += 301  # an older session: a resumed one does not hear its task again
     assert not brief(hub, b.token, worker).startswith("You are kaptyorka worker")
+
+
+def test_worker_brief_without_needs_brief_has_no_task(hub, alice):
+    b = start_worker(hub, alice)  # Claude Code: the task went on the command line
+    text = brief(hub, b.token, ident("claude:w1", machine="box-1", tool="claude-code"))
+    assert text.startswith("Kaptyorka: you are `box-1/claude-code/proj-a`.")
+    assert "fix the tests" not in text
+
+
+OWN_TOKEN = ("use your own device token: run kaptyorka join with an invite, or ask the admin to"
+             " assign this machine")
+
+
+def test_legacy_token_cannot_start_adopt_or_close_workers(hub, alice, clock):
+    _, client = alice
+    start_worker(hub, alice)
+    hub.store.device_add(admin_id(hub), "admin-own")  # the admin has a token of their own
+    bridge(hub, admin_id(hub), host="box-9")  # and a private device the shared token must not reach
+    legacy = as_token(hub, ADMIN)
+    who = ident("k:x", machine="box-1")  # a self-reported machine name
+    assert OWN_TOKEN in call_error(legacy, who, "work", project="proj-a", task="x")
+    assert OWN_TOKEN in call_error(legacy, who, "close_worker", name="proj-a-w1")
+    clock[0] += ONLINE_S + UNATTENDED_S + 5
+    hub.app.state.tick()
+    assert OWN_TOKEN in call_error(legacy, who, "adopt", name="proj-a-w1")
+    for action in ("close", "adopt"):
+        status, text = http.request("POST", f"{hub.url}/api/workers/proj-a-w1/{action}", ADMIN)
+        assert (status, text) == (403, OWN_TOKEN)
+    assert hub.ws.by_name("proj-a-w1")["state"] == "unattended"
+    assert hub.ws.by_name("proj-a-w2") is None
+    assert run(call(legacy, who, "workers")) == []  # no admin view through the shared token
+    assert http.request("GET", hub.url + "/api/workers", ADMIN)[1] == []
 
 
 def test_unattended_worker_in_brief_and_adopt(hub, alice, clock):
@@ -338,6 +376,8 @@ def test_auto_update_route_and_machine_rows(hub, alice):
     assert http.request("POST", url, client.token, {"on": False})[0] == 403
     assert http.request("POST", url, ADMIN, {"on": "yes"})[0] == 400
     assert http.request("POST", url, ADMIN, {"on": False})[0] == 204
+    assert http.request("POST", f"{hub.url}/api/devices/999/auto_update", ADMIN,
+                        {"on": False})[0] == 404
     status, machines = http.request("GET", hub.url + "/api/machines", client.token)
     assert status == 200
     dev = next(d for m in machines for d in m["devices"] if d["id"] == b.device_id)

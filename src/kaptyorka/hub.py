@@ -8,7 +8,7 @@ import inspect
 import math
 import mimetypes
 import re
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Dict, List, Mapping, Optional, Union
 from urllib.parse import unquote
 
@@ -28,6 +28,8 @@ from kaptyorka.workers import WorkerStore
 MAX_WAIT_S = 25
 TICK_S = 15
 WORKER_BRIEF_S = 300  # a worker session this young hears its task in the start brief
+OWN_TOKEN = ("use your own device token: run kaptyorka join with an invite, or ask the admin to"
+             " assign this machine")
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
        "style-src 'unsafe-inline'; img-src 'self' data:")
 
@@ -279,6 +281,10 @@ def build_app(store: Store) -> Starlette:
         rid = store.request_access(principal.person_id, kind, target, why)
         return f"requested #{rid}; the admin sees it on the page"
 
+    def own_workers(principal: Principal) -> List[dict]:
+        # the shared token is no admin here: anyone may hold it
+        return ws.list(replace(principal, role="member") if principal.legacy else principal)
+
     def no_machine(project: str, machine: Optional[str], tool: str, usable: List[dict],
                    reasons: List[str]) -> str:
         if machine is not None and not usable and not reasons:
@@ -300,6 +306,8 @@ def build_app(store: Store) -> Starlette:
         task as its first message. machine: one host by name; tool: claude-code (default),
         codex or opencode; resume: a session id to continue."""
         agent, principal = caller(ctx)
+        if principal.legacy:
+            raise KaptyorkaError(OWN_TOKEN)
         if not (store.may_write_project(project, principal)
                 or (agent.project == project and not ws.registered(project))):
             raise KaptyorkaError(f"you may not start workers in {project}: that takes the write"
@@ -327,13 +335,15 @@ def build_app(store: Store) -> Starlette:
     def workers(ctx: Context) -> List[dict]:
         """Your workers (the admin: everyone's): name, project, host, state, attach line."""
         _, principal = caller(ctx)
-        return ws.list(principal)
+        return own_workers(principal)
 
     @server.tool()
     @_tool_errors
     async def adopt(name: str, ctx: Context) -> str:
         """Become the boss of one of your unattended workers; its held messages come to you."""
         agent, principal = caller(ctx)
+        if principal.legacy:
+            raise KaptyorkaError(OWN_TOKEN)
         w = ws.adopt(principal, name, agent.key)
         wake_bridges()
         return f"you are now the boss of `{name}`; {w['delivered']} held messages delivered"
@@ -343,6 +353,8 @@ def build_app(store: Store) -> Starlette:
     async def close_worker(name: str, ctx: Context) -> str:
         """End one of your workers (its session on that machine is stopped)."""
         _, principal = caller(ctx)
+        if principal.legacy:
+            raise KaptyorkaError(OWN_TOKEN)
         w = ws.close(principal, name)
         wake_bridges()
         return f"closing `{name}`" + (f"; {w['note']}" if w.get("note") else "")
@@ -366,7 +378,8 @@ def build_app(store: Store) -> Starlette:
             ws.facts_seen(principal.device_id, facts, body.get("folders"))
         return JSONResponse({"version": __version__,
                              "auto_update": own and ws.auto_update(principal.device_id),
-                             "projects": [p["name"] for p in store.projects_for(principal)],
+                             "projects": [] if principal.legacy else
+                             [p["name"] for p in store.projects_for(principal)],
                              "you": principal.person_name, "shared": principal.shared})
 
     @server.custom_route("/bridge/poll", methods=["GET"])
@@ -418,7 +431,7 @@ def build_app(store: Store) -> Starlette:
                 return PlainTextResponse("no such starting worker here", status_code=404)
             tick()  # the boss hears it now
             return Response(status_code=204)
-        if not ws.link(name, str(body["key"]), device_id):
+        if not ws.link(name, str(body["key"]), device_id, body.get("needs_brief") is True):
             return PlainTextResponse("no such starting worker here", status_code=404)
         w = ws.by_name(name)
         tell(ws.boss_key(name), f"worker `{name}` is up on {w['host']}; attach with"
@@ -716,6 +729,8 @@ def build_app(store: Store) -> Starlette:
         body = await request.json()
         if body["on"] is not None and not isinstance(body["on"], bool):
             raise ValueError("on must be true, false or null")
+        if not ws.device_exists(request.path_params["device_id"]):
+            return PlainTextResponse("no such device", status_code=404)
         ws.set_auto_update(request.path_params["device_id"], body["on"])
         return Response(status_code=204)
 
@@ -724,12 +739,14 @@ def build_app(store: Store) -> Starlette:
         principal = request.scope.get("state", {}).get("principal")
         if principal is None:
             return PlainTextResponse("unauthorized", status_code=401)
-        return JSONResponse(ws.list(principal))
+        return JSONResponse(own_workers(principal))
 
     async def worker_action(request: Request, close: bool) -> Response:
         principal = request.scope.get("state", {}).get("principal")
         if principal is None:
             return PlainTextResponse("unauthorized", status_code=401)
+        if principal.legacy:
+            return PlainTextResponse(OWN_TOKEN, status_code=403)
         name = request.path_params["name"]
         try:
             # the page acts as the person: a web boss hears its notices on the page
