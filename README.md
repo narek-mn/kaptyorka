@@ -129,7 +129,7 @@ Push means a running session gets a message without anyone typing. Pull only mea
 | `notes_list` | List notes (team notes, or a project's with `project=`) |
 | `notes_read` | Read a note |
 | `notes_write` | Write a note. Notes outlive sessions |
-| `work` | Start a worker session for you on another machine |
+| `work` | Start a worker session for you on another machine. Leave `machine` empty and the hub picks one; `resume` is a session id to continue |
 | `workers` | List your workers |
 | `adopt` | Take over one of your unattended workers |
 | `close_worker` | End one of your workers |
@@ -143,7 +143,7 @@ Rename a Claude Code session with `/rename <name>` and agents can reach it by th
 A worker is an agent session that runs on another machine for you. Say "do this on the GPU box" and your agent calls `work`. Here is the story:
 
 1. Your agent calls `work(project, task)`. You need the write role in the project, and a machine you may use.
-2. The hub picks a machine and tells its bridge. The bridge finds the project folder and starts the tool there, with your task as the first message.
+2. The hub picks a machine and tells its bridge. Your own account comes first; someone's shared account only on a machine where you have none. The bridge finds the project folder and starts the tool there, with your task as the first message.
 3. The worker works alone. When it has news, it messages its boss (you). You get the worker's name and an attach line, so you can look inside.
 4. Attach from any computer with the line you got: `ssh -t <user>@<machine> claude attach <name>` for Claude Code, `ssh <user>@<machine> -t tmux attach -t =<name>` for Codex and OpenCode.
 5. `close_worker(name)` ends it. `workers` lists yours, with the state of each.
@@ -157,9 +157,11 @@ The project folder is the path the hub learned from sessions that ran this proje
 
 Permissions: nothing is bypassed. A worker runs with the account's own saved permission settings. Only Claude Code reports that a worker is waiting for a permission; the boss is told once per half hour, with the attach line. Codex and OpenCode do not report it, so attach and look.
 
-If the boss goes offline, the worker keeps going. After 2 minutes it is `unattended`, and after 24 hours `abandoned`. Nothing kills it. Its messages are held. Call `adopt(name)` from one of your own sessions (or press Adopt on the page) to take it over; the held messages come to you.
+If the boss goes offline, the worker keeps going. After 2 minutes it is `unattended`, and after 24 hours `abandoned`. Nothing kills it. Its messages are held by the hub. Call `adopt(name)` from one of your own sessions (or press Adopt on the page) to take it over; the held messages come to you.
 
-The old shared token cannot start, adopt or close workers. Use your own token.
+A worker is closed as gone only when its machine's bridge reports and has not seen the worker's session for over 10 minutes. If the session shows up again, the worker is `up` again and the boss is told.
+
+The old shared token cannot start, adopt or close workers. Use your own token. A worker on someone's shared account cannot either: it asks its boss.
 
 The **Machines** tab on the page shows each machine, its workers and warnings (for example an old version). It also has the auto-update switch for each account.
 
@@ -244,7 +246,7 @@ Everything is in `~/.kaptyorka`:
 - `inbox/`: files saved with `fetch_file`
 - `workers/<name>.log`: what a worker printed, on the machine that runs it
 - `folders.json`: project folders the bridge learned from sessions
-- `launched.json`: workers the bridge started, so it can find them again after a restart
+- `launched.json`: the bridge's memory of the start and stop orders it already ran, so an order sent again is never run twice (it is not a list of workers)
 - `bridge.log`
 
 ## Commands

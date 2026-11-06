@@ -235,6 +235,9 @@ def test_fleet_add_smoke_with_fake_run(monkeypatch, home, tmp_path, capsys):
     assert entry_with_exit(["fleet", "add", "alice@box-1", "--person", "alice"]) == 0
     assert capsys.readouterr().out == "alice@box-1: joined as alice@box-1; tools: claude-code\n"
     assert all(a[:3] == ["ssh", "-o", "BatchMode=yes"] for a in seen) and len(seen) == 4
+    # every target rejected: a failure, not a success
+    assert entry_with_exit(["fleet", "add", "a b@box-2", "--person", "alice"]) == 1
+    assert capsys.readouterr().out == "a b@box-2: not a user@host\n" and len(seen) == 4
 
 
 def test_fleet_list_prints_devices(monkeypatch, home, capsys):

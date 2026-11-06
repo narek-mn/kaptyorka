@@ -399,7 +399,7 @@ def _fleet_add(args) -> int:
         return 1
     for line in lines:
         print(line)
-    return 1 if any(": failed at " in l for l in lines) else 0
+    return 1 if any(": failed at " in l or l.endswith(": not a user@host") for l in lines) else 0
 
 
 def _fleet_list(args) -> int:
