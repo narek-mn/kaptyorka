@@ -1,4 +1,6 @@
-"""SQLite storage for the hub: agents, messages and notes."""
+"""SQLite storage for the hub: agents, messages, notes, people and their access."""
+import getpass
+import hashlib
 import sqlite3
 import threading
 import time
@@ -10,23 +12,85 @@ ONLINE_S = 30
 LEASE_S = 60
 MAX_TEXT = 32_000
 RATE = (30, 60)
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
     key TEXT PRIMARY KEY, name TEXT NOT NULL, machine TEXT NOT NULL,
     tool TEXT NOT NULL, project TEXT NOT NULL, status TEXT NOT NULL DEFAULT '',
     activity TEXT NOT NULL DEFAULT '', last_seen REAL NOT NULL,
-    label TEXT NOT NULL DEFAULT '');
+    label TEXT NOT NULL DEFAULT '', person_id INTEGER, os_user TEXT NOT NULL DEFAULT '',
+    host TEXT NOT NULL DEFAULT '', started REAL);
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT, sender_key TEXT NOT NULL,
     sender_name TEXT NOT NULL, to_key TEXT, to_name TEXT NOT NULL,
     machine TEXT NOT NULL, tool TEXT NOT NULL, project TEXT NOT NULL,
     text TEXT NOT NULL, created REAL NOT NULL, read_at REAL,
-    push_state TEXT NOT NULL DEFAULT 'new', offered_at REAL);
+    push_state TEXT NOT NULL DEFAULT 'new', offered_at REAL, file_id INTEGER,
+    kind TEXT NOT NULL DEFAULT 'message');
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL,
-    text TEXT NOT NULL, author TEXT NOT NULL, time REAL NOT NULL);
+    text TEXT NOT NULL, author TEXT NOT NULL, time REAL NOT NULL, project TEXT);
+CREATE TABLE IF NOT EXISTS schema (version INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS people (
+    id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('admin','member','manager')), created REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS devices (
+    id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL, name TEXT NOT NULL,
+    token_hash TEXT UNIQUE NOT NULL, secret_hash TEXT NOT NULL DEFAULT '',
+    created REAL NOT NULL, last_used REAL, revoked_at REAL,
+    shared INTEGER NOT NULL DEFAULT 0, legacy INTEGER NOT NULL DEFAULT 0,
+    host TEXT NOT NULL DEFAULT '', os_user TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS invites (
+    code TEXT PRIMARY KEY, person_id INTEGER NOT NULL, created REAL NOT NULL,
+    expires REAL NOT NULL, used_at REAL);
+CREATE TABLE IF NOT EXISTS projects (
+    name TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '',
+    repo TEXT NOT NULL DEFAULT '', created REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS project_access (
+    project TEXT NOT NULL, person_id INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('read','write','manage')),
+    PRIMARY KEY(project, person_id));
+CREATE TABLE IF NOT EXISTS machines (
+    host TEXT PRIMARY KEY, owner_person_id INTEGER, first_seen REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS machine_access (
+    host TEXT NOT NULL, person_id INTEGER NOT NULL, PRIMARY KEY(host, person_id));
+CREATE TABLE IF NOT EXISTS doors (
+    id INTEGER PRIMARY KEY, a_key TEXT NOT NULL, a_person INTEGER NOT NULL,
+    b_key TEXT NOT NULL, b_person INTEGER NOT NULL,
+    scope TEXT NOT NULL CHECK(scope IN ('session','group')),
+    opened_at REAL NOT NULL, closed_at REAL, opened_by INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS knocks (
+    id INTEGER PRIMARY KEY, from_key TEXT NOT NULL, from_person INTEGER NOT NULL,
+    to_key TEXT, to_person INTEGER NOT NULL, about TEXT NOT NULL, created REAL NOT NULL,
+    answered_at REAL, answer TEXT);
+CREATE TABLE IF NOT EXISTS requests (
+    id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('project','machine')), target TEXT NOT NULL,
+    why TEXT NOT NULL DEFAULT '', created REAL NOT NULL, decided_at REAL, decision TEXT,
+    decided_by INTEGER);
+CREATE TABLE IF NOT EXISTS log (
+    id INTEGER PRIMARY KEY, time REAL NOT NULL, person TEXT NOT NULL, kind TEXT NOT NULL,
+    detail TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS files (
+    id INTEGER PRIMARY KEY, message_id INTEGER, name TEXT NOT NULL, size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL, created REAL NOT NULL, person_id INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS rekeys (
+    device_name TEXT PRIMARY KEY, token TEXT NOT NULL, created REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
+
+# columns added after 0.1: an older database gets them by ALTER TABLE when it is opened
+ADDED_COLUMNS = [
+    ("agents", "label", "TEXT NOT NULL DEFAULT ''"),
+    ("agents", "person_id", "INTEGER"),
+    ("agents", "os_user", "TEXT NOT NULL DEFAULT ''"),
+    ("agents", "host", "TEXT NOT NULL DEFAULT ''"),
+    ("agents", "started", "REAL"),
+    ("messages", "file_id", "INTEGER"),
+    ("messages", "kind", "TEXT NOT NULL DEFAULT 'message'"),
+    ("notes", "project", "TEXT"),
+]
 
 
 class KaptyorkaError(Exception):
@@ -64,6 +128,10 @@ class Agent:
     last_seen: float
     online: bool
     label: str = ""
+    person_id: Optional[int] = None
+    os_user: str = ""
+    host: str = ""
+    started: Optional[float] = None
 
 
 @dataclass
@@ -84,30 +152,91 @@ class Note:
     text: str
     author: str
     time: float
+    project: Optional[str] = None
 
 
 class Store:
-    def __init__(self, path: Path, clock: Callable[[], float] = time.time):
+    def __init__(self, path: Path, clock: Callable[[], float] = time.time,
+                 legacy_token: Optional[str] = None):
         self.clock = clock
         self.lock = threading.Lock()
         self.db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
-        if "label" not in {r["name"] for r in self.db.execute("PRAGMA table_info(agents)")}:
-            self.db.execute("ALTER TABLE agents ADD COLUMN label TEXT NOT NULL DEFAULT ''")
+        self._migrate(legacy_token)
         self.sends: Dict[str, List[float]] = {}
+
+    def _migrate(self, legacy_token):
+        """Bring an older database up to SCHEMA_VERSION. A 0.1 hub had one shared token: it
+        becomes the `legacy` device of an admin person, who owns every agent seen so far."""
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            for table, column, kind in ADDED_COLUMNS:
+                have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
+                if column not in have:
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+            no_people = self.db.execute("SELECT 1 FROM people LIMIT 1").fetchone() is None
+            if legacy_token and no_people:
+                now = self.clock()
+                admin = self.db.execute(
+                    "INSERT INTO people (name, role, created) VALUES (?, 'admin', ?)",
+                    (getpass.getuser(), now)).lastrowid
+                self.db.execute(
+                    "INSERT INTO devices (person_id, name, token_hash, created, legacy)"
+                    " VALUES (?, 'legacy', ?, ?, 1)",
+                    (admin, hashlib.sha256(legacy_token.encode()).hexdigest(), now))
+                self.db.execute("UPDATE agents SET person_id=?", (admin,))
+                self.db.execute("UPDATE notes SET project=topic WHERE project IS NULL"
+                                " AND topic IN (SELECT DISTINCT project FROM agents)")
+            if self._version() != SCHEMA_VERSION:
+                self.db.execute("DELETE FROM schema")
+                self.db.execute("INSERT INTO schema (version) VALUES (?)", (SCHEMA_VERSION,))
+            self.db.execute("COMMIT")
+        except BaseException:
+            self.db.execute("ROLLBACK")
+            raise
+
+    def _version(self):
+        row = self.db.execute("SELECT MAX(version) AS v FROM schema").fetchone()
+        return row["v"] or 0
+
+    def schema_version(self) -> int:
+        with self.lock:
+            return self._version()
 
     def close(self) -> None:
         with self.lock:
             self.db.close()
+
+    # people
+
+    def people(self) -> List[dict]:
+        with self.lock:
+            rows = self.db.execute("SELECT id, name, role, created FROM people ORDER BY id")
+            return [dict(r) for r in rows]
+
+    def devices(self, person_id: int) -> List[dict]:
+        with self.lock:
+            rows = self.db.execute("SELECT * FROM devices WHERE person_id=? ORDER BY id",
+                                   (person_id,)).fetchall()
+            return [{k: r[k] for k in r.keys() if k not in ("token_hash", "secret_hash")}
+                    for r in rows]
+
+    # log
+
+    def log_add(self, person: str, kind: str, detail: str) -> None:
+        with self.lock:
+            self.db.execute("INSERT INTO log (time, person, kind, detail) VALUES (?,?,?,?)",
+                            (self.clock(), person, kind, detail))
 
     # agents
 
     def _agent(self, row, now) -> Agent:
         return Agent(row["key"], row["name"], row["machine"], row["tool"], row["project"],
                      row["status"], row["activity"], row["last_seen"],
-                     now - row["last_seen"] < ONLINE_S, row["label"])
+                     now - row["last_seen"] < ONLINE_S, row["label"], row["person_id"],
+                     row["os_user"], row["host"], row["started"])
 
     def _online_rows(self, now):
         return self.db.execute("SELECT * FROM agents WHERE last_seen > ? ORDER BY rowid",
@@ -317,19 +446,23 @@ class Store:
         self.db.execute("INSERT INTO notes (topic, text, author, time) VALUES (?,?,?,?)",
                         (topic, text, author, self.clock()))
 
-    def notes_list(self) -> List[dict]:
+    def notes_list(self, project: Optional[str] = None) -> List[dict]:
+        """Latest note of each topic; with `project`, only that project's topics."""
         with self.lock:
             rows = self.db.execute(
                 "SELECT topic, author, time FROM notes WHERE id IN"
-                " (SELECT MAX(id) FROM notes GROUP BY topic) ORDER BY id DESC").fetchall()
+                " (SELECT MAX(id) FROM notes GROUP BY topic)"
+                " AND (? IS NULL OR project=?) ORDER BY id DESC", (project, project)).fetchall()
             return [dict(r) for r in rows]
 
-    def notes_read(self, topic: str) -> Optional[Note]:
-        history = self.note_history(topic)
+    def notes_read(self, topic: str, project: Optional[str] = None) -> Optional[Note]:
+        history = self.note_history(topic, project=project)
         return history[0] if history else None
 
-    def note_history(self, topic: str) -> List[Note]:
+    def note_history(self, topic: str, project: Optional[str] = None) -> List[Note]:
         with self.lock:
-            rows = self.db.execute("SELECT * FROM notes WHERE topic=? ORDER BY id DESC",
-                                   (topic,)).fetchall()
-            return [Note(r["topic"], r["text"], r["author"], r["time"]) for r in rows]
+            rows = self.db.execute(
+                "SELECT * FROM notes WHERE topic=? AND (? IS NULL OR project=?) ORDER BY id DESC",
+                (topic, project, project)).fetchall()
+            return [Note(r["topic"], r["text"], r["author"], r["time"], r["project"])
+                    for r in rows]
