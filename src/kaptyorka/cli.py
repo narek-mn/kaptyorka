@@ -8,6 +8,7 @@ import select
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from kaptyorka import __version__, http, paths, service
@@ -116,6 +117,55 @@ def _who(args) -> int:
     return 0
 
 
+def _admin_call(method: str, path: str, body=None):
+    """Call the hub with the saved config; (status, body), or None after printing why not."""
+    cfg = paths.load_config()
+    if not cfg.get("hub") or not cfg.get("token"):
+        print("not joined: run kaptyorka join", file=sys.stderr)
+        return None
+    try:
+        return http.request(method, cfg["hub"] + path, cfg["token"], body)
+    except http.HubUnreachable:
+        print(f"kaptyorka hub unreachable at {cfg['hub']}", file=sys.stderr)
+        return None
+
+
+def _invite(args) -> int:
+    got = _admin_call("POST", "/api/people", {"name": args.person})
+    if got is None:
+        return 1
+    if got[0] not in (200, 409):  # 409: the person already exists
+        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        return 1
+    got = _admin_call("POST", "/api/invites", {"person": args.person})
+    if got is None:
+        return 1
+    if got[0] != 200:
+        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        return 1
+    print(got[1]["url"])
+    return 0
+
+
+def _people(args) -> int:
+    got = _admin_call("GET", "/api/people")
+    if got is None:
+        return 1
+    if got[0] != 200:
+        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        return 1
+    now = time.time()
+    rows = [("NAME", "ROLE", "DEVICES", "LAST SEEN")]
+    for p in got[1]:
+        used = [d["last_used"] for d in p["devices"] if d.get("last_used")]
+        rows.append((p["name"], p["role"], str(len(p["devices"])),
+                     f"{round(now - max(used))}s ago" if used else "never"))
+    w = [max(len(r[i]) for r in rows) for i in range(3)]
+    for r in rows:
+        print("  ".join(c.ljust(n) for c, n in zip(r, w)) + "  " + r[3])
+    return 0
+
+
 def _stop(args) -> int:
     try:
         for unit in ("kaptyorka-bridge", "kaptyorka-hub"):
@@ -215,6 +265,12 @@ def _hook(args) -> int:
 def _join(args) -> int:
     from kaptyorka import join
 
+    if args.invite:
+        got = join.redeem(args.invite, args.name)
+        if got is None:
+            return 1
+        hub, token, secret = got
+        return join.main(hub, token, args.name, only=args.only, secret=secret)
     if not args.hub and not args.token:  # no flags: the previous arguments, saved by the last join
         cfg = paths.load_config()
         if not cfg.get("hub") or not cfg.get("token"):
@@ -237,6 +293,7 @@ def entry() -> None:
     s.add_argument("--host", help="address shown to the team (default: this machine's IP)")
     s.set_defaults(run=_start)
     j = sub.add_parser("join", help="connect this machine's agents to the hub (again, with no flags)")
+    j.add_argument("invite", nargs="?", help="invite link from your admin")
     j.add_argument("--hub", help="hub address")
     j.add_argument("--token", help="hub token")
     j.add_argument("--name", default=_default_name(), help="this machine's name on the team (default: user@host)")
@@ -255,6 +312,10 @@ def entry() -> None:
     v.add_argument("--host")
     v.add_argument("--foreground", action="store_true")
     v.set_defaults(run=_serve)
+    i = sub.add_parser("invite")
+    i.add_argument("person")
+    i.set_defaults(run=_invite)
+    sub.add_parser("people").set_defaults(run=_people)
     sub.add_parser("who").set_defaults(run=_who)
     m = sub.add_parser("mcp")
     m.add_argument("--workspace")

@@ -145,3 +145,33 @@ def test_join_only_adds_to_earlier_tools(hub, home):
     assert paths.load_config()["tools"] == ["claude-code", "codex"]
     main(hub.url, "T", "pc", adapters=[a, b], install=no_service([]))
     assert "tools" not in paths.load_config()
+
+
+def test_redeem_returns_hub_token_secret(monkeypatch):
+    from kaptyorka import join
+
+    seen = {}
+
+    def fake(method, url, token, body=None, **kw):
+        seen.update(method=method, url=url, body=body)
+        return 200, {"token": "tok", "secret": "sec", "hub": "http://h:1"}
+
+    monkeypatch.setattr("kaptyorka.http.request", fake)
+    assert join.redeem("http://h:1/i/CODE123", "pc") == ("http://h:1", "tok", "sec")
+    assert seen["method"] == "POST" and seen["url"] == "http://h:1/i/CODE123"
+    assert seen["body"]["device_name"] == "pc" and seen["body"]["host"] and seen["body"]["os_user"]
+
+
+def test_redeem_failure_message(monkeypatch, capsys):
+    from kaptyorka import join
+
+    monkeypatch.setattr("kaptyorka.http.request", lambda *a, **k: (400, "invite expired"))
+    assert join.redeem("http://h:1/i/CODE123", "pc") is None
+    assert "invite expired" in capsys.readouterr().err
+    assert join.redeem("not a url", "pc") is None
+
+
+def test_join_saves_secret(hub, home):
+    a = FakeAdapter("a")
+    assert main(hub.url, "T", "pc", adapters=[a], install=no_service([]), secret="s3") == 0
+    assert paths.load_config()["secret"] == "s3"

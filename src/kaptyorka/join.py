@@ -1,7 +1,10 @@
+import getpass
 import os
+import re
+import socket
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from kaptyorka import http, paths, service
 
@@ -20,8 +23,33 @@ def install_bridge(exe: str, install=None) -> bool:
     return True
 
 
+def redeem(url: str, name: str) -> Optional[Tuple[str, str, str]]:
+    """Use an invite link: (hub, token, secret), or None after printing why it failed."""
+    m = re.fullmatch(r"(https?://[^/\s]+)/i/([\w-]+)/?", url.strip())
+    if not m:
+        print("that is not an invite link (expected http://<hub>/i/<code>)", file=sys.stderr)
+        return None
+    base, code = m.groups()
+    try:
+        host = socket.gethostname().split(".")[0]
+        try:
+            os_user = getpass.getuser()
+        except Exception:
+            os_user = ""
+        status, body = http.request("POST", f"{base}/i/{code}", "", {
+            "device_name": name, "host": host, "os_user": os_user})
+    except http.HubUnreachable:
+        print(f"kaptyorka hub unreachable at {base}", file=sys.stderr)
+        return None
+    if status != 200 or not isinstance(body, dict):
+        print(f"invite failed: {body if isinstance(body, str) else status}", file=sys.stderr)
+        return None
+    return body.get("hub") or base, body["token"], body["secret"]
+
+
 def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
-         install=service.install, only: Optional[List[str]] = None) -> int:
+         install=service.install, only: Optional[List[str]] = None,
+         secret: Optional[str] = None) -> int:
     hub = hub.strip()
     hub = (hub if "://" in hub else "http://" + hub).rstrip("/")
     token = token.strip().strip("'\"")
@@ -47,6 +75,8 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     exe = str(Path(sys.argv[0]).resolve())
     done = [a for a in adapters if a.installed() and (not only or a.tool in only)]
     cfg = {"hub": hub, "token": token, "machine": name}
+    if secret:
+        cfg["secret"] = secret
     if only:
         # the bridge drives only these; a later --only adds to the earlier ones
         cfg["tools"] = sorted(set(only) | set(paths.load_config().get("tools", [])))

@@ -1,6 +1,7 @@
 """The hub app: MCP tools and plain routes over HTTP behind per-device tokens."""
 import asyncio
 import functools
+import html
 import importlib.resources
 import inspect
 import math
@@ -14,12 +15,18 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from kaptyorka.auth import Auth, bearer
+from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.store import Agent, KaptyorkaError, Principal, Store
 
 MAX_WAIT_S = 25
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
        "style-src 'unsafe-inline'; img-src 'self' data:")
+
+INVITE_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+               "<title>kaptyorka</title><style>body{{background:#111418;color:#e6e8eb;"
+               "font:16px system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem}}"
+               "pre{{background:#1b2027;padding:1rem;border-radius:6px;overflow-x:auto}}</style>"
+               "{body}")
 
 INSTRUCTIONS = (
     "kaptyorka connects you with the other coding agents on this team. "
@@ -240,11 +247,94 @@ def build_app(store: Store) -> Starlette:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
 
+    limiter = RateLimiter()  # shared by token checks (Auth) and failed invite redeems
+
+    def admin_only(request: Request) -> "Response | None":
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None or not principal.is_admin():
+            return PlainTextResponse("admin only", status_code=403)
+        return None
+
+    def hub_url(request: Request) -> str:
+        return f"http://{request.headers.get('host') or request.url.netloc}"
+
+    @server.custom_route("/api/people", methods=["GET"])
+    async def api_people(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        return JSONResponse([{**p, "devices": store.devices(p["id"])} for p in store.people()])
+
+    @server.custom_route("/api/people", methods=["POST"])
+    @_bad_request
+    async def api_people_create(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        try:
+            pid = store.person_create(str(body["name"]), str(body.get("role", "member")))
+        except KaptyorkaError as e:
+            status = 409 if "already exists" in str(e) else 400
+            return PlainTextResponse(str(e), status_code=status)
+        return JSONResponse({"id": pid})
+
+    @server.custom_route("/api/invites", methods=["POST"])
+    @_bad_request
+    async def api_invites(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        person = store.person_by_name(str(body["person"]))
+        if person is None:
+            return PlainTextResponse("no such person", status_code=404)
+        code = store.invite_create(person["id"])
+        return JSONResponse({"code": code, "url": f"{hub_url(request)}/i/{code}"})
+
+    @server.custom_route("/api/devices/{device_id:int}/revoke", methods=["POST"])
+    async def api_device_revoke(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        store.device_revoke(request.path_params["device_id"])
+        return Response(status_code=204)
+
+    @server.custom_route("/i/{code}", methods=["GET"])
+    async def invite_page(request: Request) -> Response:
+        code = request.path_params["code"]
+        headers = {"Cache-Control": "no-store"}
+        if not store.invite_valid(code):
+            return HTMLResponse(INVITE_PAGE.format(body="<p>This invite is not valid.</p>"),
+                                status_code=404, headers=headers)
+        cmd = html.escape(f"kaptyorka join {hub_url(request)}/i/{code}")
+        body = (f"<h1>Join the team hub</h1><pre>{cmd}</pre>"
+                "<p>Paste this link to your agent and say: join this.</p>")
+        return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)
+
+    @server.custom_route("/i/{code}", methods=["POST"])
+    @_bad_request
+    async def invite_redeem(request: Request) -> Response:
+        code = request.path_params["code"]
+        key = (request.client.host if request.client else "?", code)
+        if limiter.blocked(key):
+            return PlainTextResponse("too many failed attempts", status_code=429)
+        body = await request.json()
+        try:
+            token, secret = store.invite_redeem(code, str(body["device_name"]),
+                                                str(body.get("host", "")),
+                                                str(body.get("os_user", "")))
+        except KaptyorkaError as e:
+            limiter.hit(key)
+            return PlainTextResponse(str(e), status_code=400)
+        return JSONResponse({"token": token, "secret": secret, "hub": hub_url(request)},
+                            headers={"Cache-Control": "no-store"})
+
     @server.custom_route("/", methods=["GET"])
     async def page(request: Request) -> Response:
         html = (importlib.resources.files("kaptyorka") / "web/index.html").read_text("utf-8")
         return HTMLResponse(html, headers={"Cache-Control": "no-store", "Content-Security-Policy": CSP})
 
     app = server.streamable_http_app(host="0.0.0.0")
-    app.add_middleware(Auth, store=store)
+    app.add_middleware(Auth, store=store, limiter=limiter)
     return app

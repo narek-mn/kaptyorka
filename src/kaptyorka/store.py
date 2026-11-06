@@ -1,18 +1,21 @@
 """SQLite storage for the hub: agents, messages, notes, people and their access."""
 import getpass
 import hashlib
+import secrets
 import sqlite3
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 ONLINE_S = 30
 LEASE_S = 60
 MAX_TEXT = 32_000
 RATE = (30, 60)
 SCHEMA_VERSION = 2
+INVITE_TTL_S = 7 * 86400
+ROLES = ("admin", "member", "manager")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -271,10 +274,83 @@ class Store:
             return Principal(person_id, who["name"], who["role"], dev["id"], device_name,
                              bool(dev["shared"]), bool(dev["legacy"]))
 
+    def person_create(self, name: str, role: str = "member") -> int:
+        name = _person(name)
+        if role not in ROLES:
+            raise KaptyorkaError("role must be admin, member or manager")
+        with self.lock:
+            if self.db.execute("SELECT 1 FROM people WHERE name=?", (name,)).fetchone():
+                raise KaptyorkaError(f"a person named {name} already exists")
+            if role == "admin" and self.db.execute(
+                    "SELECT 1 FROM people WHERE role='admin'").fetchone():
+                raise KaptyorkaError("there is already an admin")
+            pid = self.db.execute("INSERT INTO people (name, role, created) VALUES (?,?,?)",
+                                  (name, role, self.clock())).lastrowid
+        self.log_add(name, "person", f"created as {role}")
+        return pid
+
+    def person_by_name(self, name: str) -> Optional[dict]:
+        with self.lock:
+            row = self.db.execute("SELECT id, name, role, created FROM people WHERE name=?",
+                                  (name.strip(),)).fetchone()
+            return dict(row) if row else None
+
+    def invite_create(self, person_id: int, ttl_s: float = INVITE_TTL_S) -> str:
+        code = secrets.token_urlsafe(16)
+        now = self.clock()
+        with self.lock:
+            row = self.db.execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
+            if row is None:
+                raise KaptyorkaError("no such person")
+            self.db.execute("INSERT INTO invites (code, person_id, created, expires)"
+                            " VALUES (?,?,?,?)", (code, person_id, now, now + ttl_s))
+        self.log_add(row["name"], "invite", "invite created")
+        return code
+
+    def invite_valid(self, code: str) -> bool:
+        """True when the code exists, is unused and has not expired."""
+        with self.lock:
+            row = self.db.execute("SELECT expires, used_at FROM invites WHERE code=?",
+                                  (code,)).fetchone()
+            return row is not None and row["used_at"] is None and row["expires"] > self.clock()
+
+    def invite_redeem(self, code: str, device_name: str, host: str = "",
+                      os_user: str = "") -> Tuple[str, str]:
+        """Use an invite once: a new device for its person. Returns (token, signing secret);
+        only their hashes are kept."""
+        device_name = device_name.strip()
+        if not device_name or len(device_name) > 80:
+            raise KaptyorkaError("device name must be 1 to 80 characters")
+        token, secret = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        now = self.clock()
+        with self.lock:
+            inv = self.db.execute("SELECT * FROM invites WHERE code=?", (code,)).fetchone()
+            if inv is None:
+                raise KaptyorkaError("no such invite")
+            if inv["used_at"] is not None:
+                raise KaptyorkaError("invite already used")
+            if inv["expires"] <= now:
+                raise KaptyorkaError("invite expired")
+            who = self.db.execute("SELECT name FROM people WHERE id=?",
+                                  (inv["person_id"],)).fetchone()
+            self.db.execute("UPDATE invites SET used_at=? WHERE code=?", (now, code))
+            self.db.execute(
+                "INSERT INTO devices (person_id, name, token_hash, secret_hash, created, host, os_user)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (inv["person_id"], device_name, hashlib.sha256(token.encode()).hexdigest(),
+                 hashlib.sha256(secret.encode()).hexdigest(), now, host[:80], os_user[:80]))
+        self.log_add(who["name"], "join", f"device {device_name}")
+        return token, secret
+
     def device_revoke(self, device_id: int) -> None:
         with self.lock:
-            self.db.execute("UPDATE devices SET revoked_at=? WHERE id=? AND revoked_at IS NULL",
-                            (self.clock(), device_id))
+            cur = self.db.execute("UPDATE devices SET revoked_at=? WHERE id=? AND revoked_at IS NULL",
+                                  (self.clock(), device_id))
+            row = self.db.execute("SELECT d.name, p.name AS person FROM devices d"
+                                  " JOIN people p ON p.id=d.person_id WHERE d.id=?",
+                                  (device_id,)).fetchone()
+        if cur.rowcount and row:
+            self.log_add(row["person"], "revoke", f"device {row['name']}")
 
     # log
 

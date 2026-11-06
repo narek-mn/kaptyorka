@@ -71,3 +71,70 @@ def test_join_name_defaults_to_user_at_host(monkeypatch):
     assert cli._default_name() == f"alice@{host}"
     monkeypatch.setattr(getpass, "getuser", lambda: (_ for _ in ()).throw(OSError()))
     assert cli._default_name() == host
+
+
+def test_cli_join_invite_url(monkeypatch, home):
+    from kaptyorka import join
+
+    calls = []
+
+    def fake(method, url, token, body=None, **kw):
+        calls.append((method, url, body))
+        return 200, {"token": "tok", "secret": "sec", "hub": "http://h:1"}
+
+    monkeypatch.setattr(http, "request", fake)
+    got = {}
+    monkeypatch.setattr(join, "main", lambda hub, token, name, **kw: got.update(
+        hub=hub, token=token, name=name, **kw) or 0)
+    entry_with_exit(["join", "http://h:1/i/CODE123", "--name", "pc"])
+    assert calls[0][:2] == ("POST", "http://h:1/i/CODE123")
+    assert (got["hub"], got["token"], got["name"], got["secret"]) == ("http://h:1", "tok", "pc", "sec")
+
+
+def test_cli_join_invite_failure_exits_1(monkeypatch, home, capsys):
+    monkeypatch.setattr(http, "request", lambda *a, **k: (400, "invite already used"))
+    assert entry_with_exit(["join", "http://h:1/i/CODE123"]) == 1
+    assert "invite already used" in capsys.readouterr().err
+
+
+def entry_with_exit(args):
+    try:
+        entry_with(args)
+    except SystemExit as e:
+        return e.code
+
+
+def test_cli_invite_prints_url(monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    calls = []
+
+    def fake(method, url, token, body=None, **kw):
+        calls.append((method, url, token, body))
+        if url.endswith("/api/people"):
+            return 409, "a person named ann already exists"
+        return 200, {"code": "C" * 22, "url": "http://h:1/i/" + "C" * 22}
+
+    monkeypatch.setattr(http, "request", fake)
+    assert entry_with_exit(["invite", "ann"]) == 0
+    assert capsys.readouterr().out.strip() == "http://h:1/i/" + "C" * 22
+    assert calls[1] == ("POST", "http://h:1/api/invites", "adm", {"person": "ann"})
+
+
+def test_cli_invite_not_admin(monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "t", "machine": "pc"})
+    monkeypatch.setattr(http, "request", lambda *a, **k: (403, "admin only"))
+    assert entry_with_exit(["invite", "ann"]) == 1
+    assert "admin only" in capsys.readouterr().err
+
+
+def test_cli_people_table(monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    rows = [{"name": "ann", "role": "admin", "devices": [{"last_used": 100.0}, {"last_used": 200.0}]},
+            {"name": "ben", "role": "member", "devices": []}]
+    monkeypatch.setattr(http, "request", lambda *a, **k: (200, rows))
+    monkeypatch.setattr("time.time", lambda: 260.0)
+    assert entry_with_exit(["people"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].split() == ["NAME", "ROLE", "DEVICES", "LAST", "SEEN"]
+    assert out[1].split()[:3] == ["ann", "admin", "2"] and "60s ago" in out[1]
+    assert out[2].split() == ["ben", "member", "0", "never"]
