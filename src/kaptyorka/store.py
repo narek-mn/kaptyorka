@@ -736,8 +736,14 @@ class Store:
                 target = by_key.get(m["to_key"]) or next(
                     (r for r in online if r["person_id"] == m["to_person"]), None)
             else:
-                target = by_key.get(m["to_key"]) or next(
-                    (r for r in online if r["name"] == m["to_name"]), None)
+                target = by_key.get(m["to_key"])
+                if target is None:  # held: the name may now belong to another person's session
+                    target = next((r for r in online if r["name"] == m["to_name"]), None)
+                    if target is not None and not m["sender_key"].startswith("web:"):
+                        sender = self.db.execute("SELECT * FROM agents WHERE key=?",
+                                                 (m["sender_key"],)).fetchone()
+                        if sender is None or not self._may_message(sender, target):
+                            target = None
             if target is not None:
                 out.append((m, target))
         return out
@@ -952,6 +958,11 @@ class Store:
             if cur is None or not cur.rowcount:
                 raise KaptyorkaError(f"no open door to {to}")
             who = self._person_name(by["person_id"]) or by["name"]
+            self.db.execute(
+                "INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool,"
+                " project, text, created, kind) VALUES (?,?,?,?,?,?,?,?,?,'door')",
+                (by_key, by["name"], other["key"], other["name"], other["machine"],
+                 other["tool"], other["project"], f"Door closed by {who} ({by['name']}).", now))
         self.log_add(who, "door_close", f"{by['name']} -> {other['name']}")
 
     def _door_row(self, d, key=None, person_id=None) -> dict:

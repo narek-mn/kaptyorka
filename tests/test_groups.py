@@ -227,3 +227,26 @@ def test_session_seen_only_by_its_bridge_belongs_to_the_device_person(store, tea
     store.heartbeat("pc3", [{"key": "a3", "tool": "codex", "project": "q"}],
                     principal=store.authenticate(team["tokens"]["ann"]))
     assert store.send("a1", "pc3/codex/q", "hi") == 1
+
+
+def test_held_message_not_retargeted_to_another_persons_session(store, team, clock):
+    _, tc = person(store, "cat")
+    pa, pb = store.person_by_name("ann")["id"], store.person_by_name("ben")["id"]
+    store.open_door_group(pa, pb, "boss")
+    clock.t += 31  # ben's session goes offline
+    session(store, team["tokens"]["ann"], "a1", "pc")
+    assert store.send("a1", "dgx/codex/p", "for ben") == 1
+    assert session(store, tc, "c1", "dgx").name == "dgx/codex/p"  # cat takes the name
+    assert store.inbox("c1") == [] and store.offer("dgx") == []
+    clock.t += 31  # cat leaves; a new session of ben takes the name
+    assert session(store, team["tokens"]["ben"], "b2", "dgx").name == "dgx/codex/p"
+    assert [m.text for m in store.inbox("b2")] == ["for ben"]
+
+
+def test_door_close_tells_the_other_side(store, team):
+    kid = store.knock("a1", "ben", "hi")
+    store.answer(kid, "b1", True)
+    store.inbox("b1")
+    store.door_close("a1", "dgx/codex/p")
+    msgs = store.inbox("b1")
+    assert [(m.kind, m.text) for m in msgs] == [("door", "Door closed by ann (pc/codex/p).")]
