@@ -47,7 +47,8 @@ def test_shim_hub_down(home):
         async with shim(home, "http://127.0.0.1:9") as c:
             names = {t.name for t in (await c.list_tools()).tools}
             assert names == {"who", "send", "inbox", "status", "notes_list", "notes_read",
-                             "notes_write"}
+                             "notes_write", "projects", "knock", "answer", "door_close",
+                             "request_access", "fetch_file"}
             t0 = time.monotonic()
             r = await c.call_tool("who", {})
             assert time.monotonic() - t0 < 5
@@ -183,6 +184,10 @@ def test_shim_send_uploads_local_path(hub, home, tmp_path):
             assert not r.is_error, text(r)
             r = await c.call_tool("send", {"to": other, "text": "hi", "file": str(tmp_path / "no.png")})
             assert r.is_error and "cannot read" in text(r)
+            big = tmp_path / "big.png"
+            big.write_bytes(b"x" * 5_000_001)
+            r = await c.call_tool("send", {"to": other, "text": "hi", "file": str(big)})
+            assert r.is_error and text(r) == "file too large: 5000001 bytes, limit 5000000"
             bad = tmp_path / "x.exe"
             bad.write_bytes(b"x")
             r = await c.call_tool("send", {"to": other, "text": "hi", "file": str(bad)})

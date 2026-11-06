@@ -14,12 +14,14 @@ from mcp.server.stdio import stdio_server
 from urllib.parse import quote
 
 from kaptyorka import http, identity, paths
+from kaptyorka.store import MAX_FILE
 
 TIMEOUT_S = 4.5  # whole call, connection included: the agent hears back within 5 s
 HEARTBEAT_S = 10
 OPENCODE_META = "ai.opencode/sessionID"  # OpenCode V2 tags each tool call with its session
 TRANSPORT_ERRORS = (types.CONNECTION_CLOSED, types.REQUEST_TIMEOUT)  # the client's, not the hub's
-FALLBACK_TOOLS = ["who", "send", "inbox", "status", "notes_list", "notes_read", "notes_write"]
+FALLBACK_TOOLS = ["who", "send", "inbox", "status", "notes_list", "notes_read", "notes_write",
+                  "projects", "knock", "answer", "door_close", "request_access", "fetch_file"]
 
 
 class Relay:
@@ -105,6 +107,8 @@ def _upload(cfg: dict, headers: dict, args: dict) -> Optional[str]:
             data = f.read()
     except OSError as e:
         return f"cannot read {args['file']}: {e.strerror or e}"
+    if len(data) > MAX_FILE:  # the hub refuses early and drops the connection mid-upload
+        return f"file too large: {len(data)} bytes, limit {MAX_FILE}"
     status, body, _ = http.request_raw(
         "POST", cfg["hub"] + "/api/files", cfg["token"], data,
         {**headers, "X-File-Name": quote(os.path.basename(path))})

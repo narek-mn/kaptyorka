@@ -18,7 +18,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from kaptyorka.auth import Auth, RateLimiter, bearer
-from kaptyorka.store import Agent, KaptyorkaError, Principal, Store
+from kaptyorka.store import MAX_FILE, Agent, KaptyorkaError, Principal, Store
 
 MAX_WAIT_S = 25
 MAX_IDENT = 100
@@ -349,7 +349,17 @@ def build_app(store: Store) -> Starlette:
     async def api_file_upload(request: Request) -> Response:
         principal = request.scope["state"]["principal"]
         name = unquote(request.headers.get("x-file-name") or "") or "file"
-        data = await request.body()
+        def too_large(n):
+            return PlainTextResponse(f"file too large: {n} bytes, limit {MAX_FILE}", status_code=400)
+
+        declared = request.headers.get("content-length") or ""
+        if declared.isdigit() and int(declared) > MAX_FILE:
+            return too_large(int(declared))
+        data = b""
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > MAX_FILE:
+                return too_large(len(data))
         try:
             fid = store.file_add(name, data, principal.person_id)
         except KaptyorkaError as e:

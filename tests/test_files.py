@@ -33,8 +33,9 @@ def test_upload_limit_exact_and_over(hub, home):
     pid, tok = person(hub.store, "ann")
     status, body, _ = upload(hub, tok, "a.png", b"x" * MAX_FILE)
     assert status == 200 and b'"size":5000000' in body.replace(b" ", b"")
-    status, body, _ = upload(hub, tok, "a.png", b"x" * (MAX_FILE + 1))
-    assert status == 400 and body.decode() == "file too large: 5000001 bytes, limit 5000000"
+    with pytest.raises(KaptyorkaError) as e:  # over HTTP the hub answers before the body is sent
+        hub.store.file_add("a.png", b"x" * (MAX_FILE + 1), pid)
+    assert str(e.value) == "file too large: 5000001 bytes, limit 5000000"
     assert MAX_FILE == 5_000_000
 
 
@@ -110,3 +111,33 @@ def test_inbox_carries_file(hub, home):
     cat, cat_t = person(hub.store, "cat")
     hub.token = cat_t
     assert call_error(hub, ident("claude:c"), "fetch_file", id=fid).endswith("no such file")
+
+
+def test_oversize_content_length_refused_unread(hub, home):
+    import socket
+    pid, tok = person(hub.store, "ann")
+    host, port = hub.url[len("http://"):].split(":")
+    with socket.create_connection((host, int(port))) as s:
+        s.sendall((f"POST /api/files HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {tok}\r\n"
+                   f"X-File-Name: a.png\r\nContent-Length: 5000001\r\n\r\n").encode())  # no body sent
+        s.settimeout(5)
+        reply = s.recv(4096).decode()
+    assert reply.startswith("HTTP/1.1 400") and "file too large: 5000001 bytes" in reply
+    assert hub.store.db.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
+
+
+def test_oversize_chunked_stops_at_limit(hub, home):
+    import urllib.request
+    pid, tok = person(hub.store, "ann")
+
+    def chunks():
+        for _ in range(6):
+            yield b"x" * 1_000_000
+    req = urllib.request.Request(hub.url + "/api/files", data=chunks(), method="POST",
+                                 headers={"Authorization": f"Bearer {tok}", "X-File-Name": "a.png",
+                                          "Transfer-Encoding": "chunked"})
+    import urllib.error
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(req)
+    assert e.value.code == 400 and b"file too large" in e.value.read()
+    assert hub.store.db.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
