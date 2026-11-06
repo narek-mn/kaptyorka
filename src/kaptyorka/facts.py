@@ -93,8 +93,9 @@ def _learned() -> Dict[str, str]:
 
 
 def folders(projects: List[str], sessions: list, home: Path) -> dict:
-    """{project: folder}: learned from session cwds (and remembered), else home/project.
-    A remembered folder that is gone is dropped."""
+    """{project: folder}: every folder learned from session cwds (and remembered), registered
+    or not, plus home/project for the hub's projects not learned. A remembered folder that is
+    gone is dropped."""
     learned = _learned()
     seen = dict(learned)
     for s in sessions:
@@ -107,10 +108,8 @@ def folders(projects: List[str], sessions: list, home: Path) -> dict:
             write_atomic(paths.home() / "folders.json", json.dumps(seen, indent=2))
         except OSError:
             pass  # remembering is a convenience; never stop the heartbeat
-    out = {}
+    out = dict(seen)
     for p in projects:
-        if p in seen:
-            out[p] = seen[p]
-        elif (home / p).is_dir():
+        if p not in out and (home / p).is_dir():
             out[p] = str(home / p)
     return out

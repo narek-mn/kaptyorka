@@ -115,7 +115,15 @@ def test_folders_learn_and_remember(home, tmp_path):
     assert facts.folders(["proj-b"], [], home) == {"proj-b": str(b)}
     # a learned path beats the home folder
     s = [Session("claude:2", "claude-code", "proj-a", cwd=str(x))]
-    assert facts.folders(["proj-a"], s, home) == {"proj-a": str(x)}
+    assert facts.folders(["proj-a"], s, home) == {"proj-a": str(x), "proj-b": str(b)}
+
+
+def test_folders_report_unregistered_learned_folders(home, tmp_path):
+    own = tmp_path / "w" / "proj-c"  # not in the hub's list: the person's own folder
+    own.mkdir(parents=True)
+    s = [Session("claude:1", "claude-code", "proj-c", cwd=str(own))]
+    assert facts.folders([], s, home) == {"proj-c": str(own)}
+    assert facts.folders([], [], home) == {"proj-c": str(own)}  # remembered
 
 
 def test_folders_tolerate_broken_file_and_write_only_on_change(home, tmp_path):

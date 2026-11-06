@@ -7,7 +7,8 @@ import pytest
 import kaptyorka
 from conftest import start_hub
 from helpers import _client, call, call_error, person, run
-from kaptyorka import http
+from kaptyorka import facts, http
+from kaptyorka.adapters.base import Session
 from kaptyorka.orders import signing_key, verify
 from kaptyorka.store import ONLINE_S, Store
 from kaptyorka.workers import UNATTENDED_S, WorkerStore
@@ -178,9 +179,18 @@ def test_work_refuses_without_write_role(hub, registered):
     assert hub.ws.list(hub.store.authenticate(client.token)) == []
 
 
-def test_work_allows_own_unregistered_folder(hub):
+def test_work_allows_own_unregistered_folder(hub, tmp_path, monkeypatch):
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "kh"))
     pid, client = member(hub, "alice", role=None)
-    bridge(hub, pid, folders={"proj-b": "/w/proj-b"})
+    own = tmp_path / "w" / "proj-b"
+    own.mkdir(parents=True)
+    # what a real bridge sends: alice's hub list is empty, her session works in proj-b
+    _, body = heartbeat(hub, client.token, "laptop", folders={})
+    assert body["projects"] == []
+    sent = facts.folders(body["projects"], [Session("claude:a", "claude-code", "proj-b",
+                                                    cwd=str(own))], tmp_path)
+    assert sent == {"proj-b": str(own)}
+    bridge(hub, pid, folders=sent)
     own = ident("k:a", project="proj-b")
     assert run(call(client, own, "work", project="proj-b", task="x")) == \
         "starting `proj-b-w1` on box-1 (u)"
