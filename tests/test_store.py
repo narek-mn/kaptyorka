@@ -280,7 +280,7 @@ def test_notes_write_from_web(store):
     store.seen("a", "pc", "codex", "nav")
     store.notes_write("a", "api", "v1")
     store.notes_write_from_web("Narek", "api", "v2")
-    assert [(n.author, n.text) for n in store.note_history("api")] == [("Narek", "v2"), ("pc/codex/nav", "v1")]
+    assert [(n.author, n.text) for n in store.note_history("api")] == [("Narek", "v2"), ("me", "v1")]
     with pytest.raises(KaptyorkaError, match="topic"):
         store.notes_write_from_web("Narek", " ", "x")
 
@@ -289,9 +289,13 @@ def test_agent_replies_to_web_sender(store):
     store.seen("a", "pc", "codex", "nav")
     store.send_from_web("Narek", "pc/codex/nav", "hi")
     store.inbox("a")
-    assert store.send("a", "narek", "hello back") == 1
+    with pytest.raises(KaptyorkaError, match="no door to narek"):  # a page name of no person
+        store.send("a", "narek", "hello back")
+    store.send_from_web("me", "pc/codex/nav", "hi", person_id=store.person_by_name("me")["id"])
+    store.inbox("a")
+    assert store.send("a", "me", "hello back") == 1  # the session's own person
     m = store.messages()[-1]
-    assert (m.sender, m.to, m.read, m.to_web) == ("pc/codex/nav", "Narek", True, True)
+    assert (m.sender, m.to, m.read, m.to_web) == ("pc/codex/nav", "me", True, True)
     assert store.inbox("a") == [] and store.offer("pc") == []
 
 

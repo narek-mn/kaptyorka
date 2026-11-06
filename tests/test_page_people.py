@@ -7,7 +7,7 @@ import pytest
 from conftest import start_hub
 from helpers import person
 from kaptyorka import http
-from kaptyorka.store import Store
+from kaptyorka.store import KaptyorkaError, Store
 
 
 @pytest.fixture
@@ -47,8 +47,8 @@ def test_me(app):
 
 def test_feed_filtered_for_member(app):
     s = app.store
-    a1, b1, x1 = online(app, "ann", "a1", "pc"), online(app, "ben", "b1", "dgx"), \
-        online(app, "boss", "x1", "srv")
+    a1, b1, x1 = online(app, "ann", "a1", "pc"), online(app, "ben", "b1", "box-2"), \
+        online(app, "boss", "x1", "box-1")
     s.send(x1.key, a1.name, "for ann")
     s.send(x1.key, b1.name, "for ben")
     s.notes_write(x1.key, "team-topic", "everyone")
@@ -76,17 +76,17 @@ def test_feed_filtered_for_member(app):
 def test_feed_masks_private_sessions(app):
     s = app.store
     online(app, "ann", "a1", "pc", "mine")
-    b1 = online(app, "ben", "b1", "dgx", "backend")
-    x1 = online(app, "boss", "x1", "srv", "ops")
+    b1 = online(app, "ben", "b1", "box-2", "backend")
+    x1 = online(app, "boss", "x1", "box-1", "ops")
     s.send(x1.key, "pc/codex/mine", "hello ann")
     rows = {a["person"]: a for a in get(app, "ann", "/api/feed")["agents"]}
     assert (rows["ann"]["name"], rows["ann"]["project"], rows["ann"]["mine"]) == \
         ("pc/codex/mine", "mine", True)
     assert (rows["ben"]["name"], rows["ben"]["project"], rows["ben"]["mine"]) == \
-        ("dgx/codex/(private)", "(private)", False)
+        ("box-2/codex/(private)", "(private)", False)
     assert rows["ann"]["doors"] == [] and "doors" not in rows["ben"]
     msg = get(app, "ann", "/api/feed")["messages"][-1]
-    assert (msg["sender"], msg["to"]) == ("srv/codex/(private)", "pc/codex/mine")
+    assert (msg["sender"], msg["to"]) == ("box-1/codex/(private)", "pc/codex/mine")
     assert not any(k.startswith("_") for k in msg)
 
     s.project_register("backend")
@@ -99,7 +99,7 @@ def test_feed_masks_private_sessions(app):
 
 def test_feed_admin_extras(app):
     s = app.store
-    online(app, "ben", "b1", "dgx")
+    online(app, "ben", "b1", "box-2")
     s.project_register("proj")
     s.grant_project("proj", app.ids["ann"], "write", "boss")
     s.request_access(app.ids["ben"], "project", "proj", "to help")
@@ -145,7 +145,7 @@ def test_web_send_uses_principal(app):
 def test_web_send_follows_group_rule(app):
     s = app.store
     online(app, "ann", "a1", "pc")
-    b1 = online(app, "ben", "b1", "dgx")
+    b1 = online(app, "ben", "b1", "box-2")
     status, body = post(app, "ann", "/api/send", {"to": b1.name, "text": "hi"})
     assert status == 400 and f"no door to {b1.name}" in body
     assert post(app, "ann", "/api/send", {"to": "all", "text": "hi"}) == (200, {"sent": 1})
@@ -181,7 +181,7 @@ def test_web_notes_respects_project_access(app):
 
 def test_files_query_token_only_on_files_route(app):
     s = app.store
-    a1, x1 = online(app, "ann", "a1", "pc"), online(app, "boss", "x1", "srv")
+    a1, x1 = online(app, "ann", "a1", "pc"), online(app, "boss", "x1", "box-1")
     fid = s.file_add("pic.png", b"\x89PNG", app.ids["boss"])
     s.send(x1.key, a1.name, "look", fid)
     ann = app.tokens["ann"]
@@ -200,7 +200,7 @@ def test_files_query_token_only_on_files_route(app):
 
 def test_knock_answer_route(app):
     s = app.store
-    a1, b1 = online(app, "ann", "a1", "pc"), online(app, "ben", "b1", "dgx")
+    a1, b1 = online(app, "ann", "a1", "pc"), online(app, "ben", "b1", "box-2")
     kid = s.knock(b1.key, "ann", "about the api")
     status, body = post(app, "ben", f"/api/knocks/{kid}/answer", {"answer": "yes"})
     assert status == 400 and "only ann or the admin" in body
@@ -257,3 +257,44 @@ def test_invite_web_form_redirects_to_page(app):
         assert e.code == 303
         token = e.headers["Location"].split("#t=", 1)[1]
     assert http.request("GET", app.url + "/api/me", token)[1]["person"] == "ben"
+
+
+def test_agent_reply_to_page_needs_door(app):
+    s = app.store
+    a1, b1 = online(app, "ann", "a1", "pc"), online(app, "ben", "b1", "box-2")
+    assert post(app, "boss", "/api/send", {"to": a1.name, "text": "please check"})[0] == 200
+    assert s.send(a1.key, "boss", "done") == 1  # the admin's page wrote first: a door is open
+    assert get(app, "boss", "/api/feed")["messages"][-1]["text"] == "done"
+    with pytest.raises(KaptyorkaError, match=r"no door to boss: knock\(to, about\) first"):
+        s.send(b1.key, "boss", "cold message")
+    # the page's door is a session door: it closes when the session goes offline
+    with s.lock:
+        s.db.execute("UPDATE agents SET last_seen=last_seen-100 WHERE key='a1'")
+    s.expire_doors(s.clock())
+    online(app, "ann", "a1", "pc")
+    with pytest.raises(KaptyorkaError, match="no door to boss"):
+        s.send(a1.key, "boss", "later")
+
+
+def test_note_author_is_the_person(app):
+    s = app.store
+    a1 = online(app, "ann", "a1", "pc", "webshop")
+    s.notes_write(a1.key, "plan", "v1")
+    assert s.notes_read("plan").author == "ann"
+    loner = s.seen("x9", "box-1", "codex", "p")  # a session of no person
+    s.notes_write(loner.key, "plan", "v2")
+    assert s.notes_read("plan").author == "box-1/codex/p"
+
+
+def test_admin_actions_log_the_admin(app):
+    s = app.store
+    assert post(app, "boss", "/api/people", {"name": "zed"})[0] == 200
+    assert post(app, "boss", "/api/invites", {"person": "zed"})[0] == 200
+    dev = s.devices(app.ids["ann"])[0]["id"]
+    assert post(app, "boss", f"/api/devices/{dev}/shared", {"shared": True})[0] == 204
+    assert post(app, "boss", f"/api/devices/{dev}/revoke", {})[0] == 204
+    log = [(r["person"], r["kind"], r["detail"]) for r in s.log(4)]
+    assert log == [("boss", "revoke", "device ann-laptop of ann"),
+                   ("boss", "device_shared", "device ann-laptop of ann on"),
+                   ("boss", "invite", "invite for zed"),
+                   ("boss", "person", "zed created as member")]

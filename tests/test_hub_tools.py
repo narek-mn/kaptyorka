@@ -1,3 +1,4 @@
+import getpass
 from kaptyorka import http
 from helpers import call, call_error, run, tool_names
 
@@ -40,5 +41,5 @@ def test_notes_roundtrip(hub):
     run(call(hub, PC, "notes_write", topic="api", text="v1 at /v1"))
     note = run(call(hub, DGX, "notes_read", topic="api"))
     assert note["text"] == "v1 at /v1"
-    assert note["author"] == "pc/claude-code/murmur"
+    assert note["author"] == getpass.getuser()  # the person behind the hub fixture's token
     assert run(call(hub, DGX, "notes_read", topic="x")) == "no note named x"

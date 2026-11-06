@@ -314,7 +314,7 @@ class Store:
             self.log_add(principal.person_name, "rekeyed", principal.device_name)
         return principal
 
-    def person_create(self, name: str, role: str = "member") -> int:
+    def person_create(self, name: str, role: str = "member", by: str = "") -> int:
         name = _person(name)
         if role not in ROLES:
             raise KaptyorkaError("role must be admin, member or manager")
@@ -326,7 +326,7 @@ class Store:
                 raise KaptyorkaError("there is already an admin")
             pid = self.db.execute("INSERT INTO people (name, role, created) VALUES (?,?,?)",
                                   (name, role, self.clock())).lastrowid
-        self.log_add(name, "person", f"created as {role}")
+        self.log_add(by or name, "person", f"{name} created as {role}")
         return pid
 
     def person_by_name(self, name: str) -> Optional[dict]:
@@ -335,7 +335,7 @@ class Store:
                                   (name.strip(),)).fetchone()
             return dict(row) if row else None
 
-    def invite_create(self, person_id: int, ttl_s: float = INVITE_TTL_S) -> str:
+    def invite_create(self, person_id: int, ttl_s: float = INVITE_TTL_S, by: str = "") -> str:
         code = secrets.token_urlsafe(16)
         now = self.clock()
         with self.lock:
@@ -344,7 +344,7 @@ class Store:
                 raise KaptyorkaError("no such person")
             self.db.execute("INSERT INTO invites (code, person_id, created, expires)"
                             " VALUES (?,?,?,?)", (code, person_id, now, now + ttl_s))
-        self.log_add(row["name"], "invite", "invite created")
+        self.log_add(by or row["name"], "invite", f"invite for {row['name']}")
         return code
 
     def invite_valid(self, code: str) -> bool:
@@ -382,7 +382,7 @@ class Store:
         self.log_add(who["name"], "join", f"device {device_name}")
         return token, secret
 
-    def device_revoke(self, device_id: int) -> None:
+    def device_revoke(self, device_id: int, by: str = "") -> None:
         with self.lock:
             dev = self.db.execute("SELECT * FROM devices WHERE id=?", (device_id,)).fetchone()
             if dev is not None and self._is_rekey_device(dev):  # its token must not be handed out
@@ -393,7 +393,7 @@ class Store:
                                   " JOIN people p ON p.id=d.person_id WHERE d.id=?",
                                   (device_id,)).fetchone()
         if cur.rowcount and row:
-            self.log_add(row["person"], "revoke", f"device {row['name']}")
+            self.log_add(by or row["person"], "revoke", f"device {row['name']} of {row['person']}")
 
     # machines
 
@@ -475,11 +475,17 @@ class Store:
     def revoke_machine(self, host: str, person_id: int, by: str) -> None:
         self._grant_change(host, person_id, False, by)
 
-    def device_set_shared(self, device_id: int, shared: bool) -> None:
+    def device_set_shared(self, device_id: int, shared: bool, by: str = "") -> None:
         with self.lock:
             cur = self.db.execute("UPDATE devices SET shared=? WHERE id=?", (int(shared), device_id))
+            row = self.db.execute("SELECT d.name, p.name AS person FROM devices d"
+                                  " JOIN people p ON p.id=d.person_id WHERE d.id=?",
+                                  (device_id,)).fetchone()
         if not cur.rowcount:
             raise KaptyorkaError("no such device")
+        if row is not None:
+            self.log_add(by or row["person"], "device_shared",
+                         f"device {row['name']} of {row['person']} {'on' if shared else 'off'}")
 
     # projects
 
@@ -1007,8 +1013,7 @@ class Store:
             targets = self._targets(sender_key, to, now)
             if to == "all":
                 targets = [t for t in targets if self._may_message(sender, t)]
-            elif not all(t["key"].startswith("web:") or self._may_message(sender, t)
-                         for t in targets):  # a person on the web page: Task 11 checks those
+            elif not all(self._may_message(sender, self._as_target(t)) for t in targets):
                 raise KaptyorkaError(f"no door to {to}: knock(to, about) first")
             n = self._insert(sender_key, sender["name"], targets, text, now, file_id)
             self._rate_hit(sender_key, now)
@@ -1038,21 +1043,34 @@ class Store:
             if person_id is not None:
                 self._expire_doors(now)
                 me = {"key": key, "person_id": person_id}
-
-                def may(t):
-                    return self._may_message(me, {"key": t["key"], "person_id": self._target_person(t)})
                 if to == "all":
-                    targets = [t for t in targets if may(t)]
-                elif not all(may(t) for t in targets):
+                    targets = [t for t in targets if self._may_message(me, self._as_target(t))]
+                elif not all(self._may_message(me, self._as_target(t)) for t in targets):
                     raise KaptyorkaError(f"no door to {to}: knock(to, about) first")
+                for t in targets:  # so the session can always reply to the page
+                    self._web_door(key, person_id, t, now)
             return self._insert(key, name, targets, text, now)
 
-    def _target_person(self, t):
-        """The person behind a target row; a person on the web page by their name."""
+    def _as_target(self, t) -> dict:
+        """A target row as _may_message reads it; a person on the web page by their name."""
         if t["key"].startswith("web:"):
             p = self.db.execute("SELECT id FROM people WHERE name=?", (t["key"][4:],)).fetchone()
-            return p["id"] if p else None
-        return t["person_id"]
+            return {"key": t["key"], "person_id": p["id"] if p else None}
+        return {"key": t["key"], "person_id": t["person_id"]}
+
+    def _web_door(self, web_key, person_id, t, now):
+        """A session door between a person's page and a session it wrote to, unless one is
+        open or they are the same person. It closes when the session goes offline."""
+        tp = None if t["key"].startswith("web:") else t["person_id"]
+        if tp is None or tp == person_id:
+            return
+        if self.db.execute(
+                "SELECT 1 FROM doors WHERE closed_at IS NULL AND scope='session' AND"
+                " ((a_key=? AND b_key=?) OR (a_key=? AND b_key=?))",
+                (web_key, t["key"], t["key"], web_key)).fetchone() is None:
+            self.db.execute(
+                "INSERT INTO doors (a_key, a_person, b_key, b_person, scope, opened_at, opened_by)"
+                " VALUES (?,?,?,?,'session',?,?)", (web_key, person_id, t["key"], tp, now, person_id))
 
     def _targets(self, sender_key, to, now):
         online = self._online_rows(now)
@@ -1301,11 +1319,12 @@ class Store:
             return s is not None and t is not None and self._may_message(s, t)
 
     def _expire_doors(self, now):
-        """A session door lasts while both sessions are online."""
+        """A session door lasts while both sessions are online (a person's page counts as
+        always online)."""
         self.db.execute(
             "UPDATE doors SET closed_at=? WHERE closed_at IS NULL AND scope='session' AND"
-            " (a_key NOT IN (SELECT key FROM agents WHERE last_seen > ?)"
-            " OR b_key NOT IN (SELECT key FROM agents WHERE last_seen > ?))",
+            " ((a_key NOT LIKE 'web:%' AND a_key NOT IN (SELECT key FROM agents WHERE last_seen > ?))"
+            " OR (b_key NOT LIKE 'web:%' AND b_key NOT IN (SELECT key FROM agents WHERE last_seen > ?)))",
             (now, now - ONLINE_S, now - ONLINE_S))
 
     def expire_doors(self, now: float) -> None:
@@ -1580,9 +1599,12 @@ class Store:
                 raise KaptyorkaError("unknown session")
             if project is not None and row["person_id"] is None:  # nobody to check access for
                 raise KaptyorkaError(f"no access to project {project}; ask with request_access")
+            author = row["name"]  # a session of no person signs with its session name
             if row["person_id"] is not None:
-                self._check_project(project, self._person_principal(row["person_id"]), write=True)
-            self._note(topic, text, row["name"], project)
+                who = self._person_principal(row["person_id"])
+                self._check_project(project, who, write=True)
+                author = who.person_name if who else author
+            self._note(topic, text, author, project)
 
     def notes_write_from_web(self, name: str, topic: str, text: str,
                              project: Optional[str] = None,

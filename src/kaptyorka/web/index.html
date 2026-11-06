@@ -693,7 +693,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
       feed.doors.forEach(function (d) {
         var mine = me && (d.a_person === me.person || d.b_person === me.person);
         var other = !mine ? d.a_person + " ↔ " + d.b_person : d.a_person === me.person ? d.b_person : d.a_person;
-        var detail = d.scope === "group" ? "all sessions" : (d.a_session + " ↔ " + d.b_session);
+        var detail = d.scope === "group" ? "all sessions" : ((d.a_session || "page") + " ↔ " + (d.b_session || "page"));
         doors.appendChild(el("span", { "class": "tag door", title: "Open door: " + detail },
                              [icon("i-door", 12), other || "—"]));
       });

@@ -499,7 +499,8 @@ def build_app(store: Store) -> Starlette:
             return denied
         body = await request.json()
         try:
-            pid = store.person_create(str(body["name"]), str(body.get("role", "member")))
+            pid = store.person_create(str(body["name"]), str(body.get("role", "member")),
+                                      by=request.scope["state"]["principal"].person_name)
         except KaptyorkaError as e:
             status = 409 if "already exists" in str(e) else 400
             return PlainTextResponse(str(e), status_code=status)
@@ -515,7 +516,7 @@ def build_app(store: Store) -> Starlette:
         person = store.person_by_name(str(body["person"]))
         if person is None:
             return PlainTextResponse("no such person", status_code=404)
-        code = store.invite_create(person["id"])
+        code = store.invite_create(person["id"], by=request.scope["state"]["principal"].person_name)
         return JSONResponse({"code": code, "url": f"{hub_url(request)}/i/{code}"})
 
     @server.custom_route("/api/devices/{device_id:int}/revoke", methods=["POST"])
@@ -523,7 +524,8 @@ def build_app(store: Store) -> Starlette:
         denied = admin_only(request)
         if denied:
             return denied
-        store.device_revoke(request.path_params["device_id"])
+        store.device_revoke(request.path_params["device_id"],
+                            by=request.scope["state"]["principal"].person_name)
         return Response(status_code=204)
 
     @server.custom_route("/api/devices/{device_id:int}/shared", methods=["POST"])
@@ -536,7 +538,8 @@ def build_app(store: Store) -> Starlette:
         if not isinstance(body["shared"], bool):
             raise ValueError("shared must be true or false")
         try:
-            store.device_set_shared(request.path_params["device_id"], body["shared"])
+            store.device_set_shared(request.path_params["device_id"], body["shared"],
+                                    by=request.scope["state"]["principal"].person_name)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
