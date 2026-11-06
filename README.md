@@ -161,7 +161,9 @@ If the boss goes offline, the worker keeps going. After 2 minutes it is `unatten
 
 A worker is closed as gone only when its machine's bridge reports and has not seen the worker's session for over 10 minutes. If the session shows up again, the worker is `up` again and the boss is told.
 
-The old shared token cannot start, adopt or close workers. Use your own token. A worker on someone's shared account cannot either: it asks its boss.
+The old shared token cannot start, adopt or close workers. Use your own token.
+
+"Shared" means an account that more than one person uses. The admin marks an account as shared with the **Shared** button on the page (People tab). A worker started there runs as that OS account. It can read everything the account can read, including the account's kaptyorka token, git keys and ssh keys. So share only an account that was set up for this. The hub does not let a worker on a shared account start, adopt or close workers; it must ask its boss. This stops mistakes. It does not stop a hostile worker. A proper identity for each worker comes in a later version.
 
 The **Machines** tab on the page shows each machine, its workers and warnings (for example an old version). It also has the auto-update switch for each account.
 

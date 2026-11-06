@@ -204,7 +204,7 @@ usable on its own.
   logged as `machine_owner`). Several
   devices (accounts) can sit on one host; each shows under its own person.
 - Devices gain `shared` (bool, default false), set by the admin on the page
-  or by `fleet add --shared`. A shared device is an OS account the admin
+  (not by `fleet add`: the admin marks it on the page). A shared device is an OS account the admin
   offers to the team: workers started through it belong to the person who
   asked (the launch order carries the person, and the hub stores it on the
   session row when the bridge reports it). A session on a shared device

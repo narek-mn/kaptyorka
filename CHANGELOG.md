@@ -8,7 +8,7 @@
 - New commands: `kaptyorka doctor [--fix]`, `kaptyorka fleet add <user@host>... --person <name> [--key-from <file>]`, `kaptyorka fleet list`.
 - Auto-update: the bridge updates when the hub is newer; on by default for members, off for the admin.
 - The hub's heartbeat answer is now JSON (version, auto_update, projects, you, shared) instead of an empty answer. We suggest updating the hub first, then the machines. An older bridge keeps working with the new hub; it just cannot use the new parts until it updates.
-- The old shared token cannot start, adopt or close workers, and neither can a worker on someone's shared account.
+- The old shared token cannot start, adopt or close workers. The hub also refuses these for a worker on an account the admin marked shared. This stops mistakes, not a hostile worker: that worker runs as the account and can read its token and keys. Share only an account set up for this. Proper worker identity comes in a later version.
 - New files in `~/.kaptyorka`: `workers/<name>.log`, `folders.json`, `launched.json`.
 
 ## 0.2.0
