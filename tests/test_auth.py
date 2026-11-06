@@ -99,7 +99,6 @@ def test_legacy_token_is_admin(app, store):
 
 
 def test_legacy_machine_mapped_to_person(app, store):
-    run(call(app.legacy, {**ANN, "key": "claude:9", "machine": "other"}, "who"))  # still unassigned
     with store.lock:
         store.db.execute("INSERT INTO settings (key, value) VALUES (?, ?)",
                          ("legacy:pc", str(app.ann.id)))

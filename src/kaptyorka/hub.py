@@ -343,7 +343,11 @@ def build_app(store: Store) -> Starlette:
             topics = [n["topic"] for n in store.notes_list()]
             if topics:
                 line += f" Board topics: {', '.join(topics)}."
-            line += _request_lines(store, request.scope.get("state", {}).get("principal"))
+            principal = request.scope.get("state", {}).get("principal")
+            line += _request_lines(store, principal)
+            if principal is not None and principal.is_admin() and store.legacy_ready_to_disable():
+                line += (" All old machines have their own tokens;"
+                         " switch the shared token off on the page.")
             parts.insert(0, line)
         return PlainTextResponse("\n\n".join(parts))
 
@@ -460,7 +464,8 @@ def build_app(store: Store) -> Starlette:
         if denied:
             return denied
         return JSONResponse({"unassigned": store.legacy_unassigned(),
-                             "enabled": store.legacy_enabled()})
+                             "enabled": store.legacy_enabled(),
+                             "ready_to_disable": store.legacy_ready_to_disable()})
 
     @server.custom_route("/api/legacy/assign", methods=["POST"])
     @_bad_request

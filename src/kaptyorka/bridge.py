@@ -33,6 +33,7 @@ class Bridge:
         self.cfg, self.adapters, self.log = cfg, adapters, log
         self.stop = threading.Event()
         self._problems: Dict[str, Optional[str]] = {}
+        self.pending_confirm = False  # a new token is saved but the hub has not confirmed it
 
     def _report(self, area: str, problem: Optional[str]) -> None:
         """Log a problem once per area until that area succeeds (problem None) again."""
@@ -66,18 +67,31 @@ class Bridge:
         self._report("ack", None if status == 204 else f"hub answered {status} to ack")
 
     def _rekey(self, m: dict) -> None:
-        """The hub gave this legacy machine a token of its own: save it, then confirm with it.
-        If the confirm fails, the hub offers the same token again on the next poll."""
+        """The hub gave this legacy machine a token of its own: save it, switch to it, confirm."""
         self.cfg.update(token=m["token"], secret=m["secret"])
         paths.save_config(self.cfg)
-        status, _ = http.request("POST", self.cfg["hub"] + "/bridge/rekeyed", self.cfg["token"],
-                                 {"machine": self.cfg["machine"]})
+        self.pending_confirm = True
+        self._confirm()
+
+    def _confirm(self) -> None:
+        """Tell the hub the new token is in use; retried on each poll until it answers 204.
+        The hub also drops the pending rekey on the first call made with the new token."""
+        try:
+            status, _ = http.request("POST", self.cfg["hub"] + "/bridge/rekeyed",
+                                     self.cfg["token"], {"machine": self.cfg["machine"]})
+        except http.HubUnreachable:
+            status = None
         if status == 204:
+            self.pending_confirm = False
+            self._report("rekey", None)
             self.log("rekeyed: this machine now has its own token")
         else:
-            self._report("rekey", f"hub answered {status} to rekeyed")
+            self._report("rekey", f"hub answered {status} to rekeyed" if status
+                         else "hub unreachable when confirming the new token")
 
     def poll_once(self, wait: float = WAIT_S) -> int:
+        if self.pending_confirm:
+            self._confirm()
         query = urlencode({"machine": self.cfg["machine"], "wait": wait})
         status, items = http.request("GET", f"{self.cfg['hub']}/bridge/poll?{query}",
                                      self.cfg["token"], timeout=wait + 5)

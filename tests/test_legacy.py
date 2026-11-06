@@ -109,12 +109,23 @@ def test_legacy_machine_unassigned_then_assigned(store):
 def test_legacy_used_logged_once_per_machine_per_day(store, clock):
     legacy_seen(store, MACHINE)
     store.authenticate(LEGACY, machine=MACHINE)
-    store.authenticate(LEGACY, machine="other")
+    store.authenticate(LEGACY, machine="made-up")  # never seen: no log row, no settings row
     used = lambda: [r["detail"] for r in store.log() if r["kind"] == "legacy_used"]  # noqa: E731
-    assert sorted(used()) == [MACHINE, "other"]
+    assert used() == [MACHINE]
+    with store.lock:
+        assert store.db.execute("SELECT COUNT(*) FROM settings WHERE key LIKE 'legacy_seen:%'"
+                                ).fetchone()[0] == 1
     clock.now += 86400
     store.authenticate(LEGACY, machine=MACHINE)
-    assert sorted(used()) == [MACHINE, MACHINE, "other"]
+    assert used() == [MACHINE, MACHINE]
+
+
+def test_revoking_the_new_device_drops_its_rekey(store):
+    kim, _ = person(store, "kim")
+    legacy_seen(store, MACHINE)
+    store.assign_legacy(MACHINE, kim, "root")
+    store.device_revoke(next(d["id"] for d in store.devices(kim) if d["name"] == MACHINE))
+    assert rekeys(store) == []
 
 
 def test_rekey_offered_once_and_consumed(app, store):
@@ -135,11 +146,10 @@ def test_rekey_offered_once_and_consumed(app, store):
     assert http.request("POST", app.url + "/bridge/rekeyed", token, {"machine": MACHINE})[0] == 204
     assert rekeys(store) == []
     assert poll(app, token=token) == []
-    # the only legacy machine has its own token now, so the shared one is retired
-    assert http.request("GET", f"{app.url}/bridge/poll?machine={MACHINE}", LEGACY)[0] == 401
+    assert all(i.get("kind") != "rekey" for i in poll(app))  # the shared token still works
     p = store.authenticate(token)
     assert (p.person_name, p.device_name, p.legacy) == ("kim", MACHINE, False)
-    entry = next(r for r in store.log() if r["kind"] == "rekeyed")
+    [entry] = [r for r in store.log() if r["kind"] == "rekeyed"]
     assert (entry["person"], entry["detail"]) == ("kim", MACHINE)
     assert secret
 
@@ -171,7 +181,8 @@ def test_legacy_bridge_routes_attribute_to_assigned_person(app, store):
 def test_legacy_routes(app, store):
     beat(app)
     status, body = http.request("GET", app.url + "/api/legacy", app.admin)
-    assert (status, body) == (200, {"unassigned": [MACHINE], "enabled": True})
+    assert (status, body) == (200, {"unassigned": [MACHINE], "enabled": True,
+                                    "ready_to_disable": False})
     for method, path, payload in (("GET", "/api/legacy", None),
                                   ("POST", "/api/legacy/off", {}),
                                   ("POST", "/api/legacy/on", {}),
@@ -182,24 +193,46 @@ def test_legacy_routes(app, store):
     assert assign(app, machine="nowhere")[0] == 400
 
 
-def test_legacy_refused_when_nothing_unassigned_or_switched_off(app, store):
-    assert store.authenticate(LEGACY) is not None  # nothing seen yet: machines must be able to show up
+READY = "All old machines have their own tokens; switch the shared token off on the page."
+
+
+def start_brief(app, token):
+    h = {"X-Kaptyorka-Key": "claude:7", "X-Kaptyorka-Machine": "admin-pc",
+         "X-Kaptyorka-Tool": "claude-code", "X-Kaptyorka-Project": "proj"}
+    status, text = http.request("GET", app.url + "/api/brief?event=start", token, headers=h)
+    assert status == 200
+    return text
+
+
+def ready(app):
+    return http.request("GET", app.url + "/api/legacy", app.admin)[1]["ready_to_disable"]
+
+
+def test_legacy_accepted_until_switched_off(app, store):
+    assert store.authenticate(LEGACY) is not None  # nothing seen yet
     beat(app, machine="m1")
     beat(app, machine="m2", key="codex:2")
-    assert http.request("POST", app.url + "/api/legacy/off", app.admin, {})[0] == 204
-    assert store.authenticate(LEGACY) is None
-    assert http.request("GET", app.url + "/api/legacy", LEGACY)[0] == 401
-    assert http.request("GET", app.url + "/api/legacy", app.admin)[1]["enabled"] is False
-    assert http.request("POST", app.url + "/api/legacy/on", app.admin, {})[0] == 204
-    assert store.authenticate(LEGACY) is not None
-    assert [r["detail"] for r in store.log() if r["kind"] == "legacy_toggle"] == ["on", "off"]
+    assert not ready(app)
     assert assign(app, machine="m1")[0] == 204
     assert assign(app, machine="m2")[0] == 204
-    assert store.legacy_unassigned() == []
-    # still accepted while an assigned bridge has not picked up its own token
-    assert store.authenticate(LEGACY, machine="m1") is not None
+    assert not ready(app)  # their bridges have not taken their tokens yet
     for machine in ("m1", "m2"):
         token = next(r["token"] for r in rekeys(store) if r["device_name"] == machine)
         assert http.request("POST", app.url + "/bridge/rekeyed", token, {"machine": machine})[0] == 204
+    assert ready(app)
+    assert store.authenticate(LEGACY, machine="m1") is not None  # never switched off by itself
+    assert READY in start_brief(app, app.admin)
+    assert READY not in start_brief(app, app.kim_token)
+    beat(app, machine="m3", key="codex:3")
+    assert not ready(app)
+    assert assign(app, machine="m3")[0] == 204
+    assert http.request("POST", app.url + "/api/legacy/off", app.admin, {})[0] == 204
     assert store.authenticate(LEGACY) is None
-    assert store.authenticate(LEGACY, machine="m1") is None
+    assert rekeys(store) == []  # fetched with the shared token, so dropped with it
+    assert http.request("GET", app.url + "/api/legacy", LEGACY)[0] == 401
+    body = http.request("GET", app.url + "/api/legacy", app.admin)[1]
+    assert (body["enabled"], body["ready_to_disable"]) == (False, False)
+    assert READY not in start_brief(app, app.admin)
+    assert http.request("POST", app.url + "/api/legacy/on", app.admin, {})[0] == 204
+    assert store.authenticate(LEGACY) is not None
+    assert [r["detail"] for r in store.log() if r["kind"] == "legacy_toggle"] == ["on", "off"]

@@ -292,3 +292,56 @@ def test_bridge_applies_rekey_and_saves_config(hub, home, monkeypatch):
     assert (p.person_id, p.device_name, p.legacy) == (kim, "dgx", False)
     hub.store.send_from_web("root", "dgx/codex/proj", "hi")
     assert bridge.poll_once(0) == 1  # the new token works for the next requests
+
+
+def test_lost_rekey_confirm_heals_and_is_retried(hub, home, monkeypatch):
+    from helpers import person
+    from kaptyorka import identity, paths
+
+    monkeypatch.setattr(identity, "facts",
+                        lambda: {"host": "dgx", "os_user": "me", "version": "0.2.0"})
+    real, failed = bridge_mod.http.request, []
+
+    def first_confirm_fails(method, url, token, body=None, *a, **kw):
+        if url.endswith("/bridge/rekeyed") and not failed:
+            failed.append(url)
+            return 500, "boom"
+        return real(method, url, token, body, *a, **kw)
+
+    monkeypatch.setattr(bridge_mod.http, "request", first_confirm_fails)
+    lines = []
+    conf = cfg(hub)
+    paths.save_config(conf)
+    bridge = Bridge(conf, [fake_codex()], lines.append)
+    bridge.heartbeat()
+    kim, _ = person(hub.store, "kim")
+    hub.store.assign_legacy("dgx", kim, "root")
+    bridge.heartbeat()
+    bridge.poll_once(0)
+    assert bridge.pending_confirm and lines == ["hub answered 500 to rekeyed"]
+    rekeys = lambda: hub.store.db.execute("SELECT COUNT(*) FROM rekeys").fetchone()[0]  # noqa: E731
+    assert rekeys() == 1
+    bridge.heartbeat()  # the first call with the new token clears the pending rekey
+    assert rekeys() == 0
+    assert [r["detail"] for r in hub.store.log() if r["kind"] == "rekeyed"] == ["dgx"]
+    bridge.poll_once(0)  # and the bridge retries its confirm
+    assert not bridge.pending_confirm
+    assert lines[-1] == "rekeyed: this machine now has its own token"
+    assert [r["detail"] for r in hub.store.log() if r["kind"] == "rekeyed"] == ["dgx"]
+
+
+def test_rekey_confirm_hub_down_does_not_escape_poll(hub, home, monkeypatch):
+    lines = []
+    bridge = Bridge(cfg(hub), [fake_codex()], lines.append)
+    bridge.pending_confirm = True
+    real = bridge_mod.http.request
+
+    def down(method, url, *a, **kw):
+        if url.endswith("/bridge/rekeyed"):
+            raise bridge_mod.http.HubUnreachable(url)
+        return real(method, url, *a, **kw)
+
+    monkeypatch.setattr(bridge_mod.http, "request", down)
+    assert bridge.poll_once(0) == 0
+    assert bridge.pending_confirm
+    assert lines == ["hub unreachable when confirming the new token"]

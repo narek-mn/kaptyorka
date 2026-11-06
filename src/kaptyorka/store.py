@@ -273,16 +273,19 @@ class Store:
         shared token (the legacy device) maps a machine to a person through `legacy:<machine>`
         in settings, and to the device's own person otherwise."""
         digest = hashlib.sha256(token.encode()).hexdigest()
-        used = False
+        used, confirmed = False, False
         with self.lock:
             dev = self.db.execute("SELECT * FROM devices WHERE token_hash=? AND revoked_at IS NULL",
                                   (digest,)).fetchone()
             if dev is None:
                 return None
             if dev["legacy"]:
-                if not self._legacy_alive():
+                if not self._legacy_enabled():
                     return None
                 used = bool(machine) and self._legacy_used(machine)
+            else:
+                # a rekeyed bridge calling with its new token: its confirm may have been lost
+                confirmed = self._rekey_done(dev)
             person_id, device_name = dev["person_id"], dev["name"]
             who = None
             if dev["legacy"] and machine:
@@ -307,6 +310,8 @@ class Store:
                                   bool(dev["shared"]), bool(dev["legacy"]))
         if used:
             self.log_add("system", "legacy_used", machine)
+        if confirmed:
+            self.log_add(principal.person_name, "rekeyed", principal.device_name)
         return principal
 
     def person_create(self, name: str, role: str = "member") -> int:
@@ -379,6 +384,9 @@ class Store:
 
     def device_revoke(self, device_id: int) -> None:
         with self.lock:
+            dev = self.db.execute("SELECT * FROM devices WHERE id=?", (device_id,)).fetchone()
+            if dev is not None and self._is_rekey_device(dev):  # its token must not be handed out
+                self.db.execute("DELETE FROM rekeys WHERE device_name=?", (dev["name"],))
             cur = self.db.execute("UPDATE devices SET revoked_at=? WHERE id=? AND revoked_at IS NULL",
                                   (self.clock(), device_id))
             row = self.db.execute("SELECT d.name, p.name AS person FROM devices d"
@@ -683,21 +691,32 @@ class Store:
         row = self.db.execute("SELECT value FROM settings WHERE key='legacy_enabled'").fetchone()
         return row is None or row["value"] != "0"
 
-    def _legacy_alive(self) -> bool:
-        """The shared token works while it is switched on and some machine still needs it: one
-        not yet assigned, or an assigned one whose bridge has not taken its own token. Before
-        any machine is assigned it works too, so machines can show up to be assigned."""
-        if not self._legacy_enabled():
+    def _is_rekey_device(self, dev) -> bool:
+        """True when `dev` is the device assign_legacy made and its rekey is still pending."""
+        if dev["legacy"] or not self.db.execute("SELECT 1 FROM rekeys WHERE device_name=?",
+                                                (dev["name"],)).fetchone():
             return False
-        if self._legacy_unassigned():
-            return True
-        if self.db.execute("SELECT 1 FROM rekeys LIMIT 1").fetchone():
-            return True
-        return self.db.execute(
-            "SELECT 1 FROM settings WHERE substr(key, 1, 7)='legacy:' LIMIT 1").fetchone() is None
+        assigned = self._assigned_device(dev["name"], dev["person_id"])
+        return assigned is not None and assigned["id"] == dev["id"]
+
+    def _rekey_done(self, dev) -> bool:
+        """Forget a pending rekey once its new device calls; True when one was forgotten."""
+        if not self.db.execute("SELECT 1 FROM rekeys LIMIT 1").fetchone():
+            return False
+        if not self._is_rekey_device(dev):
+            return False
+        self.db.execute("DELETE FROM rekeys WHERE device_name=?", (dev["name"],))
+        return True
 
     def _legacy_used(self, machine: str) -> bool:
-        """True (and remembered) when this machine's use of the shared token is first in a day."""
+        """True (and remembered) when this machine's use of the shared token is first in a day.
+        Only machines the hub knows as legacy count, so made-up names leave no rows."""
+        known = self.db.execute(
+            "SELECT 1 FROM agents a JOIN devices d ON d.id=a.device_id"
+            " WHERE d.legacy=1 AND a.machine=? LIMIT 1", (machine,)).fetchone() or \
+            self.db.execute("SELECT 1 FROM settings WHERE key=?", (f"legacy:{machine}",)).fetchone()
+        if not known:
+            return False
         key, now = f"legacy_seen:{machine}", self.clock()
         row = self.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
         try:
@@ -728,11 +747,24 @@ class Store:
         with self.lock:
             return self._legacy_enabled()
 
+    def legacy_ready_to_disable(self) -> bool:
+        """The shared token is on but no machine needs it: every one seen with it is assigned
+        and has taken its own token."""
+        with self.lock:
+            return (self._legacy_enabled() and not self._legacy_unassigned()
+                    and not self.db.execute("SELECT 1 FROM rekeys LIMIT 1").fetchone()
+                    and self.db.execute("SELECT 1 FROM settings WHERE substr(key, 1, 7)='legacy:'"
+                                        " LIMIT 1").fetchone() is not None)
+
     def set_legacy_enabled(self, on: bool, by: str) -> None:
+        """Switched off, the shared token stops working and pending rekeys are dropped (they
+        are fetched with that token)."""
         with self.lock:
             self.db.execute("INSERT INTO settings (key, value) VALUES ('legacy_enabled', ?)"
                             " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                             ("1" if on else "0",))
+            if not on:
+                self.db.execute("DELETE FROM rekeys")
         self.log_add(by, "legacy_toggle", "on" if on else "off")
 
     def assign_legacy(self, machine: str, person_id: int, by: str) -> None:
@@ -769,8 +801,9 @@ class Store:
             return dev["version"] if dev is not None else ""
 
     def rekeyed(self, machine: str, principal: Principal) -> bool:
-        """The bridge saved its new token (and calls with it): forget the raw values.
-        False when the caller is not that machine's new device."""
+        """The bridge saved its new token and confirms with it. Authenticating that token has
+        already forgotten the raw values (see _rekey_done); this checks the caller is that
+        machine's new device. False when it is not."""
         with self.lock:
             dev = self._assigned_device(machine, principal.person_id)
             if principal.legacy or dev is None or dev["id"] != principal.device_id:
