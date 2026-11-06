@@ -415,6 +415,12 @@ class WorkerStore:
             row = self._row(name)
             return row["boss_key"] if row else None
 
+    def session_person(self, key: str) -> Optional[int]:
+        """The person an agents row belongs to (None: unknown key or no person yet)."""
+        with self.lock:
+            row = self.db.execute("SELECT person_id FROM agents WHERE key=?", (key,)).fetchone()
+            return row["person_id"] if row else None
+
     def live_keys(self) -> dict:
         """{session key: worker name} for the sessions of live workers."""
         with self.lock:

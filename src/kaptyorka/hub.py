@@ -30,6 +30,7 @@ TICK_S = 15
 WORKER_BRIEF_S = 300  # a worker session this young hears its task in the start brief
 OWN_TOKEN = ("use your own device token: run kaptyorka join with an invite, or ask the admin to"
              " assign this machine")
+ON_SHARED = "a worker on a shared account cannot start, adopt or close workers; ask your boss"
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
        "style-src 'unsafe-inline'; img-src 'self' data:")
 
@@ -281,7 +282,20 @@ def build_app(store: Store) -> Starlette:
         rid = store.request_access(principal.person_id, kind, target, why)
         return f"requested #{rid}; the admin sees it on the page"
 
-    def own_workers(principal: Principal) -> List[dict]:
+    def foreign(principal: Principal, person_id: Optional[int]) -> Optional[int]:
+        """The person behind a session on a shared device that is not the device's owner (a
+        worker the bridge there started for someone else); None for the owner's own."""
+        if principal.shared and person_id is not None and person_id != principal.person_id:
+            return person_id
+        return None
+
+    def page_foreign(request: Request, principal: Principal) -> Optional[int]:
+        key = unquote(request.headers.get("x-kaptyorka-key") or "")
+        return foreign(principal, ws.session_person(key)) if key else None
+
+    def own_workers(principal: Principal, other: Optional[int] = None) -> List[dict]:
+        if other is not None:  # a session of another person on a shared device: theirs only
+            return ws.list(replace(principal, person_id=other, role="member"))
         # the shared token is no admin here: anyone may hold it
         return ws.list(replace(principal, role="member") if principal.legacy else principal)
 
@@ -308,6 +322,8 @@ def build_app(store: Store) -> Starlette:
         agent, principal = caller(ctx)
         if principal.legacy:
             raise KaptyorkaError(OWN_TOKEN)
+        if foreign(principal, agent.person_id) is not None:
+            raise KaptyorkaError(ON_SHARED)
         if not (store.may_write_project(project, principal)
                 or (agent.project == project and not ws.registered(project))):
             raise KaptyorkaError(f"you may not start workers in {project}: that takes the write"
@@ -334,8 +350,8 @@ def build_app(store: Store) -> Starlette:
     @_tool_errors
     def workers(ctx: Context) -> List[dict]:
         """Your workers (the admin: everyone's): name, project, host, state, attach line."""
-        _, principal = caller(ctx)
-        return own_workers(principal)
+        agent, principal = caller(ctx)
+        return own_workers(principal, foreign(principal, agent.person_id))
 
     @server.tool()
     @_tool_errors
@@ -344,6 +360,8 @@ def build_app(store: Store) -> Starlette:
         agent, principal = caller(ctx)
         if principal.legacy:
             raise KaptyorkaError(OWN_TOKEN)
+        if foreign(principal, agent.person_id) is not None:
+            raise KaptyorkaError(ON_SHARED)
         w = ws.adopt(principal, name, agent.key)
         wake_bridges()
         return f"you are now the boss of `{name}`; {w['delivered']} held messages delivered"
@@ -352,9 +370,11 @@ def build_app(store: Store) -> Starlette:
     @_tool_errors
     async def close_worker(name: str, ctx: Context) -> str:
         """End one of your workers (its session on that machine is stopped)."""
-        _, principal = caller(ctx)
+        agent, principal = caller(ctx)
         if principal.legacy:
             raise KaptyorkaError(OWN_TOKEN)
+        if foreign(principal, agent.person_id) is not None:
+            raise KaptyorkaError(ON_SHARED)
         w = ws.close(principal, name)
         wake_bridges()
         return f"closing `{name}`" + (f"; {w['note']}" if w.get("note") else "")
@@ -747,7 +767,7 @@ def build_app(store: Store) -> Starlette:
         principal = request.scope.get("state", {}).get("principal")
         if principal is None:
             return PlainTextResponse("unauthorized", status_code=401)
-        return JSONResponse(own_workers(principal))
+        return JSONResponse(own_workers(principal, page_foreign(request, principal)))
 
     async def worker_action(request: Request, close: bool) -> Response:
         principal = request.scope.get("state", {}).get("principal")
@@ -755,6 +775,8 @@ def build_app(store: Store) -> Starlette:
             return PlainTextResponse("unauthorized", status_code=401)
         if principal.legacy:
             return PlainTextResponse(OWN_TOKEN, status_code=403)
+        if page_foreign(request, principal) is not None:
+            return PlainTextResponse(ON_SHARED, status_code=403)
         name = request.path_params["name"]
         try:
             # the page acts as the person: a web boss hears its notices on the page

@@ -406,3 +406,40 @@ def test_instructions_name_the_worker_tools():
     assert ("work(project, task) starts a worker session for you on another machine; workers()"
             " lists yours; adopt(name) takes over an unattended one; close_worker(name) ends"
             " one.") in INSTRUCTIONS
+
+
+ON_SHARED = "a worker on a shared account cannot start, adopt or close workers; ask your boss"
+
+
+def test_worker_on_shared_box_cannot_start_adopt_or_close(hub, alice, clock):
+    pid, client = alice
+    bob_id, bob = member(hub, "bob")
+    b = bridge(hub, bob_id, host="box-2")  # bob's machine, shared with alice
+    hub.store.device_set_shared(b.device_id, True)
+    hub.store.grant_machine("box-2", pid, by="test")
+    assert run(call(client, BOSS, "work", project="proj-a", task="x")) == \
+        "starting `proj-a-w1` on box-2 (u)"
+    item = poll(hub, b)[0]
+    http.request("POST", hub.url + "/bridge/ack", b.token,
+                 {"id": item["id"], "ok": True, "launch": True})
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "proj-a-w1", "key": "claude:w1"})[0] == 204
+    box = as_token(hub, b.token)  # the worker calls with the box owner's token
+    worker = ident("claude:w1", machine="box-2", tool="claude-code")
+    assert ON_SHARED in call_error(box, worker, "work", project="proj-a", task="y")
+    assert ON_SHARED in call_error(box, worker, "close_worker", name="proj-a-w1")
+    assert ON_SHARED in call_error(box, worker, "adopt", name="proj-a-w1")
+    h = {"X-Kaptyorka-Key": "claude:w1"}
+    for action in ("close", "adopt"):
+        assert http.request("POST", f"{hub.url}/api/workers/proj-a-w1/{action}", b.token,
+                            headers=h) == (403, ON_SHARED)
+    assert [w["name"] for w in run(call(box, worker, "workers"))] == ["proj-a-w1"]
+    assert [w["name"] for w in http.request("GET", hub.url + "/api/workers", b.token,
+                                            headers=h)[1]] == ["proj-a-w1"]
+    assert hub.ws.by_name("proj-a-w1")["state"] == "up" and hub.ws.by_name("proj-a-w2") is None
+    # bob's own session on box-2 still may
+    own = ident("k:bob", machine="box-2")
+    assert run(call(box, own, "work", project="proj-a", task="z", machine="box-2")) == \
+        "starting `proj-a-w2` on box-2 (u) in a worktree, the folder is busy"
+    assert [w["name"] for w in run(call(box, own, "workers"))] == ["proj-a-w2"]
+    assert run(call(box, own, "close_worker", name="proj-a-w2")).startswith("closing `proj-a-w2`")
