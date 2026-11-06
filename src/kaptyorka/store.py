@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS devices (
     token_hash TEXT UNIQUE NOT NULL, secret_hash TEXT NOT NULL DEFAULT '',
     created REAL NOT NULL, last_used REAL, revoked_at REAL,
     shared INTEGER NOT NULL DEFAULT 0, legacy INTEGER NOT NULL DEFAULT 0,
-    host TEXT NOT NULL DEFAULT '', os_user TEXT NOT NULL DEFAULT '');
+    host TEXT NOT NULL DEFAULT '', os_user TEXT NOT NULL DEFAULT '',
+    version TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS invites (
     code TEXT PRIMARY KEY, person_id INTEGER NOT NULL, created REAL NOT NULL,
     expires REAL NOT NULL, used_at REAL);
@@ -93,6 +94,7 @@ ADDED_COLUMNS = [
     ("messages", "file_id", "INTEGER"),
     ("messages", "kind", "TEXT NOT NULL DEFAULT 'message'"),
     ("notes", "project", "TEXT"),
+    ("devices", "version", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -352,6 +354,83 @@ class Store:
         if cur.rowcount and row:
             self.log_add(row["person"], "revoke", f"device {row['name']}")
 
+    # machines
+
+    def machines(self, principal: Principal) -> List[dict]:
+        """Machines (hosts) with their devices and online session count. An admin sees all; anyone
+        else sees the hosts they own, have a device on, or were given."""
+        with self.lock:
+            now = self.clock()
+            out = []
+            for m in self.db.execute("SELECT m.host, m.owner_person_id, p.name AS owner FROM machines m"
+                                     " LEFT JOIN people p ON p.id=m.owner_person_id ORDER BY m.host"):
+                devs = [{"id": d["id"], "name": d["name"], "person": d["person"],
+                         "person_id": d["person_id"], "os_user": d["os_user"],
+                         "shared": bool(d["shared"]), "version": d["version"],
+                         "last_used": d["last_used"]}
+                        for d in self.db.execute(
+                            "SELECT d.*, p.name AS person FROM devices d JOIN people p"
+                            " ON p.id=d.person_id WHERE d.host=? AND d.revoked_at IS NULL"
+                            " ORDER BY d.id", (m["host"],))]
+                if not (principal.is_admin() or m["owner_person_id"] == principal.person_id
+                        or any(d["person_id"] == principal.person_id for d in devs)
+                        or self._granted(m["host"], principal.person_id)):
+                    continue
+                online = self.db.execute("SELECT COUNT(*) FROM agents WHERE host=? AND last_seen>?",
+                                         (m["host"], now - ONLINE_S)).fetchone()[0]
+                for d in devs:
+                    del d["person_id"]
+                out.append({"host": m["host"], "owner": m["owner"],
+                            "owner_person_id": m["owner_person_id"], "devices": devs,
+                            "online": online})
+            return out
+
+    def _granted(self, host: str, person_id: int) -> bool:
+        return self.db.execute("SELECT 1 FROM machine_access WHERE host=? AND person_id=?",
+                               (host, person_id)).fetchone() is not None
+
+    def may_use(self, host: str, person_id: int) -> bool:
+        """True for an admin, the machine's owner, anyone with a device on it, or a grant."""
+        with self.lock:
+            p = self.db.execute("SELECT role FROM people WHERE id=?", (person_id,)).fetchone()
+            if p is not None and p["role"] == "admin":
+                return True
+            m = self.db.execute("SELECT owner_person_id FROM machines WHERE host=?",
+                                (host,)).fetchone()
+            if m is not None and m["owner_person_id"] == person_id:
+                return True
+            if self.db.execute("SELECT 1 FROM devices WHERE host=? AND person_id=?"
+                               " AND revoked_at IS NULL", (host, person_id)).fetchone():
+                return True
+            return self._granted(host, person_id)
+
+    def _grant_change(self, host: str, person_id: int, grant: bool) -> None:
+        with self.lock:
+            if self.db.execute("SELECT 1 FROM machines WHERE host=?", (host,)).fetchone() is None:
+                raise KaptyorkaError(f"no such machine: {host}")
+            who = self.db.execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
+            if who is None:
+                raise KaptyorkaError("no such person")
+            if grant:
+                self.db.execute("INSERT OR IGNORE INTO machine_access (host, person_id) VALUES (?,?)",
+                                (host, person_id))
+            else:
+                self.db.execute("DELETE FROM machine_access WHERE host=? AND person_id=?",
+                                (host, person_id))
+        self.log_add("system", "grant" if grant else "revoke", f"machine:{host} -> {who['name']}")
+
+    def grant_machine(self, host: str, person_id: int) -> None:
+        self._grant_change(host, person_id, True)
+
+    def revoke_machine(self, host: str, person_id: int) -> None:
+        self._grant_change(host, person_id, False)
+
+    def device_set_shared(self, device_id: int, shared: bool) -> None:
+        with self.lock:
+            cur = self.db.execute("UPDATE devices SET shared=? WHERE id=?", (int(shared), device_id))
+        if not cur.rowcount:
+            raise KaptyorkaError("no such device")
+
     # log
 
     def log_add(self, person: str, kind: str, detail: str) -> None:
@@ -416,9 +495,14 @@ class Store:
             row = self.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
             return self._agent(row, now)
 
-    def heartbeat(self, machine: str, sessions: List[dict], tools: Sequence[str] = ()) -> None:
+    def heartbeat(self, machine: str, sessions: List[dict], tools: Sequence[str] = (),
+                  principal: Optional[Principal] = None, facts: Optional[dict] = None) -> None:
         """`tools` are the tools whose sessions this list is complete for: the rest of their agents
-        on this machine are gone, so their names are free at once."""
+        on this machine are gone, so their names are free at once. `facts` (host, os_user,
+        version) say which computer the sessions run on; an older bridge sends none."""
+        facts = facts or {}
+        host = str(facts.get("host") or "")[:80]
+        os_user = str(facts.get("os_user") or "")[:80]
         with self.lock:
             now = self.clock()
             seen = {s["key"] for s in sessions}
@@ -429,6 +513,17 @@ class Store:
             for s in sessions:
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s.get("activity"),
                             s.get("label", ""))
+                if host:
+                    self.db.execute("UPDATE agents SET host=?, os_user=? WHERE key=?",
+                                    (host, os_user, s["key"]))
+            if host:
+                self.db.execute("INSERT OR IGNORE INTO machines (host, owner_person_id, first_seen)"
+                                " VALUES (?,?,?)",
+                                (host, principal.person_id if principal else None, now))
+                if principal is not None and not principal.legacy:
+                    self.db.execute("UPDATE devices SET host=?, os_user=?, version=? WHERE id=?",
+                                    (host, os_user, str(facts.get("version") or "")[:40],
+                                     principal.device_id))
 
     def online(self) -> List[Agent]:
         with self.lock:

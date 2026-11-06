@@ -162,7 +162,10 @@ def build_app(store: Store) -> Starlette:
     @_bad_request
     async def bridge_heartbeat(request: Request) -> Response:
         body = await request.json()
-        store.heartbeat(body["machine"], body["sessions"], body.get("tools", ()))
+        facts = body.get("facts")
+        store.heartbeat(body["machine"], body["sessions"], body.get("tools", ()),
+                        principal=request.scope.get("state", {}).get("principal"),
+                        facts=facts if isinstance(facts, dict) else None)
         return Response(status_code=204)
 
     @server.custom_route("/bridge/poll", methods=["GET"])
@@ -299,6 +302,53 @@ def build_app(store: Store) -> Starlette:
             return denied
         store.device_revoke(request.path_params["device_id"])
         return Response(status_code=204)
+
+    @server.custom_route("/api/devices/{device_id:int}/shared", methods=["POST"])
+    @_bad_request
+    async def api_device_shared(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        if not isinstance(body["shared"], bool):
+            raise ValueError("shared must be true or false")
+        try:
+            store.device_set_shared(request.path_params["device_id"], body["shared"])
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/machines", methods=["GET"])
+    async def api_machines(request: Request) -> Response:
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None:
+            return PlainTextResponse("unauthorized", status_code=401)
+        return JSONResponse(store.machines(principal))
+
+    async def machine_grant(request: Request, grant: bool) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        person = store.person_by_name(str(body["person"]))
+        try:
+            if person is None:
+                raise KaptyorkaError("no such person")
+            host = request.path_params["host"]
+            (store.grant_machine if grant else store.revoke_machine)(host, person["id"])
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/machines/{host}/grant", methods=["POST"])
+    @_bad_request
+    async def api_machine_grant(request: Request) -> Response:
+        return await machine_grant(request, True)
+
+    @server.custom_route("/api/machines/{host}/revoke", methods=["POST"])
+    @_bad_request
+    async def api_machine_revoke(request: Request) -> Response:
+        return await machine_grant(request, False)
 
     @server.custom_route("/i/{code}", methods=["GET"])
     async def invite_page(request: Request) -> Response:

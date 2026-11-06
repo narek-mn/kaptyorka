@@ -58,3 +58,66 @@ def test_log_add(tmp_path):
     s.log_add("alice", "invite", "bob")
     row = s.db.execute("SELECT time, person, kind, detail FROM log").fetchone()
     assert tuple(row) == (1234.0, "alice", "invite", "bob")
+
+
+def _member(s, name, role="member"):
+    from helpers import person
+    return person(s, name, role)
+
+
+def _facts(host, os_user="u", version="0.2.0"):
+    return {"host": host, "os_user": os_user, "version": version}
+
+
+def test_heartbeat_without_facts_is_fine(tmp_path):
+    s = Store(tmp_path / "hub.db")
+    s.heartbeat("m", [{"key": "k:1", "tool": "codex", "project": "p"}])
+    assert s.agent("k:1").host == ""
+    s.close()
+
+
+def test_heartbeat_records_host_and_owner(tmp_path):
+    s = Store(tmp_path / "hub.db")
+    pid, token = _member(s, "u1")
+    p = s.authenticate(token)
+    s.heartbeat("u1@h1", [{"key": "k:1", "tool": "codex", "project": "p"}], principal=p,
+                facts=_facts("h1", "osu", "0.2.0"))
+    a = s.agent("k:1")
+    assert (a.host, a.os_user) == ("h1", "osu")
+    [m] = s.machines(p)
+    assert m["host"] == "h1" and m["owner_person_id"] == pid and m["owner"] == "u1"
+    assert m["online"] == 1
+    d = m["devices"][0]
+    assert d["name"] == "u1-laptop" and d["os_user"] == "osu" and d["version"] == "0.2.0"
+    s.close()
+
+
+def test_two_devices_one_host(tmp_path):
+    s = Store(tmp_path / "hub.db")
+    p1, t1 = _member(s, "u1")
+    p2, t2 = _member(s, "u2")
+    for t in (t1, t2):
+        s.heartbeat("m", [], principal=s.authenticate(t), facts=_facts("h1"))
+    admin, ta = _member(s, "root", "admin")
+    [m] = s.machines(s.authenticate(ta))
+    assert m["owner_person_id"] == p1  # first sight owns it
+    assert sorted(d["person"] for d in m["devices"]) == ["u1", "u2"]
+    s.close()
+
+
+def test_may_use_owner_admin_grant(tmp_path):
+    s = Store(tmp_path / "hub.db")
+    o, to = _member(s, "owner")
+    other, _ = _member(s, "other")
+    friend, _ = _member(s, "friend")
+    root, _ = _member(s, "root", "admin")
+    s.heartbeat("m", [], principal=s.authenticate(to), facts=_facts("h1"))
+    assert s.may_use("h1", o) and s.may_use("h1", root)
+    assert not s.may_use("h1", other)
+    s.grant_machine("h1", friend)
+    assert s.may_use("h1", friend)
+    s.revoke_machine("h1", friend)
+    assert not s.may_use("h1", friend)
+    details = [r["detail"] for r in s.db.execute("SELECT detail FROM log WHERE kind IN ('grant','revoke')")]
+    assert details == ["machine:h1 -> friend", "machine:h1 -> friend"]
+    s.close()

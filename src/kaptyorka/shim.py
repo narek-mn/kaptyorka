@@ -75,7 +75,8 @@ class Relay:
 
 async def _heartbeat(cfg: dict, ident: identity.Identity) -> None:
     body = {"machine": ident.machine,
-            "sessions": [{"key": ident.key, "tool": ident.tool, "project": ident.project}]}
+            "sessions": [{"key": ident.key, "tool": ident.tool, "project": ident.project}],
+            "facts": identity.facts()}
     while True:
         try:
             await anyio.to_thread.run_sync(lambda: http.request(

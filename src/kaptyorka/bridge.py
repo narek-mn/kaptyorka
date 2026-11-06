@@ -6,7 +6,7 @@ from dataclasses import asdict
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import http, paths
+from kaptyorka import http, identity, paths
 from kaptyorka.adapters.base import Adapter
 
 HEARTBEAT_S = 10
@@ -54,7 +54,7 @@ class Bridge:
                 tools.append(a.tool)  # this list is complete for it
         status, _ = http.request("POST", self.cfg["hub"] + "/bridge/heartbeat", self.cfg["token"],
                                  {"machine": self.cfg["machine"], "sessions": sessions,
-                                  "tools": tools})
+                                  "tools": tools, "facts": identity.facts()})
         self._report("heartbeat", None if status == 204 else f"hub answered {status} to heartbeat")
 
     def _ack(self, msg_id: int, ok: bool) -> None:

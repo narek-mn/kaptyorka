@@ -137,3 +137,39 @@ def test_revoke_device(hub):
     dev = hub.store.devices(hub.store.authenticate(body["token"]).person_id)[0]
     assert http.request("POST", f"{hub.url}/api/devices/{dev['id']}/revoke", ADMIN)[0] == 204
     assert http.request("GET", hub.url + "/api/feed", body["token"])[0] == 401
+
+
+def test_machines_route_filtered(hub):
+    _, ta = person(hub.store, "ann")
+    _, tb = person(hub.store, "ben")
+    pc, _ = person(hub.store, "cat")
+    for t, host in ((ta, "h-a"), (tb, "h-b")):
+        facts = {"host": host, "os_user": "u", "version": "0.2.0"}
+        assert http.request("POST", hub.url + "/bridge/heartbeat", t,
+                            {"machine": host, "sessions": [], "facts": facts})[0] == 204
+    status, rows = http.request("GET", hub.url + "/api/machines", ADMIN)
+    assert status == 200 and sorted(r["host"] for r in rows) == ["h-a", "h-b"]
+    _, rows = http.request("GET", hub.url + "/api/machines", ta)
+    assert [r["host"] for r in rows] == ["h-a"]
+    assert http.request("POST", hub.url + "/api/machines/h-b/grant", ta, {"person": "ann"})[0] == 403
+    assert http.request("POST", hub.url + "/api/machines/h-b/grant", ADMIN, {"person": "ann"})[0] == 204
+    _, rows = http.request("GET", hub.url + "/api/machines", ta)
+    assert sorted(r["host"] for r in rows) == ["h-a", "h-b"]
+    assert http.request("POST", hub.url + "/api/machines/h-b/revoke", ADMIN, {"person": "ann"})[0] == 204
+    _, rows = http.request("GET", hub.url + "/api/machines", ta)
+    assert [r["host"] for r in rows] == ["h-a"]
+    status, text = http.request("POST", hub.url + "/api/machines/nope/grant", ADMIN, {"person": "ann"})
+    assert status == 400 and "no such machine" in text
+    status, text = http.request("POST", hub.url + "/api/machines/h-b/grant", ADMIN, {"person": "zed"})
+    assert status == 400 and "no such person" in text
+
+
+def test_device_shared_route(hub):
+    pid, ta = person(hub.store, "ann")
+    dev = hub.store.devices(pid)[0]
+    url = f"{hub.url}/api/devices/{dev['id']}/shared"
+    assert http.request("POST", url, ta, {"shared": True})[0] == 403
+    assert http.request("POST", url, ADMIN, {"shared": True})[0] == 204
+    assert hub.store.devices(pid)[0]["shared"] == 1
+    assert http.request("POST", url, ADMIN, {"shared": False})[0] == 204
+    assert hub.store.devices(pid)[0]["shared"] == 0

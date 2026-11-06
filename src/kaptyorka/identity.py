@@ -7,8 +7,10 @@ Session keys, one per tool, identical in shim, hook and bridge:
   codex:<thread id>
   cursor:<workspace path>  workspace = the --workspace argument, else the shim's cwd
 """
+import getpass
 import json
 import os
+import socket
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -138,3 +140,13 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
     if not key or not project:
         return None
     return Identity(key, machine, tool, project)
+
+
+def facts() -> dict:
+    """What a heartbeat says about this computer."""
+    from kaptyorka import __version__
+    try:
+        os_user = getpass.getuser()
+    except Exception:
+        os_user = ""
+    return {"host": socket.gethostname().split(".")[0], "os_user": os_user, "version": __version__}

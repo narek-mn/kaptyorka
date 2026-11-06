@@ -247,3 +247,21 @@ def test_heartbeat_frees_closed_claude_session_but_keeps_codex_when_list_is_empt
     codex._sessions.clear()  # daemon down: an empty list proves nothing
     bridge.heartbeat()
     assert [a.key for a in hub.store.online()] == ["codex:5"]
+
+
+def test_heartbeat_sends_facts(hub, home, monkeypatch):
+    import getpass
+
+    import kaptyorka
+    sent = []
+    real = bridge_mod.http.request
+
+    def spy(method, url, token, body=None, *a, **kw):
+        sent.append(body)
+        return real(method, url, token, body, *a, **kw)
+
+    monkeypatch.setattr(bridge_mod.http, "request", spy)
+    Bridge(cfg(hub), [fake_codex()], bridge_mod.log).heartbeat()
+    facts = sent[0]["facts"]
+    assert facts == {"host": socket.gethostname().split(".")[0], "os_user": getpass.getuser(),
+                     "version": kaptyorka.__version__}
