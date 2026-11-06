@@ -4,9 +4,11 @@ import socket
 import subprocess
 import threading
 import time
+import types
 
 import pytest
 
+import kaptyorka
 from kaptyorka import bridge as bridge_mod
 from kaptyorka import launch as launch_mod
 from kaptyorka.adapters.base import DeliveryError, Session, merge_json
@@ -661,3 +663,66 @@ def test_close_of_a_gone_session_marks_the_worker_closed(team):
     team.bridge.poll_once(0)
     assert team.acks[-1] == (team.order()["id"], True, True, "")
     assert team.worker()["state"] == "closed"
+
+
+def update_bridge(hub, monkeypatch, version="99.0.0", auto=True):
+    """A bridge whose heartbeat answer says the hub runs `version`; its runner records argv."""
+    from kaptyorka import hub as hub_mod
+
+    monkeypatch.setattr(hub_mod, "__version__", version)
+    runner = LaunchRun()
+    lines = []
+    b = Bridge(cfg(hub), [fake_codex()], lines.append, run=runner)
+    b.heartbeat()
+    b.hub["auto_update"] = auto  # the test token is a legacy one: the hub answers false
+    b.poll_once = lambda wait=0: 0
+    return b, runner, lines
+
+
+def update_calls(runner):
+    return [c for c in runner.calls if c[-1] == "update"]
+
+
+def test_auto_update_runs_once_at_quiet_moment(hub, home, monkeypatch):
+    b, runner, lines = update_bridge(hub, monkeypatch)
+    b.pending["w"] = ({}, {}, 0.0)
+    b._step()
+    assert update_calls(runner) == []  # a launch is pending
+    b.pending.clear()
+    b.poll_once = lambda wait=0: 1
+    b._step()
+    assert update_calls(runner) == []  # the poll delivered something
+    b.poll_once = lambda wait=0: 0
+    b._step()
+    b._step()
+    calls = update_calls(runner)
+    assert len(calls) == 1 and calls[0][0].endswith("kaptyorka")
+    assert lines.count(f"updating kaptyorka {kaptyorka.__version__} -> 99.0.0") == 1
+
+
+def test_no_auto_update_when_off_or_same_version(hub, home, monkeypatch):
+    b, runner, _ = update_bridge(hub, monkeypatch, auto=False)
+    b._step()
+    assert update_calls(runner) == []
+    b, runner, _ = update_bridge(hub, monkeypatch, version=kaptyorka.__version__)
+    b._step()
+    assert update_calls(runner) == []
+    b, runner, _ = update_bridge(hub, monkeypatch, version="0.0.1")
+    b._step()
+    assert update_calls(runner) == []
+
+
+def test_auto_update_failure_logs_once_and_retries_after_an_hour(hub, home, monkeypatch):
+    b, runner, lines = update_bridge(hub, monkeypatch)
+    runner.rc = 1
+    now = [1000.0]
+    monkeypatch.setattr(bridge_mod, "time", types.SimpleNamespace(
+        monotonic=lambda: now[0], time=time.time, strftime=time.strftime))
+    b._step()
+    b._step()
+    assert len(update_calls(runner)) == 1
+    assert len([l for l in lines if l.startswith("auto-update failed")]) == 1
+    now[0] += 3601
+    b._step()
+    assert len(update_calls(runner)) == 2
+    assert len([l for l in lines if l.startswith("auto-update failed")]) == 1

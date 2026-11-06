@@ -1,5 +1,6 @@
 """Per-machine bridge: reports running sessions and pushes messages through each tool's door."""
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -9,13 +10,14 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import facts, http, identity, orders, paths
+from kaptyorka import __version__, facts, http, identity, orders, paths
 from kaptyorka.adapters.base import Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
 HEARTBEAT_S = 10
 WAIT_S = 25
 RETRY_S = 5
+UPDATE_RETRY_S = 3600  # after a failed auto-update
 FACTS_S = 60
 SHOW_UP_S = 120  # a started worker's session must appear in the session list within this
 SEEN_KEEP = 200  # order ids remembered against replay
@@ -51,6 +53,8 @@ class Bridge:
         self.hub: dict = {}  # the hub's last JSON answer to a heartbeat; {} before one or on 204
         self._facts: dict = {}
         self._facts_at = 0.0
+        self._updated_to = ""  # the hub version an update was last run for
+        self._update_retry_at = 0.0
 
     def _report(self, area: str, problem: Optional[str]) -> None:
         """Log a problem once per area until that area succeeds (problem None) again."""
@@ -288,14 +292,42 @@ class Bridge:
     def _step(self) -> float:
         """One poll; returns how long to wait before the next. Logs each problem once."""
         try:
-            self.poll_once(WAIT_S)
+            delivered = self.poll_once(WAIT_S)
         except (http.HubUnreachable, RuntimeError) as e:
             problem = (f"kaptyorka hub unreachable at {self.cfg['hub']}"
                        if isinstance(e, http.HubUnreachable) else str(e))
             self._report("poll", problem)
             return RETRY_S
         self._report("poll", None)
+        self._maybe_update(delivered)
         return 0
+
+    @staticmethod
+    def _numbers(version) -> tuple:
+        return tuple(int(n) for n in re.findall(r"\d+", str(version or "")))
+
+    def _maybe_update(self, delivered: int) -> None:
+        """Run `kaptyorka update` once per hub version, only at a quiet moment."""
+        new = self.hub.get("version")
+        if (not self.hub.get("auto_update") or delivered or self.pending
+                or new == self._updated_to
+                or self._numbers(new) <= self._numbers(__version__)
+                or time.monotonic() < self._update_retry_at):
+            return
+        argv0 = Path(sys.argv[0]).resolve() if sys.argv and sys.argv[0] else None
+        exe = argv0 if argv0 and argv0.name == "kaptyorka" else Path(sys.executable).parent / "kaptyorka"
+        self.log(f"updating kaptyorka {__version__} -> {new}")
+        try:
+            r = self.runner([str(exe), "update"], capture_output=True, text=True)
+            error = "" if r.returncode == 0 else (r.stderr or r.stdout or "").strip() or f"exit {r.returncode}"
+        except Exception as e:
+            error = str(e)
+        if error:
+            self._report("update", f"auto-update failed: {error}")
+            self._update_retry_at = time.monotonic() + UPDATE_RETRY_S
+        else:
+            self._report("update", None)
+            self._updated_to = new
 
     def _beat(self) -> None:
         while not self.stop.is_set():
