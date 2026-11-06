@@ -434,3 +434,38 @@ def test_brief_mentions_pending(hub):
     assert " Pending: use of h-b (machine)." in b and " Denied: access to shop (project)." in b
     hub.store.clock = lambda t=hub.store.clock(): t + 8 * 86400
     assert "Denied" not in brief()
+
+
+def test_deny_then_approve_grants_nothing(hub):
+    ta, ann, a_id = setup_access(hub)
+    run(call(ann, a_id, "request_access", kind="project", target="shop"))
+    admin = hub.store.authenticate(ADMIN).person_id
+    pid = hub.store.person_by_name("ann")["id"]
+    hub.store.decide_request(1, admin, False)
+    with pytest.raises(Exception, match="already decided"):
+        hub.store.decide_request(1, admin, True)
+    assert hub.store.project_role("shop", pid) is None
+    assert hub.store.requests(pending_only=False)[0]["decision"] == "denied"
+
+
+def test_failed_grant_reverts_claim(hub):
+    ta, ann, a_id = setup_access(hub)
+    run(call(ann, a_id, "request_access", kind="project", target="shop"))
+    with hub.store.lock:
+        hub.store.db.execute("DELETE FROM projects WHERE name='shop'")
+    admin = hub.store.authenticate(ADMIN).person_id
+    with pytest.raises(Exception, match="no project named shop"):
+        hub.store.decide_request(1, admin, True)
+    assert [r["id"] for r in hub.store.requests()] == [1]
+
+
+def test_approve_never_lowers_role(hub):
+    ta, ann, a_id = setup_access(hub)
+    run(call(ann, a_id, "request_access", kind="project", target="shop"))
+    pid = hub.store.person_by_name("ann")["id"]
+    hub.store.grant_project("shop", pid, "write", "t")  # given after the request was made
+    assert http.request("POST", hub.url + "/api/requests/1", ADMIN, {"approve": True})[0] == 204
+    assert hub.store.project_role("shop", pid) == "write"
+    detail = hub.store.db.execute(
+        "SELECT detail FROM log WHERE kind='request_decided'").fetchone()["detail"]
+    assert detail.endswith("approved (already write)")

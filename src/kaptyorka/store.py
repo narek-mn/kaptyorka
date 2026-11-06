@@ -431,6 +431,17 @@ class Store:
     def grant_machine(self, host: str, person_id: int, by: str) -> None:
         self._grant_change(host, person_id, True, by)
 
+    def _grant_machine(self, host: str, person_id: int) -> str:
+        """Lock held by the caller. Returns the person's name."""
+        if self.db.execute("SELECT 1 FROM machines WHERE host=?", (host,)).fetchone() is None:
+            raise KaptyorkaError(f"no such machine: {host}")
+        who = self.db.execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
+        if who is None:
+            raise KaptyorkaError("no such person")
+        self.db.execute("INSERT OR IGNORE INTO machine_access (host, person_id) VALUES (?,?)",
+                        (host, person_id))
+        return who["name"]
+
     def revoke_machine(self, host: str, person_id: int, by: str) -> None:
         self._grant_change(host, person_id, False, by)
 
@@ -470,10 +481,15 @@ class Store:
         if role not in PROJECT_ROLES:
             raise KaptyorkaError("project role must be read, write or manage")
         with self.lock:
-            name = self._project_target(project, person_id)
-            self.db.execute("INSERT OR REPLACE INTO project_access (project, person_id, role)"
-                            " VALUES (?,?,?)", (project, person_id, role))
+            name = self._grant_project(project, person_id, role)
         self.log_add(by, "grant", f"project:{project}:{role} -> {name}")
+
+    def _grant_project(self, project: str, person_id: int, role: str) -> str:
+        """Lock held by the caller. Returns the person's name."""
+        name = self._project_target(project, person_id)
+        self.db.execute("INSERT OR REPLACE INTO project_access (project, person_id, role)"
+                        " VALUES (?,?,?)", (project, person_id, role))
+        return name
 
     def revoke_project(self, project: str, person_id: int, by: str) -> None:
         with self.lock:
@@ -560,10 +576,10 @@ class Store:
                     raise KaptyorkaError(f"no project named {target}")
                 has = self._role(target, person_id) is not None
             else:
-                if self.db.execute("SELECT 1 FROM machines WHERE host=?", (target,)).fetchone() is None:
-                    raise KaptyorkaError(f"no machine named {target}")
                 m = self.db.execute("SELECT owner_person_id FROM machines WHERE host=?",
                                     (target,)).fetchone()
+                if m is None:
+                    raise KaptyorkaError(f"no machine named {target}")
                 has = (self._is_admin(person_id) or m["owner_person_id"] == person_id
                        or self._granted(target, person_id))
             if has:
@@ -594,30 +610,44 @@ class Store:
                                       (person_id, since))
 
     def decide_request(self, request_id: int, by_person_id: int, approve: bool) -> None:
+        """Claim the request first, so a deny racing an approve cannot both win; if the grant
+        then fails, the claim is undone. Approving never lowers a project role already held."""
+        decision = "approved" if approve else "denied"
+        note = ""
         with self.lock:
             row = self.db.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
             if row is None:
                 raise KaptyorkaError("no such request")
-            if row["decided_at"] is not None:
-                raise KaptyorkaError("request already decided")
             by = self.db.execute("SELECT name FROM people WHERE id=?", (by_person_id,)).fetchone()
             who = self.db.execute("SELECT name FROM people WHERE id=?", (row["person_id"],)).fetchone()
-        if by is None or who is None:
-            raise KaptyorkaError("no such person")
-        if approve:  # the grants take the lock themselves, so they run before the decision is saved
-            if row["kind"] == "project":
-                self.grant_project(row["target"], row["person_id"], "read", by["name"])
-            else:
-                self.grant_machine(row["target"], row["person_id"], by["name"])
-        decision = "approved" if approve else "denied"
-        with self.lock:
+            if by is None or who is None:
+                raise KaptyorkaError("no such person")
             cur = self.db.execute("UPDATE requests SET decided_at=?, decision=?, decided_by=?"
                                   " WHERE id=? AND decided_at IS NULL",
                                   (self.clock(), decision, by_person_id, request_id))
-        if not cur.rowcount:
-            raise KaptyorkaError("request already decided")
+            if not cur.rowcount:
+                raise KaptyorkaError("request already decided")
+            if approve:
+                try:
+                    if row["kind"] == "project":
+                        have = self.db.execute(
+                            "SELECT role FROM project_access WHERE project=? AND person_id=?",
+                            (row["target"], row["person_id"])).fetchone()
+                        if have is not None and have["role"] != "read":
+                            note = f" (already {have['role']})"
+                        else:
+                            self._grant_project(row["target"], row["person_id"], "read")
+                    else:
+                        self._grant_machine(row["target"], row["person_id"])
+                except KaptyorkaError:
+                    self.db.execute("UPDATE requests SET decided_at=NULL, decision=NULL,"
+                                    " decided_by=NULL WHERE id=?", (request_id,))
+                    raise
+        if approve and not note:
+            self.log_add(by["name"], "grant", f"{row['kind']}:{row['target']}"
+                         f"{':read' if row['kind'] == 'project' else ''} -> {who['name']}")
         self.log_add(by["name"], "request_decided",
-                     f"{row['kind']}:{row['target']} -> {who['name']}: {decision}")
+                     f"{row['kind']}:{row['target']} -> {who['name']}: {decision}{note}")
 
     # log
 
