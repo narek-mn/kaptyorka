@@ -19,7 +19,7 @@ def closed_port() -> int:
 def test_hook_start_prints_brief(hub, home, monkeypatch, capsys):
     join(hub.url)
     monkeypatch.setattr(hook, "identify", lambda machine, workspace=None:
-                        Identity("claude:1", machine, "claude-code", "murmur"))
+                        Identity("claude:1", machine, "claude-code", "proj-a"))
     assert hook.main("claude-code", "start") == 0
     assert capsys.readouterr().out.startswith("Kaptyorka: you are `")
 
@@ -27,7 +27,7 @@ def test_hook_start_prints_brief(hub, home, monkeypatch, capsys):
 def test_hook_prompt_with_nothing_unread_prints_nothing(hub, home, monkeypatch, capsys):
     join(hub.url)
     monkeypatch.setattr(hook, "identify", lambda machine, workspace=None:
-                        Identity("claude:1", machine, "claude-code", "murmur"))
+                        Identity("claude:1", machine, "claude-code", "proj-a"))
     assert hook.main("claude-code", "prompt") == 0
     assert capsys.readouterr().out == ""
 
@@ -35,7 +35,7 @@ def test_hook_prompt_with_nothing_unread_prints_nothing(hub, home, monkeypatch, 
 def test_hook_hub_down_is_silent(home, monkeypatch, capsys):
     join(f"http://127.0.0.1:{closed_port()}")
     monkeypatch.setattr(hook, "identify", lambda machine, workspace=None:
-                        Identity("claude:1", machine, "claude-code", "murmur"))
+                        Identity("claude:1", machine, "claude-code", "proj-a"))
     t = time.monotonic()
     assert hook.main("claude-code", "start") == 0
     assert time.monotonic() - t < 3.5
@@ -62,7 +62,7 @@ def test_hook_hub_hanging_gives_up_within_budget(home, monkeypatch, capsys):
         s.listen(1)
         join(f"http://127.0.0.1:{s.getsockname()[1]}")
         monkeypatch.setattr(hook, "identify", lambda machine, workspace=None:
-                            Identity("claude:1", machine, "claude-code", "murmur"))
+                            Identity("claude:1", machine, "claude-code", "proj-a"))
         t = time.monotonic()
         assert hook.main("claude-code", "start") == 0
         assert time.monotonic() - t < 3.5

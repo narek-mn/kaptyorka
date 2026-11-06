@@ -89,10 +89,10 @@ def live_sock(tmp_path):
 
 
 def test_sessions_from_folder(home, tmp_path):
-    write_session_file(home, pid=os.getpid(), cwd="/w/murmur", status="idle", sock=live_sock(tmp_path))
+    write_session_file(home, pid=os.getpid(), cwd="/w/proj-a", status="idle", sock=live_sock(tmp_path))
     write_session_file(home, pid=dead_pid(), cwd="/w/gone", sock=live_sock(tmp_path))
     assert ClaudeAdapter(home).sessions() == [
-        Session(f"claude:sid-{os.getpid()}", "claude-code", "murmur", "idle")]
+        Session(f"claude:sid-{os.getpid()}", "claude-code", "proj-a", "idle")]
 
 
 def test_socket_push_multiline_text(home, sock_dir):
@@ -215,7 +215,7 @@ def test_configure_leaves_broken_settings_alone(home, fake_claude_cli):
 
 
 def test_claude_key_matches_shim_and_bridge(home, monkeypatch, tmp_path):
-    write_session_file(home, pid=os.getpid(), cwd="/w/murmur", sock=live_sock(tmp_path))
+    write_session_file(home, pid=os.getpid(), cwd="/w/proj-a", sock=live_sock(tmp_path))
     monkeypatch.setattr(identity, "ancestors", lambda pid: [(os.getpid(), "claude")])
     ident = identity.identify("pc", pid=1)
     s = ClaudeAdapter(home).sessions()[0]

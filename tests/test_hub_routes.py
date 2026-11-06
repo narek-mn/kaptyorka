@@ -8,9 +8,9 @@ from kaptyorka import http
 from kaptyorka.auth import Auth
 from helpers import call, call_error, run
 
-PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
-DGX = {"key": "claude:2", "machine": "dgx", "tool": "claude-code", "project": "backend"}
-DGX_NAME = "dgx/claude-code/backend"
+PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "proj-a"}
+BOX2 = {"key": "claude:2", "machine": "box-2", "tool": "claude-code", "project": "proj-b"}
+BOX2_NAME = "box-2/claude-code/proj-b"
 ADMIN_NAME = getpass.getuser()  # the hub fixture's token "T" is this admin's legacy device
 
 
@@ -59,75 +59,75 @@ def feed(hub):
     return body
 
 
-def dgx_online(hub, activity="idle"):
-    assert heartbeat(hub, "dgx", [{"key": DGX["key"], "tool": "claude-code",
-                                   "project": "backend", "activity": activity}]) == 204
+def box2_online(hub, activity="idle"):
+    assert heartbeat(hub, "box-2", [{"key": BOX2["key"], "tool": "claude-code",
+                                   "project": "proj-b", "activity": activity}]) == 204
 
 
 def test_heartbeat_makes_sessions_online(hub):
-    assert heartbeat(hub, "dgx", [
-        {"key": "claude:2", "tool": "claude-code", "project": "backend", "activity": "busy"},
-        {"key": "codex:3", "tool": "codex", "project": "backend", "activity": "idle"}]) == 204
+    assert heartbeat(hub, "box-2", [
+        {"key": "claude:2", "tool": "claude-code", "project": "proj-b", "activity": "busy"},
+        {"key": "codex:3", "tool": "codex", "project": "proj-b", "activity": "idle"}]) == 204
     agents = feed(hub)["agents"]
-    assert {a["name"] for a in agents} == {"dgx/claude-code/backend", "dgx/codex/backend"}
+    assert {a["name"] for a in agents} == {"box-2/claude-code/proj-b", "box-2/codex/proj-b"}
     assert {a["activity"] for a in agents} == {"busy", "idle"}
 
 
 def test_poll_returns_immediately_when_queued(hub):
-    dgx_online(hub)
-    hub_send(hub, PC, DGX_NAME, "hi")
+    box2_online(hub)
+    hub_send(hub, PC, BOX2_NAME, "hi")
     t0 = time.time()
-    status, items = http.request("GET", f"{hub.url}/bridge/poll?machine=dgx&wait=25", "T",
+    status, items = http.request("GET", f"{hub.url}/bridge/poll?machine=box-2&wait=25", "T",
                                  timeout=30)
     assert status == 200 and len(items) == 1 and time.time() - t0 < 1
-    assert items[0]["key"] == DGX["key"]
-    assert items[0]["text"] == "Kaptyorka message from pc/claude-code/murmur:\n\nhi"
+    assert items[0]["key"] == BOX2["key"]
+    assert items[0]["text"] == "Kaptyorka message from pc/claude-code/proj-a:\n\nhi"
 
 
 def test_poll_wakes_on_send(hub):
-    dgx_online(hub)
+    box2_online(hub)
     t0 = time.time()
-    th = start_thread(lambda: http.request("GET", f"{hub.url}/bridge/poll?machine=dgx&wait=10",
+    th = start_thread(lambda: http.request("GET", f"{hub.url}/bridge/poll?machine=box-2&wait=10",
                                            "T", timeout=15))
     time.sleep(0.5)
-    hub_send(hub, PC, DGX_NAME, "hi")
+    hub_send(hub, PC, BOX2_NAME, "hi")
     status, items = th.join_result()
     assert status == 200 and len(items) == 1 and time.time() - t0 < 3
 
 
 def test_poll_empty_after_wait(hub):
     t0 = time.time()
-    assert http.request("GET", f"{hub.url}/bridge/poll?machine=dgx&wait=1", "T") == (200, [])
+    assert http.request("GET", f"{hub.url}/bridge/poll?machine=box-2&wait=1", "T") == (200, [])
     assert 0.9 < time.time() - t0 < 3
 
 
 def test_ack_false_leaves_message_for_brief(hub):
-    dgx_online(hub)
-    hub_send(hub, PC, DGX_NAME, "move api?")
-    _, items = http.request("GET", f"{hub.url}/bridge/poll?machine=dgx&wait=0", "T")
+    box2_online(hub)
+    hub_send(hub, PC, BOX2_NAME, "move api?")
+    _, items = http.request("GET", f"{hub.url}/bridge/poll?machine=box-2&wait=0", "T")
     assert http.request("POST", hub.url + "/bridge/ack", "T",
                         {"id": items[0]["id"], "ok": False})[0] == 204
-    assert brief(hub, DGX, "prompt") == \
-        "Kaptyorka message from pc/claude-code/murmur:\n\nmove api?"
-    assert brief(hub, DGX, "prompt") == ""
+    assert brief(hub, BOX2, "prompt") == \
+        "Kaptyorka message from pc/claude-code/proj-a:\n\nmove api?"
+    assert brief(hub, BOX2, "prompt") == ""
 
 
 def test_ack_true_marks_read(hub):
-    dgx_online(hub)
-    hub_send(hub, PC, DGX_NAME, "hi")
-    _, items = http.request("GET", f"{hub.url}/bridge/poll?machine=dgx&wait=0", "T")
+    box2_online(hub)
+    hub_send(hub, PC, BOX2_NAME, "hi")
+    _, items = http.request("GET", f"{hub.url}/bridge/poll?machine=box-2&wait=0", "T")
     assert http.request("POST", hub.url + "/bridge/ack", "T",
                         {"id": items[0]["id"], "ok": True})[0] == 204
-    assert brief(hub, DGX, "prompt") == ""
+    assert brief(hub, BOX2, "prompt") == ""
 
 
 def test_ack_string_false_is_not_ok(hub):
-    dgx_online(hub)
-    hub_send(hub, PC, DGX_NAME, "hi")
-    _, items = http.request("GET", f"{hub.url}/bridge/poll?machine=dgx&wait=0", "T")
+    box2_online(hub)
+    hub_send(hub, PC, BOX2_NAME, "hi")
+    _, items = http.request("GET", f"{hub.url}/bridge/poll?machine=box-2&wait=0", "T")
     assert http.request("POST", hub.url + "/bridge/ack", "T",
                         {"id": items[0]["id"], "ok": "false"})[0] == 204
-    assert "hi" in brief(hub, DGX, "prompt")
+    assert "hi" in brief(hub, BOX2, "prompt")
 
 
 def raw_post(hub, path, data: bytes):
@@ -147,40 +147,40 @@ def test_bad_input_is_400(hub):
     assert raw_post(hub, "/bridge/heartbeat", b"{not json") == 400
     assert raw_post(hub, "/bridge/ack", b"{not json") == 400
     assert http.request("POST", hub.url + "/bridge/heartbeat", "T",
-                        {"machine": "dgx", "sessions": [{"key": "k"}]})[0] == 400
+                        {"machine": "box-2", "sessions": [{"key": "k"}]})[0] == 400
     assert http.request("POST", hub.url + "/bridge/ack", "T", {"ok": True})[0] == 400
     assert http.request("GET", hub.url + "/bridge/poll?wait=0", "T")[0] == 400
     for wait in ("abc", "nan", "inf"):
-        assert http.request("GET", f"{hub.url}/bridge/poll?machine=dgx&wait={wait}",
+        assert http.request("GET", f"{hub.url}/bridge/poll?machine=box-2&wait={wait}",
                             "T")[0] == 400
 
 
 def test_brief_start_summary_exact(hub):
-    dgx_online(hub)
+    box2_online(hub)
     run(call(hub, PC, "who"))
-    run(call(hub, DGX, "notes_write", topic="murmur-api", text="v1"))
-    hub_send(hub, DGX, "pc/claude-code/murmur", "ping")
+    run(call(hub, BOX2, "notes_write", topic="proj-a-api", text="v1"))
+    hub_send(hub, BOX2, "pc/claude-code/proj-a", "ping")
     assert brief(hub, PC, "start") == (
-        "Kaptyorka: you are `pc/claude-code/murmur`. 1 other online: dgx/claude-code/backend"
-        " (idle). 1 unread message. Board topics: murmur-api.\n\n"
-        "Kaptyorka message from dgx/claude-code/backend:\n\nping")
+        "Kaptyorka: you are `pc/claude-code/proj-a`. 1 other online: box-2/claude-code/proj-b"
+        " (idle). 1 unread message. Board topics: proj-a-api.\n\n"
+        "Kaptyorka message from box-2/claude-code/proj-b:\n\nping")
 
 
 def test_brief_start_alone_plural_no_topics(hub):
     assert brief(hub, PC, "start") == \
-        "Kaptyorka: you are `pc/claude-code/murmur`. No one else online. 0 unread messages."
-    dgx_online(hub, activity="")
+        "Kaptyorka: you are `pc/claude-code/proj-a`. No one else online. 0 unread messages."
+    box2_online(hub, activity="")
     heartbeat(hub, "jetson", [{"key": "oc:1", "tool": "opencode", "project": "nav",
                                "activity": "busy"}])
     run(call(hub, PC, "notes_write", topic="a", text="1"))
     run(call(hub, PC, "notes_write", topic="b", text="2"))
-    hub_send(hub, DGX, "pc/claude-code/murmur", "one")
-    hub_send(hub, DGX, "pc/claude-code/murmur", "two")
+    hub_send(hub, BOX2, "pc/claude-code/proj-a", "one")
+    hub_send(hub, BOX2, "pc/claude-code/proj-a", "two")
     assert brief(hub, PC, "start") == (
-        "Kaptyorka: you are `pc/claude-code/murmur`. 2 others online: dgx/claude-code/backend,"
+        "Kaptyorka: you are `pc/claude-code/proj-a`. 2 others online: box-2/claude-code/proj-b,"
         " jetson/opencode/nav (busy). 2 unread messages. Board topics: b, a.\n\n"
-        "Kaptyorka message from dgx/claude-code/backend:\n\none\n\n"
-        "Kaptyorka message from dgx/claude-code/backend:\n\ntwo")
+        "Kaptyorka message from box-2/claude-code/proj-b:\n\none\n\n"
+        "Kaptyorka message from box-2/claude-code/proj-b:\n\ntwo")
 
 
 def test_brief_prompt_empty_when_nothing_new(hub):
@@ -193,13 +193,13 @@ def test_brief_without_identity_refused(hub):
 
 
 def test_feed_lists_messages_and_note_history(hub):
-    dgx_online(hub)
-    hub_send(hub, PC, DGX_NAME, "hi")
+    box2_online(hub)
+    hub_send(hub, PC, BOX2_NAME, "hi")
     run(call(hub, PC, "notes_write", topic="api", text="v1"))
     run(call(hub, PC, "notes_write", topic="api", text="v2"))
     f = feed(hub)
     assert [(m["sender"], m["to"], m["text"]) for m in f["messages"]] == \
-        [("pc/claude-code/murmur", DGX_NAME, "hi")]
+        [("pc/claude-code/proj-a", BOX2_NAME, "hi")]
     assert [n["topic"] for n in f["notes"]] == ["api"]
     assert [h["text"] for h in f["notes"][0]["history"]] == ["v2", "v1"]
 
@@ -238,34 +238,34 @@ def test_websocket_without_token_closed(tmp_path):
 
 @pytest.mark.parametrize("event", ["stop", "tool"])
 def test_brief_stop_and_tool_are_unread_only(hub, event):
-    dgx_online(hub)
-    hub_send(hub, PC, DGX_NAME, "hi")
-    assert brief(hub, DGX, event) == "Kaptyorka message from pc/claude-code/murmur:\n\nhi"
-    assert brief(hub, DGX, event) == ""
+    box2_online(hub)
+    hub_send(hub, PC, BOX2_NAME, "hi")
+    assert brief(hub, BOX2, event) == "Kaptyorka message from pc/claude-code/proj-a:\n\nhi"
+    assert brief(hub, BOX2, event) == ""
 
 
 def test_label_in_feed_brief_and_cli_rows(hub):
-    assert heartbeat(hub, "dgx", [{"key": "claude:2", "tool": "claude-code",
-                                   "project": "backend", "label": "api-dev"},
-                                  {"key": "codex:3", "tool": "codex", "project": "backend"}]) == 204
+    assert heartbeat(hub, "box-2", [{"key": "claude:2", "tool": "claude-code",
+                                   "project": "proj-b", "label": "api-dev"},
+                                  {"key": "codex:3", "tool": "codex", "project": "proj-b"}]) == 204
     labels = {a["name"]: a["label"] for a in feed(hub)["agents"]}
-    assert labels == {"dgx/claude-code/backend": "api-dev", "dgx/codex/backend": ""}
-    ident = {"key": "codex:3", "machine": "dgx", "tool": "codex", "project": "backend"}
-    assert "api-dev (dgx/claude-code/backend)" in brief(hub, ident, "start")
+    assert labels == {"box-2/claude-code/proj-b": "api-dev", "box-2/codex/proj-b": ""}
+    ident = {"key": "codex:3", "machine": "box-2", "tool": "codex", "project": "proj-b"}
+    assert "api-dev (box-2/claude-code/proj-b)" in brief(hub, ident, "start")
 
 
 def test_web_send_lands_in_inbox_with_person_name(hub):
-    dgx_online(hub)
+    box2_online(hub)
     s, body = http.request("POST", hub.url + "/api/send", "T",
-                           {"to": DGX_NAME, "text": "from the page"})
+                           {"to": BOX2_NAME, "text": "from the page"})
     assert s == 200 and body == {"sent": 1}
-    assert [(m["from"], m["text"]) for m in run(call(hub, DGX, "inbox"))] == [(ADMIN_NAME, "from the page")]
+    assert [(m["from"], m["text"]) for m in run(call(hub, BOX2, "inbox"))] == [(ADMIN_NAME, "from the page")]
     assert feed(hub)["messages"][-1]["from_web"] is True
 
 
 def test_web_send_all_and_unknown_name(hub):
-    dgx_online(hub)
-    hub_send(hub, PC, DGX_NAME, "make PC online")
+    box2_online(hub)
+    hub_send(hub, PC, BOX2_NAME, "make PC online")
     s, body = http.request("POST", hub.url + "/api/send", "T", {"to": "all", "text": "hi"})
     assert s == 200 and body == {"sent": 2}
     s, body = http.request("POST", hub.url + "/api/send", "T", {"to": "nobody", "text": "hi"})
@@ -285,13 +285,13 @@ def test_web_routes_require_token(hub):
 
 
 def test_agent_reply_to_web_sender_goes_to_page_not_inbox(hub):
-    dgx_online(hub)
-    http.request("POST", hub.url + "/api/send", "T", {"to": DGX_NAME, "text": "hi"})
-    assert http.request("GET", hub.url + "/bridge/poll?machine=dgx&wait=0", "T")[1][0]["text"] == \
+    box2_online(hub)
+    http.request("POST", hub.url + "/api/send", "T", {"to": BOX2_NAME, "text": "hi"})
+    assert http.request("GET", hub.url + "/bridge/poll?machine=box-2&wait=0", "T")[1][0]["text"] == \
         f"Kaptyorka message from {ADMIN_NAME} (web page):\n\nhi"
-    assert "sent to 1 session" in str(hub_send(hub, DGX, ADMIN_NAME, "on it"))
+    assert "sent to 1 session" in str(hub_send(hub, BOX2, ADMIN_NAME, "on it"))
     last = feed(hub)["messages"][-1]
     assert (last["to"], last["to_web"], last["read"]) == (ADMIN_NAME, True, True)
-    texts = [m["text"] for i in (PC, DGX) for m in run(call(hub, i, "inbox"))]
+    texts = [m["text"] for i in (PC, BOX2) for m in run(call(hub, i, "inbox"))]
     assert "on it" not in texts
-    assert f"people: {ADMIN_NAME}" in call_error(hub, DGX, "send", to="Bob", text="x")
+    assert f"people: {ADMIN_NAME}" in call_error(hub, BOX2, "send", to="Bob", text="x")

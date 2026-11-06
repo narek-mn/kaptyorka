@@ -9,7 +9,7 @@ from kaptyorka.adapters.base import DeliveryError, Session, merge_json
 from kaptyorka.bridge import Bridge, joined_adapters
 from helpers import call, run
 
-PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
+PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "proj-a"}
 
 
 class FakeAdapter:
@@ -36,7 +36,7 @@ class FakeAdapter:
 
 
 def cfg(hub):
-    return {"hub": hub.url, "token": hub.token, "machine": "dgx"}
+    return {"hub": hub.url, "token": hub.token, "machine": "box-2"}
 
 
 def fake_codex():
@@ -44,7 +44,7 @@ def fake_codex():
 
 
 def send_hi(hub):
-    run(call(hub, PC, "send", to="dgx/codex/proj", text="hi"))
+    run(call(hub, PC, "send", to="box-2/codex/proj", text="hi"))
 
 
 def wait_for(cond, timeout=5):
@@ -61,7 +61,7 @@ def test_heartbeat_reports_all_sessions(hub, home):
     online = {x.key: x for x in hub.store.online()}
     assert set(online) == {"codex:1", "codex:2", "opencode:x"}
     assert online["opencode:x"].activity == "editing"
-    assert online["opencode:x"].machine == "dgx"
+    assert online["opencode:x"].machine == "box-2"
 
 
 class BrokenAdapter(FakeAdapter):
@@ -84,7 +84,7 @@ def test_poll_delivers_and_acks(hub, home):
     bridge.heartbeat()
     send_hi(hub)
     assert bridge.poll_once(wait=1) == 1
-    assert fake.delivered == [("codex:5", "Kaptyorka message from pc/claude-code/murmur:\n\nhi")]
+    assert fake.delivered == [("codex:5", "Kaptyorka message from pc/claude-code/proj-a:\n\nhi")]
     assert hub.store.inbox("codex:5") == []
 
 
@@ -150,7 +150,7 @@ def test_hub_down_logged_once_per_outage(hub, home, monkeypatch):
     monkeypatch.setattr(bridge_mod, "RETRY_S", 0.01)
     lines = []
     url = f"http://127.0.0.1:{_closed_port()}"
-    bridge = Bridge({"hub": url, "token": "T", "machine": "dgx"}, [], lines.append)
+    bridge = Bridge({"hub": url, "token": "T", "machine": "box-2"}, [], lines.append)
     calls = []
     real_poll = bridge.poll_once
     bridge.poll_once = lambda wait=25: (calls.append(1), real_poll(wait))[1]
@@ -272,14 +272,14 @@ def test_bridge_applies_rekey_and_saves_config(hub, home, monkeypatch):
     from kaptyorka import identity, paths
 
     monkeypatch.setattr(identity, "facts",
-                        lambda: {"host": "dgx", "os_user": "me", "version": "0.2.0"})
+                        lambda: {"host": "box-2", "os_user": "me", "version": "0.2.0"})
     lines = []
     conf = {**cfg(hub), "tools": ["codex"]}
     paths.save_config(conf)
     bridge = Bridge(conf, [fake_codex()], lines.append)
     bridge.heartbeat()  # with the old shared token: an unassigned legacy machine
     kim, _ = person(hub.store, "kim")
-    hub.store.assign_legacy("dgx", kim, "root")
+    hub.store.assign_legacy("box-2", kim, "root")
     bridge.heartbeat()  # now reports its version on the assigned device
     assert bridge.poll_once(0) == 0
     saved = paths.load_config()
@@ -289,8 +289,8 @@ def test_bridge_applies_rekey_and_saves_config(hub, home, monkeypatch):
     with hub.store.lock:
         assert hub.store.db.execute("SELECT COUNT(*) FROM rekeys").fetchone()[0] == 0
     p = hub.store.authenticate(saved["token"])
-    assert (p.person_id, p.device_name, p.legacy) == (kim, "dgx", False)
-    hub.store.send_from_web("root", "dgx/codex/proj", "hi")
+    assert (p.person_id, p.device_name, p.legacy) == (kim, "box-2", False)
+    hub.store.send_from_web("root", "box-2/codex/proj", "hi")
     assert bridge.poll_once(0) == 1  # the new token works for the next requests
 
 
@@ -299,7 +299,7 @@ def test_lost_rekey_confirm_heals_and_is_retried(hub, home, monkeypatch):
     from kaptyorka import identity, paths
 
     monkeypatch.setattr(identity, "facts",
-                        lambda: {"host": "dgx", "os_user": "me", "version": "0.2.0"})
+                        lambda: {"host": "box-2", "os_user": "me", "version": "0.2.0"})
     real, failed = bridge_mod.http.request, []
 
     def first_confirm_fails(method, url, token, body=None, *a, **kw):
@@ -315,7 +315,7 @@ def test_lost_rekey_confirm_heals_and_is_retried(hub, home, monkeypatch):
     bridge = Bridge(conf, [fake_codex()], lines.append)
     bridge.heartbeat()
     kim, _ = person(hub.store, "kim")
-    hub.store.assign_legacy("dgx", kim, "root")
+    hub.store.assign_legacy("box-2", kim, "root")
     bridge.heartbeat()
     bridge.poll_once(0)
     assert bridge.pending_confirm and lines == ["hub answered 500 to rekeyed"]
@@ -323,11 +323,11 @@ def test_lost_rekey_confirm_heals_and_is_retried(hub, home, monkeypatch):
     assert rekeys() == 1
     bridge.heartbeat()  # the first call with the new token clears the pending rekey
     assert rekeys() == 0
-    assert [r["detail"] for r in hub.store.log() if r["kind"] == "rekeyed"] == ["dgx"]
+    assert [r["detail"] for r in hub.store.log() if r["kind"] == "rekeyed"] == ["box-2"]
     bridge.poll_once(0)  # and the bridge retries its confirm
     assert not bridge.pending_confirm
     assert lines[-1] == "rekeyed: this machine now has its own token"
-    assert [r["detail"] for r in hub.store.log() if r["kind"] == "rekeyed"] == ["dgx"]
+    assert [r["detail"] for r in hub.store.log() if r["kind"] == "rekeyed"] == ["box-2"]
 
 
 def test_rekey_confirm_hub_down_does_not_escape_poll(hub, home, monkeypatch):

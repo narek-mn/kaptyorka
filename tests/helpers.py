@@ -42,7 +42,7 @@ def tool_names(hub) -> set:
     return {t.name for t in r.tools}
 
 
-def write_session_file(home, pid, cwd="/w/murmur", status="idle", version="2.1.318",
+def write_session_file(home, pid, cwd="/w/proj-a", status="idle", version="2.1.318",
                        sock=None, peer_token=None, name=None, name_source=None, session_id=None):
     """A Claude Code session file (and its .key file when peer_token is given)."""
     import json

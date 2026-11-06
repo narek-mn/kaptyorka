@@ -25,7 +25,7 @@ PORT = 18765
 HUB = f"http://127.0.0.1:{PORT}"
 KAPTYORKA = str(Path(sys.executable).parent / "kaptyorka")
 SETUP = Path.home() / "claude-setup"
-PROMPT = ("Use the kaptyorka send tool to ask e2e/claude-code/backend to write PONG into "
+PROMPT = ("Use the kaptyorka send tool to ask e2e/claude-code/proj-b to write PONG into "
           "reply.txt in its folder.")
 
 
@@ -87,9 +87,9 @@ def test_two_sessions_talk():
     # Claude Code refuses --bg in an untrusted folder, and /tmp is not trusted; a hidden folder
     # beside the repo inherits the trust of its parent. The session names come from the folders.
     root = Path(tempfile.mkdtemp(prefix=".kaptyorka-e2e-", dir=Path(__file__).resolve().parents[2]))
-    murmur, backend = root / "murmur", root / "backend"
-    murmur.mkdir()
-    backend.mkdir()
+    proj_a, proj_b = root / "proj-a", root / "proj-b"
+    proj_a.mkdir()
+    proj_b.mkdir()
     hub_env = {**os.environ, "KAPTYORKA_HOME": str(root / "hub")}
     pc_home = root / "pc"
     pc_env = {**os.environ, "KAPTYORKA_HOME": str(pc_home), "KAPTYORKA_SKIP_SERVICE": "1"}
@@ -117,23 +117,23 @@ def test_two_sessions_talk():
         bridge = subprocess.Popen([KAPTYORKA, "bridge"], env=pc_env,
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        ids.append(_start_session(backend, "kaptyorka-e2e-backend",
+        ids.append(_start_session(proj_b, "kaptyorka-e2e-proj-b",
                                   "Wait. When a kaptyorka message arrives, do what it says."))
-        _wait("backend online", 60, lambda: any(
-            a["name"] == "e2e/claude-code/backend" for a in _feed(token)["agents"]))
-        ids.append(_start_session(murmur, "kaptyorka-e2e-murmur", PROMPT))
+        _wait("proj-b online", 60, lambda: any(
+            a["name"] == "e2e/claude-code/proj-b" for a in _feed(token)["agents"]))
+        ids.append(_start_session(proj_a, "kaptyorka-e2e-proj-a", PROMPT))
 
-        reply = backend / "reply.txt"
+        reply = proj_b / "reply.txt"
         shot = os.environ.get("KAPTYORKA_E2E_SCREENSHOT")
-        _wait("PONG in backend/reply.txt", 240,
+        _wait("PONG in proj-b/reply.txt", 240,
               lambda: reply.exists() and "PONG" in reply.read_text())
 
         feed = _feed(token)
         names = [a["name"] for a in feed["agents"]]
-        assert "e2e/claude-code/backend" in names, names
-        assert any(n.startswith("e2e/claude-code/murmur") for n in names), names
-        assert any(m["to"] == "e2e/claude-code/backend"
-                   and m["sender"].startswith("e2e/claude-code/murmur")
+        assert "e2e/claude-code/proj-b" in names, names
+        assert any(n.startswith("e2e/claude-code/proj-a") for n in names), names
+        assert any(m["to"] == "e2e/claude-code/proj-b"
+                   and m["sender"].startswith("e2e/claude-code/proj-a")
                    for m in feed["messages"]), feed["messages"]
         if shot:
             subprocess.run(["google-chrome", "--headless=new", "--disable-gpu",

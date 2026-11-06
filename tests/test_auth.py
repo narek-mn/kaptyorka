@@ -9,8 +9,8 @@ from kaptyorka.store import ONLINE_S, Store
 from mcp.shared.exceptions import MCPError
 
 LEGACY = "old-shared-token"
-ANN = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
-BEN = {"key": "claude:2", "machine": "dgx", "tool": "claude-code", "project": "backend"}
+ANN = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "proj-a"}
+BEN = {"key": "claude:2", "machine": "box-2", "tool": "claude-code", "project": "proj-b"}
 
 
 class Clock:
@@ -67,7 +67,7 @@ def test_revoked_device_401_and_sessions_vanish(app, store, clock):
     assert isinstance(leaf, MCPError) and "error response" in str(leaf)
     clock.now += ONLINE_S + 1
     names = [r["name"] for r in run(call(app.ann, ANN, "who"))]
-    assert names == ["pc/claude-code/murmur"]
+    assert names == ["pc/claude-code/proj-a"]
 
 
 def test_ten_failures_then_429(app):
@@ -95,7 +95,7 @@ def test_legacy_token_is_admin(app, store):
     me = next(r for r in rows if r["you"])
     admin = next(p for p in store.people() if p["role"] == "admin")
     assert store.agent(ANN["key"]).person_id == admin["id"]
-    assert me["name"] == "pc/claude-code/murmur"
+    assert me["name"] == "pc/claude-code/proj-a"
 
 
 def test_legacy_machine_mapped_to_person(app, store):

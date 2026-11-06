@@ -12,7 +12,7 @@ from kaptyorka.store import Store
 
 from conftest import start_hub
 
-IDENT = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
+IDENT = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "proj-a"}
 
 
 def shim(home, hub_url, ident=IDENT):
@@ -127,12 +127,12 @@ def test_shim_finds_claude_session_file_written_late(hub, home):
             assert r.is_error and "no kaptyorka identity" in text(r)
             d = home / ".claude" / "sessions"
             d.mkdir(parents=True)
-            (d / f"{os.getpid()}.json").write_text(json.dumps({"cwd": "/w/murmur", "sessionId": "sid-x"}))
+            (d / f"{os.getpid()}.json").write_text(json.dumps({"cwd": "/w/proj-a", "sessionId": "sid-x"}))
             r = await c.call_tool("who", {})
             assert not r.is_error, text(r)
     anyio.run(go)
     [a] = hub.store.online()
-    assert (a.key, a.tool, a.project) == ("claude:sid-x", "claude-code", "murmur")
+    assert (a.key, a.tool, a.project) == ("claude:sid-x", "claude-code", "proj-a")
 
 
 def test_shim_passes_hub_errors_through(hub, home):
@@ -160,12 +160,12 @@ def test_shim_follows_claude_session_id_change(hub, home):
     d = home / ".claude" / "sessions"
     d.mkdir(parents=True)
     f = d / f"{os.getpid()}.json"
-    f.write_text(json.dumps({"cwd": "/w/murmur", "sessionId": "old"}))
+    f.write_text(json.dumps({"cwd": "/w/proj-a", "sessionId": "old"}))
 
     async def go():
         async with shim(home, hub.url, ident=None) as c:
             assert not (await c.call_tool("who", {})).is_error
-            f.write_text(json.dumps({"cwd": "/w/murmur", "sessionId": "new"}))  # /clear
+            f.write_text(json.dumps({"cwd": "/w/proj-a", "sessionId": "new"}))  # /clear
             assert not (await c.call_tool("who", {})).is_error
     anyio.run(go)
     assert {a.key for a in hub.store.online()} == {"claude:old", "claude:new"}
@@ -210,7 +210,8 @@ def test_shim_fetch_file_saves_to_inbox(hub, home):
             out = json.loads(text(r))
             assert out["name"] == "a b/notes.txt" and out["size"] == 5
             assert out["path"] == str(paths.inbox_dir() / f"{fid}-notes.txt")
-            assert open(out["path"], "rb").read() == b"hello"
+            with open(out["path"], "rb") as f:
+                assert f.read() == b"hello"
             r = await c.call_tool("fetch_file", {"id": 999})
             assert r.is_error and "no such file" in text(r)
     anyio.run(go)

@@ -76,7 +76,7 @@ def test_feed_filtered_for_member(app):
 def test_feed_masks_private_sessions(app):
     s = app.store
     online(app, "ann", "a1", "pc", "mine")
-    b1 = online(app, "ben", "b1", "box-2", "backend")
+    b1 = online(app, "ben", "b1", "box-2", "proj-b")
     x1 = online(app, "boss", "x1", "box-1", "ops")
     s.send(x1.key, "pc/codex/mine", "hello ann")
     rows = {a["person"]: a for a in get(app, "ann", "/api/feed")["agents"]}
@@ -89,10 +89,10 @@ def test_feed_masks_private_sessions(app):
     assert (msg["sender"], msg["to"]) == ("box-1/codex/(private)", "pc/codex/mine")
     assert not any(k.startswith("_") for k in msg)
 
-    s.project_register("backend")
-    s.grant_project("backend", app.ids["ann"], "read", "boss")
+    s.project_register("proj-b")
+    s.grant_project("proj-b", app.ids["ann"], "read", "boss")
     rows = {a["person"]: a for a in get(app, "ann", "/api/feed")["agents"]}
-    assert (rows["ben"]["name"], rows["ben"]["project"]) == (b1.name, "backend")
+    assert (rows["ben"]["name"], rows["ben"]["project"]) == (b1.name, "proj-b")
     admin_rows = {a["person"]: a for a in get(app, "boss", "/api/feed")["agents"]}
     assert admin_rows["ann"]["project"] == "mine"
 

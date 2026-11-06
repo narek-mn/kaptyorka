@@ -36,9 +36,9 @@ def store(tmp_path, clock):
 
 
 def test_names_get_suffix_when_shared(store):
-    a = store.seen("claude:1", "pc", "claude-code", "murmur")
-    b = store.seen("claude:2", "pc", "claude-code", "murmur")
-    assert (a.name, b.name) == ("pc/claude-code/murmur", "pc/claude-code/murmur-2")
+    a = store.seen("claude:1", "pc", "claude-code", "proj-a")
+    b = store.seen("claude:2", "pc", "claude-code", "proj-a")
+    assert (a.name, b.name) == ("pc/claude-code/proj-a", "pc/claude-code/proj-a-2")
 
 
 def test_offline_after_30s(store, clock):
@@ -48,27 +48,27 @@ def test_offline_after_30s(store, clock):
 
 def test_send_unknown_name_lists_online(store):
     store.seen("k", "pc", "codex", "nav")
-    with pytest.raises(KaptyorkaError, match="pc/codex/nav"): store.send("k", "dgx/codex/typo", "hi")
+    with pytest.raises(KaptyorkaError, match="pc/codex/nav"): store.send("k", "box-2/codex/typo", "hi")
 
 
 def test_send_all_online_only(store, clock):
-    for i, m in enumerate(["pc", "dgx", "jet"]): store.seen(f"k{i}", m, "codex", "p")
-    clock.t += 31; store.seen("k0", "pc", "codex", "p"); store.seen("k1", "dgx", "codex", "p")
+    for i, m in enumerate(["pc", "box-2", "jet"]): store.seen(f"k{i}", m, "codex", "p")
+    clock.t += 31; store.seen("k0", "pc", "codex", "p"); store.seen("k1", "box-2", "codex", "p")
     assert store.send("k0", "all", "hi") == 1
 
 
 def test_held_message_goes_to_next_session_same_project(store, clock):
-    store.seen("s", "pc", "codex", "a"); store.seen("old", "dgx", "claude-code", "murmur")
-    store.send("s", "dgx/claude-code/murmur", "hi"); clock.t += 31
-    store.seen("new", "dgx", "claude-code", "murmur")
+    store.seen("s", "pc", "codex", "a"); store.seen("old", "box-2", "claude-code", "proj-a")
+    store.send("s", "box-2/claude-code/proj-a", "hi"); clock.t += 31
+    store.seen("new", "box-2", "claude-code", "proj-a")
     assert [m.text for m in store.inbox("new")] == ["hi"]
     assert store.inbox("new") == []
 
 
 def test_message_to_online_dash2_not_taken_by_first(store):
     store.seen("s", "pc", "codex", "a")
-    store.seen("one", "dgx", "codex", "m"); store.seen("two", "dgx", "codex", "m")
-    store.send("s", "dgx/codex/m-2", "hi")
+    store.seen("one", "box-2", "codex", "m"); store.seen("two", "box-2", "codex", "m")
+    store.send("s", "box-2/codex/m-2", "hi")
     assert store.inbox("one") == [] and len(store.inbox("two")) == 1
 
 
@@ -83,52 +83,52 @@ def test_held_message_not_taken_by_other_session_in_same_folder(store, clock):
 
 
 def test_held_message_goes_to_new_session_after_restart(store, clock):
-    sess = {"key": "claude:S1", "tool": "claude-code", "project": "murmur"}
+    sess = {"key": "claude:S1", "tool": "claude-code", "project": "proj-a"}
     store.seen("s", "pc", "codex", "a")
-    store.heartbeat("dgx", [sess], ["claude-code"])
-    store.send("s", "dgx/claude-code/murmur", "hi"); clock.t += 5
-    store.heartbeat("dgx", [], ["claude-code"])  # session gone, name free
+    store.heartbeat("box-2", [sess], ["claude-code"])
+    store.send("s", "box-2/claude-code/proj-a", "hi"); clock.t += 5
+    store.heartbeat("box-2", [], ["claude-code"])  # session gone, name free
     store.seen("s", "pc", "codex", "a")
-    new = store.seen("claude:S2", "dgx", "claude-code", "murmur")
-    assert new.name == "dgx/claude-code/murmur"
+    new = store.seen("claude:S2", "box-2", "claude-code", "proj-a")
+    assert new.name == "box-2/claude-code/proj-a"
     assert [m.text for m in store.inbox("claude:S2")] == ["hi"]
 
 
 def test_offer_frames_and_ack_marks_read(store):
-    store.seen("s", "pc", "codex", "a"); store.seen("t", "dgx", "codex", "b")
-    store.send("s", "dgx/codex/b", "hi")
-    [o] = store.offer("dgx")
+    store.seen("s", "pc", "codex", "a"); store.seen("t", "box-2", "codex", "b")
+    store.send("s", "box-2/codex/b", "hi")
+    [o] = store.offer("box-2")
     assert o["key"] == "t" and o["text"] == "Kaptyorka message from pc/codex/a:\n\nhi"
-    store.ack(o["id"], True); assert store.inbox("t") == [] and store.offer("dgx") == []
+    store.ack(o["id"], True); assert store.inbox("t") == [] and store.offer("box-2") == []
 
 
 def test_failed_push_stays_for_pull(store):
-    store.seen("s", "pc", "codex", "a"); store.seen("t", "dgx", "codex", "b")
-    store.send("s", "dgx/codex/b", "hi")
-    [o] = store.offer("dgx")
+    store.seen("s", "pc", "codex", "a"); store.seen("t", "box-2", "codex", "b")
+    store.send("s", "box-2/codex/b", "hi")
+    [o] = store.offer("box-2")
     store.ack(o["id"], False)
-    assert store.offer("dgx") == []
+    assert store.offer("box-2") == []
     assert [m.text for m in store.inbox("t")] == ["hi"]
 
 
 def test_offer_lease_reoffers_unacked(store, clock):
-    store.seen("s", "pc", "codex", "a"); store.seen("t", "dgx", "codex", "b")
-    store.send("s", "dgx/codex/b", "hi")
-    [o] = store.offer("dgx")
-    assert store.offer("dgx") == []
+    store.seen("s", "pc", "codex", "a"); store.seen("t", "box-2", "codex", "b")
+    store.send("s", "box-2/codex/b", "hi")
+    [o] = store.offer("box-2")
+    assert store.offer("box-2") == []
     clock.t += 61
-    store.seen("s", "pc", "codex", "a"); store.seen("t", "dgx", "codex", "b")
-    assert [x["id"] for x in store.offer("dgx")] == [o["id"]]
+    store.seen("s", "pc", "codex", "a"); store.seen("t", "box-2", "codex", "b")
+    assert [x["id"] for x in store.offer("box-2")] == [o["id"]]
 
 
 def test_text_and_rate_limits(store):
-    store.seen("s", "pc", "codex", "a"); store.seen("t", "dgx", "codex", "b")
+    store.seen("s", "pc", "codex", "a"); store.seen("t", "box-2", "codex", "b")
     with pytest.raises(KaptyorkaError, match="too long"):
-        store.send("s", "dgx/codex/b", "x" * 32_001)
+        store.send("s", "box-2/codex/b", "x" * 32_001)
     for _ in range(30):
-        store.send("s", "dgx/codex/b", "hi")
+        store.send("s", "box-2/codex/b", "hi")
     with pytest.raises(KaptyorkaError, match="rate"):
-        store.send("s", "dgx/codex/b", "hi")
+        store.send("s", "box-2/codex/b", "hi")
 
 
 def test_notes_keep_history(store):
@@ -141,9 +141,9 @@ def test_notes_keep_history(store):
 def test_survives_reopen(tmp_path):
     path = tmp_path / "hub.db"
     s = one_person(Store(path))
-    s.seen("a", "pc", "codex", "x"); s.seen("b", "dgx", "codex", "y")
+    s.seen("a", "pc", "codex", "x"); s.seen("b", "box-2", "codex", "y")
     s.notes_write("a", "api", "v1")
-    s.send("a", "dgx/codex/y", "hi")
+    s.send("a", "box-2/codex/y", "hi")
     s.close()
     s2 = Store(path)
     assert s2.notes_read("api").text == "v1"
@@ -162,19 +162,19 @@ def test_heartbeat_sets_activity_and_seen_keeps_it(store):
 
 
 def test_send_to_offline_held_name_reaches_next_session(store, clock):
-    store.seen("s", "pc", "codex", "a"); store.seen("old", "dgx", "claude-code", "murmur")
+    store.seen("s", "pc", "codex", "a"); store.seen("old", "box-2", "claude-code", "proj-a")
     clock.t += 31; store.seen("s", "pc", "codex", "a")
-    assert store.send("s", "dgx/claude-code/murmur", "hi") == 1
-    store.seen("new", "dgx", "claude-code", "murmur")
+    assert store.send("s", "box-2/claude-code/proj-a", "hi") == 1
+    store.seen("new", "box-2", "claude-code", "proj-a")
     assert [m.text for m in store.inbox("new")] == ["hi"]
 
 
 def test_returning_agent_gets_suffix_if_name_taken(store, clock):
-    store.seen("s", "pc", "codex", "a"); store.seen("A", "dgx", "codex", "m")
+    store.seen("s", "pc", "codex", "a"); store.seen("A", "box-2", "codex", "m")
     clock.t += 31; store.seen("s", "pc", "codex", "a")
-    assert store.seen("B", "dgx", "codex", "m").name == "dgx/codex/m"
-    assert store.seen("A", "dgx", "codex", "m").name == "dgx/codex/m-2"
-    store.send("s", "dgx/codex/m", "hi")
+    assert store.seen("B", "box-2", "codex", "m").name == "box-2/codex/m"
+    assert store.seen("A", "box-2", "codex", "m").name == "box-2/codex/m-2"
+    store.send("s", "box-2/codex/m", "hi")
     assert store.inbox("A") == [] and [m.text for m in store.inbox("B")] == ["hi"]
 
 
@@ -183,9 +183,9 @@ def beat(store, key, project, label=""):
 
 
 def test_send_by_label_case_insensitive(store):
-    beat(store, "a", "x", "Backend-Dev")
+    beat(store, "a", "x", "Proj-b-Dev")
     store.seen("b", "pc", "codex", "y")
-    assert store.send("b", "backend-dev", "hi") == 1
+    assert store.send("b", "proj-b-dev", "hi") == 1
     assert store.messages()[0].to == "pc/claude-code/x"
 
 
@@ -233,22 +233,22 @@ def test_old_db_without_label_column_opens(tmp_path):
 
 
 def test_resumed_session_keeps_its_name(store, clock):
-    sess = [{"key": "claude:S1", "tool": "claude-code", "project": "murmur"}]
+    sess = [{"key": "claude:S1", "tool": "claude-code", "project": "proj-a"}]
     store.heartbeat("pc", sess, ["claude-code"]); clock.t += 5
     store.heartbeat("pc", sess, ["claude-code"])  # new pid, same session id: same key
-    assert [a.name for a in store.online()] == ["pc/claude-code/murmur"]
+    assert [a.name for a in store.online()] == ["pc/claude-code/proj-a"]
 
 
 def test_session_missing_from_heartbeat_frees_its_name(store, clock):
-    old = {"key": "claude:S1", "tool": "claude-code", "project": "murmur"}
-    other = {"key": "codex:T", "tool": "codex", "project": "murmur"}
+    old = {"key": "claude:S1", "tool": "claude-code", "project": "proj-a"}
+    other = {"key": "codex:T", "tool": "codex", "project": "proj-a"}
     store.heartbeat("pc", [old, other], ["claude-code", "codex"])
-    store.seen("d", "dgx", "claude-code", "murmur"); clock.t += 5
-    store.heartbeat("pc", [other], ["claude-code"])  # codex not covered, dgx is another machine
+    store.seen("d", "box-2", "claude-code", "proj-a"); clock.t += 5
+    store.heartbeat("pc", [other], ["claude-code"])  # codex not covered, box-2 is another machine
     assert {a.key for a in store.online()} == {"codex:T", "d"}
-    store.heartbeat("pc", [{"key": "claude:S2", "tool": "claude-code", "project": "murmur"}],
+    store.heartbeat("pc", [{"key": "claude:S2", "tool": "claude-code", "project": "proj-a"}],
                     ["claude-code"])
-    assert store.agent("claude:S2").name == "pc/claude-code/murmur"
+    assert store.agent("claude:S2").name == "pc/claude-code/proj-a"
 
 
 def test_send_from_web_lands_in_inbox_and_is_pushed(store):
@@ -262,7 +262,7 @@ def test_send_from_web_lands_in_inbox_and_is_pushed(store):
 
 def test_send_from_web_to_all_and_no_rate_limit(store):
     store.seen("a", "pc", "codex", "nav")
-    store.seen("b", "dgx", "codex", "nav")
+    store.seen("b", "box-2", "codex", "nav")
     assert store.send_from_web("Narek", "all", "hi") == 2
     for _ in range(40):
         store.send_from_web("Narek", "pc/codex/nav", "x")
