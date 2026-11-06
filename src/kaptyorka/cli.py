@@ -155,13 +155,13 @@ def _update(args, run=subprocess.run) -> int:
         return 1
     was_active = {unit: service.is_active(unit, run=run) for unit in ("kaptyorka-bridge", "kaptyorka-hub")}
     try:
-        r = run(["pipx", "reinstall", "kaptyorka"], capture_output=True, text=True)
+        r = run(["pipx", "upgrade", "--pip-args=--no-cache-dir", "kaptyorka"], capture_output=True, text=True)
         new = run([str(venv / "bin/kaptyorka"), "--version"], capture_output=True, text=True) if r.returncode == 0 else r
     except FileNotFoundError:
         print("pipx not found", file=sys.stderr)
         return 1
     if r.returncode != 0:
-        print((r.stderr or r.stdout).strip() or "pipx reinstall failed", file=sys.stderr)
+        print((r.stderr or r.stdout).strip() or "pipx upgrade failed", file=sys.stderr)
         return 1
     print(f"kaptyorka {__version__} -> {new.stdout.strip().removeprefix('kaptyorka ')}")
     return _restart(was_active, run)

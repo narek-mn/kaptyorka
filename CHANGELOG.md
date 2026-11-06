@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.8
+
+- Page redesign: Team has worded columns and a colour legend, Messages reads like a chat, Notes lists topics on the left and opens one on the right.
+- Send messages and write notes from the page.
+- `kaptyorka update` ignores pip's cache, so it always gets the newest release.
+
 ## 0.1.7
 
 - Fix: a message held for an offline session goes only to that session, or to a new session that takes its name, never to another session in the same folder.

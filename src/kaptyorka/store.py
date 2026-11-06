@@ -33,6 +33,25 @@ class KaptyorkaError(Exception):
     """Error whose message is shown to the agent."""
 
 
+def _check_length(text: str) -> None:
+    if len(text) > MAX_TEXT:
+        raise KaptyorkaError(f"message too long: {len(text)} characters, limit {MAX_TEXT}")
+
+
+def _sender(m) -> str:
+    """Sender as an agent sees it; a person on the page is marked so the agent knows to
+    reply to that name."""
+    web = m["sender_key"].startswith("web:")
+    return m["sender_name"] + (" (web page)" if web else "")
+
+
+def _person(name: str) -> str:
+    name = name.strip()
+    if not name or len(name) > 40:
+        raise KaptyorkaError("name must be 1 to 40 characters")
+    return name
+
+
 @dataclass
 class Agent:
     key: str
@@ -55,6 +74,8 @@ class Message:
     text: str
     created: float
     read: bool
+    from_web: bool = False
+    to_web: bool = False
 
 
 @dataclass
@@ -163,40 +184,65 @@ class Store:
             sender = self.db.execute("SELECT * FROM agents WHERE key=?", (sender_key,)).fetchone()
             if sender is None:
                 raise KaptyorkaError("unknown sender session")
-            if len(text) > MAX_TEXT:
-                raise KaptyorkaError(f"message too long: {len(text)} characters, limit {MAX_TEXT}")
+            _check_length(text)
             count, window = RATE
             recent = [t for t in self.sends.get(sender_key, []) if now - t < window]
             if len(recent) >= count:
                 raise KaptyorkaError(f"rate limit: at most {count} sends per {window} s")
-            online = self._online_rows(now)
-            if to == "all":
-                targets = [r for r in online if r["key"] != sender_key]
-            else:
-                match = [r for r in online if r["name"] == to]
-                if not match:
-                    labeled = [r for r in online if r["label"] and r["label"].lower() == to.lower()]
-                    if len(labeled) > 1:
-                        raise KaptyorkaError(f"several sessions are named {to}: "
-                                             + ", ".join(r["name"] for r in labeled))
-                    match = labeled
-                match = match or self.db.execute(
-                    "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1",
-                    (to,)).fetchall()
-                if not match:
-                    names = ", ".join(r["name"] + (f" ({r['label']})" if r["label"] else "")
-                                      for r in online) or "none"
-                    raise KaptyorkaError(f"no session named {to}; online: {names}")
-                targets = match[:1]
-            for t in targets:
-                self.db.execute(
-                    "INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine,"
-                    " tool, project, text, created) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (sender_key, sender["name"], t["key"], t["name"], t["machine"],
-                     t["tool"], t["project"], text, now))
+            n = self._deliver(sender_key, sender["name"], to, text, now)
             recent.append(now)
             self.sends[sender_key] = recent
-            return len(targets)
+            return n
+
+    def send_from_web(self, name: str, to: str, text: str) -> int:
+        """Send as a person on the web page, not an agent: sender key `web:<name>`."""
+        name = _person(name)
+        with self.lock:
+            _check_length(text)
+            return self._deliver(f"web:{name}", name, to, text, self.clock())
+
+    def _targets(self, sender_key, to, now):
+        online = self._online_rows(now)
+        if to == "all":
+            return [r for r in online if r["key"] != sender_key]
+        match = [r for r in online if r["name"] == to]
+        if not match:
+            labeled = [r for r in online if r["label"] and r["label"].lower() == to.lower()]
+            if len(labeled) > 1:
+                raise KaptyorkaError(f"several sessions are named {to}: "
+                                     + ", ".join(r["name"] for r in labeled))
+            match = labeled
+        match = match or self.db.execute(
+            "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1",
+            (to,)).fetchall()
+        if match:
+            return match[:1]
+        people = self._people()
+        person = next((p for p in people if p.lower() == to.lower()), None)
+        if person is not None:  # a person on the web page: they read replies there
+            return [{"key": f"web:{person}", "name": person, "machine": "", "tool": "", "project": ""}]
+        names = ", ".join(r["name"] + (f" ({r['label']})" if r["label"] else "")
+                          for r in online) or "none"
+        extra = f"; people: {', '.join(people)}" if people else ""
+        raise KaptyorkaError(f"no session named {to}; online: {names}{extra}")
+
+    def _people(self):
+        """Names of people who have written from the web page, newest first."""
+        rows = self.db.execute("SELECT sender_name FROM messages WHERE sender_key LIKE 'web:%'"
+                               " GROUP BY sender_name ORDER BY MAX(id) DESC").fetchall()
+        return [r["sender_name"] for r in rows]
+
+    def _deliver(self, sender_key, sender_name, to, text, now):
+        targets = self._targets(sender_key, to, now)
+        for t in targets:
+            # a person reads it on the page, so it is never waiting for delivery
+            read_at = now if t["key"].startswith("web:") else None
+            self.db.execute(
+                "INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine,"
+                " tool, project, text, created, read_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (sender_key, sender_name, t["key"], t["name"], t["machine"],
+                 t["tool"], t["project"], text, now, read_at))
+        return len(targets)
 
     def _deliverable(self, now):
         """Unread messages paired with the online agent they go to now."""
@@ -216,8 +262,8 @@ class Store:
             rows = [m for m, t in self._deliverable(now) if t["key"] == key]
             for m in rows:
                 self.db.execute("UPDATE messages SET read_at=? WHERE id=?", (now, m["id"]))
-            return [Message(m["id"], m["sender_name"], m["to_name"], m["text"], m["created"], True)
-                    for m in rows]
+            return [Message(m["id"], m["sender_name"], m["to_name"], m["text"], m["created"], True,
+                            m["sender_key"].startswith("web:")) for m in rows]
 
     def offer(self, machine: str) -> List[dict]:
         with self.lock:
@@ -231,7 +277,7 @@ class Store:
                     self.db.execute("UPDATE messages SET push_state='offered', offered_at=?"
                                     " WHERE id=?", (now, m["id"]))
                     out.append({"id": m["id"], "key": t["key"],
-                                "text": f"Kaptyorka message from {m['sender_name']}:\n\n{m['text']}"})
+                                "text": f"Kaptyorka message from {_sender(m)}:\n\n{m['text']}"})
             return out
 
     def ack(self, msg_id: int, ok: bool) -> None:
@@ -247,7 +293,9 @@ class Store:
             rows = self.db.execute("SELECT * FROM messages ORDER BY id DESC LIMIT ?",
                                    (limit,)).fetchall()
             return [Message(m["id"], m["sender_name"], m["to_name"], m["text"], m["created"],
-                            m["read_at"] is not None) for m in reversed(rows)]
+                            m["read_at"] is not None, m["sender_key"].startswith("web:"),
+                            (m["to_key"] or "").startswith("web:"))
+                    for m in reversed(rows)]
 
     # notes
 
@@ -256,8 +304,18 @@ class Store:
             row = self.db.execute("SELECT name FROM agents WHERE key=?", (key,)).fetchone()
             if row is None:
                 raise KaptyorkaError("unknown session")
-            self.db.execute("INSERT INTO notes (topic, text, author, time) VALUES (?,?,?,?)",
-                            (topic, text, row["name"], self.clock()))
+            self._note(topic, text, row["name"])
+
+    def notes_write_from_web(self, name: str, topic: str, text: str) -> None:
+        name, topic = _person(name), topic.strip()
+        if not topic:
+            raise KaptyorkaError("topic is empty")
+        with self.lock:
+            self._note(topic, text, name)
+
+    def _note(self, topic, text, author):
+        self.db.execute("INSERT INTO notes (topic, text, author, time) VALUES (?,?,?,?)",
+                        (topic, text, author, self.clock()))
 
     def notes_list(self) -> List[dict]:
         with self.lock:

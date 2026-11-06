@@ -73,34 +73,35 @@ nav { display: flex; align-items: stretch; gap: 4px; }
 main { flex: 1; min-height: 0; padding: 20px 24px 24px; display: flex; flex-direction: column; }
 section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; }
-.empty { flex: 1; display: grid; place-items: center; color: var(--faint); min-height: 240px; }
 
 /* team */
+.bar { display: flex; align-items: center; gap: 16px; min-height: 28px; margin-bottom: 10px; flex: none; font-size: 12px; color: var(--dim); }
+.legend { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+.legend span { display: flex; align-items: center; gap: 6px; }
+.legend .dot { width: 9px; height: 9px; animation: none; }
 #team .panel { overflow: auto; }
 table { width: 100%; border-collapse: collapse; }
 th {
   text-align: left; font-weight: 500; font-size: 12px; color: var(--dim);
-  padding: 10px 14px; border-bottom: 1px solid var(--line-strong); white-space: nowrap;
-  background: var(--panel); position: sticky; top: 0;
+  padding: 9px 14px; border-bottom: 1px solid var(--line-strong); white-space: nowrap;
+  background: var(--panel); position: sticky; top: 0; z-index: 1;
 }
-th svg { color: var(--faint); }
-td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 tbody tr:last-child td { border-bottom: 0; }
-tbody tr:hover td { background: rgba(204, 204, 220, .035); }
-.c-dot { width: 36px; padding-right: 0; }
-.name { font-weight: 600; color: #e8e8f0; white-space: nowrap; }
-.name .label-name { font-weight: 700; color: #fff; }
-.name .sep { color: var(--faint); font-weight: 400; padding: 0 1px; }
-.tag {
-  display: inline-block; padding: 1px 7px; border-radius: 3px; border: 1px solid var(--line-strong);
-  font-size: 12px; color: var(--text); white-space: nowrap;
-}
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: rgba(110, 159, 255, .06); }
+tbody tr:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.c-dot { width: 34px; padding-right: 0; }
+.who { min-width: 0; }
+.who b { display: block; font-weight: 600; color: #f0f0f6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who small { display: block; font-size: 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-plain { color: var(--text); white-space: nowrap; }
 .status { color: var(--text); max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status:empty::before { content: "\2014"; color: var(--faint); }
 .seen { color: var(--dim); white-space: nowrap; text-align: right; }
 th.seen { text-align: right; }
 .seen.late { color: var(--amber); }
-.dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--faint); }
+.dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--faint); flex: none; }
 .dot.busy { border-color: var(--green); background: var(--green); animation: pulse 1.6s ease-out infinite; }
 .dot.idle { border-color: var(--dim); background: var(--dim); }
 @keyframes pulse {
@@ -109,46 +110,94 @@ th.seen { text-align: right; }
 }
 
 /* messages */
-.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; flex: none; }
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 6px; margin-bottom: 10px; flex: none; }
 .chips .group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.chips .group + .group { margin-left: 10px; padding-left: 16px; border-left: 1px solid var(--line-strong); }
-.chips .gicon { color: var(--faint); margin-right: 2px; }
+.chips .group + .group { margin-left: 8px; padding-left: 14px; border-left: 1px solid var(--line-strong); }
+.chips .cap { font-size: 12px; color: var(--faint); margin-right: 2px; }
 .chip {
-  padding: 3px 10px; border-radius: 3px; border: 1px solid var(--line-strong);
+  padding: 2px 9px; border-radius: 3px; border: 1px solid var(--line-strong);
   color: var(--dim); font-size: 12px; background: var(--panel);
 }
 .chip:hover { color: var(--text); border-color: rgba(204, 204, 220, .32); }
 .chip[aria-pressed="true"] { color: #fff; background: rgba(61, 113, 217, .25); border-color: var(--blue-deep); }
-#log { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
-.msg {
-  display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 2px 14px;
-  padding: 10px 14px; border-bottom: 1px solid var(--line);
-}
+.chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#log { flex: 1; min-height: 0; overflow-y: auto; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.msg { padding: 9px 14px 10px; border-bottom: 1px solid var(--line); }
 .msg:last-child { border-bottom: 0; }
-.msg time { grid-row: span 2; color: var(--faint); font-size: 12px; padding-top: 1px; }
-.route { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
-.route b { font-weight: 600; color: #e8e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.route span { color: var(--blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.route { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 13px; margin-bottom: 2px; }
+.route b { font-weight: 600; color: #f0f0f6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.route .person { display: flex; align-items: center; gap: 5px; color: var(--amber); flex: none; }
+.route .to-person, .route .to-person .to { color: var(--blue); }
+.route .to { color: var(--blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .route svg { color: var(--faint); }
 .route .all { display: flex; align-items: center; gap: 5px; color: var(--amber); }
 .route .all svg { color: var(--amber); }
+.route time { margin-left: auto; padding-left: 10px; color: var(--faint); font-size: 12px; white-space: nowrap; flex: none; }
 .text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.msg .text.clip { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
+.more { margin-top: 2px; font-size: 12px; color: var(--blue); }
+.more:hover { text-decoration: underline; }
+.compose {
+  flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 10px;
+  border: 1px solid var(--line); border-top-color: var(--line-strong); border-radius: 0 0 3px 3px;
+  background: var(--raised);
+}
+.compose label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); height: 34px; }
+select, input, textarea {
+  font: inherit; color: var(--text); background: var(--canvas);
+  border: 1px solid var(--line-strong); border-radius: 3px;
+}
+select:focus, input:focus, textarea:focus { outline: none; border-color: var(--blue); }
+.compose select { height: 34px; max-width: 260px; padding: 0 8px; }
+.compose textarea { flex: 1; min-width: 0; height: 34px; max-height: 160px; padding: 6px 10px; resize: none; line-height: 1.45; }
+.compose input { width: 130px; height: 34px; padding: 0 10px; }
+.btn {
+  height: 34px; padding: 0 14px; border-radius: 3px; display: inline-flex; align-items: center; gap: 7px;
+  border: 1px solid var(--line-strong); color: var(--text); background: var(--panel); font-weight: 500; font-size: 13px; flex: none;
+}
+.btn:hover { border-color: rgba(204, 204, 220, .34); color: #fff; }
+.btn.primary { background: var(--blue-deep); border-color: var(--blue-deep); color: #fff; }
+.btn.primary:hover { background: #4b80e8; }
+.btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
+.btn[aria-pressed="true"] { border-color: var(--blue-deep); color: #fff; background: rgba(61, 113, 217, .25); }
+.as { font-size: 12px; color: var(--faint); height: 34px; display: flex; align-items: center; white-space: nowrap; }
+.as:hover { color: var(--text); }
+.err { flex: none; color: var(--red); font-size: 12px; padding: 6px 2px 0; }
 
 /* notes */
-#board { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; align-items: start; overflow-y: auto; min-height: 0; }
-.note { display: flex; flex-direction: column; text-align: left; width: 100%; }
-.note-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
-.note-head h2 { margin: 0; font-size: 14px; font-weight: 600; color: #e8e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.note-head .ver { margin-left: auto; display: flex; align-items: center; gap: 5px; color: var(--dim); font-size: 12px; }
-.note[aria-expanded="true"] .ver { color: var(--blue); }
-.note-body { padding: 12px 14px; }
-.byline { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--dim); margin-bottom: 6px; min-width: 0; }
-.byline b { font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.byline time { margin-left: auto; white-space: nowrap; }
-.history { border-top: 1px solid var(--line); background: rgba(0, 0, 0, .14); }
-.history .note-body { border-bottom: 1px solid var(--line); opacity: .78; }
-.history .note-body:last-child { border-bottom: 0; }
-.note:hover { border-color: var(--line-strong); }
+.notes { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; }
+.topics { display: flex; flex-direction: column; min-height: 0; }
+.topics .head { display: flex; align-items: center; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line-strong); font-size: 12px; color: var(--dim); flex: none; }
+.topics .head .btn { margin-left: auto; }
+#topics { overflow-y: auto; min-height: 0; }
+.topic { display: block; width: 100%; text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); border-left: 2px solid transparent; }
+.topic:hover { background: rgba(204, 204, 220, .035); }
+.topic[aria-current="true"] { background: rgba(61, 113, 217, .14); border-left-color: var(--blue); }
+.topic b { display: block; font-weight: 600; color: #f0f0f6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topic small { display: flex; gap: 8px; font-size: 12px; color: var(--faint); }
+.topic small span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topic small time { margin-left: auto; white-space: nowrap; }
+.topics[hidden] + .doc { grid-column: 1 / -1; }
+.doc { display: flex; flex-direction: column; min-height: 0; }
+.doc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid var(--line-strong); flex: none; }
+.doc-head h2 { margin: 0 8px 0 0; font-size: 16px; font-weight: 600; color: #f0f0f6; min-width: 0; overflow-wrap: anywhere; }
+.doc-head .tools { margin-left: auto; display: flex; gap: 6px; }
+.byline { display: flex; gap: 10px; align-items: baseline; font-size: 12px; color: var(--dim); padding: 8px 14px 0; flex: none; }
+.byline b { font-weight: 500; color: var(--text); }
+.byline .old { color: var(--amber); }
+.doc-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px 16px; }
+.doc-body .text { max-width: 80ch; }
+.doc textarea { width: 100%; min-height: 320px; height: 100%; padding: 10px 12px; resize: vertical; line-height: 1.5; }
+.doc .topic-in { width: 100%; height: 34px; padding: 0 10px; font-size: 15px; font-weight: 600; }
+.history { flex: none; border-bottom: 1px solid var(--line); background: rgba(0, 0, 0, .16); max-height: 200px; overflow-y: auto; }
+.version { display: flex; gap: 12px; width: 100%; text-align: left; padding: 7px 14px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--line); }
+.version:last-child { border-bottom: 0; }
+.version:hover { color: var(--text); background: rgba(204, 204, 220, .04); }
+.version[aria-current="true"] { color: #fff; background: rgba(61, 113, 217, .14); }
+.version b { font-weight: 500; color: inherit; }
+.version time { margin-left: auto; }
+.blank { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--dim); min-height: 240px; padding: 24px; text-align: center; }
+.back { display: none; }
 
 @media (max-width: 720px) {
   header { gap: 10px; padding: 0 16px; }
@@ -156,30 +205,37 @@ th.seen { text-align: right; }
   .tab { padding: 0 10px; gap: 6px; }
   .tab .label { display: none; }
   main { padding: 12px 16px 16px; }
-  #board { grid-template-columns: minmax(0, 1fr); }
+  .bar { margin-bottom: 8px; }
+  .chips { flex-direction: column; align-items: stretch; }
+  .chips .group + .group { margin-left: 0; padding-left: 0; border-left: 0; }
+  .legend { gap: 12px; }
   thead { display: none; }
   table, tbody, tr, td { display: block; }
   tr {
-    display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 6px 10px;
-    padding: 12px 14px; border-bottom: 1px solid var(--line);
+    display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 3px 10px;
+    padding: 10px 14px; border-bottom: 1px solid var(--line);
   }
   tbody tr:last-child { border-bottom: 0; }
   td { padding: 0; border: 0; }
   tbody tr:hover td { background: none; }
-  .c-dot { width: auto; align-self: center; }
-  .name { grid-column: 2; overflow: hidden; text-overflow: ellipsis; }
-  .seen { grid-column: 3; grid-row: 1; }
-  .c-tag { display: none; }
-  .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-  td.c-tag-row { display: flex; grid-column: 2 / 4; gap: 6px; flex-wrap: wrap; }
+  .c-dot { width: auto; padding-top: 4px; }
+  .who { grid-column: 2; }
+  .seen { grid-column: 3; grid-row: 1; padding-top: 1px; }
+  .c-plain { display: none; }
   .status { grid-column: 2 / 4; max-width: none; white-space: normal; color: var(--dim); }
-  .msg { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 10px 12px; }
-  .msg time { grid-row: 1; grid-column: 2; }
-  .msg .text { grid-column: 1 / 3; }
-  .route { flex-wrap: wrap; column-gap: 6px; row-gap: 0; }
-  .route b, .route span { white-space: normal; overflow-wrap: anywhere; }
+  .status:empty { display: none; }
+  .msg { padding: 9px 12px; }
+  .compose { flex-wrap: wrap; padding: 8px; }
+  .compose label { flex: none; }
+  .compose select { flex: 1; max-width: none; min-width: 0; }
+  .compose textarea { flex-basis: 100%; order: 5; }
+  .compose .btn.primary { order: 6; margin-left: auto; }
+  .compose .as { order: 6; }
+  .compose input { order: 6; flex: 1; }
+  .notes { grid-template-columns: minmax(0, 1fr); }
+  .notes.reading .topics, .notes:not(.reading) .doc { display: none; }
+  .back { display: inline-flex; }
 }
-@media (min-width: 721px) { td.c-tag-row { display: none; } }
 @media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; } }
 </style>
 </head>
@@ -198,6 +254,11 @@ th.seen { text-align: right; }
   <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
   <symbol id="i-status" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
   <symbol id="i-history" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3.5 4v4.5H8M12 8v4.5l3 1.5"/></symbol>
+  <symbol id="i-person" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.2 3.6-7 8-7s8 2.8 8 7"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></symbol>
 </svg>
 
 <div id="lock" title="Locked"><svg width="56" height="56"><use href="#i-lock"/></svg></div>
@@ -214,28 +275,52 @@ th.seen { text-align: right; }
   </header>
   <main>
     <section id="team" role="tabpanel">
+      <div class="bar">
+        <div class="legend">
+          <span title="Working on a task"><i class="dot busy"></i>busy</span>
+          <span title="Waiting for input"><i class="dot idle"></i>idle</span>
+          <span title="The tool does not report activity"><i class="dot"></i>unknown</span>
+        </div>
+      </div>
       <div class="panel">
         <table>
           <thead><tr>
             <th class="c-dot"></th>
-            <th>Name</th>
-            <th title="Machine"><svg width="15" height="15"><use href="#i-machine"/></svg></th>
-            <th title="Tool"><svg width="15" height="15"><use href="#i-tool"/></svg></th>
-            <th title="Project"><svg width="15" height="15"><use href="#i-project"/></svg></th>
-            <th title="Status"><svg width="15" height="15"><use href="#i-status"/></svg></th>
-            <th class="seen" title="Last seen"><svg width="15" height="15" style="margin-left:auto"><use href="#i-clock"/></svg></th>
+            <th>Session</th>
+            <th>Machine</th>
+            <th>Tool</th>
+            <th>Folder</th>
+            <th>Doing</th>
+            <th class="seen">Seen</th>
           </tr></thead>
           <tbody id="agents"></tbody>
         </table>
-        <div class="empty" id="team-empty" hidden><svg width="44" height="44"><use href="#i-team"/></svg></div>
+        <div class="blank" id="team-empty" hidden><svg width="40" height="40"><use href="#i-team"/></svg>No sessions online</div>
       </div>
     </section>
     <section id="messages" role="tabpanel" hidden>
       <div class="chips" id="chips"></div>
-      <div class="panel" id="log"></div>
+      <div class="chat">
+        <div class="panel" id="log"></div>
+        <form class="compose" id="compose" autocomplete="off">
+          <label for="to">To</label>
+          <select id="to"></select>
+          <textarea id="text" rows="1" placeholder="Message" aria-label="Message"></textarea>
+          <input id="me" placeholder="Your name" aria-label="Your name" maxlength="40" hidden>
+          <button type="button" class="as" id="as" title="Change your name" hidden></button>
+          <button type="submit" class="btn primary" title="Send (Enter)"><svg width="15" height="15"><use href="#i-send"/></svg>Send</button>
+        </form>
+        <div class="err" id="send-err" hidden></div>
+      </div>
     </section>
     <section id="notes" role="tabpanel" hidden>
-      <div id="board"></div>
+      <div class="notes" id="notes-grid">
+        <div class="panel topics">
+          <div class="head">Topics<button class="btn small" id="new-topic"><svg width="13" height="13"><use href="#i-plus"/></svg>New topic</button></div>
+          <div id="topics"></div>
+        </div>
+        <div class="panel doc" id="doc"></div>
+      </div>
     </section>
   </main>
 </div>
@@ -243,9 +328,10 @@ th.seen { text-align: right; }
 <script>
 (function () {
   "use strict";
-  var KEY = "kaptyorka.token";
+  var KEY = "kaptyorka.token", NAME = "kaptyorka.name";
   var token = null, view = "team", filter = { machine: null, project: null };
-  var feed = null, seen = {}, openNotes = {}, timer = null;
+  var feed = null, seen = {}, timer = null, expanded = {};
+  var note = { topic: null, mode: "read", version: 0, history: false };
 
   function store(fn) { try { return fn(window.localStorage); } catch (e) { return null; } }
 
@@ -259,13 +345,14 @@ th.seen { text-align: right; }
   if (["team", "messages", "notes"].indexOf(params.get("view")) >= 0) view = params.get("view");
   history.replaceState(null, "", location.pathname + (view === "team" ? "" : "#view=" + view));
 
+  function $(id) { return document.getElementById(id); }
   function el(tag, attrs, kids) {
     var n = document.createElement(tag);
     if (attrs) for (var k in attrs) {
       if (k === "text") n.textContent = attrs[k];
       else if (attrs[k] != null) n.setAttribute(k, attrs[k]);
     }
-    (kids || []).forEach(function (c) { if (c) n.appendChild(c); });
+    (kids || []).forEach(function (c) { if (c) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
     return n;
   }
   function icon(id, size) {
@@ -278,25 +365,42 @@ th.seen { text-align: right; }
   }
   function ago(s) {
     s = Math.max(0, Math.round(s));
-    if (s < 60) return s + "s";
-    if (s < 3600) return Math.floor(s / 60) + "m";
-    if (s < 86400) return Math.floor(s / 3600) + "h";
-    return Math.floor(s / 86400) + "d";
+    if (s < 5) return "now";
+    if (s < 60) return s + "s ago";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
   }
   function pad(n) { return (n < 10 ? "0" : "") + n; }
   function clock(t) { var d = new Date(t * 1000); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); }
   function full(t) { return new Date(t * 1000).toLocaleString(); }
+  /* relative time; the exact time on hover; refreshed after every poll */
   function timeEl(t) {
-    var d = new Date(t * 1000), today = d.toDateString() === new Date().toDateString();
-    return el("time", { datetime: d.toISOString(), title: full(t),
-                        text: today ? clock(t) : d.toLocaleDateString() });
+    return el("time", { "data-t": String(t), datetime: new Date(t * 1000).toISOString(), title: full(t),
+                        text: ago(Date.now() / 1000 - t) });
+  }
+  function tick() {
+    var now = Date.now() / 1000;
+    document.querySelectorAll("time[data-t]").forEach(function (n) { n.textContent = ago(now - n.dataset.t); });
   }
 
   function lock() {
     clearTimeout(timer);
     store(function (s) { s.removeItem(KEY); });
-    document.getElementById("app").hidden = true;
-    document.getElementById("lock").hidden = false;
+    $("app").hidden = true;
+    $("lock").hidden = false;
+  }
+
+  function api(path, body) {
+    return fetch(path, { method: "POST", cache: "no-store",
+                         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+                         body: JSON.stringify(body) })
+      .then(function (r) {
+        if (r.status === 401) { lock(); throw new Error("unauthorized"); }
+        if (!r.ok) return r.text().then(function (t) { throw new Error(t || "hub error " + r.status); });
+        clearTimeout(timer); poll();
+        return r;
+      });
   }
 
   function show(v) {
@@ -304,9 +408,9 @@ th.seen { text-align: right; }
     document.querySelectorAll(".tab").forEach(function (b) {
       b.setAttribute("aria-selected", b.dataset.view === v ? "true" : "false");
     });
-    ["team", "messages", "notes"].forEach(function (id) { document.getElementById(id).hidden = id !== v; });
+    ["team", "messages", "notes"].forEach(function (id) { $(id).hidden = id !== v; });
     history.replaceState(null, "", location.pathname + (v === "team" ? "" : "#view=" + v));
-    if (v === "messages") toBottom(true);
+    if (v === "messages") { markClipped(); toBottom(); }
   }
 
   /* where a name lives: from the online list, else from the name itself */
@@ -323,24 +427,16 @@ th.seen { text-align: right; }
     return a && a.label ? a.label : "";
   }
 
-  function nameEl(name, label) {
-    var b = el("span", { "class": "name", title: name });
-    if (label) b.appendChild(el("b", { "class": "label-name", text: label + " " }));
-    name.split("/").forEach(function (part, i) {
-      if (i) b.appendChild(el("span", { "class": "sep", text: "/" }));
-      b.appendChild(document.createTextNode(part));
-    });
-    return b;
-  }
-
   function seenCell(td, a) {
     td.className = "seen" + (a.last_seen_s >= 20 ? " late" : "");
     td.title = "Last seen " + full(Date.now() / 1000 - a.last_seen_s);
     td.textContent = ago(a.last_seen_s);
   }
 
+  var ACT = { busy: "busy", idle: "idle" };
+
   function renderTeam() {
-    var body = document.getElementById("agents");
+    var body = $("agents");
     var agents = feed.agents;
     var shape = agents.map(function (a) { return [a.name, a.machine, a.tool, a.project, a.status, a.activity, a.label]; });
     if (!changed("team", shape)) {
@@ -349,27 +445,29 @@ th.seen { text-align: right; }
     }
     body.textContent = "";
     agents.forEach(function (a) {
-      var act = a.activity || "";
-      body.appendChild(el("tr", null, [
+      var act = ACT[a.activity] || "";
+      var tr = el("tr", { tabindex: "0", title: "Message " + (a.label || a.name) }, [
         el("td", { "class": "c-dot" }, [el("div", { "class": "dot " + act, title: act || "unknown" })]),
-        el("td", null, [nameEl(a.name, a.label)]),
-        el("td", { "class": "c-tag" }, [el("span", { "class": "tag", title: "Machine", text: a.machine })]),
-        el("td", { "class": "c-tag" }, [el("span", { "class": "tag", title: "Tool", text: a.tool })]),
-        el("td", { "class": "c-tag" }, [el("span", { "class": "tag", title: "Project", text: a.project })]),
-        el("td", { "class": "c-tag-row" }, [
-          el("span", { "class": "tag", title: "Machine", text: a.machine }),
-          el("span", { "class": "tag", title: "Tool", text: a.tool }),
-          el("span", { "class": "tag", title: "Project", text: a.project })]),
-        el("td", { "class": "status", title: a.status || "", text: a.status || "" }),
+        el("td", { "class": "who" }, a.label
+          ? [el("b", { text: a.label }), el("small", { text: a.name })]
+          : [el("b", { text: a.name })]),
+        el("td", { "class": "c-plain", text: a.machine }),
+        el("td", { "class": "c-plain", text: a.tool }),
+        el("td", { "class": "c-plain", text: a.project }),
+        el("td", { "class": "status", title: a.status || null, text: a.status || "" }),
         (function () { var td = el("td"); seenCell(td, a); return td; })()
-      ]));
+      ]);
+      function go() { compose(a.name); }
+      tr.addEventListener("click", go);
+      tr.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+      body.appendChild(tr);
     });
-    document.getElementById("team-empty").hidden = agents.length > 0;
+    $("team-empty").hidden = agents.length > 0;
     document.querySelector("#team table").hidden = agents.length === 0;
   }
 
   function renderChips() {
-    var box = document.getElementById("chips");
+    var box = $("chips");
     box.textContent = "";
     var sets = { machine: {}, project: {} };
     feed.agents.forEach(function (a) { sets.machine[a.machine] = 1; sets.project[a.project] = 1; });
@@ -380,18 +478,17 @@ th.seen { text-align: right; }
         if (p.project) sets.project[p.project] = 1;
       });
     });
-    [["machine", "i-machine", "Machine"], ["project", "i-project", "Project"]].forEach(function (g) {
+    [["machine", "Machine"], ["project", "Folder"]].forEach(function (g) {
       var keys = Object.keys(sets[g[0]]).sort();
       if (keys.indexOf(filter[g[0]]) < 0) filter[g[0]] = null;
       if (!keys.length) return;
-      var group = el("div", { "class": "group" }, [el("span", { "class": "gicon", title: g[2] }, [icon(g[1], 16)])]);
+      var group = el("div", { "class": "group" }, [el("span", { "class": "cap", text: g[1] })]);
       keys.forEach(function (k) {
-        var b = el("button", { "class": "chip", title: g[2] + ": " + k, text: k,
+        var b = el("button", { "class": "chip", title: "Show only " + g[1].toLowerCase() + " " + k, text: k,
                                "aria-pressed": filter[g[0]] === k ? "true" : "false" });
         b.addEventListener("click", function () {
           filter[g[0]] = filter[g[0]] === k ? null : k;
-          renderMessages();
-          toBottom(true);
+          renderMessages(true);
         });
         group.appendChild(b);
       });
@@ -407,7 +504,7 @@ th.seen { text-align: right; }
       if (last && last.sender === m.sender && last.text === m.text && Math.abs(m.created - last.created) <= 1) {
         last.to.push(m.to);
       } else {
-        rows.push({ sender: m.sender, to: [m.to], text: m.text, created: m.created });
+        rows.push({ id: m.id, sender: m.sender, web: !!m.from_web, toWeb: !!m.to_web, to: [m.to], text: m.text, created: m.created });
       }
     });
     return rows;
@@ -419,63 +516,190 @@ th.seen { text-align: right; }
     return any("machine") && any("project");
   }
 
-  function renderMessages() {
+  function renderMessages(jump) {
     renderChips();
-    var log = document.getElementById("log");
-    var stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40, top = log.scrollTop;
+    var log = $("log");
+    var stick = jump || log.scrollHeight - log.scrollTop - log.clientHeight < 40, top = log.scrollTop;
     log.textContent = "";
     var shown = fold(feed.messages).filter(matches);
     shown.forEach(function (m) {
       var to = m.to.length > 1
-        ? el("span", { "class": "all", title: m.to.join("\n") }, [icon("i-all", 14), document.createTextNode("all")])
-        : el("span", { title: m.to[0], text: labelOf(m.to[0]) || m.to[0] });
-      log.appendChild(el("div", { "class": "msg" }, [
-        timeEl(m.created),
-        el("div", { "class": "route" }, [el("b", { title: m.sender, text: labelOf(m.sender) || m.sender }), icon("i-arrow", 14), to]),
-        el("div", { "class": "text", text: m.text })
-      ]));
-    });
-    if (!shown.length) log.appendChild(el("div", { "class": "empty" }, [icon("i-msg", 44)]));
-    if (stick) toBottom(true); else log.scrollTop = top;
-  }
-
-  function toBottom(force) {
-    var log = document.getElementById("log");
-    if (force) log.scrollTop = log.scrollHeight;
-  }
-
-  function version(h) {
-    return el("div", { "class": "note-body" }, [
-      el("div", { "class": "byline" }, [el("b", { title: h.author, text: h.author }), timeEl(h.time)]),
-      el("div", { "class": "text", text: h.text })
-    ]);
-  }
-
-  function renderNotes() {
-    var board = document.getElementById("board");
-    board.textContent = "";
-    feed.notes.forEach(function (n) {
-      var open = !!openNotes[n.topic], older = n.history.slice(1);
-      var card = el("div", { "class": "note panel", role: "button", tabindex: "0",
-                             "aria-expanded": open ? "true" : "false",
-                             title: older.length ? "History" : null }, [
-        el("div", { "class": "note-head" }, [
-          el("h2", { title: n.topic, text: n.topic }),
-          el("span", { "class": "ver", title: n.history.length + " versions" },
-             [icon("i-history", 14), document.createTextNode(String(n.history.length))])
-        ]),
-        version(n.history[0]),
-        open && older.length ? el("div", { "class": "history" }, older.map(version)) : null
+        ? el("span", { "class": "all", title: m.to.join("\n") }, [icon("i-all", 14), "all"])
+        : m.toWeb
+          ? el("span", { "class": "person to-person", title: "Read on this page" }, [icon("i-person", 13), el("span", { "class": "to", text: m.to[0] })])
+          : el("span", { "class": "to", title: m.to[0], text: labelOf(m.to[0]) || m.to[0] });
+      var from = m.web
+        ? el("span", { "class": "person", title: "Sent from this page" }, [icon("i-person", 13), el("b", { text: m.sender })])
+        : el("b", { title: m.sender, text: labelOf(m.sender) || m.sender });
+      var text = el("div", { "class": "text" + (expanded[m.id] ? "" : " clip"), text: m.text });
+      var row = el("div", { "class": "msg", "data-id": String(m.id) }, [
+        el("div", { "class": "route" }, [from, icon("i-arrow", 13), to, timeEl(m.created)]),
+        text
       ]);
-      function toggle() { openNotes[n.topic] = !open; renderNotes(); }
-      card.addEventListener("click", function () { if (!String(window.getSelection())) toggle(); });
-      card.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
-      board.appendChild(card);
+      log.appendChild(row);
     });
-    if (!feed.notes.length) board.appendChild(el("div", { "class": "empty" }, [icon("i-note", 44)]));
+    if (!shown.length) log.appendChild(el("div", { "class": "blank" }, [icon("i-msg", 40), "No messages"]));
+    markClipped();
+    if (stick) toBottom(); else log.scrollTop = top;
   }
 
-  /* redraw only the parts whose data changed, so scroll and open cards stay put */
+  /* add "more" under texts cut by the line clamp; needs layout, so only while visible */
+  function markClipped() {
+    if (view !== "messages") return;
+    $("log").querySelectorAll(".msg").forEach(function (row) {
+      var text = row.querySelector(".text"), id = row.dataset.id, old = row.querySelector(".more");
+      if (old) old.remove();
+      var cut = text.classList.contains("clip") && text.scrollHeight > text.clientHeight + 1;
+      if (!cut && !expanded[id]) return;
+      var b = el("button", { "class": "more", type: "button", text: expanded[id] ? "less" : "more" });
+      b.addEventListener("click", function () {
+        if (expanded[id]) delete expanded[id]; else expanded[id] = 1;
+        text.classList.toggle("clip", !expanded[id]);
+        markClipped();
+      });
+      row.appendChild(b);
+    });
+  }
+
+  function toBottom() { var log = $("log"); log.scrollTop = log.scrollHeight; }
+
+  /* compose */
+  function myName() { return store(function (s) { return s.getItem(NAME); }) || ""; }
+  function showName() {
+    var n = myName();
+    $("as").hidden = !n;
+    $("as").textContent = n ? "as " + n : "";
+  }
+  function renderTo() {
+    var sel = $("to"), keep = sel.value || store(function (s) { return s.getItem("kaptyorka.to"); }) || "all";
+    sel.textContent = "";
+    sel.appendChild(el("option", { value: "all", text: "all" }));
+    feed.agents.forEach(function (a) {
+      sel.appendChild(el("option", { value: a.name, text: a.label ? a.label + "  (" + a.name + ")" : a.name }));
+    });
+    if (keep !== "all" && !feed.agents.some(function (a) { return a.name === keep; })) {
+      sel.appendChild(el("option", { value: keep, text: keep + "  (offline)" }));
+    }
+    sel.value = keep;
+  }
+  function compose(to) {
+    show("messages");
+    renderTo();
+    $("to").value = to;
+    $("text").focus();
+  }
+  function grow() { var t = $("text"); t.style.height = "34px"; t.style.height = Math.min(t.scrollHeight + 2, 160) + "px"; }
+  function sendErr(msg) { $("send-err").hidden = !msg; $("send-err").textContent = msg || ""; }
+  function send() {
+    var text = $("text").value, nameIn = $("me");
+    if (!text.trim()) return;
+    if (!nameIn.hidden && nameIn.value.trim()) {
+      var n = nameIn.value.trim();
+      store(function (s) { s.setItem(NAME, n); });
+      nameIn.hidden = true;
+      showName();
+    }
+    var from = myName();
+    if (!from) { nameIn.hidden = false; nameIn.focus(); sendErr(""); return; }
+    var to = $("to").value;
+    store(function (s) { s.setItem("kaptyorka.to", to); });
+    api("/api/send", { to: to, text: text, from: from })
+      .then(function () { $("text").value = ""; grow(); sendErr(""); $("text").focus(); seen.messages = null; })
+      .catch(function (e) { sendErr(e.message); });
+  }
+
+  /* notes */
+  function topicOf(t) { return feed.notes.filter(function (n) { return n.topic === t; })[0]; }
+  function renderTopics() {
+    var box = $("topics");
+    box.textContent = "";
+    feed.notes.forEach(function (n) {
+      var h = n.history[0];
+      var b = el("button", { "class": "topic", "aria-current": n.topic === note.topic ? "true" : "false" }, [
+        el("b", { title: n.topic, text: n.topic }),
+        el("small", null, [el("span", { title: h.author, text: h.author }), timeEl(h.time)])
+      ]);
+      b.addEventListener("click", function () { open(n.topic); });
+      box.appendChild(b);
+    });
+  }
+  function open(topic) {
+    note = { topic: topic, mode: "read", version: 0, history: false };
+    renderNotes(true);
+  }
+  function renderNotes(force) {
+    if (note.mode !== "read" && !force) return;  /* never redraw over an edit */
+    if (note.topic && note.mode !== "new" && !topicOf(note.topic)) note.topic = null;
+    if (!note.topic && note.mode === "read" && feed.notes.length && window.innerWidth > 720) note.topic = feed.notes[0].topic;
+    renderTopics();
+    $("notes-grid").classList.toggle("reading", !!note.topic || note.mode === "new");
+    $("notes-grid").querySelector(".topics").hidden = !feed.notes.length && note.mode !== "new";
+    var doc = $("doc");
+    doc.textContent = "";
+    if (!feed.notes.length && note.mode === "read") {
+      $("notes-grid").classList.add("reading");
+      var start = el("button", { "class": "btn primary", type: "button" }, [icon("i-plus", 14), "New topic"]);
+      start.addEventListener("click", newTopic);
+      doc.appendChild(el("div", { "class": "blank" }, [icon("i-note", 40),
+        el("div", { text: "No notes yet. Agents write them with notes_write; you can start one here." }), start]));
+      return;
+    }
+    var back = el("button", { "class": "btn small back", type: "button", title: "Topics" }, [icon("i-back", 14)]);
+    back.addEventListener("click", function () { note = { topic: null, mode: "read", version: 0, history: false }; renderNotes(true); });
+    if (note.mode === "new" || note.mode === "edit") return editor(doc, back);
+    var n = topicOf(note.topic);
+    if (!n) return;
+    var h = n.history[note.version] || n.history[0];
+    var edit = el("button", { "class": "btn small", type: "button" }, [icon("i-edit", 13), "Edit"]);
+    edit.addEventListener("click", function () { note.mode = "edit"; renderNotes(true); });
+    var hist = el("button", { "class": "btn small", type: "button", "aria-pressed": note.history ? "true" : "false",
+                              "aria-expanded": note.history ? "true" : "false", title: n.history.length + " versions" },
+                  [icon("i-history", 13), "History " + n.history.length]);
+    hist.addEventListener("click", function () { note.history = !note.history; renderNotes(true); });
+    doc.appendChild(el("div", { "class": "doc-head" }, [back, el("h2", { text: n.topic }),
+      el("div", { "class": "tools" }, [hist, edit])]));
+    if (note.history) {
+      doc.appendChild(el("div", { "class": "history" }, n.history.map(function (v, i) {
+        var b = el("button", { "class": "version", type: "button", "aria-current": i === note.version ? "true" : "false" },
+                   [el("span", { text: "v" + (n.history.length - i) }), el("b", { text: v.author }), timeEl(v.time)]);
+        b.addEventListener("click", function () { note.version = i; renderNotes(true); });
+        return b;
+      })));
+    }
+    var by = [el("b", { text: h.author }), timeEl(h.time)];
+    if (note.version > 0) by.push(el("span", { "class": "old", text: "old version v" + (n.history.length - note.version) }));
+    doc.appendChild(el("div", { "class": "byline" }, by));
+    doc.appendChild(el("div", { "class": "doc-body" }, [el("div", { "class": "text", text: h.text })]));
+  }
+  function newTopic() { note = { topic: null, mode: "new", version: 0, history: false }; renderNotes(true); }
+  function editor(doc, back) {
+    var isNew = note.mode === "new", n = topicOf(note.topic);
+    var topicIn = isNew ? el("input", { "class": "topic-in", placeholder: "Topic", "aria-label": "Topic", maxlength: "120" }) : null;
+    var area = el("textarea", { "aria-label": "Note text" });
+    area.value = n && !isNew ? n.history[0].text : "";
+    var nameIn = myName() ? null : el("input", { placeholder: "Your name", "aria-label": "Your name", maxlength: "40", style: "height:28px;padding:0 8px;width:130px" });
+    var save = el("button", { "class": "btn small primary", type: "button" }, ["Save"]);
+    var cancel = el("button", { "class": "btn small", type: "button" }, ["Cancel"]);
+    var err = el("div", { "class": "err", hidden: "" });
+    cancel.addEventListener("click", function () { note.mode = "read"; if (isNew) note.topic = null; renderNotes(true); });
+    save.addEventListener("click", function () {
+      var topic = isNew ? topicIn.value.trim() : note.topic;
+      if (nameIn && nameIn.value.trim()) store(function (s) { s.setItem(NAME, nameIn.value.trim()); });
+      var from = myName();
+      if (!topic) { topicIn.focus(); return; }
+      if (!from) { nameIn.focus(); return; }
+      showName();
+      api("/api/notes", { topic: topic, text: area.value, from: from })
+        .then(function () { note = { topic: topic, mode: "read", version: 0, history: false }; seen.notes = null; })
+        .catch(function (e) { err.hidden = false; err.textContent = e.message; });
+    });
+    doc.appendChild(el("div", { "class": "doc-head" }, [back, isNew ? topicIn : el("h2", { text: note.topic }),
+      el("div", { "class": "tools" }, [nameIn, cancel, save])]));
+    doc.appendChild(el("div", { "class": "doc-body" }, [area, err]));
+    (isNew ? topicIn : area).focus();
+  }
+
+  /* redraw only the parts whose data changed, so scroll and open notes stay put */
   function changed(part, value) {
     var j = JSON.stringify(value);
     if (seen[part] === j) return false;
@@ -483,22 +707,25 @@ th.seen { text-align: right; }
     return true;
   }
   function render() {
-    document.getElementById("n-team").textContent = feed.agents.length;
-    document.getElementById("n-messages").textContent = fold(feed.messages).length;
-    document.getElementById("n-notes").textContent = feed.notes.length;
+    $("n-team").textContent = feed.agents.length;
+    $("n-messages").textContent = fold(feed.messages).length;
+    $("n-notes").textContent = feed.notes.length;
     renderTeam();
-    var places = feed.agents.map(function (a) { return [a.name, a.machine, a.project]; });
+    var places = feed.agents.map(function (a) { return [a.name, a.machine, a.project, a.label]; });
     if (changed("messages", [feed.messages, places, filter])) renderMessages();
-    if (changed("notes", feed.notes)) renderNotes();
+    if (changed("to", places)) renderTo();
+    if (note.mode === "read" && changed("notes", feed.notes)) renderNotes();
+    tick();
   }
 
   function live(ok) {
-    var l = document.getElementById("live");
+    var l = $("live");
     l.className = ok ? "live" : "live down";
     l.title = ok ? "Live " + clock(Date.now() / 1000) : "Hub unreachable";
   }
 
   function poll() {
+    clearTimeout(timer);
     var ctl = new AbortController(), stop = setTimeout(function () { ctl.abort(); }, 5000);
     fetch("/api/feed", { headers: { Authorization: "Bearer " + token }, cache: "no-store", signal: ctl.signal })
       .then(function (r) {
@@ -512,17 +739,32 @@ th.seen { text-align: right; }
         live(true);
         feed = JSON.parse(text);
         render();
+        clearTimeout(timer);
         timer = setTimeout(poll, 2000);
       })
-      .catch(function () { clearTimeout(stop); live(false); timer = setTimeout(poll, 2000); });
+      .catch(function () { clearTimeout(stop); live(false); clearTimeout(timer); timer = setTimeout(poll, 2000); });
   }
 
   if (!token) return;
-  document.getElementById("lock").hidden = true;
-  document.getElementById("app").hidden = false;
+  $("lock").hidden = true;
+  $("app").hidden = false;
   document.querySelectorAll(".tab").forEach(function (b) {
     b.addEventListener("click", function () { show(b.dataset.view); });
   });
+  $("compose").addEventListener("submit", function (e) { e.preventDefault(); send(); });
+  $("text").addEventListener("input", grow);
+  $("text").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+  });
+  $("me").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); send(); } });
+  $("as").addEventListener("click", function () {
+    var n = $("me");
+    n.value = myName();
+    store(function (s) { s.removeItem(NAME); });
+    showName(); n.hidden = false; n.focus();
+  });
+  $("new-topic").addEventListener("click", newTopic);
+  showName();
   show(view);
   poll();
 })();

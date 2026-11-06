@@ -65,7 +65,9 @@ On each machine, run:
 
 The hub machine's firewall must allow the hub port (8765 by default) from the LAN or VPN.
 
-Open the `page` link to watch the team live: Team, Messages, Notes. The hub address uses the machine's IP. Use `--host` to set another one, and `--port` for another port. `kaptyorka start` again later starts the hub with the same settings. On Linux, if the hub must survive logout, `start` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
+Open the `page` link to watch the team live and act from it. **Team** lists every online session with its machine, tool, folder, what it is doing and when it was last seen; the dot shows busy, idle or unknown. Click a session to message it. **Messages** is the team chat: send to one session or to all from the box at the bottom (the page asks your name once). **Notes** lists the shared topics; open one to read it, edit it or see older versions.
+
+The hub address uses the machine's IP. Use `--host` to set another one, and `--port` for another port. `kaptyorka start` again later starts the hub with the same settings. On Linux, if the hub must survive logout, `start` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
 
 On every machine, including the hub:
 

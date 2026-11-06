@@ -5,7 +5,7 @@ import time
 
 from kaptyorka import http
 from kaptyorka.hub import BearerAuth
-from helpers import call, run
+from helpers import call, call_error, run
 
 PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
 DGX = {"key": "claude:2", "machine": "dgx", "tool": "claude-code", "project": "backend"}
@@ -247,3 +247,46 @@ def test_label_in_feed_brief_and_cli_rows(hub):
     assert labels == {"dgx/claude-code/backend": "api-dev", "dgx/codex/backend": ""}
     ident = {"key": "codex:3", "machine": "dgx", "tool": "codex", "project": "backend"}
     assert "api-dev (dgx/claude-code/backend)" in brief(hub, ident, "start")
+
+
+def test_web_send_lands_in_inbox_with_person_name(hub):
+    dgx_online(hub)
+    s, body = http.request("POST", hub.url + "/api/send", "T",
+                           {"to": DGX_NAME, "text": "from the page", "from": "Narek"})
+    assert s == 200 and body == {"sent": 1}
+    assert [(m["from"], m["text"]) for m in run(call(hub, DGX, "inbox"))] == [("Narek", "from the page")]
+    assert feed(hub)["messages"][-1]["from_web"] is True
+
+
+def test_web_send_all_and_unknown_name(hub):
+    dgx_online(hub)
+    hub_send(hub, PC, DGX_NAME, "make PC online")
+    s, body = http.request("POST", hub.url + "/api/send", "T", {"to": "all", "text": "hi", "from": "Narek"})
+    assert s == 200 and body == {"sent": 2}
+    s, body = http.request("POST", hub.url + "/api/send", "T", {"to": "nobody", "text": "hi", "from": "Narek"})
+    assert s == 400 and "no session named nobody" in body
+    assert http.request("POST", hub.url + "/api/send", "T", {"to": "all"})[0] == 400
+
+
+def test_web_note_write(hub):
+    s, _ = http.request("POST", hub.url + "/api/notes", "T", {"topic": "api", "text": "v1", "from": "Narek"})
+    assert s == 204
+    assert feed(hub)["notes"][0]["history"][0]["author"] == "Narek"
+
+
+def test_web_routes_require_token(hub):
+    assert http.request("POST", hub.url + "/api/send", "bad", {"to": "all", "text": "x", "from": "N"})[0] == 401
+    assert http.request("POST", hub.url + "/api/notes", "bad", {"topic": "a", "text": "x", "from": "N"})[0] == 401
+
+
+def test_agent_reply_to_web_sender_goes_to_page_not_inbox(hub):
+    dgx_online(hub)
+    http.request("POST", hub.url + "/api/send", "T", {"to": DGX_NAME, "text": "hi", "from": "Narek"})
+    assert http.request("GET", hub.url + "/bridge/poll?machine=dgx&wait=0", "T")[1][0]["text"] == \
+        "Kaptyorka message from Narek (web page):\n\nhi"
+    assert "sent to 1 session" in str(hub_send(hub, DGX, "Narek", "on it"))
+    last = feed(hub)["messages"][-1]
+    assert (last["to"], last["to_web"], last["read"]) == ("Narek", True, True)
+    texts = [m["text"] for i in (PC, DGX) for m in run(call(hub, i, "inbox"))]
+    assert "on it" not in texts
+    assert "people: Narek" in call_error(hub, DGX, "send", to="Bob", text="x")

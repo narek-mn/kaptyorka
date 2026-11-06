@@ -116,13 +116,16 @@ def build_app(store: Store, token: str) -> Starlette:
         now = store.clock()
         return [{**_agent_row(a, now), "you": a.key == key} for a in store.online()]
 
+    def wake_bridges():
+        sent["event"].set()
+        sent["event"] = asyncio.Event()
+
     @server.tool()
     @_tool_errors
     async def send(to: str, text: str, ctx: Context) -> str:
         """Send text to one session by name or label, or to 'all'."""
         n = store.send(me(ctx).key, to, text)
-        sent["event"].set()
-        sent["event"] = asyncio.Event()
+        wake_bridges()
         return f"sent to {n} session" + ("" if n == 1 else "s")
 
     @server.tool()
@@ -200,7 +203,8 @@ def build_app(store: Store, token: str) -> Starlette:
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         unread = store.inbox(agent.key)
-        parts = [f"Kaptyorka message from {m.sender}:\n\n{m.text}" for m in unread]
+        parts = [f"Kaptyorka message from {m.sender}{' (web page)' if m.from_web else ''}:\n\n{m.text}"
+                 for m in unread]
         if request.query_params.get("event") == "start":
             others = [a for a in store.online() if a.key != agent.key]
             line = f"Kaptyorka: you are `{_titled(agent)}`. "
@@ -227,6 +231,27 @@ def build_app(store: Store, token: str) -> Starlette:
                        "history": [asdict(h) for h in store.note_history(n["topic"])]}
                       for n in store.notes_list()],
         })
+
+    @server.custom_route("/api/send", methods=["POST"])
+    @_bad_request
+    async def api_send(request: Request) -> Response:
+        body = await request.json()
+        try:
+            n = store.send_from_web(str(body["from"]), str(body["to"]), str(body["text"]))
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        wake_bridges()
+        return JSONResponse({"sent": n})
+
+    @server.custom_route("/api/notes", methods=["POST"])
+    @_bad_request
+    async def api_notes(request: Request) -> Response:
+        body = await request.json()
+        try:
+            store.notes_write_from_web(str(body["from"]), str(body["topic"]), str(body["text"]))
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return Response(status_code=204)
 
     @server.custom_route("/", methods=["GET"])
     async def page(request: Request) -> Response:
