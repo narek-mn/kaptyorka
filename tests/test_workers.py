@@ -3,7 +3,7 @@ import pytest
 from helpers import person
 from kaptyorka.orders import verify
 from kaptyorka.store import ONLINE_S, KaptyorkaError, Store
-from kaptyorka.workers import ABANDONED_S, UNATTENDED_S, WorkerStore
+from kaptyorka.workers import ABANDONED_S, UNATTENDED_S, WorkerStore, clean_facts, safe_name
 
 
 @pytest.fixture
@@ -247,7 +247,7 @@ def test_create_names_and_signs(store, ws, alice_p, dev, boss, clock):
     w = launch(ws, alice_p, dev, boss)
     assert w["name"] == "proj-a-w1" and w["state"] == "starting"
     assert w["boss"] == "box-1/claude-code/proj-a" and w["worktree"] is False
-    assert w["attach"] == "ssh -t u@box-1 claude attach proj-a-w1" and w["person"] == "alice"
+    assert w["attach"] == "ssh -t -- u@box-1 claude attach proj-a-w1" and w["person"] == "alice"
     [item] = ws.offer(dev)
     assert item["launch"] is True and item["worker"] == "proj-a-w1"
     order = {k: v for k, v in item.items() if k != "launch"}
@@ -417,18 +417,20 @@ def test_hub_down_is_not_session_gone(store, ws, alice, alice_p, boss, clock):
 
 def test_unattended_without_since_does_not_stop_the_tick(store, ws, alice, alice_p, boss,
                                                          clock):
-    linked(store, ws, alice, alice_p, boss)
+    dev, token = linked(store, ws, alice, alice_p, boss)
     store.db.execute("UPDATE workers SET state='unattended', unattended_since=NULL")
     later = clock[0] + ONLINE_S + 10  # the boss is offline: the worker stays unattended
     assert any("is unattended" in x["text"] for x in ws.warnings(later, "0.0.1"))
     ws.tick(later)
-    ws.tick(later + ABANDONED_S + 1)
+    clock[0] = later + ABANDONED_S + 1
+    worker_up(store, ws, dev, token)  # its bridge and session still report
+    ws.tick(clock[0])
     assert ws.by_name("proj-a-w1")["state"] == "abandoned"
 
 
 def test_waiting_notice_once_per_half_hour(store, ws, alice, alice_p, boss, clock):
     dev, token = linked(store, ws, alice, alice_p, boss, activity="permission_prompt")
-    text = "worker `proj-a-w1` is waiting for a permission; attach with `ssh -t u@box-1 claude attach proj-a-w1`"
+    text = "worker `proj-a-w1` is waiting for a permission; attach with `ssh -t -- u@box-1 claude attach proj-a-w1`"
     assert ws.tick(clock[0]) == [("claude:boss", text)]
     assert ws.tick(clock[0]) == []
     clock[0] += 1801
@@ -511,7 +513,7 @@ def test_only_own_or_admin_may_adopt_or_close(store, ws, alice_p, dev, bob, boss
 
 def test_attach_for_other_tools_uses_tmux(ws, alice_p, dev, boss):
     w = ws.create(alice_p, "proj-a", "t", target(dev), "codex", boss, "sid-1", False)
-    assert w["attach"] == "ssh u@box-1 -t tmux attach -t =proj-a-w1"
+    assert w["attach"] == "ssh -t -- u@box-1 tmux attach -t =proj-a-w1"
     assert w["os_user"] == "u" and w["host"] == "box-1" and w["tool"] == "codex"
 
 
@@ -519,7 +521,7 @@ def test_attach_line_quotes_bridge_reported_values(store, ws, alice_p, dev, boss
     with store.lock:  # a bridge may report anything as its user
         store.db.execute("UPDATE devices SET os_user='u; rm -rf ~' WHERE id=?", (dev,))
     w = launch(ws, alice_p, dev, boss)
-    assert w["attach"] == "ssh -t 'u; rm -rf ~@box-1' claude attach proj-a-w1"
+    assert w["attach"] == "ssh -t -- 'u; rm -rf ~@box-1' claude attach proj-a-w1"
 
 
 def shared_box(store, bob):
@@ -747,3 +749,48 @@ def test_warnings_old_version_from_device_row_without_facts(store, ws, alice, cl
     store.db.execute("UPDATE devices SET version='0.2.1' WHERE id=?", (a,))
     assert [w["text"] for w in ws.warnings(clock[0], "0.3.0")] == [
         "box-1 (alice) runs kaptyorka 0.2.1; the hub runs 0.3.0"]
+
+
+def test_bridge_gone_an_hour_closes_its_workers(store, ws, alice, alice_p, boss, clock):
+    dev, token = linked(store, ws, alice, alice_p, boss)
+    ws.tick(clock[0] + 3500)
+    assert ws.by_name("proj-a-w1")["state"] != "closed"
+    notices = ws.tick(clock[0] + 3601)
+    w = ws.by_name("proj-a-w1")
+    assert w["state"] == "closed" and w["error"] == "bridge offline for over an hour"
+    assert notices[0] == ("claude:boss",
+                          "worker `proj-a-w1` is closed: bridge offline for over an hour")
+    assert store.db.execute("SELECT COUNT(*) FROM launches WHERE worker='proj-a-w1'"
+                            " AND done_at IS NULL").fetchone()[0] == 0
+    assert not any("proj-a-w1" in t for _, t in ws.tick(clock[0] + 3700))  # told once
+
+
+def test_bridge_gone_waits_for_the_hub_to_settle(store, ws, alice, alice_p, boss, clock):
+    linked(store, ws, alice, alice_p, boss)
+    clock[0] += 7200  # the hub itself was down two hours
+    again = WorkerStore(store)
+    again.tick(clock[0] + 60)
+    assert again.by_name("proj-a-w1")["state"] != "closed"
+
+
+def test_revoked_device_closes_its_workers(store, ws, alice, alice_p, boss, clock):
+    dev, _ = linked(store, ws, alice, alice_p, boss)
+    store.device_revoke(dev)
+    ws.tick(clock[0])
+    w = ws.by_name("proj-a-w1")
+    assert w["state"] == "closed" and w["error"] == "device revoked"
+
+
+def test_close_with_bridge_offline_is_done_at_once(store, ws, alice, alice_p, boss, clock):
+    dev, _ = linked(store, ws, alice, alice_p, boss)
+    clock[0] += ONLINE_S + 1
+    w = ws.close(alice_p, "proj-a-w1")
+    assert w["state"] == "closed"
+    assert w["note"] == "the bridge is offline; the session may still run on box-1"
+    assert ws.offer(dev) == []  # no close order nobody would ack
+
+
+def test_facts_drop_names_that_read_as_options():
+    assert clean_facts({"os_user": "-oProxyCommand=x"})["os_user"] == ""
+    assert clean_facts({"os_user": "u.name_1"})["os_user"] == "u.name_1"
+    assert safe_name("-box") == "" and safe_name("box-1") == "box-1" and safe_name(3) == ""

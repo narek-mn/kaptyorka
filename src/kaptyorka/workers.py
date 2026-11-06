@@ -14,6 +14,7 @@ MAX_FACT = 200
 UNATTENDED_S = 120  # boss offline this long: the worker is unattended
 ABANDONED_S = 86400  # unattended this long: abandoned
 GONE_S = 600  # the worker's own session offline this long: closed
+BRIDGE_GONE_S = 3600  # bridge silent this long: its workers are closed
 STARTUP_S = 120  # after the hub starts, bridges get this long to report before any is gone
 OFFLINE_S = 600  # bridge silent this long: warn
 REOFFER_S = 60
@@ -50,6 +51,14 @@ def ensure_schema(db) -> None:
         db.execute("ALTER TABLE workers ADD COLUMN told REAL")  # a Task 2 database
     if "needs_brief" not in cols:
         db.execute("ALTER TABLE workers ADD COLUMN needs_brief INTEGER NOT NULL DEFAULT 0")
+
+
+SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def safe_name(value) -> str:
+    """A host or os user name fit for an ssh line (never an option); "" otherwise."""
+    return value if isinstance(value, str) and SAFE_NAME.match(value) else ""
 
 
 def _cut(value) -> Optional[str]:
@@ -89,7 +98,7 @@ def clean_facts(facts: dict) -> dict:
     facts = facts if isinstance(facts, dict) else {}
     out = {}
     if _cut(facts.get("os_user")) is not None:
-        out["os_user"] = _cut(facts["os_user"])
+        out["os_user"] = safe_name(_cut(facts["os_user"]))
     if _cut(facts.get("version")) is not None:
         out["version"] = _cut(facts["version"])
     if _bool(facts.get("tmux")) is not None:
@@ -260,8 +269,8 @@ class WorkerStore:
         os_user = dev["os_user"] if dev else ""
         # bridge-reported values: quoted; `=` makes tmux match the whole name, not a prefix
         dest, name = shlex.quote(f"{os_user}@{row['host']}"), shlex.quote(row["name"])
-        attach = (f"ssh -t {dest} claude attach {name}" if row["tool"] == "claude-code"
-                  else f"ssh {dest} -t tmux attach -t ={name}")
+        attach = f"ssh -t -- {dest} " + (f"claude attach {name}" if row["tool"] == "claude-code"
+                                         else f"tmux attach -t ={name}")
         return {"name": row["name"], "project": row["project"], "task": row["task"],
                 "host": row["host"], "os_user": os_user, "tool": row["tool"],
                 "folder": row["folder"], "worktree": bool(row["worktree"]),
@@ -519,13 +528,27 @@ class WorkerStore:
         """State changes; notices (to_key, text) for online bosses."""
         notices = []
         with self.lock:
+            # gone only when its bridge reports and still misses it; never just after a restart
+            judging = now >= self.started + STARTUP_S
+            # a bridge that never comes back: nobody could stop or report its workers
+            for w in self.db.execute(
+                    "SELECT w.name, w.boss_key, d.last_used, d.revoked_at FROM workers w"
+                    " LEFT JOIN devices d ON d.id=w.device_id WHERE w.state IN"
+                    f" ({','.join('?' * len(LIVE))})", LIVE).fetchall():
+                if w["revoked_at"] is not None:
+                    why = "device revoked"
+                elif judging and w["last_used"] is not None \
+                        and w["last_used"] < now - BRIDGE_GONE_S:
+                    why = "bridge offline for over an hour"
+                else:
+                    continue
+                self._end(w["name"], why, why, now)
+                notices.append((w["boss_key"], f"worker `{w['name']}` is closed: {why}"))
             rows = self.db.execute(
                 "SELECT w.*, a.last_seen AS own_seen, a.activity, b.last_seen AS boss_seen,"
                 " d.last_used AS bridge_seen FROM workers w LEFT JOIN agents a ON a.key=w.key"
                 " LEFT JOIN agents b ON b.key=w.boss_key LEFT JOIN devices d ON d.id=w.device_id"
                 " WHERE w.state IN ('up','unattended')").fetchall()
-            # gone only when its bridge reports and still misses it; never just after a restart
-            judging = now >= self.started + STARTUP_S
             for w in rows:
                 boss_online = w["boss_key"].startswith("web:") or (  # the page: always there
                     w["boss_seen"] is not None and w["boss_seen"] > now - ONLINE_S)
@@ -612,19 +635,32 @@ class WorkerStore:
             if w["state"] in ("closed", "failed"):
                 raise KaptyorkaError(f"worker {name} is already {w['state']}")
             now = self.clock()
+            dev = self.db.execute("SELECT last_used, revoked_at FROM devices WHERE id=?",
+                                  (w["device_id"],)).fetchone()
+            offline = dev is None or dev["revoked_at"] is not None or \
+                dev["last_used"] is None or dev["last_used"] <= now - ONLINE_S
+            notes = []
             if w["state"] == "starting":  # nothing to kill yet: the launch is never sent
-                self.db.execute("UPDATE launches SET done_at=?, ok=0, error='closed before start'"
-                                " WHERE worker=? AND kind='launch' AND done_at IS NULL",
-                                (now, name))
-                self.db.execute("UPDATE workers SET state='closed', closed_at=? WHERE name=?",
-                                (now, name))
+                self._end(name, "", "closed before start", now)
+            elif offline:  # nobody would take a close order: closed here and now
+                self._end(name, "", "bridge offline", now)
+                notes.append(f"the bridge is offline; the session may still run on {w['host']}")
             else:
                 self._queue(w["device_id"], name, "close", {
                     "issued": now, "worker": name, "tool": w["tool"], "key": w["key"]})
             out = self._dict(self._row(name))
             if w["worktree"]:
-                out["note"] = f"its worktree {w['folder']} stays in place"
+                notes.append(f"its worktree {w['folder']} stays in place")
+            if notes:
+                out["note"] = "; ".join(notes)
             return out
+
+    def _end(self, name: str, error: str, order_error: str, now: float) -> None:
+        """Closed by the hub alone: the worker and its orders still waiting. Under the lock."""
+        self.db.execute("UPDATE launches SET done_at=?, ok=0, error=? WHERE worker=?"
+                        " AND done_at IS NULL", (now, order_error, name))
+        self.db.execute("UPDATE workers SET state='closed', error=?, closed_at=? WHERE name=?",
+                        (error, now, name))
 
     def warnings(self, now: float, hub_version: str) -> List[dict]:
         """Things a person should look at: failed launches, offline bridges, old versions,

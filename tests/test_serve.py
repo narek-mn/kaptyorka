@@ -238,6 +238,16 @@ def test_reinstall_keeps_the_plists_own_keys(home):
     assert service.existing_env(plist, "darwin") == {"MY_KEY": "a&b"}
 
 
+def test_broken_plist_counts_as_no_env(home):
+    plist = home / "Library/LaunchAgents/io.kaptyorka.kaptyorka-bridge.plist"
+    plist.parent.mkdir(parents=True)
+    plist.write_text("<plist><dict><key>EnvironmentVariables")  # cut off mid-file
+    assert service.existing_env(plist, "darwin") == {}
+    install("kaptyorka-bridge", ["/k", "bridge"], run=fake_run([]), platform="darwin",
+            env={"PATH": "/p"})
+    assert service.existing_env(plist, "darwin") == {"PATH": "/p"}
+
+
 def test_stop_linux_disables_unit():
     calls = []
     assert service.stop("kaptyorka-bridge", run=fake_run(calls), platform="linux") == [

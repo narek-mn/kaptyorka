@@ -23,7 +23,7 @@ from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, clean
-from kaptyorka.workers import WorkerStore
+from kaptyorka.workers import WorkerStore, safe_name
 
 MAX_WAIT_S = 25
 TICK_S = 15
@@ -384,6 +384,9 @@ def build_app(store: Store) -> Starlette:
     async def bridge_heartbeat(request: Request) -> Response:
         body = await request.json()
         facts = body.get("facts")
+        if isinstance(facts, dict):  # they go on ssh lines: never one that reads as an option
+            facts = {**facts, **{k: safe_name(facts[k]) for k in ("host", "os_user")
+                                 if k in facts}}
         principal = request.scope.get("state", {}).get("principal")
         if principal is not None and principal.legacy:
             # the machine is only in the body, which Auth does not read: map it to its person
@@ -1015,8 +1018,8 @@ def build_app(store: Store) -> Starlette:
         person = ws.invite_person(code)  # read first: authenticating would mark the bridge seen
         try:
             token, secret = store.invite_redeem(code, str(body["device_name"]),
-                                                str(body.get("host", "")),
-                                                str(body.get("os_user", "")))
+                                                safe_name(str(body.get("host", ""))),
+                                                safe_name(str(body.get("os_user", ""))))
         except KaptyorkaError as e:
             limiter.hit(key)
             return PlainTextResponse(str(e), status_code=400)

@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
+from xml.parsers.expat import ExpatError
 from xml.sax.saxutils import escape
 
 from kaptyorka import paths
@@ -181,7 +182,7 @@ def existing_env(path: Path, platform: str) -> Dict[str, str]:
             return {k: v for k, v in env.items() if isinstance(k, str) and isinstance(v, str)} \
                 if isinstance(env, dict) else {}
         text = path.read_text()
-    except (OSError, ValueError, plistlib.InvalidFileException):
+    except (OSError, ValueError, ExpatError, plistlib.InvalidFileException):
         return {}
     out = {}
     for line in text.splitlines():

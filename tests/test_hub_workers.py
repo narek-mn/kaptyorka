@@ -144,7 +144,7 @@ def test_poll_carries_signed_launch_and_ack_links_worker(hub, alice):
                         {"worker": "proj-a-w1", "key": "claude:w1"})[0] == 204
     assert hub.ws.by_name("proj-a-w1")["state"] == "up"
     assert inbox_texts(client, BOSS) == [
-        "worker `proj-a-w1` is up on box-1; attach with `ssh -t u@box-1 claude attach proj-a-w1`"]
+        "worker `proj-a-w1` is up on box-1; attach with `ssh -t -- u@box-1 claude attach proj-a-w1`"]
     # a retried link (the answer was lost) is a success and tells the boss nothing new
     assert http.request("POST", hub.url + "/bridge/worker", b.token,
                         {"worker": "proj-a-w1", "key": "claude:w1"})[0] == 204
@@ -475,3 +475,24 @@ def test_machines_hide_other_peoples_folders_and_commits(hub, alice):
         seen = dev(token)
         assert seen["folders"] == {"proj-x": "/w/proj-x"} and seen["facts"]["git"] == git["git"]
     assert dev(ADMIN)["folders"] == {}  # the shared token is no admin here
+
+
+def test_names_that_read_as_ssh_options_are_dropped(hub, alice):
+    pid, _ = alice
+    code = hub.store.invite_create(pid)
+    status, body = http.request("POST", f"{hub.url}/i/{code}", "",
+                                {"device_name": "box-1", "host": "-oProxyCommand=x",
+                                 "os_user": "-lroot"})
+    assert status == 200
+    token = body["token"]
+    dev = hub.store.authenticate(token).device_id
+    row = hub.store.db.execute("SELECT host, os_user FROM devices WHERE id=?", (dev,)).fetchone()
+    assert (row["host"], row["os_user"]) == ("", "")
+    body = {"machine": "box-1", "sessions": [], "tools": [],
+            "facts": {"host": "-oProxyCommand=x", "os_user": "-lroot"}}
+    assert http.request("POST", hub.url + "/bridge/heartbeat", token, body)[0] == 200
+    row = hub.store.db.execute("SELECT host, os_user FROM devices WHERE id=?", (dev,)).fetchone()
+    assert (row["host"], row["os_user"]) == ("", "")
+    assert hub.ws.facts(dev).get("os_user", "") == ""
+    assert "-o" not in {m["host"][:2] for m in hub.store.machines(
+        hub.store.authenticate(ADMIN))}

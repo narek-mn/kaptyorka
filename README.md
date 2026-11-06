@@ -145,7 +145,7 @@ A worker is an agent session that runs on another machine for you. Say "do this 
 1. Your agent calls `work(project, task)`. You need the write role in the project, and a machine you may use.
 2. The hub picks a machine and tells its bridge. Your own account comes first; someone's shared account only on a machine where you have none. The bridge finds the project folder and starts the tool there, with your task as the first message.
 3. The worker works alone. When it has news, it messages its boss (you). You get the worker's name and an attach line, so you can look inside.
-4. Attach from any computer with the line you got: `ssh -t <user>@<machine> claude attach <name>` for Claude Code, `ssh <user>@<machine> -t tmux attach -t =<name>` for Codex and OpenCode.
+4. Attach from any computer with the line you got: `ssh -t -- <user>@<machine> claude attach <name>` for Claude Code, `ssh -t -- <user>@<machine> tmux attach -t =<name>` for Codex and OpenCode.
 5. `close_worker(name)` ends it. `workers` lists yours, with the state of each.
 
 How each tool runs:
@@ -224,7 +224,7 @@ kaptyorka fleet add alice@box-1 --person alice --key-from key.env
 kaptyorka fleet list
 ```
 
-`fleet add` installs kaptyorka on each target and joins it as that person, with an invite made for the job. `--key-from` is a file with one `NAME=value` line, for example an API key. It goes only to the bridge service's environment on the target (the unit file is mode 0600). `fleet list` shows the machines, who owns them and their version.
+`fleet add` installs kaptyorka on each target and joins it as that person, with an invite made for the job. `--key-from` is a file with one `NAME=value` line, for example an API key. It goes only to the bridge service's environment on the target (the unit file is mode 0600). `fleet list` shows the machines, who owns them and their version. A re-join keeps that key. To replace it, run `fleet add` again with a new `--key-from`; to clear it, run `kaptyorka remove` on that machine, then `join` again.
 
 Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by default for members' machines and off for the admin's. Switch it per account on the **Machines** tab.
 
