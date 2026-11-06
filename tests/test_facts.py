@@ -73,12 +73,13 @@ def test_machine_facts(monkeypatch):
     monkeypatch.setattr(facts.getpass, "getuser", lambda: "alice")
     monkeypatch.setattr(facts.os, "getloadavg", lambda: (1.5, 1, 1))
     monkeypatch.setattr(facts.os, "cpu_count", lambda: None)
+    monkeypatch.setattr(facts.doctor, "tool_configured", lambda a, home: a.tool == "claude-code")
     run = Run({"--version": (0, "2.1.3 (Claude Code)\nmore\n")})
     m = facts.machine([adapter("claude-code"), adapter("opencode")], run)
     assert m["os_user"] == "alice" and m["tmux"] is True and m["load"] == 1.5
     assert m["cpus"] == 1 and m["version"] == kaptyorka.__version__
     assert m["tools"] == {"claude-code": "2.1.3 (Claude Code)", "opencode": ""}
-    assert m["hooks_ok"] == {"claude-code": True, "opencode": True}
+    assert m["hooks_ok"] == {"claude-code": True, "opencode": False}
     assert run.calls[0][0] == ["/bin/claude", "--version"] and run.calls[0][1]["timeout"] == 5
 
 

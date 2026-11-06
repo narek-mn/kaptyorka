@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from kaptyorka import paths
+from kaptyorka import doctor, paths
 from kaptyorka.adapters.base import write_atomic
 
 GIT_TTL_S = 30
@@ -76,7 +76,7 @@ def machine(adapters: list, run=subprocess.run, platform: str = sys.platform) ->
     except OSError:
         load = 0.0
     installed = [a for a in adapters if a.installed()]
-    hooks_ok = {a.tool: True for a in installed}  # Task 8 replaces this with doctor.tool_configured
+    hooks_ok = {a.tool: doctor.tool_configured(a, Path.home()) for a in installed}
     return {"os_user": getpass.getuser(), "tmux": shutil.which("tmux") is not None,
             "load": load, "cpus": os.cpu_count() or 1,
             "tools": {a.tool: _tool_version(a.tool, run) for a in installed},

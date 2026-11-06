@@ -45,7 +45,7 @@ def test_subcommands_listed(capsys):
     out = capsys.readouterr().out
     listed = out.split("positional arguments:")[1].split("options:")[0]
     names = [l.split()[0] for l in listed.splitlines()[2:] if l.startswith("    ") and l[4] != " "]
-    assert names == ["start", "join", "leave", "stop", "update", "remove"]
+    assert names == ["start", "join", "leave", "stop", "update", "remove", "doctor"]
 
 
 def test_config_roundtrip_is_private(home):
@@ -204,5 +204,16 @@ def test_cli_machine_owner(monkeypatch, home, capsys):
 def test_metavar_lists_user_commands(capsys):
     with pytest.raises(SystemExit):
         entry_with(["--help"])
-    assert ("{start,join,leave,stop,update,remove,invite,people,project,grant,revoke,machine,who}"
+    assert ("{start,join,leave,stop,update,remove,invite,people,project,grant,revoke,machine,who,doctor}"
             in capsys.readouterr().out)
+
+
+def test_doctor_prints_one_line_per_check(monkeypatch, home, capsys):
+    from kaptyorka import doctor
+
+    seen = []
+    monkeypatch.setattr(doctor, "checks", lambda *a, **k: [doctor.Check("config", True),
+                                                          doctor.Check("tmux", False, "not installed", "brew install tmux")])
+    monkeypatch.setattr("kaptyorka.adapters.all_adapters", lambda log=print: seen.append(1) or [])
+    assert entry_with_exit(["doctor"]) == 1
+    assert capsys.readouterr().out == "ok   config\nFAIL tmux: not installed -> brew install tmux\n"

@@ -372,11 +372,17 @@ def _join(args) -> int:
     return join.main(args.hub, args.token, args.name, only=args.only)
 
 
+def _doctor(args) -> int:
+    from kaptyorka import doctor
+
+    return doctor.run(paths.load_config(), fix=args.fix)
+
+
 def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove,invite,people,"
-                            "project,grant,revoke,machine,who}")
+                            "project,grant,revoke,machine,who,doctor}")
     hide = argparse.SUPPRESS  # subparsers are hidden by giving them no help text
     s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
     s.add_argument("--port", type=int, help="hub port (default 8765)")
@@ -423,6 +429,9 @@ def entry() -> None:
     mo.add_argument("person")
     mo.set_defaults(run=_machine_owner)
     sub.add_parser("who").set_defaults(run=_who)
+    d = sub.add_parser("doctor", help="check this machine's setup; --fix repairs what it can")
+    d.add_argument("--fix", action="store_true", help="re-wire failing tools and restart a stopped bridge")
+    d.set_defaults(run=_doctor)
     m = sub.add_parser("mcp")
     m.add_argument("--workspace")
     m.set_defaults(run=_mcp)
