@@ -133,6 +133,15 @@ def _one_line(text: str) -> str:
     return " ".join(text.split())
 
 
+MAX_IDENT = 100  # machine, tool and project: they go into session names and push texts
+MAX_ACTIVITY = 200
+
+
+def clean(value, cap: int) -> str:
+    """A client-supplied name or text as the hub keeps it: one line, at most `cap` characters."""
+    return _one_line(str(value if value is not None else ""))[:cap]
+
+
 def private_name(name: str, machine: str, tool: str, project: str) -> str:
     """The session name with its project hidden: machine/tool/(private), keeping a -N suffix."""
     base = f"{machine}/{tool}/{project}"
@@ -293,6 +302,7 @@ class Store:
         shared token (the legacy device) maps a machine to a person through `legacy:<machine>`
         in settings, and to the device's own person otherwise."""
         digest = hashlib.sha256(token.encode()).hexdigest()
+        machine = clean(machine, MAX_IDENT) or None
         used, confirmed = False, False
         with self.lock:
             dev = self.db.execute("SELECT * FROM devices WHERE token_hash=? AND revoked_at IS NULL",
@@ -826,6 +836,7 @@ class Store:
         gets one, judged by what it reported for its new device; "" otherwise."""
         if principal is None or not principal.legacy:
             return ""
+        machine = clean(machine, MAX_IDENT)
         with self.lock:
             dev = self._assigned_device(machine, principal.person_id)
             return dev["version"] if dev is not None else ""
@@ -834,6 +845,7 @@ class Store:
         """The bridge saved its new token and confirms with it. Authenticating that token has
         already forgotten the raw values (see _rekey_done); this checks the caller is that
         machine's new device. False when it is not."""
+        machine = clean(machine, MAX_IDENT)
         with self.lock:
             dev = self._assigned_device(machine, principal.person_id)
             if principal.legacy or dev is None or dev["id"] != principal.device_id:
@@ -942,6 +954,7 @@ class Store:
 
     def seen(self, key: str, machine: str, tool: str, project: str,
              principal: Optional[Principal] = None) -> Agent:
+        machine, tool, project = (clean(v, MAX_IDENT) for v in (machine, tool, project))
         with self.lock:
             now = self.clock()
             if principal is not None:
@@ -969,6 +982,13 @@ class Store:
         on this machine are gone, so their names are free at once. `facts` (host, os_user,
         version) say which computer the sessions run on; an older bridge sends none."""
         facts = facts or {}
+        machine = clean(machine, MAX_IDENT)
+        sessions = [{**s, "tool": clean(s["tool"], MAX_IDENT),
+                     "project": clean(s["project"], MAX_IDENT),
+                     "label": clean(s.get("label"), MAX_LABEL),
+                     "activity": (None if s.get("activity") is None
+                                  else clean(s["activity"], MAX_ACTIVITY))}
+                    for s in sessions]
         host = str(facts.get("host") or "")[:80]
         os_user = str(facts.get("os_user") or "")[:80]
         version = str(facts.get("version") or "")[:40]
@@ -989,8 +1009,8 @@ class Store:
                 if principal is not None and held is not None \
                         and held["person_id"] not in (None, principal.person_id):
                     continue  # another person's session: a bridge speaks only for its own
-                self._touch(s["key"], machine, s["tool"], s["project"], now, s.get("activity"),
-                            str(s.get("label") or "")[:MAX_LABEL])
+                self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],
+                            s["label"])
                 if host:
                     self.db.execute("UPDATE agents SET host=?, os_user=? WHERE key=?",
                                     (host, os_user, s["key"]))
@@ -1027,7 +1047,8 @@ class Store:
 
     def set_status(self, key: str, text: str) -> None:
         with self.lock:
-            self.db.execute("UPDATE agents SET status=? WHERE key=?", (text, key))
+            self.db.execute("UPDATE agents SET status=? WHERE key=?",
+                            (clean(text, MAX_ACTIVITY), key))
 
     # messages
 
@@ -1219,6 +1240,7 @@ class Store:
         0.2 or later (0.1.9 reads every item as a message and would crash), then messages.
         With `principal`, only what is the caller's: messages to its own sessions (see _owns),
         and a rekey only for the shared token speaking for the machine's assigned person."""
+        machine = clean(machine, MAX_IDENT)
         with self.lock:
             now = self.clock()
             out = []
@@ -1327,11 +1349,13 @@ class Store:
     def _file_visible(self, file_id: int, principal: Principal) -> bool:
         if principal.is_admin():
             return True
-        pid = principal.person_id
+        pid, web = principal.person_id, f"web:{principal.person_name}"
+        # a party on the page (web:<person>) counts as that person
         return self.db.execute(
             "SELECT 1 FROM messages m LEFT JOIN agents s ON s.key=m.sender_key"
             " LEFT JOIN agents r ON r.key=m.to_key WHERE m.file_id=?"
-            " AND (s.person_id=? OR r.person_id=?) LIMIT 1", (file_id, pid, pid)).fetchone() is not None
+            " AND (s.person_id=? OR r.person_id=? OR m.sender_key=? OR m.to_key=?) LIMIT 1",
+            (file_id, pid, pid, web, web)).fetchone() is not None
 
     def file_visible(self, file_id: int, principal: Principal) -> bool:
         with self.lock:

@@ -118,11 +118,12 @@ def _upload(cfg: dict, headers: dict, args: dict) -> Optional[str]:
     return None
 
 
-def _download(cfg: dict, headers: dict, info: dict) -> dict:
-    """Save the file the hub described to the inbox folder; return {path, name, size}."""
+def _download(cfg: dict, headers: dict, info: dict) -> "dict | str":
+    """Save the file the hub described to the inbox folder; return {path, name, size}, or the
+    hub's answer as an error text when it refused."""
     status, body, _ = http.request_raw("GET", cfg["hub"] + info["url"], cfg["token"], None, headers)
     if status // 100 != 2:
-        raise http.HubUnreachable(cfg["hub"] + info["url"])
+        return body.decode("utf-8", "replace").strip() or f"download failed ({status})"
     dest = paths.inbox_dir() / f"{info['id']}-{os.path.basename(info['name'])}"
     dest.write_bytes(body)
     return {"path": str(dest), "name": info["name"], "size": info["size"]}
@@ -189,6 +190,8 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 if params.name == "fetch_file" and r is not None and not r.is_error:
                     out = await anyio.to_thread.run_sync(
                         _download, cfg, use.headers, r.structured_content["result"])
+                    if isinstance(out, str):
+                        return _error(out)
                     return types.CallToolResult(content=[types.TextContent(text=json.dumps(out))],
                                                 structured_content={"result": out})
             except MCPError as e:

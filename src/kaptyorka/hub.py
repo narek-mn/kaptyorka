@@ -20,10 +20,9 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
-from kaptyorka.store import MAX_FILE, Agent, KaptyorkaError, Principal, Store
+from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, clean
 
 MAX_WAIT_S = 25
-MAX_IDENT = 100
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
        "style-src 'unsafe-inline'; img-src 'self' data:")
 
@@ -123,7 +122,7 @@ def build_app(store: Store) -> Starlette:
     def identify(h, principal: "Principal | None" = None) -> Agent:
         # values are percent-encoded by Identity.headers(), since headers must be ASCII
         ident = [unquote(h.get(f"x-kaptyorka-{k}") or "") for k in ("key", "machine", "tool", "project")]
-        ident[1:] = [v[:MAX_IDENT] for v in ident[1:]]  # they go into session names and push texts
+        ident[1:] = [clean(v, MAX_IDENT) for v in ident[1:]]  # one line: names and push texts
         if not all(ident):
             raise KaptyorkaError("no kaptyorka identity; run kaptyorka join")
         return store.seen(*ident, principal=principal or principal_of(h))
@@ -379,7 +378,8 @@ def build_app(store: Store) -> Starlette:
         safe = re.sub(r"[^A-Za-z0-9._-]", "", info["name"].replace("\\", "/").rsplit("/", 1)[-1])
         return Response(data, media_type=mimetypes.guess_type(info["name"])[0]
                         or "application/octet-stream",
-                        headers={"Content-Disposition": f'attachment; filename="{safe or "file"}"'})
+                        headers={"Content-Disposition": f'attachment; filename="{safe or "file"}"',
+                                 "X-Content-Type-Options": "nosniff"})
 
     @server.custom_route("/api/send", methods=["POST"])
     @_bad_request

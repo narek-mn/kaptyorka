@@ -16,8 +16,14 @@ class RateLimiter:
         self.limit, self.window_s, self.clock = limit, window_s, clock
         self.failures: Dict[Hashable, List[float]] = {}
 
+    def _prune(self, now: float) -> None:
+        """Forget keys whose window has fully passed, so made-up tokens cannot grow the map."""
+        for k in [k for k, ts in self.failures.items() if not ts or now - ts[-1] >= self.window_s]:
+            del self.failures[k]
+
     def _recent(self, addr: Hashable) -> List[float]:
         now = self.clock()
+        self._prune(now)
         recent = [t for t in self.failures.get(addr, []) if now - t < self.window_s]
         if recent:
             self.failures[addr] = recent
