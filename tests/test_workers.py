@@ -233,7 +233,7 @@ def test_create_names_and_signs(store, ws, alice_p, dev, boss, clock):
     w = launch(ws, alice_p, dev, boss)
     assert w["name"] == "proj-a-w1" and w["state"] == "starting"
     assert w["boss"] == "box-1/claude-code/proj-a" and w["worktree"] is False
-    assert w["attach"] == "claude attach proj-a-w1"
+    assert w["attach"] == "claude attach proj-a-w1" and w["person"] == "alice"
     [item] = ws.offer(dev)
     assert item["launch"] is True and item["worker"] == "proj-a-w1"
     order = {k: v for k, v in item.items() if k != "launch"}

@@ -251,7 +251,8 @@ class WorkerStore:
                 "host": row["host"], "os_user": os_user, "tool": row["tool"],
                 "folder": row["folder"], "worktree": bool(row["worktree"]),
                 "state": row["state"], "error": row["error"],
-                "boss": boss["name"] if boss else row["boss_key"], "key": row["key"],
+                "boss": boss["name"] if boss else row["boss_key"],
+                "person": self._person_name(row["boss_person"]), "key": row["key"],
                 "attach": attach}
 
     def _row(self, name):

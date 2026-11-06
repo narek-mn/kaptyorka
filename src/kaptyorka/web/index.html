@@ -263,6 +263,62 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 .log-kind { color: var(--blue); white-space: nowrap; }
 .log-time { color: var(--dim); white-space: nowrap; }
 
+/* machines */
+#warn-banner {
+  flex: none; display: flex; align-items: flex-start; gap: 10px; padding: 7px 24px;
+  background: rgba(245, 183, 61, .08); border-bottom: 1px solid rgba(245, 183, 61, .32); font-size: 13px;
+}
+#warn-banner > svg { color: var(--amber); margin-top: 2px; }
+#warn-banner ul { flex: 1; min-width: 0; margin: 0; padding: 0; list-style: none; }
+#warn-banner li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#warn-banner .more { margin: 0; flex: none; }
+.warn-list { margin: 0; padding: 0; list-style: none; }
+.warn-list li { display: flex; gap: 10px; align-items: baseline; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+.warn-list li:last-child { border-bottom: 0; }
+.warn-list svg { color: var(--amber); align-self: center; }
+.warn-list small { margin-left: auto; color: var(--faint); font-size: 12px; white-space: nowrap; }
+.state { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 12px; border: 1px solid var(--line-strong); color: var(--dim); white-space: nowrap; }
+.state.starting { color: var(--blue); border-color: rgba(110, 159, 255, .4); background: rgba(110, 159, 255, .1); }
+.state.up { color: var(--green); border-color: rgba(115, 191, 105, .4); background: rgba(115, 191, 105, .1); }
+.state.unattended { color: var(--amber); border-color: rgba(245, 183, 61, .4); background: rgba(245, 183, 61, .1); }
+.state.abandoned { color: var(--red); border-color: rgba(242, 73, 92, .4); background: rgba(242, 73, 92, .08); }
+.state.failed { color: var(--red); border-color: rgba(242, 73, 92, .55); background: rgba(242, 73, 92, .16); }
+.state.closed { color: var(--faint); }
+.attach { display: flex; align-items: center; gap: 4px; }
+.attach code {
+  padding: 3px 7px; border: 1px solid var(--line); border-radius: 3px; background: var(--canvas);
+  font: 12px var(--mono); color: var(--text); white-space: nowrap; user-select: all;
+}
+.attach .btn { padding: 0 7px; }
+.task { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.werr { color: var(--red); font-size: 12px; }
+td.c-act .btn + .btn { margin-left: 6px; }
+.acct { display: flex; align-items: center; gap: 9px; }
+.acct small { display: block; color: var(--faint); font-size: 12px; }
+.dot.on { border-color: var(--green); background: var(--green); }
+.tag.warn { color: var(--amber); border-color: rgba(245, 183, 61, .4); }
+.tag.busy { color: var(--green); border-color: rgba(115, 191, 105, .4); padding: 0 6px; }
+.folder { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.folder small { color: var(--faint); font: 12px var(--mono); }
+#hosts { display: flex; flex-direction: column; gap: 14px; }
+#hosts table { table-layout: fixed; }
+#hosts th:nth-child(1) { width: 15%; }
+#hosts th:nth-child(2) { width: 8%; }
+#hosts th:nth-child(3) { width: 10%; }
+#hosts th:nth-child(4) { width: 6%; }
+#hosts th:nth-child(5) { width: 27%; }
+#hosts th:nth-child(7) { width: 9%; }
+.switch {
+  position: relative; width: 30px; height: 16px; border-radius: 8px; flex: none;
+  background: var(--raised); border: 1px solid var(--line-strong);
+}
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--dim); transition: transform .15s;
+}
+.switch[aria-checked="true"] { background: rgba(115, 191, 105, .25); border-color: var(--green); }
+.switch[aria-checked="true"]::after { transform: translateX(14px); background: var(--green); }
+
 @media (max-width: 720px) {
   header { gap: 10px; padding: 0 16px; }
   .brand span { display: none; }
@@ -305,6 +361,25 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   .notes { grid-template-columns: minmax(0, 1fr); }
   .notes.reading .topics, .notes:not(.reading) .doc { display: none; }
   .back { display: inline-flex; }
+  #warn-banner { padding: 7px 16px; }
+  /* Machines: each row a card */
+  #machines .admin table, #machines table.stack { min-width: 0; }
+  .stack thead { display: none; }
+  .stack, .stack tbody, .stack tr, .stack td { display: block; }
+  .stack tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 6px 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .stack tbody tr:last-child { border-bottom: 0; }
+  .stack td { padding: 0; border: 0; min-width: 0; }
+  .stack td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--faint); }
+  .stack td.empty-row { grid-column: 1 / -1; }
+  #hosts table { table-layout: auto; }
+  .w-name, .h-acct { grid-column: 1 / 4; }
+  .w-state, .h-auto { grid-column: 4; grid-row: 1; justify-self: end; }
+  .w-boss, .w-attach, .h-wide { grid-column: 1 / -1; }
+  .stack td.c-act { grid-column: 1 / -1; text-align: left; }
+  .stack td.c-act:empty, .w-attach:empty { display: none; }
+  .task { max-width: none; }
+  .attach code { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .folder { flex-wrap: wrap; white-space: normal; }
 }
 @media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; } }
 </style>
@@ -336,6 +411,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3.2-3.2a4.5 4.5 0 0 0-6.4-6.4L12 5.6"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3.2 3.2a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2"/></symbol>
   <symbol id="i-clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 22 20H2z"/><path d="M12 10v4.5M12 17.5v.01"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></symbol>
 </svg>
 
@@ -343,12 +419,14 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   <form id="unlock"><input id="unlock-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your token" aria-label="Token"><button class="btn primary" type="submit">Open</button></form></div>
 
 <div id="app" hidden>
+  <div id="warn-banner" role="alert" hidden></div>
   <header>
     <div class="brand"><svg width="22" height="22"><use href="#i-cube"/></svg><span>kaptyorka</span></div>
     <nav role="tablist">
       <button class="tab" role="tab" data-view="team" title="Team"><svg width="18" height="18"><use href="#i-team"/></svg><span class="label">Team</span><span class="count" id="n-team">0</span></button>
       <button class="tab" role="tab" data-view="messages" title="Messages"><svg width="18" height="18"><use href="#i-msg"/></svg><span class="label">Messages</span><span class="count" id="n-messages">0</span></button>
       <button class="tab" role="tab" data-view="notes" title="Notes"><svg width="18" height="18"><use href="#i-note"/></svg><span class="label">Notes</span><span class="count" id="n-notes">0</span></button>
+      <button class="tab" role="tab" data-view="machines" title="Machines"><svg width="18" height="18"><use href="#i-machine"/></svg><span class="label">Machines</span><span class="count" id="n-machines">0</span></button>
       <span class="sep admin-only" hidden></span>
       <button class="tab admin-only" role="tab" data-view="people" title="People" hidden><svg width="18" height="18"><use href="#i-people"/></svg><span class="label">People</span><span class="count" id="n-people">0</span></button>
       <button class="tab admin-only" role="tab" data-view="access" title="Access" hidden><svg width="18" height="18"><use href="#i-shield"/></svg><span class="label">Access</span><span class="count" id="n-access" hidden>0</span></button>
@@ -405,6 +483,23 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
         </div>
         <div class="panel doc" id="doc"></div>
       </div>
+    </section>
+    <section id="machines" role="tabpanel" class="admin" hidden>
+      <div class="err" id="fleet-err" hidden></div>
+      <div class="panel">
+        <div class="phead">Workers</div>
+        <div class="err" id="worker-err" hidden></div>
+        <table class="stack">
+          <thead><tr><th>Worker</th><th>Project</th><th>Machine</th><th>State</th><th>Boss</th><th>Attach</th><th></th></tr></thead>
+          <tbody id="worker-rows"></tbody>
+        </table>
+      </div>
+      <div class="panel" id="warn-panel" hidden>
+        <div class="phead">Warnings</div>
+        <ul class="warn-list" id="warn-rows"></ul>
+      </div>
+      <div class="err" id="device-err" hidden></div>
+      <div id="hosts"></div>
     </section>
     <section id="people" role="tabpanel" class="admin" hidden>
       <div class="panel">
@@ -485,11 +580,12 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 (function () {
   "use strict";
   var KEY = "kaptyorka.token";
-  var VIEWS = ["team", "messages", "notes"], ADMIN_VIEWS = ["people", "access", "audit"];
+  var VIEWS = ["team", "messages", "notes", "machines"], ADMIN_VIEWS = ["people", "access", "audit"];
   var token = null, view = "team", filter = { machine: null, project: null };
   var feed = null, seen = {}, timer = null, expanded = {}, me = null, myProjects = [];
   var note = { key: null, project: null, topic: null, mode: "read", version: 0, history: false };
   var logPerson = "", logRows = null;
+  var fleet = { machines: [], workers: [], warnings: [] }, fleetAt = 0;
 
   function store(fn) { try { return fn(window.localStorage); } catch (e) { return null; } }
 
@@ -598,6 +694,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
     VIEWS.concat(ADMIN_VIEWS).forEach(function (id) { $(id).hidden = id !== v; });
     history.replaceState(null, "", location.pathname + (v === "team" ? "" : "#view=" + v));
     if (v === "messages") { markClipped(); toBottom(); }
+    if (v === "machines") loadFleet(true);
   }
 
   /* where a name lives: from the online list, else from the name itself */
@@ -1144,6 +1241,152 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
       .catch(function (e) { $("log-err").hidden = false; $("log-err").textContent = e.message; });
   }
 
+  /* Machines: workers, warnings (admin), one card per host; fetched apart from the feed,
+     every poll while the tab is open, else every 10 s for the admin's banner */
+  var STATES = ["starting", "up", "unattended", "abandoned", "failed", "closed"];
+  var LIVE = { starting: 1, up: 1 };
+  function loadFleet(force) {
+    if (!me || (!force && view !== "machines" && Date.now() - fleetAt < 10000)) return;
+    fleetAt = Date.now();
+    Promise.all([get("/api/machines"), get("/api/workers"), isAdmin() ? get("/api/warnings") : []])
+      .then(function (r) {
+        fleet = { machines: r[0], workers: r[1], warnings: r[2] };
+        $("fleet-err").hidden = true;
+        renderFleet();
+      })
+      .catch(function (e) { $("fleet-err").hidden = false; $("fleet-err").textContent = e.message; });
+  }
+  /* w.person: whose worker it is; the hub lists only a member's own workers */
+  function ownWorker(w) { return w.person === me.person; }
+  function copyCode(code, b) {
+    var t = code.textContent;
+    function ok() { b.title = "Copied"; b.classList.add("ok"); setTimeout(function () { b.classList.remove("ok"); b.title = "Copy"; }, 1500); }
+    if (navigator.clipboard) navigator.clipboard.writeText(t).then(ok, function () {});
+    else { var r = document.createRange(); r.selectNodeContents(code); getSelection().removeAllRanges(); getSelection().addRange(r); document.execCommand("copy"); ok(); }
+  }
+  function bossEl(boss) {
+    if (boss.indexOf("web:") === 0) return el("span", { "class": "route" }, [el("span", { "class": "person", title: "This page" }, [icon("i-person", 13), boss.slice(4)])]);
+    return el("span", { title: boss, text: labelOf(boss) || boss });
+  }
+  function renderWorkers() {
+    var body = $("worker-rows");
+    body.textContent = "";
+    var ws = fleet.workers.filter(function (w) { return !/^(closed|failed)$/.test(w.state); })
+      .concat(fleet.workers.filter(function (w) { return /^(closed|failed)$/.test(w.state); }));
+    ws.forEach(function (w) {
+      var own = ownWorker(w), acts = [];
+      if (own && (w.state === "unattended" || w.state === "abandoned")) {
+        acts.push(button("Adopt", "primary", function () {
+          quiet(act("worker-err", "/api/workers/" + encodeURIComponent(w.name) + "/adopt"));
+        }, { title: "Become its boss on this page" }));
+      }
+      if ((own || isAdmin()) && !/^(closed|failed)$/.test(w.state)) {
+        acts.push(button("Close", "danger", function () {
+          if (confirm("Close worker " + w.name + "? Its session stops.")) {
+            quiet(act("worker-err", "/api/workers/" + encodeURIComponent(w.name) + "/close"));
+          }
+        }));
+      }
+      var code = el("code", { text: w.attach });
+      var copy = button([icon("i-copy", 13)], "", function () { copyCode(code, copy); }, { title: "Copy" });
+      body.appendChild(el("tr", null, [
+        el("td", { "class": "w-name" }, [el("b", { text: w.name }),
+                        el("div", { "class": "hint task", title: w.task, text: w.task }),
+                        w.error ? el("div", { "class": "werr", text: w.error }) : null]),
+        el("td", { "class": "c-plain w-proj", "data-label": "Project", text: w.project }),
+        el("td", { "class": "c-plain w-mach", "data-label": "Machine", title: w.folder + (w.worktree ? " (worktree)" : "") },
+           [w.host, el("div", { "class": "hint", text: w.os_user + " · " + w.tool })]),
+        el("td", { "class": "w-state" }, [el("span", { "class": "state " + w.state, text: w.state })]),
+        el("td", { "class": "c-plain w-boss", "data-label": "Boss" }, [bossEl(w.boss || ""), el("div", { "class": "hint", text: w.person })]),
+        el("td", { "class": "w-attach" }, [w.state === "closed" || w.state === "failed" ? null : el("div", { "class": "attach" }, [code, copy])]),
+        el("td", { "class": "c-act" }, acts)
+      ]));
+    });
+    if (!ws.length) body.appendChild(el("tr", null, [el("td", { colspan: "7", "class": "empty-row", text: "No workers" })]));
+  }
+  function renderWarnings() {
+    var all = isAdmin() ? fleet.warnings : [], ban = $("warn-banner");
+    ban.textContent = "";
+    ban.hidden = !all.length;
+    if (all.length) {
+      ban.appendChild(icon("i-warn", 15));
+      ban.appendChild(el("ul", null, all.slice(0, 3).map(function (w) { return el("li", { title: w.text, text: w.text }); })));
+      if (all.length > 3) ban.appendChild(button("+" + (all.length - 3) + " more", "", function () {
+        show("machines"); $("warn-panel").scrollIntoView({ block: "start" });
+      }));
+    }
+    $("warn-panel").hidden = !all.length;
+    var list = $("warn-rows");
+    list.textContent = "";
+    all.forEach(function (w) {
+      list.appendChild(el("li", null, [icon("i-warn", 14), el("span", { text: w.text }), el("small", { text: w.person })]));
+    });
+  }
+  function renderHosts() {
+    var box = $("hosts"), admin = isAdmin();
+    box.textContent = "";
+    fleet.machines.forEach(function (m) {
+      var head = ["Account", "Version", "Load", "tmux", "Tools", "Folders"].concat(admin ? ["Auto-update"] : []);
+      var tb = el("tbody");
+      m.devices.forEach(function (d) {
+        var f = d.facts || {}, tools = f.tools || {}, hooks = f.hooks_ok || {};
+        var toolTags = el("div", { "class": "cell-tags" }, Object.keys(tools).sort().map(function (t) {
+          var bad = hooks[t] === false;
+          return el("span", { "class": "tag" + (bad ? " warn" : ""), title: bad ? "kaptyorka hooks missing" : null },
+                    [t, el("small", { text: tools[t] || "" })]);
+        }));
+        var folders = el("div", { "class": "cell-list" }, Object.keys(d.folders || {}).sort().map(function (p) {
+          var path = d.folders[p];
+          var busy = fleet.workers.some(function (w) {
+            return LIVE[w.state] && !w.worktree && w.host === m.host && w.os_user === d.os_user && w.folder === path;
+          });
+          return el("div", { "class": "folder" }, [el("span", { text: p }), el("small", { text: path }),
+                    busy ? el("span", { "class": "tag busy", title: "A worker is in this folder" }, ["busy"]) : null]);
+        }));
+        var row = [
+          el("td", { "class": "h-acct" }, [el("div", { "class": "acct" }, [
+            el("i", { "class": "dot" + (d.online ? " on" : ""), title: d.online ? "Bridge online" : "Bridge offline" }),
+            el("div", null, [el("b", { text: d.person }),
+              el("small", { title: d.last_used ? full(d.last_used) : null,
+                            text: d.os_user + (d.online ? "" : d.last_used ? " · seen " + ago(Date.now() / 1000 - d.last_used) : " · never seen") })])])]),
+          el("td", { "class": "c-plain", "data-label": "Version", text: f.version || d.version || "—" }),
+          el("td", { "class": "c-plain", "data-label": "Load", text: f.load != null && f.cpus ? (+f.load).toFixed(1) + " / " + f.cpus + " cpus" : "—" }),
+          el("td", { "class": "c-plain", "data-label": "tmux", text: f.tmux === true ? "yes" : f.tmux === false ? "no" : "—" }),
+          el("td", { "class": "h-wide", "data-label": "Tools" }, [toolTags]),
+          el("td", { "class": "h-wide", "data-label": "Folders" }, [folders])
+        ];
+        if (admin) {
+          var sw = el("button", { "class": "switch", type: "button", role: "switch", "aria-checked": d.auto_update ? "true" : "false",
+                                  title: "Update kaptyorka on its own when the hub is newer", "aria-label": "Auto-update " + d.person + " on " + m.host });
+          sw.addEventListener("click", function () {
+            quiet(act("device-err", "/api/devices/" + d.id + "/auto_update", { on: !d.auto_update }));
+          });
+          row.push(el("td", { "class": "h-auto" }, [sw]));
+        }
+        tb.appendChild(el("tr", null, row));
+      });
+      if (!m.devices.length) tb.appendChild(el("tr", null, [el("td", { colspan: String(head.length), "class": "empty-row", text: "No accounts" })]));
+      box.appendChild(el("div", { "class": "panel" }, [
+        el("div", { "class": "phead" }, [icon("i-machine", 15), m.host,
+          m.owner ? el("span", { "class": "note" }, [m.owner]) : null,
+          el("span", { "class": "note", style: "margin-left:auto;padding-right:6px", text: m.online + " online" })]),
+        el("table", { "class": "stack" }, [el("thead", null, [el("tr", null, head.map(function (h) { return el("th", { text: h }); }))]), tb])
+      ]));
+    });
+    if (!fleet.machines.length) box.appendChild(el("div", { "class": "panel" }, [el("div", { "class": "empty-row", text: "No machines yet" })]));
+  }
+  function renderFleet() {
+    $("n-machines").textContent = fleet.machines.length;
+    if (changed("warnings", fleet.warnings)) renderWarnings();
+    /* not while someone selects an attach line */
+    var sel = getSelection();
+    if (sel && !sel.isCollapsed && $("machines").contains(sel.anchorNode)) return;
+    if (changed("fleet", [fleet.machines, fleet.workers])) {
+      renderWorkers();
+      renderHosts();
+    }
+  }
+
   /* an admin panel is not redrawn while someone is choosing or typing in it */
   function busy(id) {
     var a = document.activeElement;
@@ -1200,6 +1443,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
         live(true);
         feed = JSON.parse(text);
         render();
+        loadFleet();
         clearTimeout(timer);
         timer = setTimeout(poll, 2000);
       })
