@@ -110,6 +110,7 @@ ADDED_COLUMNS = [
     ("devices", "version", "TEXT NOT NULL DEFAULT ''"),
     ("agents", "device_id", "INTEGER"),
     ("rekeys", "secret", "TEXT NOT NULL DEFAULT ''"),
+    ("agents", "cwd", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -135,6 +136,7 @@ def _one_line(text: str) -> str:
 
 MAX_IDENT = 100  # machine, tool and project: they go into session names and push texts
 MAX_ACTIVITY = 200
+MAX_CWD = 200
 
 
 def clean(value, cap: int) -> str:
@@ -238,6 +240,8 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        from kaptyorka import workers  # here: workers imports this module
+        workers.ensure_schema(self.db)
         self._migrate(legacy_token)
         self.sends: Dict[str, List[float]] = {}
 
@@ -979,14 +983,15 @@ class Store:
             name, n = f"{base}-{n}", n + 1
         return name
 
-    def _touch(self, key, machine, tool, project, now, activity=None, label=None):
+    def _touch(self, key, machine, tool, project, now, activity=None, label=None, cwd=None):
         row = self.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
         if row is None:
             name = self._free_name(key, machine, tool, project, now)
             self.db.execute(
                 "INSERT INTO agents (key, name, machine, tool, project, activity, last_seen, label,"
-                " started) VALUES (?,?,?,?,?,?,?,?,?)",
-                (key, name, machine, tool, project, activity or "", now, label or "", now))
+                " started, cwd) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (key, name, machine, tool, project, activity or "", now, label or "", now,
+                 cwd or ""))
             return
         name = row["name"]
         if now - row["last_seen"] >= ONLINE_S:  # was offline: its name may have been taken
@@ -998,6 +1003,8 @@ class Store:
                             (name, now, activity, key))
         if label is not None:
             self.db.execute("UPDATE agents SET label=? WHERE key=?", (label, key))
+        if cwd is not None:
+            self.db.execute("UPDATE agents SET cwd=? WHERE key=?", (cwd, key))
 
     def seen(self, key: str, machine: str, tool: str, project: str,
              principal: Optional[Principal] = None) -> Agent:
@@ -1035,6 +1042,7 @@ class Store:
         sessions = [{**s, "tool": clean(s["tool"], MAX_IDENT),
                      "project": clean(s["project"], MAX_IDENT),
                      "label": clean(s.get("label"), MAX_LABEL),
+                     "cwd": None if s.get("cwd") is None else clean(s["cwd"], MAX_CWD),
                      "activity": (None if s.get("activity") is None
                                   else clean(s["activity"], MAX_ACTIVITY))}
                     for s in sessions]
@@ -1057,7 +1065,7 @@ class Store:
                         and held["person_id"] not in (None, principal.person_id):
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],
-                            s["label"])
+                            s["label"], s["cwd"])
                 if host:
                     self.db.execute("UPDATE agents SET host=?, os_user=? WHERE key=?",
                                     (host, os_user, s["key"]))
