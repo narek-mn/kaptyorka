@@ -1,3 +1,5 @@
+import itertools
+
 import pytest
 
 from conftest import start_hub
@@ -423,8 +425,10 @@ def test_brief_mentions_pending(hub):
     h = {"X-Kaptyorka-Key": "k:a", "X-Kaptyorka-Machine": "pc", "X-Kaptyorka-Tool": "codex",
          "X-Kaptyorka-Project": "x"}
 
-    def brief():
+    def brief():  # each a new session, so the 10 s start brief cache never answers
+        h["X-Kaptyorka-Key"] = f"k:a{next(n)}"
         return http.request("GET", hub.url + "/api/brief?event=start", ta, headers=h)[1]
+    n = itertools.count()
     assert "Pending" not in brief() and "Denied" not in brief()
     run(call(ann, a_id, "request_access", kind="project", target="shop"))
     run(call(ann, a_id, "request_access", kind="machine", target="h-b"))

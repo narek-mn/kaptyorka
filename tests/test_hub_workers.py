@@ -7,6 +7,7 @@ import pytest
 import kaptyorka
 from conftest import start_hub
 from helpers import _client, call, call_error, person, run
+from kaptyorka import brief as brief_mod
 from kaptyorka import facts, http
 from kaptyorka.adapters.base import Session
 from kaptyorka.orders import signing_key, verify
@@ -279,7 +280,7 @@ def test_worker_brief_starts_with_task(hub, alice, clock):
     text = brief(hub, b.token, worker)
     assert text.startswith("You are kaptyorka worker `proj-a-w1` for `laptop/codex/proj-a`"
                            " (alice). Your task:\n\nfix the tests")
-    assert "Kaptyorka: you are `box-1/claude-code/proj-a`." in text
+    assert "You are `box-1/claude-code/proj-a`, alice, on box-1." in text
     clock[0] += 301  # an older session: a resumed one does not hear its task again
     assert not brief(hub, b.token, worker).startswith("You are kaptyorka worker")
 
@@ -287,7 +288,7 @@ def test_worker_brief_starts_with_task(hub, alice, clock):
 def test_worker_brief_without_needs_brief_has_no_task(hub, alice):
     b = start_worker(hub, alice)  # Claude Code: the task went on the command line
     text = brief(hub, b.token, ident("claude:w1", machine="box-1", tool="claude-code"))
-    assert text.startswith("Kaptyorka: you are `box-1/claude-code/proj-a`.")
+    assert text.startswith("You are `box-1/claude-code/proj-a`, alice, on box-1.")
     assert "fix the tests" not in text
 
 
@@ -335,6 +336,7 @@ def test_unattended_worker_in_brief_and_adopt(hub, alice, clock):
         "you are now the boss of `proj-a-w1`; 1 held messages delivered"
     msgs = run(call(client, new, "inbox"))
     assert [m["text"] for m in msgs] == ["done"]
+    clock[0] += brief_mod.CACHE_S  # past the start brief's cache
     assert "Unattended" not in brief(hub, client.token, new)
 
 

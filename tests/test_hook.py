@@ -16,12 +16,12 @@ def closed_port() -> int:
         return s.getsockname()[1]
 
 
-def test_hook_start_prints_brief(hub, home, monkeypatch, capsys):
+def test_hook_start_uses_the_new_brief(hub, home, monkeypatch, capsys):
     join(hub.url)
     monkeypatch.setattr(hook, "identify", lambda machine, workspace=None:
                         Identity("claude:1", machine, "claude-code", "proj-a"))
     assert hook.main("claude-code", "start") == 0
-    assert capsys.readouterr().out.startswith("Kaptyorka: you are `")
+    assert capsys.readouterr().out.startswith("You are `pc/claude-code/proj-a`")
 
 
 def test_hook_prompt_with_nothing_unread_prints_nothing(hub, home, monkeypatch, capsys):

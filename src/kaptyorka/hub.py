@@ -21,8 +21,9 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from kaptyorka import __version__
+from kaptyorka import __version__, brief
 from kaptyorka.auth import Auth, RateLimiter, bearer
+from kaptyorka.brief import message_text
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.memory import MemoryStore, check_state
@@ -31,7 +32,6 @@ from kaptyorka.workers import WorkerStore, safe_name
 
 MAX_WAIT_S = 25
 TICK_S = 15
-WORKER_BRIEF_S = 300  # a worker session this young hears its task in the start brief
 OWN_TOKEN = ("use your own device token: run kaptyorka join with an invite, or ask the admin to"
              " assign this machine")
 ON_SHARED = "a worker on a shared account cannot start, adopt or close workers; ask your boss"
@@ -66,10 +66,6 @@ INSTRUCTIONS = (
 )
 
 
-def _plural(n: int, word: str) -> str:
-    return f"{n} {word}" + ("" if n == 1 else "s")
-
-
 def _bad_request(fn):
     """Answer 400 instead of 500 when a client sends a malformed request."""
     @functools.wraps(fn)
@@ -79,30 +75,6 @@ def _bad_request(fn):
         except (ValueError, KeyError, TypeError):  # JSONDecodeError is a ValueError
             return PlainTextResponse("bad request", status_code=400)
     return wrapper
-
-
-def _wanted(r: dict) -> str:
-    return f"access to {r['target']} (project)" if r["kind"] == "project" \
-        else f"use of {r['target']} (machine)"
-
-
-def _request_lines(store: Store, principal) -> str:
-    """The start line's tail: the caller's pending and recently denied access requests."""
-    if principal is None:
-        return ""
-    out = ""
-    pending = store.pending_for(principal.person_id)
-    if pending:
-        out += f" Pending: {', '.join(_wanted(r) for r in pending)}."
-    denied = store.denied_since(principal.person_id, store.clock() - 7 * 86400)
-    if denied:
-        out += f" Denied: {', '.join(_wanted(r) for r in denied)}."
-    return out
-
-
-def _titled(a: Agent, name: str = "") -> str:
-    name = name or a.name
-    return f"{a.label} ({name})" if a.label else name
 
 
 def _tool_errors(fn):
@@ -129,6 +101,7 @@ def build_app(store: Store) -> Starlette:
     sent = {"event": asyncio.Event()}  # set and replaced after each send; wakes bridge polls
     ws = WorkerStore(store)
     ms = MemoryStore(store)
+    brief_cache: dict = {}  # per session key; see brief.cached
     decide_lock = threading.Lock()
 
     def principal_of(headers: Mapping) -> Principal:
@@ -553,48 +526,13 @@ def build_app(store: Store) -> Starlette:
             agent = identify(request.headers)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
-        unread = store.inbox(agent.key)
-        parts = [m.text if m.kind != "message" else
-                 f"Kaptyorka message from {m.sender}{' (web page)' if m.from_web else ''}:\n\n{m.text}"
-                 for m in unread]
-        if request.query_params.get("event") == "start":
-            principal = request.scope.get("state", {}).get("principal")
-            worker = ws.by_key(agent.key)
-            young = agent.started is not None and agent.started > store.clock() - WORKER_BRIEF_S
-            others = [a for a in store.online() if a.key != agent.key]
-            line = f"Kaptyorka: you are `{_titled(agent)}`. "
-            if others:
-                now, people = store.clock(), {p["id"]: p["name"] for p in store.people()}
-                # masked like who(): another person's private folder is not named
-                names = ", ".join(_titled(a, session_row(store, a, principal, people, now)["name"])
-                                  + (f" ({a.activity})" if a.activity else "") for a in others)
-                line += f"{_plural(len(others), 'other')} online: {names}. "
-            else:
-                line += "No one else online. "
-            line += f"{_plural(len(unread), 'unread message')}."
-            topics = [n["topic"] for n in store.notes_list()]
-            if topics:
-                line += f" Board topics: {', '.join(topics)}."
-            line += _request_lines(store, principal)
-            if principal is not None and principal.is_admin() and store.legacy_ready_to_disable():
-                line += (" All old machines have their own tokens;"
-                         " switch the shared token off on the page.")
-            if principal is not None:
-                waiting = ws.unattended_for(principal.person_id)
-                if waiting:
-                    line += (" Unattended workers: "
-                             + ", ".join(f"{w['name']} ({w['host']})" for w in waiting)
-                             + "; adopt(name) takes one over.")
-                if principal.is_admin():
-                    warned = ws.warnings(store.clock(), __version__)[:3]
-                    if warned:
-                        line += " Warnings: " + "; ".join(w["text"] for w in warned) + "."
-            parts.insert(0, line)
-            if worker is not None and young:  # some tools cannot take it on the command line
-                first = ws.first_message(worker["name"])
-                if first:
-                    parts.insert(0, first)
-        return PlainTextResponse("\n\n".join(parts))
+        if request.query_params.get("event") != "start":
+            return PlainTextResponse("\n\n".join(message_text(m) for m in store.inbox(agent.key)))
+        principal = request.scope.get("state", {}).get("principal")
+        return PlainTextResponse(brief.cached(
+            agent.key, lambda: brief.build(store, ws, ms, agent, principal),
+            unread=lambda: brief.unread_count(store, agent.key), now=store.clock(),
+            cache=brief_cache))
 
     @server.custom_route("/api/me", methods=["GET"])
     async def api_me(request: Request) -> Response:

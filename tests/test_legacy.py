@@ -232,7 +232,7 @@ def test_legacy_accepted_until_switched_off(app, store):
     assert http.request("GET", app.url + "/api/legacy", LEGACY)[0] == 401
     body = http.request("GET", app.url + "/api/legacy", app.admin)[1]
     assert (body["enabled"], body["ready_to_disable"]) == (False, False)
-    assert READY not in start_brief(app, app.admin)
+    assert READY not in start_brief(app, app.admin, "claude:9")  # a new session: no cached brief
     assert http.request("POST", app.url + "/api/legacy/on", app.admin, {})[0] == 204
     assert store.authenticate(LEGACY) is not None
     assert [r["detail"] for r in store.log() if r["kind"] == "legacy_toggle"] == ["on", "off"]

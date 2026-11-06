@@ -161,14 +161,14 @@ def test_brief_start_summary_exact(hub):
     run(call(hub, BOX2, "notes_write", topic="proj-a-api", text="v1"))
     hub_send(hub, BOX2, "pc/claude-code/proj-a", "ping")
     assert brief(hub, PC, "start") == (
-        "Kaptyorka: you are `pc/claude-code/proj-a`. 1 other online: box-2/claude-code/proj-b"
-        " (idle). 1 unread message. Board topics: proj-a-api.\n\n"
-        "Kaptyorka message from box-2/claude-code/proj-b:\n\nping")
+        f"You are `pc/claude-code/proj-a`, {ADMIN_NAME}, on pc. 1 other online:"
+        " box-2/claude-code/proj-b (idle). 1 unread message. Board topics: proj-a-api.\n\n"
+        "Unread messages:\n\nKaptyorka message from box-2/claude-code/proj-b:\n\nping")
 
 
 def test_brief_start_alone_plural_no_topics(hub):
     assert brief(hub, PC, "start") == \
-        "Kaptyorka: you are `pc/claude-code/proj-a`. No one else online. 0 unread messages."
+        f"You are `pc/claude-code/proj-a`, {ADMIN_NAME}, on pc. No one else online. 0 unread messages."
     box2_online(hub, activity="")
     heartbeat(hub, "box-1", [{"key": "oc:1", "tool": "opencode", "project": "nav",
                                "activity": "busy"}])
@@ -176,10 +176,10 @@ def test_brief_start_alone_plural_no_topics(hub):
     run(call(hub, PC, "notes_write", topic="b", text="2"))
     hub_send(hub, BOX2, "pc/claude-code/proj-a", "one")
     hub_send(hub, BOX2, "pc/claude-code/proj-a", "two")
-    assert brief(hub, PC, "start") == (
-        "Kaptyorka: you are `pc/claude-code/proj-a`. 2 others online: box-2/claude-code/proj-b,"
-        " box-1/opencode/nav (busy). 2 unread messages. Board topics: b, a.\n\n"
-        "Kaptyorka message from box-2/claude-code/proj-b:\n\none\n\n"
+    assert brief(hub, PC, "start") == (  # a new message breaks the 10 s cache
+        f"You are `pc/claude-code/proj-a`, {ADMIN_NAME}, on pc. 2 others online:"
+        " box-2/claude-code/proj-b, box-1/opencode/nav (busy). 2 unread messages."
+        " Board topics: b, a.\n\nUnread messages:\n\nKaptyorka message from box-2/claude-code/proj-b:\n\none\n\n"
         "Kaptyorka message from box-2/claude-code/proj-b:\n\ntwo")
 
 
