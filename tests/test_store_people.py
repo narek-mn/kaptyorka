@@ -179,6 +179,9 @@ def test_project_register_roles_and_log(tmp_path):
 
 
 def test_may_read_write_project(tmp_path):
+    import pytest
+    from kaptyorka.store import KaptyorkaError
+
     s = Store(tmp_path / "hub.db")
     ann, ta = _member(s, "ann")
     ben, tb = _member(s, "ben")
@@ -194,4 +197,8 @@ def test_may_read_write_project(tmp_path):
     assert s.may_read_project("lab", pa) and not s.may_write_project("lab", pa)
     s.grant_project("lab", ann, "manage", by="root")
     assert s.may_write_project("lab", pa)
+    s.seen("k:nobody", "pz", "codex", "lab")  # a session with no person
+    with pytest.raises(KaptyorkaError, match="no access to project lab"):
+        s.notes_write("k:nobody", "t", "x", project="lab")
+    s.notes_write("k:nobody", "t", "team")  # team notes stay open
     s.close()

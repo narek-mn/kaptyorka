@@ -778,6 +778,8 @@ class Store:
             row = self.db.execute("SELECT name, person_id FROM agents WHERE key=?", (key,)).fetchone()
             if row is None:
                 raise KaptyorkaError("unknown session")
+            if project is not None and row["person_id"] is None:  # nobody to check access for
+                raise KaptyorkaError(f"no access to project {project}; ask with request_access")
             if row["person_id"] is not None:
                 self._check_project(project, self._person_principal(row["person_id"]), write=True)
             self._note(topic, text, row["name"], project)

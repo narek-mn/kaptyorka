@@ -58,6 +58,13 @@ def _agent_row(a: Agent, now: float) -> dict:
             "last_seen_s": round(now - a.last_seen)}
 
 
+def _private_name(a: Agent) -> str:
+    """The session name with its project hidden: machine/tool/(private), keeping a -N suffix."""
+    base = f"{a.machine}/{a.tool}/{a.project}"
+    suffix = a.name[len(base):] if a.name.startswith(base) else ""
+    return f"{a.machine}/{a.tool}/(private){suffix}"
+
+
 def _titled(a: Agent) -> str:
     return f"{a.label} ({a.name})" if a.label else a.name
 
@@ -111,7 +118,7 @@ def build_app(store: Store) -> Starlette:
     @_tool_errors
     def who(ctx: Context) -> List[dict]:
         """Online sessions: name, label, person, machine, tool, project, status, activity, last
-        seen. A project you may not see shows as (private)."""
+        seen. A project you may not see shows as (private), in the name too."""
         agent, principal = caller(ctx)
         now = store.clock()
         names = {p["id"]: p["name"] for p in store.people()}
@@ -124,6 +131,7 @@ def build_app(store: Store) -> Starlette:
             # on your own rows only; a registered project shows to anyone with a role in it
             if not mine and store.project_role(a.project, principal.person_id) is None:
                 row["project"] = "(private)"
+                row["name"] = _private_name(a)
             rows.append(row)
         return rows
 

@@ -203,7 +203,7 @@ def test_who_hides_private_project(hub):
     ann, ben = as_person(hub, ta), as_person(hub, tb)
     run(call(ann, ident("k:a", "shop", "pa"), "who"))
     rows = rows_by_name(run(call(ben, ident("k:b", "lab", "pb"), "who")))
-    a, b = rows["pa/codex/shop"], rows["pb/codex/lab"]
+    a, b = rows["pa/codex/(private)"], rows["pb/codex/lab"]
     assert a["project"] == "(private)" and a["person"] == "ann" and not a["mine"]
     assert b["project"] == "lab" and b["person"] == "ben" and b["mine"] and b["you"]
     admin_rows = rows_by_name(run(call(hub, ident("k:x", "ops", "px"), "who")))
@@ -221,16 +221,19 @@ def test_same_folder_name_two_people_not_merged(hub):
     seen_by_ann = rows_by_name(run(call(ann, a_id, "who")))
     seen_by_ben = rows_by_name(run(call(ben, b_id, "who")))
     assert seen_by_ann["pa/codex/shop"]["project"] == "shop"
-    assert seen_by_ann["pb/codex/shop"]["project"] == "(private)"
+    assert seen_by_ann["pb/codex/(private)"]["project"] == "(private)"
     assert seen_by_ben["pb/codex/shop"]["project"] == "shop"
-    assert seen_by_ben["pa/codex/shop"]["project"] == "(private)"
+    assert seen_by_ben["pa/codex/(private)"]["project"] == "(private)"
+    admin_names = {r["name"] for r in run(call(hub, ident("k:x", "ops", "px"), "who"))}
+    assert {"pa/codex/shop", "pb/codex/shop"} <= admin_names
     assert http.request("POST", hub.url + "/api/projects", ADMIN, {"name": "shop"})[0] == 204
     for name in ("ann", "ben"):
         assert http.request("POST", hub.url + "/api/projects/shop/grant", ADMIN,
                             {"person": name, "role": "read"})[0] == 204
     for client, i in ((ann, a_id), (ben, b_id)):
-        rows = run(call(client, i, "who"))
+        rows = [r for r in run(call(client, i, "who")) if r["person"] in ("ann", "ben")]
         assert {r["project"] for r in rows} == {"shop"}
+        assert {r["name"] for r in rows} == {"pa/codex/shop", "pb/codex/shop"}
 
 
 def test_notes_project_scope_read_write(hub):
@@ -330,3 +333,21 @@ def test_unregistered_folder_notes_not_merged(hub):
     assert "no access to project shop" in call_error(ben, b_id, "notes_read", topic="t",
                                                      project="shop")
     assert "no access to project shop" in call_error(ben, b_id, "notes_list", project="shop")
+
+
+def test_who_masks_name_of_private_session(hub):
+    _, ta = person(hub.store, "ann")
+    _, tb = person(hub.store, "ben")
+    ann, ben = as_person(hub, ta), as_person(hub, tb)
+    a1, a2 = ident("k:a1", "shop", "pa"), ident("k:a2", "shop", "pa")
+    run(call(ann, a1, "who"))
+    run(call(ann, a2, "who"))  # second session, same folder: pa/codex/shop-2
+    rows = run(call(ben, ident("k:b", "lab", "pb"), "who"))
+    hidden = sorted(r["name"] for r in rows if r["person"] == "ann")
+    assert hidden == ["pa/codex/(private)", "pa/codex/(private)-2"]
+    assert all(r["project"] == "(private)" for r in rows if r["person"] == "ann")
+    assert not any("shop" in str(v) for r in rows for v in r.values())
+    admin = {r["name"] for r in run(call(hub, ident("k:x", "ops", "px"), "who"))}
+    assert {"pa/codex/shop", "pa/codex/shop-2"} <= admin
+    mine = {r["name"] for r in run(call(ann, a1, "who"))}
+    assert {"pa/codex/shop", "pa/codex/shop-2"} <= mine
