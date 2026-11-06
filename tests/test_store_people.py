@@ -114,10 +114,11 @@ def test_may_use_owner_admin_grant(tmp_path):
     s.heartbeat("m", [], principal=s.authenticate(to), facts=_facts("h1"))
     assert s.may_use("h1", o) and s.may_use("h1", root)
     assert not s.may_use("h1", other)
-    s.grant_machine("h1", friend)
+    s.grant_machine("h1", friend, "root")
     assert s.may_use("h1", friend)
-    s.revoke_machine("h1", friend)
+    s.revoke_machine("h1", friend, "root")
     assert not s.may_use("h1", friend)
-    details = [r["detail"] for r in s.db.execute("SELECT detail FROM log WHERE kind IN ('grant','revoke')")]
-    assert details == ["machine:h1 -> friend", "machine:h1 -> friend"]
+    rows = [(r["person"], r["detail"]) for r in
+            s.db.execute("SELECT person, detail FROM log WHERE kind IN ('grant','revoke')")]
+    assert rows == [("root", "machine:h1 -> friend")] * 2
     s.close()

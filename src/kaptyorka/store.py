@@ -404,7 +404,7 @@ class Store:
                 return True
             return self._granted(host, person_id)
 
-    def _grant_change(self, host: str, person_id: int, grant: bool) -> None:
+    def _grant_change(self, host: str, person_id: int, grant: bool, by: str) -> None:
         with self.lock:
             if self.db.execute("SELECT 1 FROM machines WHERE host=?", (host,)).fetchone() is None:
                 raise KaptyorkaError(f"no such machine: {host}")
@@ -417,13 +417,13 @@ class Store:
             else:
                 self.db.execute("DELETE FROM machine_access WHERE host=? AND person_id=?",
                                 (host, person_id))
-        self.log_add("system", "grant" if grant else "revoke", f"machine:{host} -> {who['name']}")
+        self.log_add(by, "grant" if grant else "revoke", f"machine:{host} -> {who['name']}")
 
-    def grant_machine(self, host: str, person_id: int) -> None:
-        self._grant_change(host, person_id, True)
+    def grant_machine(self, host: str, person_id: int, by: str) -> None:
+        self._grant_change(host, person_id, True, by)
 
-    def revoke_machine(self, host: str, person_id: int) -> None:
-        self._grant_change(host, person_id, False)
+    def revoke_machine(self, host: str, person_id: int, by: str) -> None:
+        self._grant_change(host, person_id, False, by)
 
     def device_set_shared(self, device_id: int, shared: bool) -> None:
         with self.lock:

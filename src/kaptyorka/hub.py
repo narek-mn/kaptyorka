@@ -335,7 +335,9 @@ def build_app(store: Store) -> Starlette:
             if person is None:
                 raise KaptyorkaError("no such person")
             host = request.path_params["host"]
-            (store.grant_machine if grant else store.revoke_machine)(host, person["id"])
+            principal = request.scope["state"]["principal"]
+            (store.grant_machine if grant else store.revoke_machine)(
+                host, person["id"], principal.person_name)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)

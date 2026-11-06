@@ -155,6 +155,8 @@ def test_machines_route_filtered(hub):
     assert http.request("POST", hub.url + "/api/machines/h-b/grant", ADMIN, {"person": "ann"})[0] == 204
     _, rows = http.request("GET", hub.url + "/api/machines", ta)
     assert sorted(r["host"] for r in rows) == ["h-a", "h-b"]
+    who = hub.store.db.execute("SELECT person FROM log WHERE kind='grant'").fetchone()["person"]
+    assert who == hub.store.authenticate(ADMIN).person_name
     assert http.request("POST", hub.url + "/api/machines/h-b/revoke", ADMIN, {"person": "ann"})[0] == 204
     _, rows = http.request("GET", hub.url + "/api/machines", ta)
     assert [r["host"] for r in rows] == ["h-a"]
