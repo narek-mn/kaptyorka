@@ -1,6 +1,7 @@
 import json
 import os
 import socket
+import subprocess
 import threading
 import time
 
@@ -37,6 +38,17 @@ class FakeAdapter:
         return []
 
 
+class FakeRun:
+    """A runner for git and --version: every command fails, none is really started."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, cmd, **kw):
+        self.calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 1, "", "")
+
+
 @pytest.fixture(autouse=True)
 def no_real_commands(monkeypatch):
     """No tool is on PATH, so the facts run no `--version`; git is only asked for session folders."""
@@ -44,6 +56,7 @@ def no_real_commands(monkeypatch):
 
     facts._cache.clear()
     monkeypatch.setattr(facts.shutil, "which", lambda n: None)
+    monkeypatch.setattr(bridge_mod.subprocess, "run", FakeRun())  # Bridge's default runner
 
 
 def cfg(hub):
@@ -358,23 +371,26 @@ def test_rekey_confirm_hub_down_does_not_escape_poll(hub, home, monkeypatch):
     assert lines == ["hub unreachable when confirming the new token"]
 
 
-def test_heartbeat_sends_facts_and_reads_answer(hub, home, tmp_path, monkeypatch):
+def test_heartbeat_sends_facts_and_reads_answer(hub, home, tmp_path):
     from helpers import person
-    from kaptyorka import facts as facts_mod
     from kaptyorka.workers import WorkerStore
 
-    facts_mod._cache.clear()
+    proj = home / "proj-a"
+    proj.mkdir()
     pid, token = person(hub.store, "alice")
     device = hub.store.authenticate(token).device_id
-    a = FakeAdapter(sessions=[Session("codex:1", "codex", "proj-a", cwd="/w/proj-a")])
-    bridge = Bridge({**cfg(hub), "token": token}, [a], bridge_mod.log)
+    a = FakeAdapter(sessions=[Session("codex:1", "codex", "proj-a", cwd=str(proj))])
+    fake = FakeRun()
+    bridge = Bridge({**cfg(hub), "token": token}, [a], bridge_mod.log, run=fake)
     assert bridge.hub == {}
     bridge.heartbeat()
     assert bridge.hub["you"] == "alice" and "projects" in bridge.hub
-    bridge.hub["projects"] = ["proj-a"]
+    assert any(c[:3] == ["git", "-C", str(proj)] for c in fake.calls)
+    bridge.hub["projects"] = ["proj-a", "proj-b"]
+    (home / "proj-b").mkdir()  # found under the default home, ~/<project>
     bridge.heartbeat()
     f = WorkerStore(hub.store).facts(device)
     assert f["os_user"] and f["cpus"] >= 1 and f["tools"] == {"codex": ""}
-    assert WorkerStore(hub.store).folders(device) == {"proj-a": "/w/proj-a"}
+    assert WorkerStore(hub.store).folders(device) == {"proj-a": str(proj), "proj-b": str(home / "proj-b")}
     row = hub.store.db.execute("SELECT cwd FROM agents WHERE key='codex:1'").fetchone()
-    assert row["cwd"] == "/w/proj-a"
+    assert row["cwd"] == str(proj)

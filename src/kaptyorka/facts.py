@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from kaptyorka import paths
+from kaptyorka.adapters.base import write_atomic
 
 GIT_TTL_S = 30
+GIT_BUDGET_S = 2
 VERSION_TTL_S = 600
 COMMANDS = {"claude-code": "claude", "opencode": "opencode", "codex": "codex", "cursor": "cursor-agent"}
 _cache: Dict[Tuple[str, str], Tuple[float, object]] = {}
@@ -29,11 +31,14 @@ def _cached(key: Tuple[str, str], ttl: float, make: Callable[[], object]):
 
 def git(cwd: str, run=subprocess.run) -> Optional[dict]:
     """Branch, dirty flag and last subject of the repo at cwd; None when it is not one."""
-    def out(*args: str) -> Optional[str]:
-        r = run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=2)
-        return r.stdout if r.returncode == 0 else None
-
     def make() -> Optional[dict]:
+        deadline = time.monotonic() + GIT_BUDGET_S  # one budget for all calls on this folder
+
+        def out(*args: str) -> Optional[str]:
+            left = max(deadline - time.monotonic(), 0.01)
+            r = run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=left)
+            return r.stdout if r.returncode == 0 else None
+
         try:
             branch = out("rev-parse", "--abbrev-ref", "HEAD")
             if branch is None:
@@ -41,7 +46,8 @@ def git(cwd: str, run=subprocess.run) -> Optional[dict]:
             status, subject = out("status", "--porcelain"), out("log", "-1", "--format=%s")
         except (subprocess.TimeoutExpired, OSError):
             return None
-        return {"branch": branch.strip(), "dirty": bool((status or "").strip()),
+        return {"branch": branch.strip(),
+                "dirty": None if status is None else bool(status.strip()),
                 "subject": (subject or "").strip()}
 
     return _cached(("git", cwd), GIT_TTL_S, make)  # type: ignore[return-value]
@@ -87,15 +93,20 @@ def _learned() -> Dict[str, str]:
 
 
 def folders(projects: List[str], sessions: list, home: Path) -> dict:
-    """{project: folder}: learned from session cwds (and remembered), else home/project."""
+    """{project: folder}: learned from session cwds (and remembered), else home/project.
+    A remembered folder that is gone is dropped."""
     learned = _learned()
     seen = dict(learned)
     for s in sessions:
         cwd = getattr(s, "cwd", "") or ""
         if cwd:
             seen[os.path.basename(cwd.rstrip("/"))] = cwd
+    seen = {k: v for k, v in seen.items() if os.path.isdir(v)}
     if seen != learned:
-        (paths.home() / "folders.json").write_text(json.dumps(seen, indent=2))
+        try:
+            write_atomic(paths.home() / "folders.json", json.dumps(seen, indent=2))
+        except OSError:
+            pass  # remembering is a convenience; never stop the heartbeat
     out = {}
     for p in projects:
         if p in seen:

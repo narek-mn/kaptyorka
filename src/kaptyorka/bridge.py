@@ -80,7 +80,7 @@ class Bridge:
             {"machine": self.cfg["machine"], "sessions": sessions, "tools": tools,
              "facts": self._machine_facts(objs),
              "folders": facts.folders(projects if isinstance(projects, list) else [], objs,
-                                      Path.home() / "workspace" / "projects")})
+                                      Path.home())})
         self.hub = answer if status == 200 and isinstance(answer, dict) else {}
         self._report("heartbeat", None if status in (200, 204)
                      else f"hub answered {status} to heartbeat")

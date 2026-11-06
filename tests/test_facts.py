@@ -30,7 +30,7 @@ def setup_function():
 def test_git_reads_branch_dirty_subject_with_timeout():
     run = Run(GIT)
     assert facts.git("/w/p", run) == {"branch": "main", "dirty": True, "subject": "fix thing"}
-    assert all(c[0][:3] == ["git", "-C", "/w/p"] and c[1]["timeout"] == 2 for c in run.calls)
+    assert all(c[0][:3] == ["git", "-C", "/w/p"] and 0 < c[1]["timeout"] <= 2 for c in run.calls)
 
 
 def test_git_clean_repo():
@@ -41,6 +41,11 @@ def test_git_clean_repo():
 def test_git_not_a_repo_or_timeout_is_none():
     assert facts.git("/w/a", Run({"rev-parse": (128, "")})) is None
     assert facts.git("/w/b", Run({"rev-parse": subprocess.TimeoutExpired("git", 2)})) is None
+
+
+def test_git_status_failure_leaves_dirty_unknown():
+    run = Run({**GIT, "status": (1, "")})
+    assert facts.git("/w/p", run)["dirty"] is None
 
 
 def test_git_cached_for_30_seconds(monkeypatch):
@@ -95,25 +100,52 @@ def test_load_zero_on_error_and_version_cached(monkeypatch):
     assert len(run.calls) == 2
 
 
-def test_folders_learn_and_remember(home):
+def test_folders_learn_and_remember(home, tmp_path):
     (home / "proj-a").mkdir()
-    s = [Session("claude:1", "claude-code", "proj-b", cwd="/w/proj-b")]
+    b, x = tmp_path / "w" / "proj-b", tmp_path / "x" / "proj-a"
+    b.mkdir(parents=True)
+    x.mkdir(parents=True)
+    s = [Session("claude:1", "claude-code", "proj-b", cwd=str(b))]
     out = facts.folders(["proj-a", "proj-b", "proj-c"], s, home)
-    assert out == {"proj-a": str(home / "proj-a"), "proj-b": "/w/proj-b"}
+    assert out == {"proj-a": str(home / "proj-a"), "proj-b": str(b)}
     saved = paths.home() / "folders.json"
-    assert json.loads(saved.read_text()) == {"proj-b": "/w/proj-b"}
+    assert json.loads(saved.read_text()) == {"proj-b": str(b)}
     # the session ended: still known
-    assert facts.folders(["proj-b"], [], home) == {"proj-b": "/w/proj-b"}
+    assert facts.folders(["proj-b"], [], home) == {"proj-b": str(b)}
     # a learned path beats the home folder
-    s = [Session("claude:2", "claude-code", "proj-a", cwd="/x/proj-a")]
-    assert facts.folders(["proj-a"], s, home) == {"proj-a": "/x/proj-a"}
+    s = [Session("claude:2", "claude-code", "proj-a", cwd=str(x))]
+    assert facts.folders(["proj-a"], s, home) == {"proj-a": str(x)}
 
 
-def test_folders_tolerate_broken_file_and_write_only_on_change(home):
+def test_folders_tolerate_broken_file_and_write_only_on_change(home, tmp_path):
     saved = paths.home() / "folders.json"
     saved.write_text("{nope")
-    s = [Session("claude:1", "claude-code", "p", cwd="/w/p")]
-    assert facts.folders(["p"], s, home) == {"p": "/w/p"}
+    p = tmp_path / "p"
+    p.mkdir()
+    s = [Session("claude:1", "claude-code", "p", cwd=str(p))]
+    assert facts.folders(["p"], s, home) == {"p": str(p)}
     mtime = saved.stat().st_mtime_ns
     facts.folders(["p"], s, home)
     assert saved.stat().st_mtime_ns == mtime
+
+
+def test_folders_drop_vanished_learned_path(home):
+    (home / "p").mkdir()
+    gone = home / "gone-dir" / "p"
+    gone.mkdir(parents=True)
+    s = [Session("claude:1", "claude-code", "p", cwd=str(gone))]
+    assert facts.folders(["p"], s, home) == {"p": str(gone)}
+    gone.rmdir()
+    assert facts.folders(["p"], [], home) == {"p": str(home / "p")}
+    assert json.loads((paths.home() / "folders.json").read_text()) == {}
+
+
+def test_folders_survive_unwritable_file(home, tmp_path, monkeypatch):
+    def boom(*a):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(facts, "write_atomic", boom)
+    d = tmp_path / "p"
+    d.mkdir()
+    s = [Session("claude:1", "claude-code", "p", cwd=str(d))]
+    assert facts.folders(["p"], s, home) == {"p": str(d)}
