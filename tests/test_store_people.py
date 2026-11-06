@@ -122,3 +122,17 @@ def test_may_use_owner_admin_grant(tmp_path):
             s.db.execute("SELECT person, detail FROM log WHERE kind IN ('grant','revoke')")]
     assert rows == [("root", "machine:h1 -> friend")] * 2
     s.close()
+
+
+def test_device_on_host_does_not_grant_use(tmp_path):
+    s = Store(tmp_path / "hub.db")
+    _, ta = _member(s, "u1")
+    b, tb = _member(s, "u2")
+    s.heartbeat("m", [], principal=s.authenticate(ta), facts=_facts("h1"))
+    pb = s.authenticate(tb)
+    s.heartbeat("m", [], principal=pb, facts=_facts("h1"))  # self-reported host
+    assert not s.may_use("h1", b)
+    assert [m["host"] for m in s.machines(pb)] == ["h1"]  # still visible
+    s.grant_machine("h1", b, by="root")
+    assert s.may_use("h1", b)
+    s.close()

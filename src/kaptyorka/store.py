@@ -390,7 +390,8 @@ class Store:
                                (host, person_id)).fetchone() is not None
 
     def may_use(self, host: str, person_id: int) -> bool:
-        """True for an admin, the machine's owner, anyone with a device on it, or a grant."""
+        """True for an admin, the machine's owner, or a grant. A device reporting the host is not
+        enough: the host name is self-reported."""
         with self.lock:
             p = self.db.execute("SELECT role FROM people WHERE id=?", (person_id,)).fetchone()
             if p is not None and p["role"] == "admin":
@@ -398,9 +399,6 @@ class Store:
             m = self.db.execute("SELECT owner_person_id FROM machines WHERE host=?",
                                 (host,)).fetchone()
             if m is not None and m["owner_person_id"] == person_id:
-                return True
-            if self.db.execute("SELECT 1 FROM devices WHERE host=? AND person_id=?"
-                               " AND revoked_at IS NULL", (host, person_id)).fetchone():
                 return True
             return self._granted(host, person_id)
 

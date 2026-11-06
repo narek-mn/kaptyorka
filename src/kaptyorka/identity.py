@@ -144,9 +144,9 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
 
 def facts() -> dict:
     """What a heartbeat says about this computer."""
-    from kaptyorka import __version__
     try:
-        os_user = getpass.getuser()
+        from kaptyorka import __version__
+        return {"host": socket.gethostname().split(".")[0], "os_user": getpass.getuser(),
+                "version": __version__}
     except Exception:
-        os_user = ""
-    return {"host": socket.gethostname().split(".")[0], "os_user": os_user, "version": __version__}
+        return {"host": "", "os_user": "", "version": ""}
