@@ -143,7 +143,7 @@ def test_poll_carries_signed_launch_and_ack_links_worker(hub, alice):
                         {"worker": "proj-a-w1", "key": "claude:w1"})[0] == 204
     assert hub.ws.by_name("proj-a-w1")["state"] == "up"
     assert inbox_texts(client, BOSS) == [
-        "worker `proj-a-w1` is up on box-1; attach with `claude attach proj-a-w1`"]
+        "worker `proj-a-w1` is up on box-1; attach with `ssh -t u@box-1 claude attach proj-a-w1`"]
     # a retried link (the answer was lost) is a success and tells the boss nothing new
     assert http.request("POST", hub.url + "/bridge/worker", b.token,
                         {"worker": "proj-a-w1", "key": "claude:w1"})[0] == 204

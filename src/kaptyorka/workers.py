@@ -3,6 +3,7 @@ store.py; a WorkerStore shares the Store's database, lock and clock."""
 import json
 import math
 import re
+import shlex
 import time
 from typing import List, Optional, Tuple
 
@@ -245,8 +246,10 @@ class WorkerStore:
         boss = self.db.execute("SELECT name FROM agents WHERE key=?",
                                (row["boss_key"],)).fetchone()
         os_user = dev["os_user"] if dev else ""
-        attach = (f"claude attach {row['name']}" if row["tool"] == "claude-code"
-                  else f"ssh {os_user}@{row['host']} -t tmux attach -t {row['name']}")
+        # bridge-reported values: quoted; `=` makes tmux match the whole name, not a prefix
+        dest, name = shlex.quote(f"{os_user}@{row['host']}"), shlex.quote(row["name"])
+        attach = (f"ssh -t {dest} claude attach {name}" if row["tool"] == "claude-code"
+                  else f"ssh {dest} -t tmux attach -t ={name}")
         return {"name": row["name"], "project": row["project"], "task": row["task"],
                 "host": row["host"], "os_user": os_user, "tool": row["tool"],
                 "folder": row["folder"], "worktree": bool(row["worktree"]),

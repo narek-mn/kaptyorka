@@ -233,7 +233,7 @@ def test_create_names_and_signs(store, ws, alice_p, dev, boss, clock):
     w = launch(ws, alice_p, dev, boss)
     assert w["name"] == "proj-a-w1" and w["state"] == "starting"
     assert w["boss"] == "box-1/claude-code/proj-a" and w["worktree"] is False
-    assert w["attach"] == "claude attach proj-a-w1" and w["person"] == "alice"
+    assert w["attach"] == "ssh -t u@box-1 claude attach proj-a-w1" and w["person"] == "alice"
     [item] = ws.offer(dev)
     assert item["launch"] is True and item["worker"] == "proj-a-w1"
     order = {k: v for k, v in item.items() if k != "launch"}
@@ -369,7 +369,7 @@ def test_worker_session_gone_closes_it(store, ws, alice, alice_p, boss, clock):
 
 def test_waiting_notice_once_per_half_hour(store, ws, alice, alice_p, boss, clock):
     dev, token = linked(store, ws, alice, alice_p, boss, activity="permission_prompt")
-    text = "worker `proj-a-w1` is waiting for a permission; attach with `claude attach proj-a-w1`"
+    text = "worker `proj-a-w1` is waiting for a permission; attach with `ssh -t u@box-1 claude attach proj-a-w1`"
     assert ws.tick(clock[0]) == [("claude:boss", text)]
     assert ws.tick(clock[0]) == []
     clock[0] += 1801
@@ -452,8 +452,15 @@ def test_only_own_or_admin_may_adopt_or_close(store, ws, alice_p, dev, bob, boss
 
 def test_attach_for_other_tools_uses_tmux(ws, alice_p, dev, boss):
     w = ws.create(alice_p, "proj-a", "t", target(dev), "codex", boss, "sid-1", False)
-    assert w["attach"] == "ssh u@box-1 -t tmux attach -t proj-a-w1"
+    assert w["attach"] == "ssh u@box-1 -t tmux attach -t =proj-a-w1"
     assert w["os_user"] == "u" and w["host"] == "box-1" and w["tool"] == "codex"
+
+
+def test_attach_line_quotes_bridge_reported_values(store, ws, alice_p, dev, boss):
+    with store.lock:  # a bridge may report anything as its user
+        store.db.execute("UPDATE devices SET os_user='u; rm -rf ~' WHERE id=?", (dev,))
+    w = launch(ws, alice_p, dev, boss)
+    assert w["attach"] == "ssh -t 'u; rm -rf ~@box-1' claude attach proj-a-w1"
 
 
 def shared_box(store, bob):

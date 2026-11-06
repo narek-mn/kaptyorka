@@ -209,7 +209,7 @@ def test_close_commands(home):
     launcher.close({"worker": "proj-a-w1", "tool": "claude-code", "job": "ffee0011"})  # the bridge's
     launcher.close({"worker": "proj-a-w1", "tool": "codex", "key": "codex:1"})
     assert run.calls == [["claude", "stop", "ab12cd34"], ["claude", "stop", "ffee0011"],
-                         ["tmux", "kill-session", "-t", "proj-a-w1"]]
+                         ["tmux", "kill-session", "-t", "=proj-a-w1"]]  # never w10
     with pytest.raises(LaunchError, match="no Claude Code session id to stop"):
         launcher.close({"worker": "proj-a-w1", "tool": "claude-code"})  # never `stop <name>`
     with pytest.raises(LaunchError, match="Permission denied"):
@@ -220,6 +220,8 @@ def test_close_commands(home):
 def test_closing_a_gone_session_is_done(home):
     for tool, said in [("codex", "can't find session: proj-a-w1"),
                        ("opencode", "no server running on /tmp/tmux-1000/default"),
+                       ("codex", "error connecting to /tmp/tmux-1000/default"
+                                 " (No such file or directory)"),
                        ("codex", "can't find pane: proj-a-w1"),
                        ("claude-code", "No job matching 'ab12cd34'. Run 'claude agents'")]:
         make(home, run=FakeRun(1, said)).close({"worker": "proj-a-w1", "tool": tool, "key": KEY})

@@ -145,7 +145,7 @@ A worker is an agent session that runs on another machine for you. Say "do this 
 1. Your agent calls `work(project, task)`. You need the write role in the project, and a machine you may use.
 2. The hub picks a machine and tells its bridge. The bridge finds the project folder and starts the tool there, with your task as the first message.
 3. The worker works alone. When it has news, it messages its boss (you). You get the worker's name and an attach line, so you can look inside.
-4. Attach with `claude attach <name>`. For Codex and OpenCode, the line is an `ssh ... tmux attach` command.
+4. Attach from any computer with the line you got: `ssh -t <user>@<machine> claude attach <name>` for Claude Code, `ssh <user>@<machine> -t tmux attach -t =<name>` for Codex and OpenCode.
 5. `close_worker(name)` ends it. `workers` lists yours, with the state of each.
 
 How each tool runs:

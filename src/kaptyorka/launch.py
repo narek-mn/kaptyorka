@@ -12,6 +12,7 @@ from kaptyorka import facts, paths
 NAME = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 # what tmux and claude say when the session to stop is not there
 GONE = ("can't find session", "no server running", "can't find pane", "No job matching")
+NO_SERVER = ("error connecting to", "No such file or directory")  # newer tmux, no server
 CLAUDE_WAIT_S = 60  # `claude --bg` returns once the session runs
 TMUX_WAIT_S = 10  # `tmux new-session -d` returns at once
 # `claude --bg` ignores --session-id and prints the short id that `claude stop` takes (never
@@ -161,13 +162,14 @@ class Launcher:
     def close(self, order: dict) -> None:
         name = self._name(order)
         argv = (["claude", "stop", self._job(order)] if order.get("tool") == "claude-code"
-                else ["tmux", "kill-session", "-t", name])
+                else ["tmux", "kill-session", "-t", f"={name}"])  # `=`: this name, not a prefix
         try:
             r = self.run(argv, capture_output=True, text=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as e:
             raise LaunchError(f"{argv[0]} failed: {e}")
         out = ((r.stderr or "") + (r.stdout or "")).strip()
-        if r.returncode != 0 and any(g in out for g in GONE):
+        if r.returncode != 0 and (any(g in out for g in GONE)
+                                  or all(g in out for g in NO_SERVER)):
             self.log(f"worker {name} was already gone: {out}")
             return  # closing a session that is not there is done
         if r.returncode != 0:
