@@ -58,7 +58,7 @@ def start_hub(store, port: int = 0):
 
     from kaptyorka.hub import build_app
 
-    server = uvicorn.Server(uvicorn.Config(build_app(store, "T"), host="127.0.0.1", port=port,
+    server = uvicorn.Server(uvicorn.Config(build_app(store), host="127.0.0.1", port=port,
                                            log_level="warning", timeout_graceful_shutdown=1))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -80,7 +80,7 @@ def start_hub(store, port: int = 0):
 def hub(tmp_path):
     from kaptyorka.store import Store
 
-    store = Store(tmp_path / "hub.db")
+    store = Store(tmp_path / "hub.db", legacy_token="T")
     stop = start_hub(store)
     yield SimpleNamespace(url=f"http://127.0.0.1:{stop.port}", token="T", store=store)
     stop()

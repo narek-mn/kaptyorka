@@ -1,12 +1,11 @@
-"""The hub app: MCP tools and plain routes over HTTP behind a bearer token."""
+"""The hub app: MCP tools and plain routes over HTTP behind per-device tokens."""
 import asyncio
 import functools
-import hmac
 import importlib.resources
 import inspect
 import math
 from dataclasses import asdict
-from typing import List, Union
+from typing import List, Mapping, Union
 from urllib.parse import unquote
 
 from mcp.server.mcpserver import Context, MCPServer
@@ -14,9 +13,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
-from starlette.websockets import WebSocketClose
 
-from kaptyorka.store import Agent, KaptyorkaError, Store
+from kaptyorka.auth import Auth, bearer
+from kaptyorka.store import Agent, KaptyorkaError, Principal, Store
 
 MAX_WAIT_S = 25
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
@@ -28,26 +27,6 @@ INSTRUCTIONS = (
     "inbox() reads your messages; status(text) says what you are working on; "
     "notes_list/notes_read/notes_write share a team board, one text per topic."
 )
-
-
-class BearerAuth:
-    """ASGI wrapper: 401 unless the bearer token matches; GET / is open."""
-
-    def __init__(self, app, token: str):
-        self.app = app
-        self.expected = f"Bearer {token}".encode()
-
-    async def __call__(self, scope, receive, send):
-        kind = scope["type"]
-        if kind != "lifespan" and not (
-                kind == "http" and scope["method"] == "GET" and scope["path"] == "/"):
-            auth = dict(scope["headers"]).get(b"authorization", b"")
-            if not hmac.compare_digest(auth, self.expected):
-                deny = (PlainTextResponse("unauthorized", status_code=401) if kind == "http"
-                        else WebSocketClose(1008))
-                await deny(scope, receive, send)
-                return
-        await self.app(scope, receive, send)
 
 
 def _plural(n: int, word: str) -> str:
@@ -94,16 +73,24 @@ def _tool_errors(fn):
     return wrapper
 
 
-def build_app(store: Store, token: str) -> Starlette:
+def build_app(store: Store) -> Starlette:
     server = MCPServer("kaptyorka", instructions=INSTRUCTIONS)
     sent = {"event": asyncio.Event()}  # set and replaced after each send; wakes bridge polls
+
+    def principal_of(headers: Mapping) -> Principal:
+        """The caller's principal from its bearer token (the Auth middleware already let it in)."""
+        machine = unquote(headers.get("x-kaptyorka-machine") or "") or None
+        principal = store.authenticate(bearer(headers), machine=machine)
+        if principal is None:
+            raise KaptyorkaError("unauthorized")
+        return principal
 
     def identify(h) -> Agent:
         # values are percent-encoded by Identity.headers(), since headers must be ASCII
         ident = [unquote(h.get(f"x-kaptyorka-{k}") or "") for k in ("key", "machine", "tool", "project")]
         if not all(ident):
             raise KaptyorkaError("no kaptyorka identity; run kaptyorka join")
-        return store.seen(*ident)
+        return store.seen(*ident, principal=principal_of(h))
 
     def me(ctx: Context) -> Agent:
         return identify(ctx.headers or {})
@@ -259,5 +246,5 @@ def build_app(store: Store, token: str) -> Starlette:
         return HTMLResponse(html, headers={"Cache-Control": "no-store", "Content-Security-Policy": CSP})
 
     app = server.streamable_http_app(host="0.0.0.0")
-    app.add_middleware(BearerAuth, token=token)
+    app.add_middleware(Auth, store=store)
     return app

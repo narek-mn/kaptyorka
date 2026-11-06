@@ -4,7 +4,7 @@ import threading
 import time
 
 from kaptyorka import http
-from kaptyorka.hub import BearerAuth
+from kaptyorka.auth import Auth
 from helpers import call, call_error, run
 
 PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
@@ -214,7 +214,7 @@ def test_routes_require_token(hub):
     assert http.request("GET", hub.url + "/api/brief?event=start", "bad")[0] == 401
 
 
-def test_websocket_without_token_closed():
+def test_websocket_without_token_closed(tmp_path):
     sent = []
 
     async def app(scope, receive, send):
@@ -226,9 +226,12 @@ def test_websocket_without_token_closed():
     async def send(msg):
         sent.append(msg)
 
-    asyncio.run(BearerAuth(app, "T")({"type": "websocket", "path": "/mcp", "headers": []},
-                                     receive, send))
-    assert sent[0]["type"] == "websocket.close"
+    from kaptyorka.store import Store
+
+    store = Store(tmp_path / "hub.db", legacy_token="T")
+    asyncio.run(Auth(app, store)({"type": "websocket", "path": "/mcp", "headers": []},
+                                 receive, send))
+    assert sent[0]["type"] == "websocket.close" and sent[0]["code"] == 1008
 
 
 @pytest.mark.parametrize("event", ["stop", "tool"])

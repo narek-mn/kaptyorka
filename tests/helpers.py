@@ -57,3 +57,19 @@ def write_session_file(home, pid, cwd="/w/murmur", status="idle", version="2.1.3
     (d / f"{pid}.json").write_text(json.dumps(data))
     if peer_token is not None:
         (d / f"{pid}.ab12.key").write_text(json.dumps({"peerToken": peer_token}))
+
+
+def person(store, name: str, role: str = "member"):
+    """Insert a person with one device straight into the store; return (person_id, token)."""
+    import hashlib
+    import secrets
+
+    token = secrets.token_urlsafe(32)
+    now = store.clock()
+    with store.lock:
+        pid = store.db.execute("INSERT INTO people (name, role, created) VALUES (?,?,?)",
+                               (name, role, now)).lastrowid
+        store.db.execute("INSERT INTO devices (person_id, name, token_hash, created)"
+                         " VALUES (?,?,?,?)",
+                         (pid, f"{name}-laptop", hashlib.sha256(token.encode()).hexdigest(), now))
+    return pid, token

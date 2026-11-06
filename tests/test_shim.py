@@ -63,7 +63,7 @@ def test_shim_reconnects_after_hub_restart(home, tmp_path):
     db = tmp_path / "restart.db"
 
     async def go():
-        store = Store(db)
+        store = Store(db, legacy_token="T")
         stop = start_hub(store, port)
         try:
             async with shim(home, url) as c:
@@ -72,7 +72,7 @@ def test_shim_reconnects_after_hub_restart(home, tmp_path):
                 store.close()
                 r = await c.call_tool("who", {})
                 assert text(r) == f"kaptyorka hub unreachable at {url}"
-                store2 = Store(db)
+                store2 = Store(db, legacy_token="T")
                 stop2 = start_hub(store2, port)
                 try:
                     r = await c.call_tool("who", {})

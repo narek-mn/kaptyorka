@@ -38,8 +38,8 @@ def _serve(args) -> int:
         from kaptyorka.hub import build_app
         from kaptyorka.store import Store
 
-        store = Store(paths.home() / "hub.db")
-        uvicorn.run(build_app(store, token), host="0.0.0.0", port=args.port, log_level="warning",
+        store = Store(paths.home() / "hub.db", legacy_token=token)
+        uvicorn.run(build_app(store), host="0.0.0.0", port=args.port, log_level="warning",
                     timeout_graceful_shutdown=3)  # open agent streams must not hold up a stop
         return 0
     exe = str(Path(sys.argv[0]).resolve())

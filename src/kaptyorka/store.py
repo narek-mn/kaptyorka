@@ -135,6 +135,21 @@ class Agent:
 
 
 @dataclass
+class Principal:
+    """Who a request is from: the person behind a device token."""
+    person_id: int
+    person_name: str
+    role: str  # admin | member | manager
+    device_id: int
+    device_name: str
+    shared: bool
+    legacy: bool
+
+    def is_admin(self) -> bool:
+        return self.role == "admin"
+
+
+@dataclass
 class Message:
     id: int
     sender: str
@@ -223,6 +238,35 @@ class Store:
             return [{k: r[k] for k in r.keys() if k not in ("token_hash", "secret_hash")}
                     for r in rows]
 
+    def authenticate(self, token: str, machine: Optional[str] = None) -> Optional[Principal]:
+        """The principal for a device token, or None when it is unknown or revoked. The 0.1
+        shared token (the legacy device) maps a machine to a person through `legacy:<machine>`
+        in settings, and to the device's own person otherwise."""
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with self.lock:
+            dev = self.db.execute("SELECT * FROM devices WHERE token_hash=? AND revoked_at IS NULL",
+                                  (digest,)).fetchone()
+            if dev is None:
+                return None
+            person_id, device_name = dev["person_id"], dev["name"]
+            if dev["legacy"] and machine:
+                mapped = self.db.execute("SELECT value FROM settings WHERE key=?",
+                                         (f"legacy:{machine}",)).fetchone()
+                if mapped is not None:
+                    person_id, device_name = int(mapped["value"]), machine
+            who = self.db.execute("SELECT name, role FROM people WHERE id=?",
+                                  (person_id,)).fetchone()
+            if who is None:
+                return None
+            self.db.execute("UPDATE devices SET last_used=? WHERE id=?", (self.clock(), dev["id"]))
+            return Principal(person_id, who["name"], who["role"], dev["id"], device_name,
+                             bool(dev["shared"]), bool(dev["legacy"]))
+
+    def device_revoke(self, device_id: int) -> None:
+        with self.lock:
+            self.db.execute("UPDATE devices SET revoked_at=? WHERE id=? AND revoked_at IS NULL",
+                            (self.clock(), device_id))
+
     # log
 
     def log_add(self, person: str, kind: str, detail: str) -> None:
@@ -255,9 +299,9 @@ class Store:
         if row is None:
             name = self._free_name(key, machine, tool, project, now)
             self.db.execute(
-                "INSERT INTO agents (key, name, machine, tool, project, activity, last_seen, label)"
-                " VALUES (?,?,?,?,?,?,?,?)",
-                (key, name, machine, tool, project, activity or "", now, label or ""))
+                "INSERT INTO agents (key, name, machine, tool, project, activity, last_seen, label,"
+                " started) VALUES (?,?,?,?,?,?,?,?,?)",
+                (key, name, machine, tool, project, activity or "", now, label or "", now))
             return
         name = row["name"]
         if now - row["last_seen"] >= ONLINE_S:  # was offline: its name may have been taken
@@ -270,10 +314,20 @@ class Store:
         if label is not None:
             self.db.execute("UPDATE agents SET label=? WHERE key=?", (label, key))
 
-    def seen(self, key: str, machine: str, tool: str, project: str) -> Agent:
+    def seen(self, key: str, machine: str, tool: str, project: str,
+             principal: Optional[Principal] = None) -> Agent:
         with self.lock:
             now = self.clock()
             self._touch(key, machine, tool, project, now)
+            if principal is not None:
+                # every call, so a legacy machine handed to another person moves at once
+                dev = self.db.execute("SELECT host, os_user FROM devices WHERE id=?",
+                                      (principal.device_id,)).fetchone()
+                self.db.execute(
+                    "UPDATE agents SET person_id=?, host=COALESCE(NULLIF(?, ''), host),"
+                    " os_user=COALESCE(NULLIF(?, ''), os_user) WHERE key=?",
+                    (principal.person_id, dev["host"] if dev else "",
+                     dev["os_user"] if dev else "", key))
             row = self.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
             return self._agent(row, now)
 
