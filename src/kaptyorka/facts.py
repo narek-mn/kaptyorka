@@ -76,7 +76,7 @@ def machine(adapters: list, run=subprocess.run, platform: str = sys.platform) ->
     except OSError:
         load = 0.0
     installed = [a for a in adapters if a.installed()]
-    hooks_ok = {a.tool: doctor.tool_configured(a, Path.home()) for a in installed}
+    hooks_ok = {a.tool: doctor.tool_configured(a, getattr(a, "home", Path.home())) for a in installed}
     return {"os_user": getpass.getuser(), "tmux": shutil.which("tmux") is not None,
             "load": load, "cpus": os.cpu_count() or 1,
             "tools": {a.tool: _tool_version(a.tool, run) for a in installed},

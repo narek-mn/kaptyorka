@@ -131,3 +131,88 @@ def test_run_prints_lines_and_fix_rewires_and_restarts(monkeypatch, home, unit, 
     assert doctor.run(CFG, fix=True, adapters=[a], home=home, run=r, platform="linux", exe=EXE) == 0
     assert configured == [EXE]
     assert "FAIL" not in capsys.readouterr().out
+
+
+def fake_adapter(tool, home, installed=True):
+    configured = []
+    return SimpleNamespace(tool=tool, home=home, installed=lambda: installed,
+                           configure=lambda exe: configured.append(exe) or [], configured=configured)
+
+
+def put(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text if isinstance(text, str) else json.dumps(text))
+
+
+def test_opencode_configured(home):
+    a = SimpleNamespace(tool="opencode")
+    assert not doctor.tool_configured(a, home)
+    conf = home / ".config/opencode"
+    put(conf / "opencode.json", {"mcp": {"kaptyorka": {"type": "local"}}})
+    assert not doctor.tool_configured(a, home)  # plugin missing
+    put(conf / "plugins/kaptyorka.js", "x")
+    assert doctor.tool_configured(a, home)
+    put(conf / "opencode.json", {"mcp": {}})
+    assert not doctor.tool_configured(a, home)
+
+
+def codex_files(conf, toml=True, hooks=True):
+    put(conf / "config.toml", "[mcp_servers.kaptyorka]\ncommand = \"x\"\n" if toml else "")
+    h = {}
+    if hooks:
+        h = {"SessionStart": [{"matcher": "startup|resume",
+                               "hooks": [{"type": "command", "command": f"{EXE} hook codex start"}]}],
+             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"{EXE} hook codex prompt"}]}]}
+    put(conf / "hooks.json", {"hooks": h})
+
+
+def test_codex_configured(home, monkeypatch):
+    a = SimpleNamespace(tool="codex")
+    assert not doctor.tool_configured(a, home)
+    conf = home / ".codex"
+    codex_files(conf)
+    assert doctor.tool_configured(a, home)
+    codex_files(conf, toml=False)
+    assert not doctor.tool_configured(a, home)
+    codex_files(conf, hooks=False)
+    assert not doctor.tool_configured(a, home)
+    other = home / "elsewhere"
+    monkeypatch.setenv("CODEX_HOME", str(other))
+    assert not doctor.tool_configured(a, home)  # honours codex_home
+    codex_files(other)
+    assert doctor.tool_configured(a, home)
+
+
+def test_cursor_configured(home):
+    a = SimpleNamespace(tool="cursor")
+    assert not doctor.tool_configured(a, home)
+    d = home / ".cursor"
+    put(d / "mcp.json", {"mcpServers": {"kaptyorka": {}}})
+    assert not doctor.tool_configured(a, home)  # hooks missing
+    hooks = {"version": 1, "hooks": {"stop": [{"command": f"{EXE} hook cursor stop"}],
+                                     "postToolUse": [{"command": f"{EXE} hook cursor tool"}]}}
+    put(d / "hooks.json", hooks)
+    assert doctor.tool_configured(a, home)
+    del hooks["hooks"]["stop"]
+    put(d / "hooks.json", hooks)
+    assert not doctor.tool_configured(a, home)
+
+
+def test_fix_reconfigures_only_the_failing_tool(home, unit, answer, capsys):
+    good, bad = fake_adapter("claude-code", home), fake_adapter("cursor", home)
+    write_claude(home)
+    assert doctor.run(CFG, fix=True, adapters=[good, bad], home=home, run=Run(), platform="linux",
+                      exe=EXE) == 1  # fake configure writes nothing: still failing
+    assert bad.configured == [EXE] and good.configured == []
+    out = capsys.readouterr().out
+    assert "ok   tool: claude-code" in out and "FAIL tool: cursor" in out
+
+
+def test_fix_does_not_restart_a_missing_bridge(home, answer, monkeypatch, capsys):
+    import kaptyorka.service as service
+
+    calls = []
+    monkeypatch.setattr(service, "restart", lambda *a, **k: calls.append(a) or [])
+    assert doctor.run(CFG, fix=True, adapters=[], home=home, run=Run(), platform="linux", exe=EXE) == 1
+    assert calls == []
+    assert "FAIL bridge service: not installed -> kaptyorka join" in capsys.readouterr().out
