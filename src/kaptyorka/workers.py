@@ -479,7 +479,7 @@ class WorkerStore:
         failed, offline, rest = [], [], []
         with self.lock:
             devices = self.db.execute(
-                "SELECT d.id, d.host, d.os_user, d.shared, d.last_used, p.name AS person,"
+                "SELECT d.id, d.host, d.os_user, d.shared, d.version, d.last_used, p.name AS person,"
                 " f.facts FROM devices d LEFT JOIN people p ON p.id=d.person_id"
                 " LEFT JOIN device_facts f ON f.device_id=d.id"
                 " WHERE d.revoked_at IS NULL AND d.legacy=0 ORDER BY d.id").fetchall()
@@ -501,7 +501,7 @@ class WorkerStore:
                 add(offline, f"bridge on {who} has been offline for"
                     f" {int((now - d['last_used']) // 60)} minutes")
             facts = json.loads(d["facts"]) if d["facts"] else {}
-            v = facts.get("version") or ""
+            v = facts.get("version") or d["version"] or ""
             if _version_tuple(v) and _version_tuple(v) < _version_tuple(hub_version):
                 add(rest, f"{who} runs kaptyorka {v}; the hub runs {hub_version}")
             for tool, ok in (facts.get("hooks_ok") or {}).items():

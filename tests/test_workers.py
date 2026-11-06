@@ -663,3 +663,10 @@ def test_warnings_none_when_healthy_and_skip_revoked_legacy(store, ws, alice, cl
     ws.facts_seen(a, {"tmux": True}, {})  # no version: not warned
     store.db.execute("UPDATE devices SET legacy=0 WHERE id=?", (a,))
     assert ws.warnings(clock[0], "0.3.0") == []
+
+
+def test_warnings_old_version_from_device_row_without_facts(store, ws, alice, clock):
+    a = device(store, alice, "box-1", "alice")[0]
+    store.db.execute("UPDATE devices SET version='0.2.1' WHERE id=?", (a,))
+    assert [w["text"] for w in ws.warnings(clock[0], "0.3.0")] == [
+        "box-1 (alice) runs kaptyorka 0.2.1; the hub runs 0.3.0"]
