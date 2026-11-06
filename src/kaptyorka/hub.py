@@ -340,6 +340,7 @@ def build_app(store: Store) -> Starlette:
     @server.custom_route("/api/me", methods=["GET"])
     async def api_me(request: Request) -> Response:
         p = request.scope["state"]["principal"]
+        store.page_seen(p)  # only the page asks who it is
         return JSONResponse({"person": p.person_name, "role": p.role, "device": p.device_name,
                              "person_id": p.person_id})
 
@@ -412,6 +413,10 @@ def build_app(store: Store) -> Starlette:
         principal = request.scope.get("state", {}).get("principal")
         if principal is None or not principal.is_admin():
             return PlainTextResponse("admin only", status_code=403)
+        if principal.legacy and store.has_own_device(principal.person_id):
+            # anyone holding the shared token would be the admin: once the admin has a token
+            # of their own, admin work takes that one
+            return PlainTextResponse("use your own admin token", status_code=403)
         return None
 
     def hub_url(request: Request) -> str:
@@ -484,6 +489,13 @@ def build_app(store: Store) -> Starlette:
 
     @server.custom_route("/api/legacy/off", methods=["POST"])
     async def api_legacy_off(request: Request) -> Response:
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is not None and principal.is_admin() and (
+                principal.legacy or not store.has_own_device(principal.person_id)):
+            # switched off with itself, the shared token would lock the admin out
+            return PlainTextResponse(
+                "switch the shared token off with your own admin token: run kaptyorka start"
+                " on the hub machine and open the page link it prints", status_code=400)
         return await legacy_toggle(request, False)
 
     @server.custom_route("/api/legacy/on", methods=["POST"])

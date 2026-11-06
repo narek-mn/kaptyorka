@@ -57,9 +57,36 @@ def _serve(args) -> int:
     for line in lines:
         print(line, file=sys.stderr)
     url = f"http://{args.host or _outbound_ip()}:{args.port}"
-    print(f"hub:   {url}\ntoken: {token}\npage:  {url}/#t={token}")
-    print(f"\nOn each machine, run:\n  kaptyorka join --hub {url} --token {token}\n  (add --name <name> to pick another name)")
+    admin = _admin_device(token)
+    cfg = paths.load_config()
+    if not cfg.get("hub") or not cfg.get("token"):  # this machine joins as the admin
+        paths.save_config({"hub": url, "token": admin, "machine": _default_name()})
+    print(f"hub:   {url}\npage:  {url}/#t={admin}")
+    print(f"\njoin this machine: kaptyorka join --hub {url} --token {admin}"
+          "\ninvite teammates: kaptyorka invite <name>")
     return 0
+
+
+def _admin_device(legacy_token: str) -> str:
+    """The admin's own device token (device `hub`), made on the first start and kept in
+    ~/.kaptyorka/admin-token, so the admin never depends on the shared token."""
+    from kaptyorka.store import Store
+
+    p = paths.home() / "admin-token"
+    store = Store(paths.home() / "hub.db", legacy_token=legacy_token)
+    try:
+        saved = p.read_text().strip() if p.exists() else ""
+        got = store.authenticate(saved) if saved else None
+        if got is not None and got.is_admin() and not got.legacy:
+            return saved
+        admin = next(x for x in store.people() if x["role"] == "admin")
+        token = store.device_add(admin["id"], "hub")
+    finally:
+        store.close()
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(token + "\n")
+    return token
 
 
 def _default_name() -> str:
@@ -340,7 +367,8 @@ def _join(args) -> int:
 def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
-    sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove}")
+    sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove,invite,people,"
+                            "project,grant,revoke,who}")
     hide = argparse.SUPPRESS  # subparsers are hidden by giving them no help text
     s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
     s.add_argument("--port", type=int, help="hub port (default 8765)")

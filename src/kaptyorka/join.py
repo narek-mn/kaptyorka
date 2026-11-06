@@ -101,10 +101,11 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     if not done:
         print(", ".join(f"{t} is not installed" for t in only) if only
               else "no supported agent tool found", file=sys.stderr)
-        return 1
+        rc = 1
     notes = [a.restart_note for a in ok if a.restart_note]
     for n in notes:
         print(f"restart: {n}")
     if not notes and ok:
         print("done, nothing to restart")
+    print(f"page: {hub}/#t={token}")
     return rc

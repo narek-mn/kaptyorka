@@ -51,7 +51,8 @@ def test_join_configures_installed_only(hub, home, capsys):
     assert paths.load_config() == {"hub": hub.url, "token": "T", "machine": "pc"}
     assert calls == [("kaptyorka-bridge", [EXE, "bridge"])]
     out = capsys.readouterr().out
-    assert "on: wired on" in out and "bridge: service ok" in out and out.endswith("done, nothing to restart\n")
+    assert "on: wired on" in out and "bridge: service ok" in out
+    assert out.endswith(f"done, nothing to restart\npage: {hub.url}/#t=T\n")
 
 
 def test_join_twice_same_result(hub, home, fake_claude_cli):  # noqa: F811
@@ -66,7 +67,8 @@ def test_join_twice_same_result(hub, home, fake_claude_cli):  # noqa: F811
 def test_join_prints_restart_notes(hub, home, capsys):
     a = FakeAdapter("claude-code", note="Claude Code: restart")
     assert main(hub.url, "T", "pc", adapters=[a, FakeAdapter("b")], install=no_service([])) == 0
-    assert capsys.readouterr().out.splitlines()[-1] == "restart: Claude Code: restart"
+    assert capsys.readouterr().out.splitlines()[-2:] == ["restart: Claude Code: restart",
+                                                          f"page: {hub.url}/#t=T"]
 
 
 def test_join_only_limits_adapters(hub, home):

@@ -67,7 +67,9 @@ def test_install_darwin_bootstrap(home):
         ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)])
 
 
-def test_serve_creates_token_once_and_prints_three_lines(home, capsys, monkeypatch):
+def test_start_makes_admin_device_once_and_joins_this_machine(home, capsys, monkeypatch):
+    from kaptyorka.store import Store
+
     monkeypatch.setattr(service, "install", lambda *a, **k: [])
     outs = []
     for _ in range(2):
@@ -76,12 +78,46 @@ def test_serve_creates_token_once_and_prints_three_lines(home, capsys, monkeypat
         assert e.value.code == 0
         outs.append(capsys.readouterr().out.splitlines())
     assert outs[0] == outs[1]
-    token = (paths.home() / "hub-token").read_text().strip()
-    assert outs[0] == ["hub:   http://10.0.0.5:9999", f"token: {token}", f"page:  http://10.0.0.5:9999/#t={token}",
-                       "", "On each machine, run:",
-                       f"  kaptyorka join --hub http://10.0.0.5:9999 --token {token}",
-                       "  (add --name <name> to pick another name)"]
-    assert (paths.home() / "hub-token").stat().st_mode & 0o777 == 0o600
+    shared = (paths.home() / "hub-token").read_text().strip()
+    admin = (paths.home() / "admin-token").read_text().strip()
+    assert admin != shared
+    assert outs[0] == ["hub:   http://10.0.0.5:9999", f"page:  http://10.0.0.5:9999/#t={admin}",
+                       "", f"join this machine: kaptyorka join --hub http://10.0.0.5:9999 --token {admin}",
+                       "invite teammates: kaptyorka invite <name>"]
+    assert shared not in "\n".join(outs[0])
+    for f in ("hub-token", "admin-token"):
+        assert (paths.home() / f).stat().st_mode & 0o777 == 0o600
+    cfg = paths.load_config()
+    assert cfg["hub"] == "http://10.0.0.5:9999" and cfg["token"] == admin and cfg["machine"]
+    store = Store(paths.home() / "hub.db")
+    p = store.authenticate(admin)
+    assert p.is_admin() and not p.legacy and p.device_name == "hub"
+    assert [d["name"] for d in store.devices(p.person_id)] == ["legacy", "hub"]  # made once
+    store.close()
+
+
+def test_start_keeps_an_existing_join(home, capsys, monkeypatch):
+    monkeypatch.setattr(service, "install", lambda *a, **k: [])
+    paths.save_config({"hub": "http://other:1", "token": "MINE", "machine": "pc"})
+    with pytest.raises(SystemExit):
+        run_cli(["start", "--port", "9999", "--host", "10.0.0.5"])
+    assert paths.load_config() == {"hub": "http://other:1", "token": "MINE", "machine": "pc"}
+
+
+def test_start_replaces_a_revoked_admin_device(home, capsys, monkeypatch):
+    from kaptyorka.store import Store
+
+    monkeypatch.setattr(service, "install", lambda *a, **k: [])
+    with pytest.raises(SystemExit):
+        run_cli(["start", "--port", "9999", "--host", "10.0.0.5"])
+    first = (paths.home() / "admin-token").read_text().strip()
+    store = Store(paths.home() / "hub.db")
+    store.device_revoke(store.authenticate(first).device_id)
+    store.close()
+    with pytest.raises(SystemExit):
+        run_cli(["start"])
+    second = (paths.home() / "admin-token").read_text().strip()
+    assert second != first and f"--token {second}" in capsys.readouterr().out
 
 
 def test_who_prints_table(hub, home, capsys):
@@ -401,7 +437,7 @@ def test_start_again_uses_saved_port_and_host(home, capsys, monkeypatch):
         with pytest.raises(SystemExit):
             run_cli(["start", *args])
     out = capsys.readouterr().out.splitlines()
-    assert out[0] == out[7] == "hub:   http://10.0.0.5:9999"
+    assert out[0] == out[5] == "hub:   http://10.0.0.5:9999"
     assert seen[0] == seen[1] and seen[1][-2:] == ["--port", "9999"]
 
 

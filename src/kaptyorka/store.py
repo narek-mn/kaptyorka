@@ -412,6 +412,40 @@ class Store:
         self.log_add(who["name"], "join", f"device {device_name}")
         return token, secret
 
+    def device_add(self, person_id: int, name: str, by: str = "") -> str:
+        """A new device of the person's own (not the shared token); returns its token."""
+        token = secrets.token_urlsafe(32)
+        with self.lock:
+            who = self.db.execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
+            if who is None:
+                raise KaptyorkaError("no such person")
+            self.db.execute("INSERT INTO devices (person_id, name, token_hash, created)"
+                            " VALUES (?,?,?,?)",
+                            (person_id, name, hashlib.sha256(token.encode()).hexdigest(),
+                             self.clock()))
+        self.log_add(by or who["name"], "device", f"device {name} of {who['name']}")
+        return token
+
+    def has_own_device(self, person_id: int) -> bool:
+        """True when the person has a working device that is not the 0.1 shared token."""
+        with self.lock:
+            return self.db.execute("SELECT 1 FROM devices WHERE person_id=? AND legacy=0 AND"
+                                   " revoked_at IS NULL LIMIT 1", (person_id,)).fetchone() is not None
+
+    def page_seen(self, principal: Principal) -> None:
+        """Log `page_login` the first time in a day a device opens the page."""
+        key, now = f"page_seen:{principal.device_id}", self.clock()
+        with self.lock:
+            row = self.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            try:
+                if row is not None and now - float(row["value"]) < 86400:
+                    return
+            except ValueError:
+                pass
+            self.db.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
+                            " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(now)))
+        self.log_add(principal.person_name, "page_login", principal.device_name)
+
     def device_revoke(self, device_id: int, by: str = "") -> None:
         with self.lock:
             dev = self.db.execute("SELECT * FROM devices WHERE id=?", (device_id,)).fetchone()
@@ -1092,6 +1126,7 @@ class Store:
         `person_id` the page counts as a session of that person and follows the group rule."""
         name = _person(name)
         check_secrets(text)
+        opened = []
         with self.lock:
             _check_length(text)
             now = self.clock()
@@ -1105,9 +1140,11 @@ class Store:
                 elif not all(self._may_message(me, self._as_target(t)) for t in targets):
                     raise KaptyorkaError(f"no door to {to}: knock(to, about) first")
                 if to != "all":  # so the session can reply to the page; a broadcast is one-way
-                    for t in targets:
-                        self._web_door(key, person_id, t, now)
-            return self._insert(key, name, targets, text, now)
+                    opened = [t["name"] for t in targets if self._web_door(key, person_id, t, now)]
+            n = self._insert(key, name, targets, text, now)
+        for other in opened:
+            self.log_add(name, "door_open", f"{key} <-> {other}")
+        return n
 
     def _as_target(self, t) -> dict:
         """A target row as _may_message reads it; a person on the web page by their name."""
@@ -1118,10 +1155,11 @@ class Store:
 
     def _web_door(self, web_key, person_id, t, now):
         """A session door between a person's page and a session it wrote to, unless one is
-        open or they are the same person. It closes when the session goes offline."""
+        open or they are the same person. It closes when the session goes offline. True when
+        a door was opened."""
         tp = None if t["key"].startswith("web:") else t["person_id"]
         if tp is None or tp == person_id:
-            return
+            return False
         if self.db.execute(
                 "SELECT 1 FROM doors WHERE closed_at IS NULL AND scope='session' AND"
                 " ((a_key=? AND b_key=?) OR (a_key=? AND b_key=?))",
@@ -1129,6 +1167,8 @@ class Store:
             self.db.execute(
                 "INSERT INTO doors (a_key, a_person, b_key, b_person, scope, opened_at, opened_by)"
                 " VALUES (?,?,?,?,'session',?,?)", (web_key, person_id, t["key"], tp, now, person_id))
+            return True
+        return False
 
     def _shown(self, row, viewer) -> str:
         """A session's name as person `viewer` may see it (the who() rule): the project is

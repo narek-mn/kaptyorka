@@ -39,7 +39,9 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 [hidden] { display: none !important; }
 
 /* lock */
-#lock { position: fixed; inset: 0; display: grid; place-items: center; color: var(--faint); }
+#lock { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 22px; color: var(--faint); }
+#unlock { display: flex; gap: 8px; width: min(360px, calc(100vw - 32px)); }
+#unlock input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; font-family: var(--mono); font-size: 13px; }
 
 /* top bar */
 #app { display: flex; flex-direction: column; height: 100%; }
@@ -337,7 +339,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
   <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></symbol>
 </svg>
 
-<div id="lock" title="Locked"><svg width="56" height="56"><use href="#i-lock"/></svg></div>
+<div id="lock"><svg width="56" height="56" aria-label="Locked"><use href="#i-lock"/></svg>
+  <form id="unlock"><input id="unlock-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your token" aria-label="Token"><button class="btn primary" type="submit">Open</button></form></div>
 
 <div id="app" hidden>
   <header>
@@ -1198,6 +1201,14 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
       .catch(function () { clearTimeout(stop); live(false); clearTimeout(timer); timer = setTimeout(poll, 2000); });
   }
 
+  /* a pasted token is kept like a #t= link */
+  $("unlock").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var t = $("unlock-token").value.trim();
+    if (!t) return;
+    location.replace(location.pathname + "#t=" + encodeURIComponent(t));
+    location.reload();
+  });
   if (!token) return;
   $("lock").hidden = true;
   $("app").hidden = false;
