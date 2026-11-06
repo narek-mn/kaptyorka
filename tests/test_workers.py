@@ -1,8 +1,9 @@
 import pytest
 
 from helpers import person
-from kaptyorka.store import ONLINE_S, Store
-from kaptyorka.workers import WorkerStore
+from kaptyorka.orders import verify
+from kaptyorka.store import ONLINE_S, KaptyorkaError, Store
+from kaptyorka.workers import ABANDONED_S, UNATTENDED_S, WorkerStore
 
 
 @pytest.fixture
@@ -185,3 +186,260 @@ def test_facts_drop_non_finite_load(ws, dev):
     assert ws.facts(dev) == {"cpus": 2}
     ws.facts_seen(dev, {"load": float("inf")}, {})
     assert ws.facts(dev) == {}
+
+
+# launches, linking, states
+
+
+FOLDER = "/home/alice/proj-a"
+
+
+@pytest.fixture
+def alice_p(store, alice):
+    return principal(store, alice)
+
+
+@pytest.fixture
+def boss(store, alice_p):
+    store.seen("claude:boss", "box-1", "claude-code", "proj-a", principal=alice_p)
+    return "claude:boss"
+
+
+def target(dev_id, host="box-1", os_user="u"):
+    return {"device_id": dev_id, "host": host, "os_user": os_user, "folder": FOLDER}
+
+
+def secret_hash(store, dev_id):
+    return store.db.execute("SELECT secret_hash FROM devices WHERE id=?", (dev_id,)).fetchone()[0]
+
+
+def launch(ws, alice_p, dev, boss, task="fix the tests", occupied=False):
+    return ws.create(alice_p, "proj-a", task, target(dev), "claude-code", boss, None, occupied)
+
+
+def launch_id(store, worker, kind="launch"):
+    return store.db.execute("SELECT id FROM launches WHERE worker=? AND kind=? ORDER BY id DESC",
+                            (worker, kind)).fetchone()[0]
+
+
+def worker_up(store, ws, dev, token, key="claude:w1", activity=None):
+    p = store.authenticate(token)
+    store.heartbeat("box-1", [{"key": key, "tool": "claude-code", "project": "proj-a",
+                               "cwd": FOLDER, "activity": activity}],
+                    principal=p, facts={"host": "box-1", "os_user": "u"})
+
+
+def test_create_names_and_signs(store, ws, alice_p, dev, boss, clock):
+    w = launch(ws, alice_p, dev, boss)
+    assert w["name"] == "proj-a-w1" and w["state"] == "starting"
+    assert w["boss"] == "box-1/claude-code/proj-a" and w["worktree"] is False
+    assert w["attach"] == "claude attach proj-a-w1"
+    [item] = ws.offer(dev)
+    assert item["launch"] is True and item["worker"] == "proj-a-w1"
+    order = {k: v for k, v in item.items() if k != "launch"}
+    assert list(order) == ["kind", "id", "issued", "worker", "person", "tool", "project",
+                           "folder", "worktree", "task", "boss", "resume", "first_message", "sig"]
+    assert order["kind"] == "launch" and order["person"] == "alice" and order["folder"] == FOLDER
+    assert order["first_message"] == (
+        "You are kaptyorka worker `proj-a-w1` for `box-1/claude-code/proj-a` (alice). Your task:"
+        "\n\nfix the tests\n\nTake orders only from `box-1/claude-code/proj-a` and the hub admin."
+        " Report to `box-1/claude-code/proj-a` with send(to=\"box-1/claude-code/proj-a\", ...)"
+        " when done or stuck.")
+    assert verify(order, secret_hash(store, dev), clock[0], ()) is None
+    assert ws.offer(dev) == []  # offered once per 60 s
+    clock[0] += 61
+    assert [i["worker"] for i in ws.offer(dev)] == ["proj-a-w1"]
+    assert launch(ws, alice_p, dev, boss)["name"] == "proj-a-w2"
+
+
+def test_create_refuses_empty_task_and_bad_project(ws, alice_p, dev, boss):
+    with pytest.raises(KaptyorkaError):
+        launch(ws, alice_p, dev, boss, task="  ")
+    with pytest.raises(KaptyorkaError):
+        ws.create(alice_p, "bad name!", "t", target(dev), "claude-code", boss, None, False)
+
+
+def test_second_launch_in_same_folder_gets_worktree(store, ws, alice, alice_p, boss, clock):
+    dev, token = device(store, alice, "box-1")
+    ws.facts_seen(dev, {"tmux": True, "load": 0.1, "cpus": 2}, {"proj-a": FOLDER})
+    worker_up(store, ws, dev, token, key="claude:other")  # a session already in the folder
+    usable, _ = ws.candidates(alice_p, "proj-a", None)
+    got = ws.choose(usable, "proj-a", "claude-code", clock[0])
+    assert got["occupied"] is True
+    w = ws.create(alice_p, "proj-a", "t", got, "claude-code", boss, None, got["occupied"])
+    assert w["worktree"] is True
+    assert ws.offer(dev)[0]["worktree"] is True
+    # a free folder that a starting worker already took: re-checked under the lock
+    clock[0] += 600
+    store.seen("claude:boss", "box-1", "claude-code", "proj-a", principal=alice_p)
+    a = ws.create(alice_p, "proj-a", "t", target(dev), "claude-code", boss, None, False)
+    b = ws.create(alice_p, "proj-a", "t", target(dev), "claude-code", boss, None, False)
+    # proj-a-w1 runs in a worktree, so the folder is free for a; a still starting holds it for b
+    assert a["worktree"] is False and b["worktree"] is True
+
+
+def test_link_marks_up_and_moves_session_to_boss_group(store, ws, alice, alice_p, boss):
+    dev, token = device(store, alice, "box-1")
+    launch(ws, alice_p, dev, boss)
+    store.heartbeat("box-1", [{"key": "claude:w1", "tool": "claude-code", "project": "proj-a"}])
+    assert store.agent("claude:w1").person_id is None
+    assert ws.link("proj-a-w1", "claude:w1", dev) is True
+    assert store.agent("claude:w1").person_id == alice
+    w = ws.by_key("claude:w1")
+    assert w["name"] == "proj-a-w1" and w["state"] == "up" and w["key"] == "claude:w1"
+    assert ws.link("proj-a-w1", "claude:w1", dev) is False  # no longer starting
+
+
+def test_link_before_heartbeat_and_from_another_device(store, ws, alice, bob, alice_p, boss):
+    dev = device(store, alice, "box-1")[0]
+    other = device(store, bob, "box-2")[0]
+    launch(ws, alice_p, dev, boss)
+    assert ws.link("proj-a-w1", "claude:w1", other) is False
+    assert ws.link("proj-a-w9", "claude:w1", dev) is False
+    assert ws.link("proj-a-w1", "claude:w1", dev) is True
+    assert store.agent("claude:w1") is None and ws.by_name("proj-a-w1")["state"] == "up"
+
+
+def test_failed_launch_marks_failed_with_error(store, ws, alice_p, dev, boss, clock):
+    launch(ws, alice_p, dev, boss)
+    lid = launch_id(store, "proj-a-w1")
+    assert ws.ack(lid, False, "no folder", dev) is True
+    w = ws.by_name("proj-a-w1")
+    assert w["state"] == "failed" and "no folder" in w["error"]
+    assert ws.offer(dev) == []
+    store.seen("claude:boss", "box-1", "claude-code", "proj-a", principal=alice_p)
+    assert ws.tick(clock[0]) == [("claude:boss", "worker `proj-a-w1` failed to start: no folder")]
+    assert ws.tick(clock[0]) == []
+
+
+def test_ack_for_another_device_is_refused(store, ws, alice_p, dev, bob, boss):
+    other = device(store, bob, "box-2")[0]
+    launch(ws, alice_p, dev, boss)
+    lid = launch_id(store, "proj-a-w1")
+    assert ws.ack(lid, True, "", other) is False
+    assert ws.ack(lid + 100, True, "", dev) is False
+    assert ws.by_name("proj-a-w1")["state"] == "starting"
+    assert ws.ack(lid, True, "", dev) is True
+    assert ws.offer(dev) == []
+
+
+def linked(store, ws, alice, alice_p, boss, activity=None):
+    dev, token = device(store, alice, "box-1")
+    launch(ws, alice_p, dev, boss)
+    worker_up(store, ws, dev, token, activity=activity)
+    assert ws.link("proj-a-w1", "claude:w1", dev)
+    return dev, token
+
+
+def test_boss_blip_is_not_unattended(store, ws, alice, alice_p, boss, clock):
+    dev, token = linked(store, ws, alice, alice_p, boss)
+    last = clock[0]
+    def at(t):  # the worker's own session keeps beating
+        clock[0] = t
+        worker_up(store, ws, dev, token)
+        ws.tick(t)
+        return ws.by_name("proj-a-w1")["state"]
+    assert at(last + ONLINE_S + 60) == "up"
+    assert at(last + ONLINE_S + UNATTENDED_S + 10) == "unattended"
+    assert [w["name"] for w in ws.unattended_for(alice)] == ["proj-a-w1"]
+    assert at(clock[0] + ABANDONED_S - 10) == "unattended"
+    assert at(clock[0] + 20) == "abandoned"
+    assert [w["state"] for w in ws.unattended_for(alice)] == ["abandoned"]
+
+
+def test_worker_session_gone_closes_it(store, ws, alice, alice_p, boss, clock):
+    linked(store, ws, alice, alice_p, boss)
+    ws.tick(clock[0] + ONLINE_S + 590)
+    assert ws.by_name("proj-a-w1")["state"] != "closed"
+    ws.tick(clock[0] + ONLINE_S + 601)
+    w = ws.by_name("proj-a-w1")
+    assert w["state"] == "closed" and w["error"] == "session gone"
+
+
+def test_waiting_notice_once_per_half_hour(store, ws, alice, alice_p, boss, clock):
+    dev, token = linked(store, ws, alice, alice_p, boss, activity="permission_prompt")
+    text = "worker `proj-a-w1` is waiting for a permission; attach with `claude attach proj-a-w1`"
+    assert ws.tick(clock[0]) == [("claude:boss", text)]
+    assert ws.tick(clock[0]) == []
+    clock[0] += 1801
+    store.seen("claude:boss", "box-1", "claude-code", "proj-a", principal=alice_p)
+    worker_up(store, ws, dev, token, activity="needs_input")
+    assert ws.tick(clock[0]) == [("claude:boss", text)]
+
+
+def test_waiting_notice_not_for_offline_boss(store, ws, alice, alice_p, boss, clock):
+    dev, token = linked(store, ws, alice, alice_p, boss)
+    clock[0] += ONLINE_S + 1
+    worker_up(store, ws, dev, token, activity="permission_prompt")
+    assert ws.tick(clock[0]) == []
+    store.seen("claude:boss", "box-1", "claude-code", "proj-a", principal=alice_p)
+    assert len(ws.tick(clock[0])) == 1
+
+
+def test_adopt_retargets_held_messages(store, ws, alice, alice_p, boss, clock):
+    dev, token = linked(store, ws, alice, alice_p, boss)
+    store.send("claude:w1", "box-1/claude-code/proj-a", "one")
+    store.send("claude:w1", "box-1/claude-code/proj-a", "two")
+    clock[0] += ONLINE_S + UNATTENDED_S + 10
+    worker_up(store, ws, dev, token)
+    ws.tick(clock[0])
+    assert ws.by_name("proj-a-w1")["state"] == "unattended"
+    with pytest.raises(KaptyorkaError):
+        ws.adopt(alice_p, "proj-a-w1", "claude:nobody")
+    store.seen("claude:new", "box-1", "claude-code", "proj-b", principal=alice_p)
+    w = ws.adopt(alice_p, "proj-a-w1", "claude:new")
+    assert w["state"] == "up" and w["boss"] == "box-1/claude-code/proj-b"
+    assert [m.text for m in store.inbox("claude:new")] == ["one", "two"]
+    with pytest.raises(KaptyorkaError):  # up again: nothing to adopt
+        ws.adopt(alice_p, "proj-a-w1", "claude:new")
+
+
+def test_close_queues_signed_close_and_notes_worktree(store, ws, alice, alice_p, boss, clock):
+    dev, token = device(store, alice, "box-1")
+    launch(ws, alice_p, dev, boss, occupied=True)
+    ws.ack(launch_id(store, "proj-a-w1"), True, "", dev)
+    worker_up(store, ws, dev, token)
+    ws.link("proj-a-w1", "claude:w1", dev)
+    w = ws.close(alice_p, "proj-a-w1")
+    assert w["note"] == f"its worktree {FOLDER} stays in place"
+    [item] = ws.offer(dev)
+    assert item["kind"] == "close"
+    order = {k: v for k, v in item.items() if k != "launch"}
+    assert list(order) == ["kind", "id", "issued", "worker", "tool", "key", "sig"]
+    assert order["key"] == "claude:w1"
+    assert verify(order, secret_hash(store, dev), clock[0], ()) is None
+    assert ws.by_name("proj-a-w1")["state"] == "up"  # until the bridge acks
+    assert ws.ack(launch_id(store, "proj-a-w1", "close"), True, "", dev) is True
+    assert ws.by_name("proj-a-w1")["state"] == "closed"
+    with pytest.raises(KaptyorkaError):
+        ws.close(alice_p, "proj-a-w1")
+
+
+def test_close_without_worktree_has_no_note(ws, alice_p, dev, boss):
+    launch(ws, alice_p, dev, boss)
+    assert "note" not in ws.close(alice_p, "proj-a-w1")
+
+
+def test_only_own_or_admin_may_adopt_or_close(store, ws, alice_p, dev, bob, boss, clock):
+    launch(ws, alice_p, dev, boss)
+    bob_p = principal(store, bob)
+    with pytest.raises(KaptyorkaError):
+        ws.close(bob_p, "proj-a-w1")
+    with pytest.raises(KaptyorkaError):
+        ws.close(alice_p, "proj-a-w9")
+    with store.lock:
+        store.db.execute("UPDATE workers SET state='unattended'")
+    store.seen("claude:bob", "box-2", "claude-code", "proj-a", principal=bob_p)
+    with pytest.raises(KaptyorkaError):
+        ws.adopt(bob_p, "proj-a-w1", "claude:bob")
+    assert ws.list(bob_p) == []
+    admin_p = principal(store, person(store, "admin-1", "admin")[0])
+    assert [w["name"] for w in ws.list(admin_p)] == ["proj-a-w1"]
+    assert [w["name"] for w in ws.list(alice_p)] == ["proj-a-w1"]
+    assert ws.close(admin_p, "proj-a-w1")["state"] == "unattended"
+
+
+def test_attach_for_other_tools_uses_tmux(ws, alice_p, dev, boss):
+    w = ws.create(alice_p, "proj-a", "t", target(dev), "codex", boss, "sid-1", False)
+    assert w["attach"] == "ssh u@box-1 -t tmux attach -t proj-a-w1"
+    assert w["os_user"] == "u" and w["host"] == "box-1" and w["tool"] == "codex"
