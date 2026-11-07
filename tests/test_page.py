@@ -42,3 +42,17 @@ def test_activity_branch_lookup_is_own_property(hub):
     assert "Object.prototype.hasOwnProperty.call(d.branches, g.branch)" in html
     assert "d.branches[g.branch]" in html.split("hasOwnProperty.call(d.branches, g.branch) ?")[1].split(";")[0]
     assert html.count("d.branches[") == 1
+
+
+def test_page_has_rules_tab(hub):
+    html = page(hub)
+    assert 'data-view="rules"' in html and 'id="rules"' in html and 'id="i-rules"' in html
+    assert re.search(r'VIEWS = \[[^\]]*"rules"', html)
+    # between Notes and Machines, visible to everyone
+    assert html.index('data-view="notes"') < html.index('data-view="rules"') < html.index('data-view="machines"')
+    assert "admin-only" not in re.search(r'<button[^>]*data-view="rules"[^>]*>', html).group(0)
+    assert '"/api/rules"' in html and '"/api/proposals"' in html and '"/api/conflicts"' in html
+    assert '"/api/proposals/"' in html and 'id="n-rules"' in html
+    code = html[html.index("function loadRules("):html.index("function busy(")]
+    assert not re.search(r"\b(prompt|alert|confirm)\(", code)  # reject reason is an inline input
+    assert "innerHTML" not in code and 'placeholder: "Reason"' in code

@@ -339,6 +339,28 @@ td.c-act .btn + .btn { margin-left: 6px; }
 .switch[aria-checked="true"] { background: rgba(115, 191, 105, .25); border-color: var(--green); }
 .switch[aria-checked="true"]::after { transform: translateX(14px); background: var(--green); }
 
+/* rules */
+.rules-top { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+#rules-doc .doc-body { flex: none; max-height: 60vh; }
+#rules-doc textarea { min-height: 360px; }
+.rules-text b { display: block; margin: 14px 0 4px; font-weight: 600; color: #f0f0f6; }
+.rules-text b:first-child { margin-top: 4px; }
+.rules-text p { margin: 0 0 8px; max-width: 80ch; white-space: pre-line; overflow-wrap: anywhere; }
+.rules-text .empty, #rules .empty-row { color: var(--faint); }
+#rules td { overflow-wrap: anywhere; }
+.skill { font: 12px var(--mono); color: var(--text); }
+.prop b { display: block; font-weight: 400; color: var(--text); white-space: pre-line; }
+.prop small, .clash small { display: block; margin-top: 3px; font-size: 12px; color: var(--dim); white-space: pre-line; }
+.prop small i { font-style: normal; color: var(--faint); }
+tr.decided .prop b { color: var(--dim); }
+.clash div + div { margin-top: 4px; }
+.clash span { color: var(--faint); margin-right: 6px; }
+.state.open { color: var(--blue); border-color: rgba(110, 159, 255, .4); background: rgba(110, 159, 255, .1); }
+.state.accepted { color: var(--green); border-color: rgba(115, 191, 105, .4); background: rgba(115, 191, 105, .1); }
+.state.rejected { color: var(--faint); }
+.reject { display: inline-flex; gap: 6px; align-items: center; }
+.reject input { width: 220px; height: 28px; padding: 0 8px; font-size: 12px; }
+
 @media (max-width: 720px) {
   header { gap: 10px; padding: 0 16px; }
   .brand span { display: none; }
@@ -401,6 +423,16 @@ td.c-act .btn + .btn { margin-left: 6px; }
   .task { max-width: none; }
   .attach code { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .folder { flex-wrap: wrap; white-space: normal; }
+  /* Rules: one column; proposals and conflicts as cards */
+  .rules-top { grid-template-columns: minmax(0, 1fr); }
+  #rules table { min-width: 0; }
+  #rules .stack tr { grid-template-columns: minmax(0, 1fr) auto; }
+  #rules .stack td { grid-column: 1 / -1; }
+  #rules .stack td.r-who { grid-column: 1; }
+  #rules .stack td.r-side { grid-column: 2; grid-row: 1; justify-self: end; text-align: right; }
+  #rules .stack td.seen { text-align: left; }
+  .reject { display: flex; }
+  .reject input { flex: 1; width: auto; min-width: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; } }
 </style>
@@ -414,6 +446,7 @@ td.c-act .btn + .btn { margin-left: 6px; }
   <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="1.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v3"/></symbol>
   <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></symbol>
   <symbol id="i-all" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4h3l6 4V6L7 10z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-rules" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="3" width="15" height="18" rx="1.5"/><path d="M8.5 8h.01M8.5 12h.01M8.5 16h.01M11.5 8h4.5M11.5 12h4.5M11.5 16h3"/></symbol>
   <symbol id="i-machine" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></symbol>
   <symbol id="i-project" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></symbol>
   <symbol id="i-tool" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8 8-5 4 5 4M16 8l5 4-5 4"/></symbol>
@@ -447,6 +480,7 @@ td.c-act .btn + .btn { margin-left: 6px; }
       <button class="tab" role="tab" data-view="team" title="Team"><svg width="18" height="18"><use href="#i-team"/></svg><span class="label">Team</span><span class="count" id="n-team">0</span></button>
       <button class="tab" role="tab" data-view="messages" title="Messages"><svg width="18" height="18"><use href="#i-msg"/></svg><span class="label">Messages</span><span class="count" id="n-messages">0</span></button>
       <button class="tab" role="tab" data-view="notes" title="Notes"><svg width="18" height="18"><use href="#i-note"/></svg><span class="label">Notes</span><span class="count" id="n-notes">0</span></button>
+      <button class="tab" role="tab" data-view="rules" title="Rules"><svg width="18" height="18"><use href="#i-rules"/></svg><span class="label">Rules</span><span class="count" id="n-rules" hidden>0</span></button>
       <button class="tab" role="tab" data-view="machines" title="Machines"><svg width="18" height="18"><use href="#i-machine"/></svg><span class="label">Machines</span><span class="count" id="n-machines">0</span></button>
       <span class="sep admin-only" hidden></span>
       <button class="tab admin-only" role="tab" data-view="people" title="People" hidden><svg width="18" height="18"><use href="#i-people"/></svg><span class="label">People</span><span class="count" id="n-people">0</span></button>
@@ -504,6 +538,34 @@ td.c-act .btn + .btn { margin-left: 6px; }
           <div id="topics"></div>
         </div>
         <div class="panel doc" id="doc"></div>
+      </div>
+    </section>
+    <section id="rules" role="tabpanel" class="admin" hidden>
+      <div class="err" id="rules-load-err" hidden></div>
+      <div class="rules-top">
+        <div class="panel doc" id="rules-doc"></div>
+        <div class="panel">
+          <div class="phead">Skills</div>
+          <table>
+            <thead><tr><th>Name</th><th>Size</th><th class="seen">Changed</th></tr></thead>
+            <tbody id="skill-rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="phead">Proposals</div>
+        <div class="err" id="prop-err" hidden></div>
+        <table class="stack">
+          <thead><tr><th>Person</th><th>Proposal</th><th>State</th><th class="seen">When</th><th></th></tr></thead>
+          <tbody id="prop-rows"></tbody>
+        </table>
+      </div>
+      <div class="panel admin-only" id="conflict-panel" hidden>
+        <div class="phead">Conflicts</div>
+        <table class="stack">
+          <thead><tr><th>Person</th><th>Folder</th><th>Rules that clash</th><th class="seen">When</th></tr></thead>
+          <tbody id="conflict-rows"></tbody>
+        </table>
       </div>
     </section>
     <section id="machines" role="tabpanel" class="admin" hidden>
@@ -602,12 +664,13 @@ td.c-act .btn + .btn { margin-left: 6px; }
 (function () {
   "use strict";
   var KEY = "kaptyorka.token";
-  var VIEWS = ["team", "messages", "notes", "machines"], ADMIN_VIEWS = ["people", "access", "audit"];
+  var VIEWS = ["team", "messages", "notes", "rules", "machines"], ADMIN_VIEWS = ["people", "access", "audit"];
   var token = null, view = "team", filter = { machine: null, project: null };
   var feed = null, seen = {}, timer = null, expanded = {}, me = null, myProjects = [];
   var note = { key: null, project: null, topic: null, mode: "read", version: 0, history: false };
   var logPerson = "", logRows = null;
   var fleet = { machines: [], workers: [], warnings: [] }, fleetAt = 0;
+  var rules = null, rulesAt = 0, rulesUi = { edit: false, rejecting: null };
 
   function store(fn) { try { return fn(window.localStorage); } catch (e) { return null; } }
 
@@ -717,6 +780,7 @@ td.c-act .btn + .btn { margin-left: 6px; }
     history.replaceState(null, "", location.pathname + (v === "team" ? "" : "#view=" + v));
     if (v === "messages") { markClipped(); toBottom(); }
     if (v === "machines") loadFleet(true);
+    if (v === "rules") loadRules(true);
   }
 
   /* where a name lives: from the online list, else from the name itself */
@@ -1459,6 +1523,135 @@ td.c-act .btn + .btn { margin-left: 6px; }
     }
   }
 
+  /* Rules: team rules, skills, proposals, conflicts (admin); fetched apart from the feed,
+     every poll while the tab is open, else every 10 s for the admin's badge */
+  function loadRules(force) {
+    if (!me || (!force && view !== "rules" && (!isAdmin() || Date.now() - rulesAt < 10000))) return;
+    rulesAt = Date.now();
+    Promise.all([get("/api/rules"), get("/api/proposals"), isAdmin() ? get("/api/conflicts") : []])
+      .then(function (r) {
+        rules = { rules: r[0], proposals: r[1], conflicts: r[2] };
+        $("rules-load-err").hidden = true;
+        renderRules();
+      })
+      .catch(function (e) { $("rules-load-err").hidden = false; $("rules-load-err").textContent = e.message; });
+  }
+  /* plain paragraphs split on blank lines; a line starting with # is a bold heading */
+  function ruleBlocks(text) {
+    var out = [];
+    text.split(/\n\s*\n/).forEach(function (block) {
+      var para = [];
+      function flush() { if (para.length) out.push(el("p", { text: para.join("\n") })); para = []; }
+      block.split("\n").forEach(function (l) {
+        if (l.charAt(0) === "#") { flush(); out.push(el("b", { text: l.replace(/^#+\s*/, "") })); }
+        else if (l.trim()) para.push(l);
+      });
+      flush();
+    });
+    return out;
+  }
+  function renderRules() {
+    var open = rules.proposals.filter(function (p) { return p.status === "open"; }).length;
+    $("n-rules").textContent = open;
+    $("n-rules").hidden = !isAdmin() || !open;
+    if (!rulesUi.edit && changed("rules-doc", rules.rules)) renderRulesDoc();
+    if (changed("skills", rules.rules.skills)) renderSkills();
+    if (!rules.proposals.some(function (p) { return p.id === rulesUi.rejecting && p.status === "open"; })) rulesUi.rejecting = null;
+    if (rulesUi.rejecting == null && changed("proposals", rules.proposals)) renderProposals();
+    if (changed("conflicts", rules.conflicts)) renderConflicts();
+    tick();
+  }
+  function renderRulesDoc() {
+    var doc = $("rules-doc"), r = rules.rules;
+    doc.textContent = "";
+    var tools = el("div", { "class": "tools" });
+    doc.appendChild(el("div", { "class": "doc-head" }, [el("h2", { text: "Team rules" }),
+      r.version ? el("span", { "class": "tag", text: "v" + r.version }) : null, tools]));
+    if (rulesUi.edit) {
+      var area = el("textarea", { "aria-label": "Team rules" });
+      area.value = r.text;
+      var err = el("div", { "class": "err", hidden: "" });
+      tools.appendChild(button("Cancel", "", function () { rulesUi.edit = false; renderRulesDoc(); }));
+      tools.appendChild(button("Save", "primary", function () {
+        api("/api/rules", { text: area.value })
+          .then(function () { rulesUi.edit = false; seen["rules-doc"] = null; loadRules(true); })
+          .catch(function (e) { err.hidden = false; err.textContent = e.message; });
+      }));
+      doc.appendChild(el("div", { "class": "doc-body" }, [area, err]));
+      area.focus();
+      return;
+    }
+    if (isAdmin()) tools.appendChild(button([icon("i-edit", 13), "Edit"], "", function () { rulesUi.edit = true; renderRulesDoc(); }));
+    if (r.version) doc.appendChild(el("div", { "class": "byline" }, [el("b", { text: r.author }), timeEl(r.time)]));
+    doc.appendChild(el("div", { "class": "doc-body rules-text" }, r.text.trim() ? ruleBlocks(r.text)
+      : [el("div", { "class": "empty", text: "No team rules yet" })]));
+  }
+  function renderSkills() {
+    var body = $("skill-rows"), ks = rules.rules.skills;
+    body.textContent = "";
+    if (!ks.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "3", text: "No team skills" })]));
+    ks.forEach(function (k) {
+      body.appendChild(el("tr", null, [el("td", { "class": "skill", text: k.name }),
+        el("td", { "class": "c-plain", text: size(k.size) }),
+        el("td", { "class": "seen", title: "by " + k.author }, [timeEl(k.time)])]));
+    });
+  }
+  function renderProposals() {
+    var body = $("prop-rows");
+    body.textContent = "";
+    var ps = rules.proposals.filter(function (p) { return p.status === "open"; })
+      .concat(rules.proposals.filter(function (p) { return p.status !== "open"; }));
+    if (!ps.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "5", text: "No proposals" })]));
+    ps.forEach(function (p) {
+      var what = el("div", { "class": "prop" }, [el("b", { text: p.text }),
+        p.evidence ? el("small", { text: p.evidence }) : null,
+        p.status === "rejected" && p.reason ? el("small", null, [el("i", { text: "Reason: " }), p.reason]) : null]);
+      var acts = el("td", { "class": "c-act" });
+      if (isAdmin() && p.status === "open") {
+        if (rulesUi.rejecting === p.id) {
+          var why = el("input", { placeholder: "Reason", "aria-label": "Reason", maxlength: "1000" });
+          var no = function () { rulesUi.rejecting = null; seen.proposals = null; renderProposals(); };
+          var yes = function () {
+            if (!why.value.trim()) { why.focus(); return; }
+            act("prop-err", "/api/proposals/" + p.id, { accept: false, reason: why.value.trim() })
+              .then(function () { rulesUi.rejecting = null; loadRules(true); }, function () {});
+          };
+          why.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") { e.preventDefault(); yes(); }
+            if (e.key === "Escape") no();
+          });
+          acts.appendChild(el("div", { "class": "reject" }, [why, button("Reject", "danger", yes), button("Cancel", "", no)]));
+          setTimeout(function () { why.focus(); }, 0);
+        } else {
+          acts.appendChild(button("Accept", "primary", function () {
+            quiet(act("prop-err", "/api/proposals/" + p.id, { accept: true, reason: "" }).then(function () { loadRules(true); }));
+          }));
+          acts.appendChild(button("Reject", "", function () { rulesUi.rejecting = p.id; renderProposals(); }));
+        }
+      }
+      body.appendChild(el("tr", { "class": p.status === "open" ? "" : "decided" }, [
+        el("td", { "class": "c-plain r-who", text: p.person }),
+        el("td", null, [what]),
+        el("td", { "class": "r-side" }, [el("span", { "class": "state " + p.status, text: p.status,
+          title: p.decided_by ? p.status + " by " + p.decided_by : null })]),
+        el("td", { "class": "seen" }, [timeEl(p.time)]),
+        acts]));
+    });
+  }
+  function renderConflicts() {
+    $("conflict-panel").hidden = !isAdmin();
+    var body = $("conflict-rows");
+    body.textContent = "";
+    if (!rules.conflicts.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "4", text: "No conflicts" })]));
+    rules.conflicts.forEach(function (c) {
+      body.appendChild(el("tr", null, [el("td", { "class": "c-plain r-who", text: c.person }),
+        el("td", null, [el("span", { "class": "tag" }, [icon("i-project", 12), c.project])]),
+        el("td", { "class": "clash" }, [el("div", null, [el("span", { text: "A" }), c.rule_a]),
+                                        el("div", null, [el("span", { text: "B" }), c.rule_b])]),
+        el("td", { "class": "seen r-side" }, [timeEl(c.time)])]));
+    });
+  }
+
   /* an admin panel is not redrawn while someone is choosing or typing in it */
   function busy(id) {
     var a = document.activeElement;
@@ -1517,6 +1710,7 @@ td.c-act .btn + .btn { margin-left: 6px; }
         render();
         if (view === "notes" && activity.project) loadActivity(activity.project);
         loadFleet();
+        loadRules();
         clearTimeout(timer);
         timer = setTimeout(poll, 2000);
       })

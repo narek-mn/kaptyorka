@@ -12,7 +12,7 @@ def html() -> str:
 
 def test_machines_tab_between_notes_and_people(html):
     tabs = re.findall(r'class="tab[^"]*" role="tab" data-view="(\w+)"', html)
-    assert tabs.index("machines") == tabs.index("notes") + 1
+    assert tabs.index("machines") == tabs.index("rules") + 1 == tabs.index("notes") + 2
     assert tabs.index("people") == tabs.index("machines") + 1
     tab = re.search(r'<button class="([^"]*)" role="tab" data-view="machines"[^>]*>', html)
     assert "admin-only" not in tab.group(1) and "hidden" not in tab.group(0)
