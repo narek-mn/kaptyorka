@@ -169,6 +169,30 @@ def test_leave_removes_team_skills(home, capsys):
     assert "removed team skill" in capsys.readouterr().out
 
 
+def test_remove_removes_team_skills(home, tmp_path, monkeypatch, capsys):
+    from kaptyorka import skills_sync
+
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+    skills_sync.sync(home, "v1", [{"name": "a", "text": "A"}], print)
+    assert remove.main([], run=fake_run([]), platform="linux") == 0
+    assert not (home / ".claude/skills/team-a").exists() and not (home / ".kaptyorka").exists()
+    assert "removed team skill" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("which", ["leave", "main"])
+def test_skill_removal_failure_does_not_crash(home, tmp_path, monkeypatch, capsys, which):
+    from kaptyorka import skills_sync
+
+    def boom(h, log):
+        raise PermissionError("busy")
+    monkeypatch.setattr(sys, "prefix", str(tmp_path))
+    monkeypatch.setattr(skills_sync, "remove_all", boom)
+    assert getattr(remove, which)([], run=fake_run([]), platform="linux") == 1
+    out = capsys.readouterr()
+    assert "team skills: failed: busy" in out.err
+    assert "kaptyorka join brings this machine back" in out.out or "removed " in out.out
+
+
 def test_remove_without_pipx_does_not_call_it(home, tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "prefix", str(tmp_path))
     calls = []

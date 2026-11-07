@@ -28,11 +28,21 @@ def _undo_join(adapters: Optional[list], run: Callable, platform: str, units) ->
     return lines, rc
 
 
+def _remove_skills() -> tuple:
+    """Remove the team skill folders: (lines, exit code); a failure is one line, not a crash."""
+    try:
+        return skills_sync.remove_all(Path.home(), lambda m: print(m, file=sys.stderr)), 0
+    except OSError as e:
+        print(f"team skills: failed: {e}", file=sys.stderr)
+        return [], 1
+
+
 def leave(adapters: Optional[list] = None, run: Callable = subprocess.run,
           platform: str = sys.platform) -> int:
     """Leave the hub: undo `join` here, keep kaptyorka, the saved hub address and any hub."""
     lines, rc = _undo_join(adapters, run, platform, ("kaptyorka-bridge",))
-    lines += skills_sync.remove_all(Path.home(), lambda m: print(m, file=sys.stderr))
+    more, failed = _remove_skills()
+    lines, rc = lines + more, rc or failed
     for line in lines:
         print(line)
     print("left the hub; kaptyorka join brings this machine back")
@@ -56,6 +66,8 @@ def main(adapters: Optional[list] = None, run: Callable = subprocess.run,
             print("nothing removed")
             return 1
     lines, rc = _undo_join(adapters, run, platform, ("kaptyorka-bridge", "kaptyorka-hub", "kaptyorka-backup"))
+    more, failed = _remove_skills()  # before ~/.kaptyorka goes: it holds skills.json
+    lines, rc = lines + more, rc or failed
     if home.is_symlink():
         home.unlink()
     else:
