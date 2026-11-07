@@ -185,7 +185,8 @@ def test_manager_relaunch_limits(hub, clock):
     hub.tick()
     assert orders(hub, b) == [] and state(hub) == "closed"
     assert hub.mm.may_launch(clock[0]) == (False, "the manager was launched twice in the"
-                                                  " last hour")
+                                                  " last hour; it tries again by itself"
+                                                  " within the hour")
     # an hour later it may start again; two failures in an hour: the page hears it once
     clock[0] += 3600
     beat(hub, b)
@@ -206,6 +207,57 @@ def test_manager_relaunch_limits(hub, clock):
     beat(hub, b)
     hub.tick()
     assert page_texts(hub).count(MANAGER_FAILED) == 1
+
+
+def test_settings_carry_the_manager_reason_and_last_error(hub, clock):
+    _, token = person(hub.store, "root", "admin")  # a web admin; no bridge on the hub machine
+
+    def settings():
+        status, body = http.request("GET", hub.url + "/api/settings", token)
+        assert status == 200
+        return body
+    s = settings()
+    assert s["manager_state"] == "off" and s["manager_reason"] == "the manager is switched off"
+    assert s["manager_error"] == ""
+    hub.mm.set_enabled(True, "test")
+    s = settings()
+    assert s["manager_state"] == "blocked" and s["manager_error"] == ""
+    assert s["manager_reason"].startswith("the admin's bridge on the hub machine is offline")
+    with hub.store.lock:
+        hub.store.db.execute(
+            "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+            " tool, state, created, closed_at, error) VALUES ('manager','p','t','k',1,1,?,"
+            "'claude','failed',?,?,'manager did not show up')", (HOST, clock[0], clock[0]))
+    s = settings()
+    assert s["manager_state"] == "blocked" and s["manager_error"] == "manager did not show up"
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE workers SET state='starting', error='', closed_at=NULL"
+                             " WHERE name='manager'")
+    s = settings()
+    assert s == {**s, "manager_state": "starting", "manager_reason": "", "manager_error": ""}
+
+
+def test_no_launch_while_claude_is_logged_out(hub, clock):
+    b = admin_bridge(hub)
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE device_facts SET facts=? WHERE device_id=?",
+                             (json.dumps({"logins": {"claude-code": False}}), b.device_id))
+    hub.mm.set_enabled(True, "test")
+    for _ in range(3):
+        hub.tick()
+        clock[0] += 130
+        with hub.store.lock:
+            hub.store.db.execute("UPDATE devices SET last_used=? WHERE id=?",
+                                 (clock[0], b.device_id))
+    assert orders(hub, b) == [] and state(hub) is None
+    assert hub.mm.may_launch(clock[0]) == (False, "Claude Code is not logged in on the hub"
+                                                  " machine; run claude auth login there")
+    assert hub.mm.launches_last_hour(clock[0]) == 0
+    with hub.store.lock:  # logged in again (or no login fact at all): it starts
+        hub.store.db.execute("UPDATE device_facts SET facts='{}' WHERE device_id=?",
+                             (b.device_id,))
+    hub.tick()
+    assert len(orders(hub, b)) == 1
 
 
 def test_manager_waits_for_the_admin_bridge(hub, clock):

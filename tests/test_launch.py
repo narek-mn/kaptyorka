@@ -172,11 +172,33 @@ def test_detach_uses_systemd_scope_on_linux_and_setsid_on_mac(home, with_systemd
     assert mac.proc.waited == 60
 
 
-def test_detach_without_systemd_run_starts_a_new_session(home, no_systemd):
+def test_detach_clears_a_leftover_scope(home, with_systemd):
+    run, popen = FakeRun(), FakePopen()
+    make(home, run=run, popen=popen).detach(["tmux", "new-session"], "/w", "w1")
+    assert run.calls == [["systemctl", "--user", "stop", "kaptyorka-worker-w1.scope"]]
+    assert popen.calls[0][0][:6] == ["systemd-run", "--user", "--scope", "--quiet", "--unit",
+                                     "kaptyorka-worker-w1"]
+
+
+@pytest.mark.parametrize("err", [OSError("no systemctl"),
+                                 subprocess.TimeoutExpired("systemctl", 5)])
+def test_detach_ignores_a_failed_scope_stop(home, with_systemd, err):
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(kw.get("timeout"))
+        raise err
     popen = FakePopen()
-    make(home, popen=popen).detach(["tmux", "new-session"], "/w", "proj-a-w1")
+    make(home, run=run, popen=popen).detach(["tmux", "new-session"], "/w", "w1")
+    assert seen == [5] and popen.calls[0][0][0] == "systemd-run"
+
+
+def test_detach_without_systemd_run_starts_a_new_session(home, no_systemd):
+    run, popen = FakeRun(), FakePopen()
+    make(home, run=run, popen=popen).detach(["tmux", "new-session"], "/w", "proj-a-w1")
     argv, kw = popen.calls[0]
     assert argv == ["tmux", "new-session"] and kw["start_new_session"] is True
+    assert run.calls == []  # no scope to clear
 
 
 def test_untrusted_workspace_is_a_clear_error(home, no_systemd):

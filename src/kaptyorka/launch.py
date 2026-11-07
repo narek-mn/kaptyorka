@@ -124,6 +124,13 @@ class Launcher:
         wait = CLAUDE_WAIT_S if argv[0] == "claude" else TMUX_WAIT_S
         kw = {}
         if self.platform.startswith("linux") and shutil.which("systemd-run"):
+            # worker names are the primary key, so the only scope that can carry this name
+            # belongs to an ended row; stopping it is safe, and systemd-run refuses a name in use
+            try:
+                self.run(["systemctl", "--user", "stop", f"kaptyorka-worker-{name}.scope"],
+                         capture_output=True, timeout=5)
+            except Exception:
+                pass
             argv = ["systemd-run", "--user", "--scope", "--quiet", "--unit",
                     f"kaptyorka-worker-{name}", *argv]
         else:

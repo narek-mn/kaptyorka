@@ -10,6 +10,7 @@ from kaptyorka import paths, rules
 from kaptyorka.adapters import claude as claude_adapter
 from kaptyorka.adapters.base import write_atomic
 from kaptyorka.store import ONLINE_S, Store
+from kaptyorka.workers import WorkerStore
 
 PERSON = "manager"
 DEVICE = "manager"
@@ -274,26 +275,58 @@ class ManagerStore:
         self._set("manager_launches",
                   json.dumps([t for t in self._launches() if now - t < 3600] + [now]))
 
+    def last_failure(self) -> Optional[dict]:
+        """The manager worker row while it is failed: its start, error and when it failed."""
+        with self.lock:
+            row = self.db.execute("SELECT created, error, closed_at FROM workers WHERE name=?"
+                                  " AND state='failed'", (WORKER,)).fetchone()
+        if row is None:
+            return None
+        return {"created": row["created"], "error": row["error"] or "",
+                "failed_at": row["closed_at"]}
+
+    def _logged_out(self, device_id: int) -> bool:
+        """The device's stored facts say Claude Code is not logged in; absent means unknown."""
+        logins = WorkerStore(self.store).facts(device_id).get("logins", {})
+        return isinstance(logins, dict) and logins.get("claude-code") is False
+
     def may_launch(self, now: float) -> Tuple[bool, str]:
+        """Every reason ends with the next step."""
         if not self.enabled():
             return False, "the manager is switched off"
         if self.blocked() == "trust":
-            return False, "Claude Code does not trust the manager's folder"
+            return False, ("Claude Code does not trust the manager's folder; run claude there"
+                           " once, accept, then kaptyorka start --manager")
         with self.lock:
             live = self.db.execute("SELECT 1 FROM workers WHERE name=? AND state IN"
                                    " ('starting','up')", (WORKER,)).fetchone()
         if live is not None:
             return False, "the manager is already running"
+        # the bridge's no-show timeout ends with the launch wait: count it from the failure
+        failed = self.last_failure()
+        if failed is not None and failed["failed_at"] is not None \
+                and now - failed["failed_at"] < RELAUNCH_S:
+            return False, "the manager failed less than 2 minutes ago; it tries again by itself"
         host = self._host_of_account()
         admin = self.admin_device(host) if host else None
         if admin is None or not admin["online"]:
-            return False, "the admin's bridge on the hub machine is offline"
+            return False, ("the admin's bridge on the hub machine is offline; check"
+                           " kaptyorka-bridge on the hub machine")
+        if self._logged_out(admin["id"]):  # before the counting: it would use up the launches
+            return False, ("Claude Code is not logged in on the hub machine; run claude auth"
+                           " login there")
         launches = self._launches()
         if launches and now - max(launches) < RELAUNCH_S:
-            return False, "the manager was launched less than 2 minutes ago"
+            return False, ("the manager was launched less than 2 minutes ago; it tries again"
+                           " by itself")
         if self.launches_last_hour(now) >= MAX_LAUNCHES_PER_HOUR:
-            return False, "the manager was launched twice in the last hour"
+            return False, ("the manager was launched twice in the last hour; it tries again by"
+                           " itself within the hour")
         return True, ""
+
+    def launch_reason(self, now: float) -> str:
+        """Why the hub would not launch the manager now; empty when it may."""
+        return self.may_launch(now)[1]
 
     def failures_last_hour(self, now: float) -> int:
         """Count the manager worker's failed start once (by its row's start time); return the

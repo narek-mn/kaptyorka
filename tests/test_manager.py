@@ -87,7 +87,8 @@ def test_write_files_never_drops_token(tmp_path, ms):
 
 
 def test_may_launch_rules(store, ms, clock):
-    assert ms.may_launch(clock[0]) == (False, "the admin's bridge on the hub machine is offline")
+    assert ms.may_launch(clock[0]) == (False, "the admin's bridge on the hub machine is offline;"
+                                              " check kaptyorka-bridge on the hub machine")
     admin_with_bridge(store)
     ms.ensure_account(HOST, "root")
     assert ms.may_launch(clock[0]) == (True, "")
@@ -124,6 +125,57 @@ def test_may_launch_rules(store, ms, clock):
             " tool, state, created) VALUES ('manager','p','t','k',1,1,'box-1','claude','up',1)")
     ok, why = ms.may_launch(clock[0] + 4000)
     assert not ok and "running" in why
+
+
+def manager_row(store, state, created, closed_at=None, error=""):
+    with store.lock:
+        store.db.execute(
+            "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+            " tool, state, created, closed_at, error) VALUES ('manager','p','t','k',1,1,'box-1',"
+            "'claude',?,?,?,?)", (state, created, closed_at, error))
+
+
+def test_no_relaunch_within_two_minutes_of_a_failure(store, ms, clock):
+    admin_with_bridge(store)
+    ms.ensure_account(HOST, "root")
+    t = clock[0]
+    manager_row(store, "failed", t - 150, closed_at=t - 30, error="did not show up")
+    assert ms.last_failure() == {"created": t - 150, "error": "did not show up",
+                                 "failed_at": t - 30}
+    assert ms.may_launch(t) == (False, "the manager failed less than 2 minutes ago;"
+                                       " it tries again by itself")
+    clock[0] = t + 91  # 121 s after the failure; the bridge still online
+    with store.lock:
+        store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'", (clock[0],))
+    assert ms.may_launch(clock[0]) == (True, "")
+
+
+def test_last_failure_only_for_a_failed_row(store, ms, clock):
+    assert ms.last_failure() is None
+    manager_row(store, "up", clock[0])
+    assert ms.last_failure() is None
+
+
+def test_launch_reason_texts(store, ms, clock):
+    admin_with_bridge(store)
+    ms.ensure_account(HOST, "root")
+    assert ms.launch_reason(clock[0]) == ""
+    ms.set_enabled(False, "root")
+    assert ms.launch_reason(clock[0]) == "the manager is switched off"
+    ms.set_enabled(True, "root")
+    ms.record_launch(clock[0])
+    assert ms.launch_reason(clock[0] + 60) == ("the manager was launched less than 2 minutes"
+                                               " ago; it tries again by itself")
+    ms.record_launch(clock[0] + 200)
+    with store.lock:
+        store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'",
+                         (clock[0] + 400,))
+    assert ms.launch_reason(clock[0] + 400) == ("the manager was launched twice in the last"
+                                                " hour; it tries again by itself within the hour")
+    ms.set_blocked("trust")
+    assert ms.launch_reason(clock[0] + 400).startswith(
+        "Claude Code does not trust the manager's folder;")
+    assert "kaptyorka start --manager" in ms.launch_reason(clock[0] + 400)
 
 
 def test_requests_add_decide_expire(ms, clock):

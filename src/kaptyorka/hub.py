@@ -1009,7 +1009,20 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         denied = admin_only(request)
         if denied:
             return denied
-        return JSONResponse({"retention_days": store.retention_days(), "manager_enabled": mm.enabled()})
+        now = store.clock()
+        row = ws.by_name(manager.WORKER)
+        running = row is not None and row["state"] in ("starting", "up")
+        reason = "" if running else mm.launch_reason(now)
+        if running:
+            state = row["state"]
+        elif not mm.enabled():
+            state = "off"
+        else:  # nothing in the way: the next tick starts it
+            state = "blocked" if reason else "starting"
+        return JSONResponse({
+            "retention_days": store.retention_days(), "manager_enabled": mm.enabled(),
+            "manager_state": state, "manager_reason": reason,
+            "manager_error": (row["error"] or "") if row and row["state"] == "failed" else ""})
 
     @server.custom_route("/api/settings", methods=["POST"])
     @_bad_request
