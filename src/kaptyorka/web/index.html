@@ -2001,7 +2001,7 @@ tr.archived b { color: var(--dim); }
       var on = settings.manager_enabled;
       ms.appendChild(el("b", { text: "The manager session is " + (on ? "on" : "off") + "." }));
       ms.appendChild(el("span", null, on
-        ? ["Switch it off with ", el("code", { text: "kaptyorka start --no-manager" }), " on the hub machine."]
+        ? ["Switch it off with ", el("code", { text: "kaptyorka start --no-manager" }), " on the hub machine, or close the manager worker on Machines."]
         : ["Turn it on with ", el("code", { text: "kaptyorka start --manager" }), " on the hub machine."]));
     }
     var lg = feed.legacy;
@@ -2125,7 +2125,8 @@ tr.archived b { color: var(--dim); }
       }
       if ((own || isAdmin()) && !/^(closed|failed)$/.test(w.state)) {
         var closeBtn = button("Close", "danger", function () {
-          confirmInline(closeBtn, "Close worker " + w.name + "? Its session stops.", "Close", function () {
+          confirmInline(closeBtn, "Close worker " + w.name + "? Its session stops."
+            + (w.manager ? " The manager stays off until kaptyorka start --manager." : ""), "Close", function () {
             return act("worker-err", "/api/workers/" + encodeURIComponent(w.name) + "/close");
           });
         });

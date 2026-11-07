@@ -1334,6 +1334,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                  else ws.adopt(principal, name, f"web:{principal.person_name}"))
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
+        if close and principal.is_admin() and w.get("manager"):  # as close_worker: the tick must not relaunch it
+            mm.set_enabled(False, principal.person_name)
         wake_bridges()
         return JSONResponse(w)
 

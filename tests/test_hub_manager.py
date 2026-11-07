@@ -540,6 +540,23 @@ def test_admin_closing_the_manager_switches_it_off(hub, clock):
     assert [x for x in orders(hub, b) if x.get("kind") != "close"] == []
 
 
+def test_admin_closing_the_manager_on_the_page_switches_it_off(hub, clock):
+    """The page's Close does what the close_worker tool does: the manager stays off."""
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    ack(hub, b, o)
+    status, w = http.request("POST", hub.url + "/api/workers/manager/close", b.token)
+    assert status == 200 and w["manager"] is True
+    assert hub.mm.enabled() is False
+    clock[0] += 120
+    beat(hub, b)
+    hub.tick()
+    assert [x for x in orders(hub, b) if x.get("kind") != "close"] == []
+    assert state(hub) not in ("starting", "up")
+
+
 def test_non_admin_close_leaves_the_switch(hub):
     """The switch-off keys on the manager row and the admin; a member never reaches it."""
     admin_bridge(hub)

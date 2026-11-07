@@ -196,6 +196,7 @@ def test_settings_tab(hub):
     assert '"The manager session is " + (on ? "on" : "off")' in html
     assert "Turn it on with " in html and "kaptyorka start --manager" in html
     assert "Switch it off with " in html and "kaptyorka start --no-manager" in html
+    assert " on the hub machine, or close the manager worker on Machines." in html
     assert '"/api/settings"' in html and "manager_enabled" in html
     people = re.search(r'<section id="people".*?</section>', html, re.S).group(0)
     assert "legacy" not in people and "Old machines" not in people
