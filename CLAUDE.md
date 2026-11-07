@@ -8,3 +8,4 @@
 - `KAPTYORKA_SKIP_SERVICE=1` makes `kaptyorka join` skip installing the bridge service. Tests only; never set it elsewhere.
 - No team names (people, projects, machines) in code, tests, fixtures or screenshots; use alice, bob, proj-a, box-1.
 - `Store.lock` is not reentrant: never call a locking store method from inside a `with self.lock` block.
+- Never run `kaptyorka` commands against the real machine (`~/.kaptyorka`, your Claude config, services). Try them only in tests or with `KAPTYORKA_HOME=<temp folder>` on a free port; never `start`, `join`, `leave`, `stop`, `update`, `remove` for real.
