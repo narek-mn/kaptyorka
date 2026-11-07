@@ -128,3 +128,34 @@ def test_member_asks_for_access(tmp_path):
     finally:
         stop()
         store.close()
+
+
+def test_phone_more_menu(tmp_path):
+    """At 390 px the admin sees five named slots; More lists the rest by name and opens them."""
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    _, token = person(store, "alice", "admin")
+    try:
+        with chrome(390, 844) as page:
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+            page.wait('!document.getElementById("more").hidden')
+            shown = page.js('[...document.querySelectorAll("nav .tab, nav .tab-more")]'
+                            '.filter(b => b.offsetWidth > 0).map(b => b.textContent.replace(/\\d+/g, ""))')
+            assert shown == ["Team", "Messages", "Notes", "Machines", "More"]
+            assert page.js('document.getElementById("view-title").textContent') == "Team"
+            page.js('document.getElementById("more").click()')
+            items = page.wait('[...document.querySelectorAll("#more-menu button")].map(b => b.textContent)')
+            assert [i.rstrip("0123456789") for i in items] == ["Rules", "People", "Access", "Log"]
+            page.js('document.body.click()')  # a click outside closes it
+            assert page.js('document.getElementById("more-menu").hidden')
+            page.js('document.getElementById("more").click()')
+            page.js('[...document.querySelectorAll("#more-menu button")].find(b => b.textContent.startsWith("People")).click()')
+            page.wait('!document.getElementById("people").hidden')
+            assert page.js('document.getElementById("more-menu").hidden')
+            assert page.js('document.getElementById("more-label").textContent') == "People"
+            assert page.js('document.getElementById("view-title").textContent') == "People"
+            assert page.js("document.documentElement.scrollWidth") == 390
+    finally:
+        stop()
+        store.close()

@@ -93,7 +93,14 @@ def test_phone_layouts(hub):
     html = page(hub)
     phone = html[html.index("@media (max-width: 720px)"):html.index("@media (prefers-reduced-motion")]
     assert "min-width: 560px" not in html  # admin tables are cards on a phone, not cut off
-    assert "nav.more-right" in phone and "mask-image" in phone and "function navFade()" in html
+    # tabs: a bottom bar with names under the icons; past five, More opens a menu of the rest
+    assert "nav { position: fixed; left: 0; right: 0; bottom: 0;" in phone and ".tab .label { display: none; }" not in phone
+    assert "nav .tab.overflow, nav .sep { display: none; }" in phone and "#view-title { display: block;" in phone
+    assert 'var PHONE_BAR = ["team", "messages", "notes", "machines"];' in html
+    assert 'id="more" type="button" aria-haspopup="menu"' in html and 'id="more-menu" role="menu"' in html
+    assert '$("more-label").textContent = cur ? cur.title : "More";' in html
+    assert 'n && !n.hidden ? el("span", { "class": "count", text: n.textContent }) : null' in html
+    assert "/* a click outside closes the menu */" in html and "mask-image" not in phone
     assert "#people td.c-act, #access td.c-act { display: flex; flex-wrap: wrap;" in phone
     assert "#audit td.l-what" in phone
     assert ".stack td.nil { display: none; }" in phone and '"sw-label", text: "Auto-update"' in html

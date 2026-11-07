@@ -71,6 +71,20 @@ nav { display: flex; align-items: stretch; gap: 4px; }
   background: var(--raised); color: var(--text); font-size: 12px; text-align: center;
 }
 .sep { width: 1px; margin: 15px 6px; background: var(--line-strong); }
+.tab-more { position: relative; display: none; align-items: center; color: var(--dim); font-weight: 500; }
+.tab-more[aria-selected="true"] { color: #fff; }
+.tab-more[aria-selected="true"]::after {
+  content: ""; position: absolute; height: 2px; background: linear-gradient(90deg, var(--blue-deep), var(--blue));
+}
+#more-menu { display: none; position: fixed; right: 8px; bottom: 64px; z-index: 21; min-width: 200px; padding: 6px;
+  background: var(--raised); border: 1px solid var(--line-strong); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
+#more-menu button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 12px; border-radius: 4px;
+  color: var(--text); font-size: 14px; text-align: left; }
+#more-menu button:hover, #more-menu button[aria-current="page"] { background: rgba(255, 255, 255, .06); }
+#more-menu button[aria-current="page"] { color: #fff; }
+#more-menu button svg { color: var(--dim); }
+#more-menu .count { margin-left: auto; }
+#view-title { display: none; }
 .viewer { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--dim); font-size: 13px; white-space: nowrap; }
 .viewer b { font-weight: 500; color: var(--text); }
 .viewer .role, .who .role { padding: 1px 6px; border-radius: 3px; font-size: 11px; color: var(--blue); border: 1px solid rgba(110, 159, 255, .35); }
@@ -415,8 +429,6 @@ tr.archived b { color: var(--dim); }
 @media (max-width: 720px) {
   header { gap: 10px; padding: 0 16px; }
   .brand span { display: none; }
-  .tab { padding: 0 10px; gap: 6px; }
-  .tab .label { display: none; }
   main { padding: 12px 16px 16px; }
   .bar { margin-bottom: 8px; }
   .chips { flex-direction: column; align-items: stretch; }
@@ -450,13 +462,20 @@ tr.archived b { color: var(--dim); }
   .compose select { flex: 1; max-width: none; min-width: 0; }
   .compose textarea { flex-basis: 100%; order: 5; }
   .compose .btn.primary { order: 6; margin-left: auto; }
-  nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  nav::-webkit-scrollbar { display: none; }
-  /* more tabs past the right edge: they fade out there */
-  nav.more-right { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
-                   mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); }
-  .tab { padding: 0 8px; }
-  .sep { margin: 15px 2px; }
+  /* the tabs: a bar at the bottom, each icon over its name; past five, the rest under More */
+  #app { padding-bottom: 58px; }
+  nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; height: 58px; gap: 0;
+        padding-bottom: env(safe-area-inset-bottom); background: var(--panel); border-top: 1px solid var(--line); }
+  nav .tab, nav .tab-more { flex: 1 1 0; min-width: 0; flex-direction: column; justify-content: center; gap: 3px;
+                        padding: 0 2px; font-size: 11px; }
+  nav .tab .label, nav .tab-more .label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  nav .tab .count { position: absolute; top: 5px; left: calc(50% + 7px); min-width: 16px; padding: 0 4px;
+                    font-size: 10px; line-height: 15px; }
+  nav .tab[aria-selected="true"]::after, nav .tab-more[aria-selected="true"]::after { top: -1px; bottom: auto; left: 22%; right: 22%; }
+  nav .tab.overflow, nav .sep { display: none; }
+  nav .tab-more:not([hidden]) { display: flex; }
+  #view-title { display: block; font-size: 16px; color: #fff; }
+  #more-menu:not([hidden]) { display: block; }
   .viewer > svg, .viewer b, .viewer .role { display: none; }
   .viewer .initial { display: grid; }
   .signout { margin-left: 10px; }
@@ -551,6 +570,7 @@ tr.archived b { color: var(--dim); }
   <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-people" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20c0-3.6 2.9-6 6.5-6 1.4 0 2.6.3 3.6.9"/><path d="M18 14v6M15 17h6"/></symbol>
   <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.3 7.5 9.5 4.4-1.2 7.5-4.9 7.5-9.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></symbol>
   <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" stroke-width="2.6"/></symbol>
   <symbol id="i-door" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4.5A1.5 1.5 0 0 1 6.5 3h11A1.5 1.5 0 0 1 19 4.5V21"/><path d="M3 21h18M14.5 12.5v.5"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8.5" y="8.5" width="12" height="12" rx="1.5"/><path d="M15.5 8.5V5A1.5 1.5 0 0 0 14 3.5H5A1.5 1.5 0 0 0 3.5 5v9A1.5 1.5 0 0 0 5 15.5h3.5"/></symbol>
@@ -570,7 +590,7 @@ tr.archived b { color: var(--dim); }
 <div id="app" hidden>
   <div id="warn-banner" role="alert" hidden></div>
   <header>
-    <div class="brand"><svg width="22" height="22"><use href="#i-cube"/></svg><span>kaptyorka</span></div>
+    <div class="brand"><svg width="22" height="22"><use href="#i-cube"/></svg><span>kaptyorka</span><b id="view-title"></b></div>
     <nav role="tablist">
       <button class="tab" role="tab" data-view="team" title="Team"><svg width="18" height="18"><use href="#i-team"/></svg><span class="label">Team</span><span class="count" id="n-team">0</span></button>
       <button class="tab" role="tab" data-view="messages" title="Messages"><svg width="18" height="18"><use href="#i-msg"/></svg><span class="label">Messages</span><span class="count" id="n-messages">0</span></button>
@@ -581,7 +601,9 @@ tr.archived b { color: var(--dim); }
       <button class="tab admin-only" role="tab" data-view="people" title="People" hidden><svg width="18" height="18"><use href="#i-people"/></svg><span class="label">People</span><span class="count" id="n-people">0</span></button>
       <button class="tab admin-only" role="tab" data-view="access" title="Access" hidden><svg width="18" height="18"><use href="#i-shield"/></svg><span class="label">Access</span><span class="count" id="n-access" hidden>0</span></button>
       <button class="tab admin-only" role="tab" data-view="audit" title="Log" hidden><svg width="18" height="18"><use href="#i-list"/></svg><span class="label">Log</span></button>
+      <button class="tab-more" id="more" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu" hidden><svg width="18" height="18"><use id="more-icon" href="#i-more"/></svg><span class="label" id="more-label">More</span></button>
     </nav>
+    <div id="more-menu" role="menu" aria-label="More tabs" hidden></div>
     <div class="viewer" id="viewer" title="Signed in"><svg width="15" height="15"><use href="#i-person"/></svg><b id="viewer-name"></b><span class="role" id="viewer-role" hidden>admin</span><span class="initial" id="viewer-initial"></span></div>
     <button class="signout" id="signout" type="button" title="Sign out"><svg width="16" height="16"><use href="#i-signout"/></svg><span class="label">Sign out</span></button>
     <div class="live" id="live" title="Connecting"><i></i></div>
@@ -961,9 +983,9 @@ tr.archived b { color: var(--dim); }
       b.setAttribute("aria-selected", b.dataset.view === v ? "true" : "false");
     });
     VIEWS.concat(ADMIN_VIEWS).forEach(function (id) { $(id).hidden = id !== v; });
-    var cur = document.querySelector('.tab[data-view="' + v + '"]');
-    if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
-    navFade();
+    $("view-title").textContent = document.querySelector('.tab[data-view="' + v + '"]').title;
+    moreOpen(false);
+    navMore();
     history.replaceState(null, "", location.pathname + (v === "team" ? "" : "#view=" + v));
     if (v === "messages") { markClipped(); toBottom(); }
     if (v === "machines") loadFleet(true);
@@ -971,20 +993,39 @@ tr.archived b { color: var(--dim); }
     if (v === "people") loadInvites();
     if (v === "team") loadAccess();
   }
-  /* the tab bar fades at the right edge while more tabs sit past it */
-  var navWidth = 0;
-  function navFade() {
-    var n = document.querySelector("nav");
-    n.classList.toggle("more-right", n.scrollLeft + n.clientWidth < n.scrollWidth - 2);
+  /* on a phone the tab bar holds five: past that, the fifth slot is More, a menu of the rest by
+     name with their counts. When the open tab is one of those, More shows its icon and name. */
+  var PHONE_BAR = ["team", "messages", "notes", "machines"];
+  function overflowTabs() {
+    var tabs = [].filter.call(document.querySelectorAll("nav .tab"), function (b) { return !b.hidden; });
+    return tabs.length > 5 ? tabs.filter(function (b) { return PHONE_BAR.indexOf(b.dataset.view) < 0; }) : [];
   }
-  /* a count that appears widens the tabs: keep the open tab in view when the bar's width changes */
-  function navKeep() {
-    var n = document.querySelector("nav");
-    if (n.scrollWidth === navWidth) return;
-    navWidth = n.scrollWidth;
-    var cur = n.querySelector('.tab[aria-selected="true"]');
-    if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
-    navFade();
+  function navMore() {
+    var over = overflowTabs();
+    document.querySelectorAll("nav .tab").forEach(function (b) { b.classList.toggle("overflow", over.indexOf(b) >= 0); });
+    var cur = over.filter(function (b) { return b.dataset.view === view; })[0];
+    $("more").hidden = !over.length;
+    $("more").setAttribute("aria-selected", cur ? "true" : "false");
+    $("more-label").textContent = cur ? cur.title : "More";
+    $("more-icon").setAttribute("href", cur ? cur.querySelector("use").getAttribute("href") : "#i-more");
+    if (!$("more-menu").hidden) fillMore(over);
+  }
+  function fillMore(over) {
+    var menu = $("more-menu");
+    menu.textContent = "";
+    over.forEach(function (b) {
+      var n = b.querySelector(".count");
+      var item = el("button", { type: "button", role: "menuitem", "aria-current": b.dataset.view === view ? "page" : null }, [
+        icon(b.querySelector("use").getAttribute("href").slice(1), 18), el("span", { text: b.title }),
+        n && !n.hidden ? el("span", { "class": "count", text: n.textContent }) : null]);
+      item.addEventListener("click", function () { show(b.dataset.view); });
+      menu.appendChild(item);
+    });
+  }
+  function moreOpen(open) {
+    if (open) fillMore(overflowTabs());
+    $("more-menu").hidden = !open;
+    $("more").setAttribute("aria-expanded", open ? "true" : "false");
   }
 
   /* where a name lives: from the online list, else from the name itself */
@@ -2116,7 +2157,7 @@ tr.archived b { color: var(--dim); }
       if (!busy("audit") && changed("audit", [feed.log, feed.settings, feed.people, logPerson, logRows])) renderLog();
       if (logPerson && changed("log-src", feed.log)) loadLog();
     }
-    navKeep();
+    navMore();
     tick();
   }
 
@@ -2224,8 +2265,11 @@ tr.archived b { color: var(--dim); }
       .catch(function (x) { $("ask-err").hidden = false; $("ask-err").textContent = x.message; });
   });
   $("chips-toggle").addEventListener("click", function () { chipsOpen = !chipsOpen; renderChips(); });
-  document.querySelector("nav").addEventListener("scroll", navFade, { passive: true });
-  window.addEventListener("resize", function () { navWidth = 0; navKeep(); });
+  $("more").addEventListener("click", function () { moreOpen($("more-menu").hidden); });
+  document.addEventListener("click", function (e) {  /* a click outside closes the menu */
+    if (!$("more-menu").hidden && !$("more").contains(e.target) && !$("more-menu").contains(e.target)) moreOpen(false);
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") moreOpen(false); });
   function boot() {
     get("/api/me").then(start).catch(function () {
       if ($("app").hidden) return;  /* locked: the token was refused */
