@@ -896,12 +896,28 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     async def api_send(request: Request) -> Response:
         body = await request.json()
         p = request.scope["state"]["principal"]  # the body's "from" (0.1 pages) is ignored
+        file_id = body.get("file_id")
         try:
-            n = ws.send_web_via_manager(p.person_name, str(body["to"]), str(body["text"]),
-                                        p.person_id, mm.person_id())
+            if file_id is not None:
+                if not isinstance(file_id, int) or isinstance(file_id, bool):
+                    raise KaptyorkaError("file_id must be a number")
+                if p.person_id is None:
+                    raise KaptyorkaError("use your own device token to send a file")
+                with store.lock:
+                    row = store.db.execute("SELECT person_id, message_id FROM files WHERE id=?",
+                                           (file_id,)).fetchone()
+                if row is None:
+                    raise KaptyorkaError("no such file")
+                if row["person_id"] != p.person_id or row["message_id"] is not None:
+                    raise KaptyorkaError("that file is not yours to send")
+                # a message with a file goes straight to its sessions, like the send tool
+                n = None
+            else:
+                n = ws.send_web_via_manager(p.person_name, str(body["to"]), str(body["text"]),
+                                            p.person_id, mm.person_id())
             if n is None:
                 n = store.send_from_web(p.person_name, str(body["to"]), str(body["text"]),
-                                        person_id=p.person_id)
+                                        person_id=p.person_id, file_id=file_id)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         wake_bridges()

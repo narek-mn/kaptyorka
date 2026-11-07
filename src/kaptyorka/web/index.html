@@ -161,6 +161,18 @@ tr.mine td:first-child { box-shadow: inset 2px 0 0 var(--blue-deep); }
 .tag .x { color: var(--faint); margin-right: -3px; padding: 0 2px; }
 .tag .x:hover { color: var(--red); }
 .tag.door { color: var(--green); border-color: rgba(115, 191, 105, .35); }
+.chips .group .btn.small { height: 24px; padding: 0 8px; }
+.door-hint { flex: none; margin: -4px 0 10px; }
+#door-err { margin: -6px 0 8px; padding-top: 0; }
+.compose .file-chip { height: 34px; max-width: 260px; min-width: 0; }
+.file-chip .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.file-chip small { flex: none; }
+.toast { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 12px; color: var(--text);
+  border-bottom: 1px solid var(--line); background: rgba(61, 113, 217, .1); }
+.toast .link { margin-left: auto; font-weight: 600; }
+.propose { align-items: flex-start; }
+.propose textarea { flex: 1 1 320px; min-width: 0; max-width: 560px; min-height: 52px; padding: 6px 8px; font-size: 12px; resize: vertical; }
+.propose input { flex: 1 1 220px; min-width: 0; max-width: 420px; }
 #knocks { flex: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
 #knocks:empty { display: none; }
 .knock {
@@ -462,6 +474,11 @@ tr.archived b { color: var(--dim); }
   .compose select { flex: 1; max-width: none; min-width: 0; }
   .compose textarea { flex-basis: 100%; order: 5; }
   .compose .btn.primary { order: 6; margin-left: auto; }
+  .compose .attach, .compose .file-chip { order: 6; }
+  .compose .attach { padding: 0 10px; }
+  .compose .attach .label { display: none; }
+  .compose .file-chip { flex: 1 1 0; max-width: none; }
+  .propose textarea, .propose input { flex-basis: 100%; max-width: none; }
   /* the tabs: a bar at the bottom, each icon over its name; past five, the rest under More */
   #app { padding-bottom: 58px; }
   nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; height: 58px; gap: 0;
@@ -647,18 +664,23 @@ tr.archived b { color: var(--dim); }
         </table>
         <div class="blank" id="team-empty" hidden><svg width="40" height="40"><use href="#i-team"/></svg>No sessions online. Open your coding tool in a project folder on a joined machine and it appears here.</div>
       </div>
-      <div class="hint team-key" id="team-key" title="After the tool name: does it get the team rules text, run the kaptyorka hooks, have the team skills" hidden>R rules text · H hooks · S skills</div>
+      <div class="hint team-key" id="team-key" title="After the tool name: does it get the team rules text, run the kaptyorka hooks, have the team skills" hidden>R rules · H hooks · S skills: what each session's tool has loaded</div>
     </section>
     <section id="messages" role="tabpanel" hidden>
       <button type="button" class="btn small filter-btn" id="chips-toggle" aria-expanded="false" aria-controls="chips" hidden>Filter</button>
       <div class="chips folded" id="chips"></div>
       <div id="knocks"></div>
+      <div class="err" id="door-err" hidden></div>
+      <div class="hint door-hint" id="door-hint" hidden>A door lets two people's sessions talk directly, without the admin.</div>
       <div class="chat">
         <div class="panel" id="log"></div>
         <form class="compose" id="compose" autocomplete="off">
           <label for="to">To</label>
           <select id="to"></select>
           <textarea id="text" rows="1" placeholder="Message" aria-label="Message"></textarea>
+          <span class="tag file-chip" id="file-chip" hidden></span>
+          <button type="button" class="btn attach" id="attach" aria-label="Attach" title="Attach a file (up to 5 MB)"><svg width="15" height="15"><use href="#i-clip"/></svg><span class="label">Attach</span></button>
+          <input type="file" id="file-in" hidden>
           <button type="submit" class="btn primary" title="Send (Enter)"><svg width="15" height="15"><use href="#i-send"/></svg>Send</button>
         </form>
         <div class="err" id="send-err" hidden></div>
@@ -687,7 +709,15 @@ tr.archived b { color: var(--dim); }
         </div>
       </div>
       <div class="panel">
-        <div class="phead">Proposals</div>
+        <div class="phead">Proposals
+          <div class="inline"><button type="button" class="btn small" id="propose-btn"><svg width="13" height="13"><use href="#i-plus"/></svg>Propose a rule</button></div>
+        </div>
+        <form class="sentence propose" id="propose" autocomplete="off" hidden>
+          <textarea id="prop-text" rows="2" placeholder="The rule" aria-label="The rule" maxlength="2000" required></textarea>
+          <input id="prop-why" placeholder="Why (what happened)" aria-label="Why (what happened)" maxlength="4000">
+          <button type="submit" class="btn small primary">Send</button>
+          <button type="button" class="btn small" id="prop-cancel">Cancel</button>
+        </form>
         <div class="err" id="prop-err" hidden></div>
         <table class="stack">
           <thead><tr><th>Person</th><th>Proposal</th><th>State</th><th class="seen">When</th><th></th></tr></thead>
@@ -818,10 +848,12 @@ tr.archived b { color: var(--dim); }
   var note = { key: null, project: null, topic: null, mode: "read", version: 0, history: false };
   var logPerson = "", logRows = null;
   var fleet = { machines: [], workers: [], warnings: [] }, fleetAt = 0;
-  var rules = null, rulesAt = 0, rulesUi = { edit: false, rejecting: null };
+  var rules = null, rulesAt = 0, rulesUi = { edit: false, rejecting: null, history: false, hist: null, version: null };
   var holding = null, holdClose = null;  /* an open inline confirm or edit: refreshes leave its panel alone */
   var peopleUi = { revoked: {}, invitesOpen: false }, invites = [], savedHost = null;
   var myAccess = null, chipsOpen = false;
+  var attached = null, doorHint = null;  /* the file waiting in the compose bar {file, id}; the door hint shown this visit */
+  var noteToast = null, toastTimer = null, deletedKey = null;  /* a line over the topics for 8 s: {text, undo}; the note this page deleted */
 
   function store(fn) { try { return fn(window.localStorage); } catch (e) { return null; } }
 
@@ -935,7 +967,8 @@ tr.archived b { color: var(--dim); }
   function apiPath(base, name, tail) { return base + encodeURIComponent(name) + (tail || ""); }
   /* the anchor gives way to the question with yesLabel and Cancel; Esc cancels. onYes returns
      a promise: the box closes when it resolves and stays (its error shown) when it fails.
-     opt.ask: a text field whose value goes to onYes; opt.value fills it; opt.edit: blue, not red */
+     opt.ask: a text field whose value goes to onYes; opt.value fills it; opt.edit: blue, not red;
+     opt.parts: more fields (selects) shown after the text */
   function confirmInline(anchor, text, yesLabel, onYes, opt) {
     opt = opt || {};
     if (holdClose) holdClose(false);
@@ -954,19 +987,19 @@ tr.archived b { color: var(--dim); }
         .then(function () { close(); }, function () { yes.disabled = false; });
     });
     var no = button("Cancel", "", function () { close(); });
-    [text ? el("span", { text: text }) : null, input, yes, no].forEach(function (n) { if (n) box.appendChild(n); });
+    [text ? el("span", { text: text }) : null].concat(opt.parts || [], [input, yes, no]).forEach(function (n) { if (n) box.appendChild(n); });
     box.addEventListener("keydown", function (e) {
       if (e.key === "Escape") { e.preventDefault(); close(); }
       if (e.key === "Enter" && e.target === input) { e.preventDefault(); yes.click(); }
     });
     anchor.replaceWith(box);
     holding = box; holdClose = close;
-    (input || no).focus();
+    (input || (opt.parts || [])[0] || no).focus();
     return box;
   }
   /* after a confirm closes: draw what the refreshes skipped while it was open */
   function redrawAdmin() {
-    ["people", "access", "fleet", "invites"].forEach(function (k) { seen[k] = null; });
+    ["people", "access", "fleet", "invites", "messages"].forEach(function (k) { seen[k] = null; });
     if (feed) render();
     if (fleet) renderFleet();
     renderInvites();
@@ -1136,15 +1169,30 @@ tr.archived b { color: var(--dim); }
       });
       box.appendChild(group);
     });
-    if (feed.doors.length) {
+    var doorPeople = (feed.people || []).filter(function (p) { return !(p.role === "manager" && p.name === "manager"); })
+      .map(function (p) { return p.name; });  /* not the manager's own account */
+    if (feed.doors.length || doorPeople.length > 1) {
       var doors = el("div", { "class": "group" }, [el("span", { "class": "cap", text: "Doors" })]);
       feed.doors.forEach(function (d) {
         var mine = me && (d.a_person === me.person || d.b_person === me.person);
         var other = !mine ? d.a_person + " ↔ " + d.b_person : d.a_person === me.person ? d.b_person : d.a_person;
         var detail = d.scope === "group" ? "all sessions" : ((d.a_session || "page") + " ↔ " + (d.b_session || "page"));
-        doors.appendChild(el("span", { "class": "tag door", title: "Open door: " + detail },
-                             [icon("i-door", 12), other || "—"]));
+        var tag = el("span", { "class": "tag door", title: "Open door: " + detail }, [icon("i-door", 12), other || "—"]);
+        if (isAdmin()) {
+          var x = el("button", { "class": "x", type: "button", title: "Close this door", "aria-label": "Close the door " + d.a_person + " ↔ " + d.b_person }, [icon("i-x", 11)]);
+          x.addEventListener("click", function () {
+            confirmInline(tag, "Close the door between " + d.a_person + " and " + d.b_person + "? Their sessions stop talking directly.", "Close", function () {
+              return act("door-err", "/api/doors/" + d.id + "/close");
+            });
+          });
+          tag.appendChild(x);
+        }
+        doors.appendChild(tag);
       });
+      if (isAdmin() && doorPeople.length > 1) {
+        var openBtn = button([icon("i-plus", 12), "Open door"], "", function () { openDoor(openBtn, doorPeople); });
+        doors.appendChild(openBtn);
+      }
       box.appendChild(doors);
     }
     /* on a phone the chips fold behind one button that names the filter in use */
@@ -1153,6 +1201,27 @@ tr.archived b { color: var(--dim); }
     t.setAttribute("aria-expanded", chipsOpen ? "true" : "false");
     t.setAttribute("aria-pressed", on.length ? "true" : "false");
     t.hidden = !box.childNodes.length;
+  }
+
+  /* admin: a door between two people, chosen in a sentence that holds through refreshes */
+  function openDoor(anchor, names) {
+    var a = el("select", { "aria-label": "First person" }), b = el("select", { "aria-label": "Second person" });
+    options(a, names, names[0]);
+    options(b, names, names[1]);
+    a.addEventListener("change", function () { if (b.value === a.value) b.value = names.filter(function (n) { return n !== a.value; })[0]; });
+    confirmInline(anchor, "Open a door between", "Open", function () {
+      if (a.value === b.value) { $("door-err").hidden = false; $("door-err").textContent = "Choose two different people."; return Promise.reject(); }
+      return act("door-err", "/api/doors", { a_person: a.value, b_person: b.value });
+    }, { edit: true, parts: [a, el("span", { text: "and" }), b] });
+  }
+  /* the first time a knock or door shows: one line on what a door is, once per browser */
+  function renderDoorHint() {
+    var any = feed.knocks.length || feed.doors.length;
+    if (doorHint === null && any) {
+      doorHint = !store(function (s) { return s.getItem("kaptyorka.door-hint"); });
+      store(function (s) { s.setItem("kaptyorka.door-hint", "1"); });
+    }
+    $("door-hint").hidden = !(doorHint && any);
   }
 
   /* pending knocks for the viewer: the person answers here, or the admin for anyone */
@@ -1229,7 +1298,8 @@ tr.archived b { color: var(--dim); }
   }
 
   function renderMessages(jump) {
-    renderChips();
+    if (!busy("chips")) renderChips();
+    renderDoorHint();
     var log = $("log");
     var stick = jump || log.scrollHeight - log.scrollTop - log.clientHeight < 40, top = log.scrollTop;
     log.textContent = "";
@@ -1299,13 +1369,41 @@ tr.archived b { color: var(--dim); }
   }
   function grow() { var t = $("text"); t.style.height = "34px"; t.style.height = Math.min(t.scrollHeight + 2, 160) + "px"; }
   function sendErr(msg) { $("send-err").hidden = !msg; $("send-err").textContent = msg || ""; }
+  /* the chosen file as a chip "name · size ×" beside the message */
+  function renderAttached() {
+    var chip = $("file-chip");
+    chip.textContent = "";
+    chip.hidden = !attached;
+    if (!attached) return;
+    var f = attached.file;
+    var x = el("button", { "class": "x", type: "button", title: "Remove the file", "aria-label": "Remove the file" }, [icon("i-x", 11)]);
+    x.addEventListener("click", function () { attached = null; $("file-in").value = ""; renderAttached(); sendErr(""); });
+    chip.appendChild(icon("i-clip", 12));
+    chip.appendChild(el("span", { "class": "name", title: f.name, text: f.name }));
+    chip.appendChild(el("small", { text: "\u00b7 " + size(f.size) }));
+    chip.appendChild(x);
+  }
+  /* upload once; a failed send keeps the uploaded id for the next try */
+  function upload() {
+    if (!attached || attached.id) return Promise.resolve(attached && attached.id);
+    var a = attached;
+    return fetch("/api/files", { method: "POST", cache: "no-store", body: a.file,
+                                 headers: { Authorization: "Bearer " + token, "X-File-Name": encodeURIComponent(a.file.name) } })
+      .then(checked).then(function (r) { return r.json(); })
+      .then(function (r) { a.id = r.id; return r.id; });
+  }
   function send() {
     var text = $("text").value;
-    if (!text.trim()) return;
+    if (!text.trim() && !attached) return;
     var to = $("to").value;
     store(function (s) { s.setItem("kaptyorka.to", to); });
-    api("/api/send", { to: to, text: text })
-      .then(function () { $("text").value = ""; grow(); sendErr(""); $("text").focus(); seen.messages = null; })
+    var sent = attached;
+    upload()
+      .then(function (fid) { return api("/api/send", fid ? { to: to, text: text, file_id: fid } : { to: to, text: text }); })
+      .then(function () {
+        $("text").value = ""; grow(); sendErr(""); $("text").focus(); seen.messages = null;
+        if (attached === sent) { attached = null; $("file-in").value = ""; renderAttached(); }
+      })
       .catch(function (e) { sendErr(e.message); });
   }
 
@@ -1319,6 +1417,15 @@ tr.archived b { color: var(--dim); }
   function renderTopics() {
     var box = $("topics");
     box.textContent = "";
+    if (noteToast) {
+      var t = noteToast, undo = t.undo ? button("Undo", "", function () {
+        quiet(api("/api/notes/undo", { topic: t.undo.topic, project: t.undo.project })
+          .then(function () { return get("/api/feed"); })
+          .then(function (f) { feed = f; deletedKey = null; toast(null); open(t.undo.project, t.undo.topic); })
+          .catch(function (e) { toast({ text: e.message }); }));
+      }, { "class": "link" }) : null;
+      box.appendChild(el("div", { "class": "toast", role: "status" }, [el("span", { text: t.text }), undo]));
+    }
     var grouped = feed.notes.some(function (n) { return n.project; }), last;
     feed.notes.forEach(function (n) {
       if (grouped && n.project !== last) {
@@ -1335,19 +1442,40 @@ tr.archived b { color: var(--dim); }
       box.appendChild(b);
     });
   }
+  /* a line over the topics that goes after 8 s */
+  function toast(t) {
+    clearTimeout(toastTimer);
+    noteToast = t;
+    if (t) toastTimer = setTimeout(function () { noteToast = null; renderTopics(); }, 8000);
+    renderTopics();
+  }
+  /* the page hides what the hub would refuse; the hub decides */
+  function mayWrite(n) {
+    return !archived(n.project) && (isAdmin() || !n.project || writable().indexOf(n.project) >= 0);
+  }
+  function mayDelete(n) {
+    if (archived(n.project)) return false;
+    if (isAdmin()) return true;
+    return n.project ? writable().indexOf(n.project) >= 0 : n.history[n.history.length - 1].author === me.person;
+  }
   /* a removed project's notes: the admin still reads them, nobody writes */
   function archived(project) {
     return !!project && (feed.archived_projects || []).some(function (p) { return p.name === project; });
   }
   function open(project, topic) {
+    if (nkey(project, topic) === deletedKey) deletedKey = null;
     note = { key: nkey(project, topic), project: project, topic: topic, mode: "read", version: 0, history: false };
     renderNotes(true);
   }
   function renderNotes(force) {
     if (note.mode !== "read" && !force) return;  /* never redraw over an edit */
-    if (note.key && note.mode !== "new" && !topicOf(note.key)) note.key = null;
-    if (!note.key && note.mode === "read" && feed.notes.length && window.innerWidth > 720) {
-      var f = feed.notes[0];
+    if (note.key && note.mode !== "new" && !topicOf(note.key)) {  /* deleted meanwhile */
+      if (note.key !== deletedKey) toast({ text: "This note was deleted." });
+      note = { key: null, project: null, topic: null, mode: "read", version: 0, history: false };
+    }
+    var first = feed.notes.filter(function (n) { return nkey(n.project, n.topic) !== deletedKey; })[0];
+    if (!note.key && note.mode === "read" && first && window.innerWidth > 720) {
+      var f = first;
       note = { key: nkey(f.project, f.topic), project: f.project, topic: f.topic, mode: "read", version: 0, history: false };
     }
     renderTopics();
@@ -1376,9 +1504,29 @@ tr.archived b { color: var(--dim); }
                               "aria-expanded": note.history ? "true" : "false", title: n.history.length + " versions" },
                   [icon("i-history", 13), "History " + n.history.length]);
     hist.addEventListener("click", function () { note.history = !note.history; renderNotes(true); });
+    var err = el("div", { "class": "err", hidden: "" }), del = null;
+    if (mayDelete(n)) {
+      del = button("Delete", "danger", function () {
+        var count = n.history.length;
+        confirmInline(del, "Delete " + n.topic + "?" + (count > 1 ? " All " + count + " versions go." : ""), "Delete", function () {
+          return api("/api/notes?topic=" + encodeURIComponent(n.topic) + (n.project ? "&project=" + encodeURIComponent(n.project) : ""), null, "DELETE")
+            .then(function () {
+              note = { key: null, project: null, topic: null, mode: "read", version: 0, history: false };
+              deletedKey = nkey(n.project, n.topic);
+              toast({ text: "Deleted " + n.topic + ".", undo: { topic: n.topic, project: n.project } });
+            }, function (e) { err.hidden = false; err.textContent = e.message; throw e; });
+        });
+      });
+    }
+    var restore = note.version > 0 && mayWrite(n) ? button([icon("i-history", 13), "Restore this version"], "primary", function () {
+      restore.disabled = true;
+      api("/api/notes", { topic: n.topic, text: h.text, project: n.project })
+        .then(function () { note.version = 0; seen.notes = null; renderNotes(true); })
+        .catch(function (e) { restore.disabled = false; err.hidden = false; err.textContent = e.message; });
+    }, { title: "Save this text as the newest version" }) : null;
     doc.appendChild(el("div", { "class": "doc-head" }, [back, el("h2", { text: n.topic }),
       n.project ? el("span", { "class": "tag" }, [icon("i-project", 12), n.project]) : null,
-      el("div", { "class": "tools" }, [hist, archived(n.project) ? null : edit])]));
+      el("div", { "class": "tools" }, [hist, archived(n.project) ? null : edit, del])]));
     if (note.history) {
       doc.appendChild(el("div", { "class": "history" }, n.history.map(function (v, i) {
         var b = el("button", { "class": "version", type: "button", "aria-current": i === note.version ? "true" : "false" },
@@ -1389,8 +1537,9 @@ tr.archived b { color: var(--dim); }
     }
     var by = [el("b", { text: h.author }), timeEl(h.time)];
     if (note.version > 0) by.push(el("span", { "class": "old", text: "old version v" + (n.history.length - note.version) }));
+    if (restore) by.push(restore);
     doc.appendChild(el("div", { "class": "byline" }, by));
-    doc.appendChild(el("div", { "class": "doc-body" }, [el("div", { "class": "text", text: h.text })]));
+    doc.appendChild(el("div", { "class": "doc-body" }, [err, el("div", { "class": "text", text: h.text })]));
   }
   /* the selected project (the open note's): its state note and a week of git activity */
   var activity = { project: null, data: null, at: 0 };
@@ -1957,7 +2106,7 @@ tr.archived b { color: var(--dim); }
           fact("c-plain", "Version", f.version || d.version),
           fact("c-plain", "Load", f.load != null && f.cpus ? (+f.load).toFixed(1) + " / " + f.cpus + " cpus" : ""),
           fact("c-plain", "tmux", f.tmux === true ? "yes" : f.tmux === false ? "no" : ""),
-          el("td", { "class": "h-wide" + (toolTags.childNodes.length ? "" : " nil"), "data-label": "Tools" }, [toolTags]),
+          el("td", { "class": "h-wide", "data-label": "Tools" }, [toolTags.childNodes.length ? toolTags : el("span", { "class": "hint", text: "No tools reported yet" })]),
           el("td", { "class": "h-wide" + (folders.childNodes.length ? "" : " nil"), "data-label": "Folders" }, [folders])
         ];
         if (admin) {
@@ -2032,12 +2181,18 @@ tr.archived b { color: var(--dim); }
     if (changed("conflicts", rules.conflicts)) renderConflicts();
     tick();
   }
+  /* the versions of the team rules, newest first; fetched when History opens or a new one lands */
+  function loadRulesHistory() {
+    get("/api/rules/history").then(function (h) { rulesUi.hist = h; renderRulesDoc(); },
+      function (e) { $("rules-load-err").hidden = false; $("rules-load-err").textContent = e.message; });
+  }
   function renderRulesDoc() {
-    var doc = $("rules-doc"), r = rules.rules;
+    var doc = $("rules-doc"), r = rules.rules, ui = rulesUi;
     doc.textContent = "";
     var tools = el("div", { "class": "tools" });
     doc.appendChild(el("div", { "class": "doc-head" }, [el("h2", { text: "Team rules" }),
       r.version ? el("span", { "class": "tag", text: "v" + r.version }) : null, tools]));
+    if (ui.history && !ui.edit && (!ui.hist || (ui.hist[0] && ui.hist[0].version !== r.version))) loadRulesHistory();
     if (rulesUi.edit) {
       var area = el("textarea", { "aria-label": "Team rules" });
       area.value = r.text;
@@ -2052,7 +2207,36 @@ tr.archived b { color: var(--dim); }
       area.focus();
       return;
     }
+    if (r.version) {
+      tools.appendChild(button([icon("i-history", 13), "History " + r.version], "", function () {
+        ui.history = !ui.history; ui.version = null; renderRulesDoc();
+      }, { "aria-pressed": ui.history ? "true" : "false", "aria-expanded": ui.history ? "true" : "false", title: r.version + " versions" }));
+    }
     if (isAdmin()) tools.appendChild(button([icon("i-edit", 13), "Edit"], "", function () { rulesUi.edit = true; renderRulesDoc(); }));
+    var old = ui.history && ui.hist && ui.version != null ? ui.hist.filter(function (v) { return v.version === ui.version; })[0] : null;
+    if (old && old.version === r.version) old = null;  /* the newest is the current text */
+    if (ui.history && ui.hist) {
+      doc.appendChild(el("div", { "class": "history" }, ui.hist.map(function (v) {
+        var cur = old ? v.version === old.version : v.version === r.version;
+        var b = el("button", { "class": "version", type: "button", "aria-current": cur ? "true" : "false" },
+                   [el("span", { text: "v" + v.version }), el("b", { text: v.author }), timeEl(v.time)]);
+        b.addEventListener("click", function () { ui.version = v.version; renderRulesDoc(); });
+        return b;
+      })));
+    }
+    if (old) {
+      var err = el("div", { "class": "err", hidden: "" });
+      var restore = isAdmin() ? button([icon("i-history", 13), "Restore this version"], "primary", function () {
+        restore.disabled = true;
+        api("/api/rules", { text: old.text })
+          .then(function () { ui.version = null; seen["rules-doc"] = null; loadRules(true); })
+          .catch(function (e) { restore.disabled = false; err.hidden = false; err.textContent = e.message; });
+      }, { title: "Make this text the current team rules" }) : null;
+      doc.appendChild(el("div", { "class": "byline" }, [el("b", { text: old.author }), timeEl(old.time),
+        el("span", { "class": "old", text: "old version v" + old.version }), restore]));
+      doc.appendChild(el("div", { "class": "doc-body rules-text" }, [err].concat(ruleBlocks(old.text))));
+      return;
+    }
     if (r.version) doc.appendChild(el("div", { "class": "byline" }, [el("b", { text: r.author }), timeEl(r.time)]));
     doc.appendChild(el("div", { "class": "doc-body rules-text" }, r.text.trim() ? ruleBlocks(r.text)
       : [el("div", { "class": "empty" }, isAdmin() ? ["No team rules yet. Write the rules every agent on the team follows. ",
@@ -2073,7 +2257,9 @@ tr.archived b { color: var(--dim); }
     body.textContent = "";
     var ps = rules.proposals.filter(function (p) { return p.status === "open"; })
       .concat(rules.proposals.filter(function (p) { return p.status !== "open"; }));
-    if (!ps.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "5", text: "No proposals. Agents file one when their person corrects them the same way twice." })]));
+    if (!ps.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "5", text: isAdmin()
+      ? "No proposals. Agents file one when their person corrects them the same way twice."
+      : "No proposals yet. Propose a rule when your agent keeps getting the same correction." })]));
     ps.forEach(function (p) {
       var what = el("div", { "class": "prop" }, [el("b", { text: p.text }),
         p.evidence ? el("small", { text: p.evidence }) : null,
@@ -2147,7 +2333,7 @@ tr.archived b { color: var(--dim); }
     if (changed("messages", [feed.messages, feed.doors, places, filter])) renderMessages();
     if (changed("knocks", [feed.knocks, feed.agents.some(function (a) { return a.mine; })])) renderKnocks();
     if (changed("to", places)) renderTo();
-    if (note.mode === "read" && changed("notes", feed.notes)) renderNotes();
+    if (note.mode === "read" && !busy("doc") && changed("notes", feed.notes)) renderNotes();
     if (feed.people) {
       $("n-people").textContent = feed.people.length;
       $("n-access").textContent = feed.requests.length;
@@ -2263,6 +2449,27 @@ tr.archived b { color: var(--dim); }
                            role: kind === "project" ? $("ask-role").value : "read" })
       .then(function () { $("ask-err").hidden = true; $("ask-target").value = ""; $("ask-why").value = ""; loadAccess(); })
       .catch(function (x) { $("ask-err").hidden = false; $("ask-err").textContent = x.message; });
+  });
+  $("attach").addEventListener("click", function () { $("file-in").click(); });
+  $("file-in").addEventListener("change", function () {
+    var f = $("file-in").files[0];
+    if (f) { attached = { file: f, id: null }; renderAttached(); sendErr(""); $("text").focus(); }
+  });
+  function proposeOpen(on) {
+    $("propose").hidden = !on;
+    $("propose-btn").hidden = on;
+    $("prop-err").hidden = true;
+    if (on) $("prop-text").focus(); else $("propose").reset();
+  }
+  $("propose-btn").addEventListener("click", function () { proposeOpen(true); });
+  $("prop-cancel").addEventListener("click", function () { proposeOpen(false); });
+  $("propose").addEventListener("keydown", function (e) { if (e.key === "Escape") proposeOpen(false); });
+  $("propose").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var text = $("prop-text").value.trim();
+    if (!text) { $("prop-text").focus(); return; }
+    act("prop-err", "/api/proposals", { text: text, evidence: $("prop-why").value.trim() })
+      .then(function () { proposeOpen(false); loadRules(true); }, function () {});
   });
   $("chips-toggle").addEventListener("click", function () { chipsOpen = !chipsOpen; renderChips(); });
   $("more").addEventListener("click", function () { moreOpen($("more-menu").hidden); });

@@ -228,3 +228,23 @@ def test_log_kinds_and_paging_routes(app):
 def test_note_delete_without_topic(app):
     assert call(app, "alice", "DELETE", "/api/notes") == (400, "topic is empty")
     assert call(app, "alice", "DELETE", "/api/notes?topic=%20") == (400, "topic is empty")
+
+
+def test_attach_refuses_another_persons_file(app):
+    fid = app.store.file_add("a.txt", b"hello", app.ids["alice"])
+    status, text = call(app, "bob", "POST", "/api/send", {"to": "alice", "text": "x", "file_id": fid})
+    assert (status, text) == (400, "that file is not yours to send")
+    status, text = call(app, "bob", "POST", "/api/send", {"to": "alice", "text": "x", "file_id": 999})
+    assert (status, text) == (400, "no such file")
+    assert not [m for m in app.store.messages() if m.file]
+
+
+def test_attach_sends_own_file_once(app):
+    fid = app.store.file_add("a.txt", b"hello", app.ids["alice"])
+    app.store.seen("b1", "box-1", "codex", "proj-a", principal=app.store.authenticate(app.tokens["bob"]))
+    to = "box-1/codex/proj-a"
+    status, body = call(app, "alice", "POST", "/api/send", {"to": to, "text": "see", "file_id": fid})
+    assert (status, body) == (200, {"sent": 1})
+    assert [(m.text, m.file["id"]) for m in app.store.messages() if m.file] == [("see", fid)]
+    status, text = call(app, "alice", "POST", "/api/send", {"to": to, "text": "again", "file_id": fid})
+    assert (status, text) == (400, "that file is not yours to send")

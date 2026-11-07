@@ -85,7 +85,8 @@ def test_team_second_line_and_admin_legend(hub):
     assert '"class": "where", text: [a.person, a.machine, a.project].filter(Boolean).join(" \\u00b7 ")' in html
     assert "#team .who .where { display: block;" in html
     assert "isAdmin() ? harnessMarks(a.harness) : null" in html
-    assert html.count("R rules text · H hooks · S skills") == 1 and 'id="team-key"' in html
+    assert html.count("R rules · H hooks · S skills: what each session's tool has loaded") == 1
+    assert 'id="team-key"' in html
     assert '$("team-key").hidden = !isAdmin() || !agents.length;' in html
 
 
@@ -117,3 +118,51 @@ def test_log_rows_are_sentences(hub):
 def test_shared_token_revoke_uses_plain_label(hub):
     html = page(hub)
     assert '"Revoke " + d.name + "? It stops working at once."' in html
+
+
+def test_compose_attach_control(hub):
+    html = page(hub)
+    form = re.search(r'<form[^>]*id="compose".*?</form>', html, re.S).group(0)
+    assert 'id="attach"' in form and 'aria-label="Attach"' in form and "#i-clip" in form
+    assert '<input type="file" id="file-in" hidden>' in form and 'id="file-chip"' in form
+    code = html[html.index("function upload("):html.index("/* notes: the team board")]
+    assert '"X-File-Name": encodeURIComponent(' in code and 'fetch("/api/files"' in code
+    assert "file_id: " in code
+
+
+def test_doors_close_open_and_hint(hub):
+    html = page(hub)
+    assert '"Close the door between " + d.a_person + " and " + d.b_person + "? Their sessions stop talking directly."' in html
+    assert '"/api/doors/" + d.id + "/close"' in html and '"/api/doors", { a_person:' in html
+    assert '"Open door"' in html and '"Open a door between"' in html
+    assert "A door lets two people's sessions talk directly, without the admin." in html
+    assert '"kaptyorka.door-hint"' in html
+
+
+def test_notes_delete_undo_restore(hub):
+    html = page(hub)
+    assert '"Delete " + n.topic + "?' in html and '"/api/notes?topic="' in html
+    assert '"/api/notes/undo"' in html and '"Deleted " + ' in html and '"Undo"' in html
+    assert '"This note was deleted."' in html
+    assert html.count('"Restore this version"') == 2  # a note's old version, the rules' old version
+
+
+def test_rules_history_and_proposal_form(hub):
+    html = page(hub)
+    assert '"/api/rules/history"' in html and '"History " + ' in html
+    form = re.search(r'<form[^>]*id="propose".*?</form>', html, re.S).group(0)
+    assert 'aria-label="The rule"' in form and 'maxlength="2000"' in form
+    assert 'aria-label="Why (what happened)"' in form and 'maxlength="4000"' in form
+    assert ">Send<" in form and ">Cancel<" in form
+    assert "Propose a rule" in html and 'act("prop-err", "/api/proposals", { text:' in html
+    assert "No proposals yet. Propose a rule when your agent keeps getting the same correction." in html
+
+
+def test_machine_cards_name_missing_tools(hub):
+    assert '"No tools reported yet"' in page(hub)
+
+
+def test_page_never_uses_browser_dialogs(hub):
+    script = page(hub).split("<script>", 1)[1]
+    assert not re.search(r"(?<![\w.])(prompt|alert|confirm)\(", script)
+    assert not re.search(r"window\.(prompt|alert|confirm)\b", script)

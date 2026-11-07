@@ -1236,7 +1236,7 @@ class Store:
         self.sends.setdefault(key, []).append(now)
 
     def send_from_web(self, name: str, to: str, text: str,
-                      person_id: Optional[int] = None) -> int:
+                      person_id: Optional[int] = None, file_id: Optional[int] = None) -> int:
         """Send as a person on the web page, not an agent: sender key `web:<name>`. With
         `person_id` the page counts as a session of that person and follows the group rule."""
         name = _person(name)
@@ -1256,7 +1256,7 @@ class Store:
                     raise KaptyorkaError(f"no door to {to}: knock(to, about) first")
                 if to != "all":  # so the session can reply to the page; a broadcast is one-way
                     opened = [t["name"] for t in targets if self._web_door(key, person_id, t, now)]
-            n = self._insert(key, name, targets, text, now)
+            n = self._insert(key, name, targets, text, now, file_id)
         for other in opened:
             self.log_add(name, "door_open", f"{key} <-> {other}")
         return n

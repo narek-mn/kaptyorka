@@ -9,6 +9,7 @@ from chrome import chrome, chrome_path
 from conftest import start_hub
 from helpers import person
 from kaptyorka.manager import ManagerStore
+from kaptyorka.rules import RulesStore
 from kaptyorka.store import Store
 
 pytestmark = [pytest.mark.slow,
@@ -25,6 +26,24 @@ def admin_page(tmp_path):
     try:
         with chrome() as page:
             yield store, page, url
+    finally:
+        stop()
+        store.close()
+
+
+@pytest.fixture
+def member_page(tmp_path):
+    """bob, a member with read access to proj-a; alice is the admin."""
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    person(store, "alice", "admin")
+    bob, token = person(store, "bob")
+    store.project_register("proj-a", by="alice")
+    store.grant_project("proj-a", bob, "read", "alice")
+    try:
+        with chrome() as page:
+            yield store, page, f"http://127.0.0.1:{stop.port}/#t={token}"
     finally:
         stop()
         store.close()
@@ -159,3 +178,127 @@ def test_phone_more_menu(tmp_path):
     finally:
         stop()
         store.close()
+
+
+def click(page, scope, label):
+    page.js(f"""[...document.querySelectorAll({json.dumps(scope + " button")})]
+      .find(b => b.textContent.trim() === {json.dumps(label)}).click()""")
+
+
+def test_attach_sends_file(admin_page):
+    store, page, url = admin_page
+    _, bob_t = person(store, "bob")
+    store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(bob_t))
+    page.go(url.replace("view=people", "view=messages"))
+    page.wait('[...document.querySelectorAll("#to option")].some(o => o.value === "box-1/codex/proj-a")')
+    page.js("""(() => { const dt = new DataTransfer(); dt.items.add(new File(["hello"], "a.txt"));
+      const i = document.getElementById("file-in"); i.files = dt.files; i.dispatchEvent(new Event("change")); })()""")
+    assert page.wait('!document.getElementById("file-chip").hidden && '
+                     'document.getElementById("file-chip").textContent') == "a.txt· 5 B"
+    page.js('document.getElementById("to").value = "box-1/codex/proj-a"')
+    page.js('document.getElementById("text").value = "see the file"')
+    page.js('document.querySelector("#compose button[type=submit]").click()')
+    assert page.wait('document.querySelector("#log .msg .file")?.textContent') == "a.txt5 B"
+    assert page.js('document.getElementById("file-chip").hidden')
+    assert [(m.text, m.file["name"]) for m in store.messages() if m.file] == [("see the file", "a.txt")]
+
+
+def test_note_delete_undo(admin_page):
+    store, page, url = admin_page
+    for v in ("one", "two", "three"):
+        store.notes_write_from_web("alice", "plan", v)
+    page.go(url.replace("view=people", "view=notes"))
+    page.wait('document.querySelector("#doc h2")?.textContent === "plan"')
+    click(page, "#doc .tools", "Delete")
+    text = page.wait('document.querySelector("#doc .confirm")?.textContent')
+    assert text.startswith("Delete plan? All 3 versions go.")
+    time.sleep(2.5)  # the confirm holds through a refresh
+    assert page.js('!!document.querySelector("#doc .confirm")')
+    click(page, "#doc .confirm", "Delete")
+    assert page.wait('document.querySelector("#topics .toast")?.textContent') == "Deleted plan.Undo"
+    assert all(n["topic"] != "plan" for n in store.notes_list(None))
+    time.sleep(2.5)  # no "This note was deleted." for the page's own delete
+    assert page.js('document.querySelector("#topics .toast")?.textContent') == "Deleted plan.Undo"
+    click(page, "#topics .toast", "Undo")
+    page.wait('document.querySelector("#doc h2")?.textContent === "plan"')
+    assert page.wait('[...document.querySelectorAll("#doc .tools button")]'
+                     '.map(b => b.textContent).includes("History 3")')
+    assert page.js('!document.querySelector("#topics .toast")')
+    assert len(store.note_history("plan")) == 3
+
+
+def test_propose_from_page(member_page):
+    store, page, url = member_page
+    page.go(url + "&view=rules")
+    assert page.wait('document.querySelector("#prop-rows .empty-row")?.textContent') == \
+        "No proposals yet. Propose a rule when your agent keeps getting the same correction."
+    page.js('document.getElementById("propose-btn").click()')
+    page.wait('!document.getElementById("propose").hidden')
+    page.js('document.querySelector("#propose button[type=submit]").click()')  # empty: nothing sent
+    assert RulesStore(store).proposals() == []
+    page.js('document.getElementById("prop-text").value = "run the tests before a commit"')
+    page.js('document.getElementById("prop-why").value = "it pushed a broken build twice"')
+    page.js('document.querySelector("#propose button[type=submit]").click()')
+    assert page.wait('document.querySelector("#prop-rows tr .state")?.textContent') == "open"
+    assert page.js('document.querySelector("#prop-rows .prop b").textContent') == "run the tests before a commit"
+    assert page.js('document.getElementById("propose").hidden')
+    assert [(p["person"], p["evidence"]) for p in RulesStore(store).proposals()] == \
+        [("bob", "it pushed a broken build twice")]
+
+
+def test_member_sees_no_restore(member_page):
+    store, page, url = member_page
+    store.notes_write_from_web("alice", "plan", "first", "proj-a")
+    store.notes_write_from_web("alice", "plan", "second", "proj-a")
+    RulesStore(store).set_rules("old rule", "alice")
+    RulesStore(store).set_rules("new rule", "alice")
+    page.go(url + "&view=notes")
+    page.wait('[...document.querySelectorAll("#topics .topic b")].some(b => b.textContent === "plan")')
+    page.js('[...document.querySelectorAll("#topics .topic")]'
+            '.find(t => t.querySelector("b").textContent === "plan").click()')
+    page.wait('document.querySelector("#doc h2")?.textContent === "plan"')
+    click(page, "#doc .tools", "History 2")
+    page.wait('document.querySelectorAll("#doc .version").length === 2')
+    page.js('document.querySelectorAll("#doc .version")[1].click()')
+    assert page.wait('document.querySelector("#doc .byline .old")?.textContent') == "old version v1"
+    buttons = page.js('[...document.querySelectorAll("#doc button")].map(b => b.textContent)')
+    assert "Restore this version" not in buttons and "Delete" not in buttons
+    page.js('document.querySelector(".tab[data-view=rules]").click()')
+    page.wait('document.querySelector("#rules-doc .tag")?.textContent === "v2"')
+    click(page, "#rules-doc .tools", "History 2")
+    page.wait('document.querySelectorAll("#rules-doc .version").length === 2')
+    page.js('document.querySelectorAll("#rules-doc .version")[1].click()')
+    assert page.wait('document.querySelector("#rules-doc .byline .old")?.textContent') == "old version v1"
+    assert page.js('document.querySelector("#rules-doc .doc-body").textContent') == "old rule"
+    buttons = page.js('[...document.querySelectorAll("#rules-doc button")].map(b => b.textContent)')
+    assert "Restore this version" not in buttons and "Edit" not in buttons
+
+
+def test_admin_restores_old_versions(admin_page):
+    store, page, url = admin_page
+    store.notes_write_from_web("alice", "plan", "first")
+    store.notes_write_from_web("alice", "plan", "second")
+    RulesStore(store).set_rules("old rule", "alice")
+    RulesStore(store).set_rules("new rule", "alice")
+    page.go(url.replace("view=people", "view=notes"))
+    page.wait('document.querySelector("#doc h2")?.textContent === "plan"')
+    click(page, "#doc .tools", "History 2")
+    page.wait('document.querySelectorAll("#doc .version").length === 2')
+    page.js('document.querySelectorAll("#doc .version")[1].click()')
+    page.wait('!!document.querySelector("#doc .byline .old")')
+    click(page, "#doc .byline", "Restore this version")
+    page.wait('document.querySelectorAll("#doc .version").length === 3')
+    assert page.js('document.querySelector("#doc .doc-body").textContent') == "first"
+    assert page.js('!document.querySelector("#doc .byline .old")')
+    assert store.note_history("plan")[0].text == "first"
+    page.js('document.querySelector(".tab[data-view=rules]").click()')
+    page.wait('document.querySelector("#rules-doc .tag")?.textContent === "v2"')
+    click(page, "#rules-doc .tools", "History 2")
+    page.wait('document.querySelectorAll("#rules-doc .version").length === 2')
+    page.js('document.querySelectorAll("#rules-doc .version")[1].click()')
+    page.wait('!!document.querySelector("#rules-doc .byline .old")')
+    click(page, "#rules-doc .byline", "Restore this version")
+    page.wait('document.querySelector("#rules-doc .tag")?.textContent === "v3"')
+    assert page.wait('document.querySelectorAll("#rules-doc .version").length === 3')
+    assert page.js('document.querySelector("#rules-doc .doc-body").textContent') == "old rule"
+    assert RulesStore(store).current()["text"] == "old rule"
