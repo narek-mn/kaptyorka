@@ -199,6 +199,51 @@ def _people(args) -> int:
     return 0
 
 
+def _rules_call(method: str, path: str, body):
+    """Call the hub for a rules push; the body on 200, else None after printing why."""
+    got = _admin_call(method, path, body)
+    if got is None:
+        return None
+    if got[0] == 403:
+        print("only the admin's device may push rules", file=sys.stderr)
+        return None
+    if got[0] != 200:
+        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        return None
+    return got[1]
+
+
+def _rules_push(args) -> int:
+    from kaptyorka import rules
+    from kaptyorka.store import KaptyorkaError
+
+    root = Path(args.dir)
+    rules_file = root / "RULES.md"
+    if not rules_file.is_file():
+        print(f"no RULES.md in {root}")
+        return 1
+    skill_files = sorted((root / "skills").glob("*.md")) if (root / "skills").is_dir() else []
+    skills = {}
+    for f in skill_files:  # every name is checked before anything is uploaded
+        try:
+            skills[rules.check_name(f.stem)] = f.read_text(encoding="utf-8")
+        except KaptyorkaError as e:
+            print(f"{f.name}: {e}", file=sys.stderr)
+            return 1
+    text = rules_file.read_text(encoding="utf-8")
+    sent = _rules_call("POST", "/api/rules", {"text": text})
+    if sent is None:
+        return 1
+    done = _rules_call("PUT", "/api/skills", {"skills": skills})
+    if done is None:
+        return 1
+    print(f"team rules v{sent['version']}; skills: {len(done['added'])} added, "
+          f"{len(done['changed'])} changed, {len(done['removed'])} removed")
+    if not skill_files and done["removed"]:  # no skills/ folder: the push replaced the whole set
+        print(f"no skills/ folder in {root}: all team skills removed")
+    return 0
+
+
 def _admin_do(method: str, path: str, body: dict, done: str) -> int:
     """One admin call that answers 204: print `done`, or the hub's message and exit 1."""
     got = _admin_call(method, path, body)
@@ -520,6 +565,10 @@ def entry() -> None:
     fa.add_argument("--key-from", help="file with one NAME=value line, sent to the bridge's environment")
     fa.set_defaults(run=_fleet_add)
     fs.add_parser("list").set_defaults(run=_fleet_list)
+    rl = sub.add_parser("rules").add_subparsers(dest="rules_cmd", required=True)
+    rp = rl.add_parser("push", help="upload a team rules folder: RULES.md and skills/*.md")
+    rp.add_argument("dir", metavar="dir")
+    rp.set_defaults(run=_rules_push)
     m = sub.add_parser("mcp")
     m.add_argument("--workspace")
     m.set_defaults(run=_mcp)

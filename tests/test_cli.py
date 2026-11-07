@@ -295,3 +295,69 @@ def test_backup_nightly_warns_without_gpg(home, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         entry_with(["backup", "alice@box-1:/srv/b", "--nightly"])
     assert "gpg not found: nightly backups will be unencrypted" in capsys.readouterr().out
+
+
+def _team_folder(tmp_path):
+    root = tmp_path / "team"
+    (root / "skills").mkdir(parents=True)
+    (root / "RULES.md").write_text("use tabs\n", encoding="utf-8")
+    (root / "skills" / "review.md").write_text("review steps", encoding="utf-8")
+    (root / "skills" / "deploy.md").write_text("deploy steps", encoding="utf-8")
+    return root
+
+
+def test_rules_push_uploads_rules_and_skills(monkeypatch, home, tmp_path, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    root = _team_folder(tmp_path)
+    calls = []
+
+    def fake(method, url, token, body=None, **kw):
+        calls.append((method, url, token, body))
+        if url.endswith("/api/rules"):
+            return 200, {"version": 3}
+        return 200, {"added": ["deploy", "review"], "changed": ["old"], "removed": []}
+
+    monkeypatch.setattr(http, "request", fake)
+    assert entry_with_exit(["rules", "push", str(root)]) == 0
+    assert calls[0] == ("POST", "http://h:1/api/rules", "adm", {"text": "use tabs\n"})
+    assert calls[1] == ("PUT", "http://h:1/api/skills", "adm",
+                        {"skills": {"deploy": "deploy steps", "review": "review steps"}})
+    assert capsys.readouterr().out.strip() == "team rules v3; skills: 2 added, 1 changed, 0 removed"
+
+
+def test_rules_push_missing_rules_md(monkeypatch, home, tmp_path, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    monkeypatch.setattr(http, "request", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call")))
+    assert entry_with_exit(["rules", "push", str(tmp_path)]) == 1
+    assert f"no RULES.md in {tmp_path}" in capsys.readouterr().out
+
+
+def test_rules_push_bad_skill_name_fails_before_upload(monkeypatch, home, tmp_path, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    root = _team_folder(tmp_path)
+    (root / "skills" / "Bad_Name.md").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(http, "request", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call")))
+    assert entry_with_exit(["rules", "push", str(root)]) == 1
+    assert "skill name must be 1-48 characters" in capsys.readouterr().err
+
+
+def test_rules_push_forbidden(monkeypatch, home, tmp_path, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "t", "machine": "pc"})
+    monkeypatch.setattr(http, "request", lambda *a, **k: (403, "admin only"))
+    assert entry_with_exit(["rules", "push", str(_team_folder(tmp_path))]) == 1
+    assert "only the admin's device may push rules" in capsys.readouterr().err
+
+
+def test_rules_push_without_skills_folder_says_all_removed(monkeypatch, home, tmp_path, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    (tmp_path / "RULES.md").write_text("use tabs\n", encoding="utf-8")
+
+    def fake(method, url, token, body=None, **kw):
+        if url.endswith("/api/rules"):
+            return 200, {"version": 4}
+        return 200, {"added": [], "changed": [], "removed": ["review"]}
+
+    monkeypatch.setattr(http, "request", fake)
+    assert entry_with_exit(["rules", "push", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        f"no skills/ folder in {tmp_path}: all team skills removed")
