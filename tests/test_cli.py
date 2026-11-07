@@ -361,3 +361,57 @@ def test_rules_push_without_skills_folder_says_all_removed(monkeypatch, home, tm
     assert entry_with_exit(["rules", "push", str(tmp_path)]) == 0
     assert capsys.readouterr().out.splitlines()[-1] == (
         f"no skills/ folder in {tmp_path}: all team skills removed")
+
+
+def _no_request(monkeypatch):
+    monkeypatch.setattr(http, "request", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call")))
+
+
+def test_rules_push_non_utf8_skill_fails_before_upload(monkeypatch, home, tmp_path, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    root = _team_folder(tmp_path)
+    (root / "skills" / "bad.md").write_bytes(b"\xff\xfe\x00")
+    _no_request(monkeypatch)
+    assert entry_with_exit(["rules", "push", str(root)]) == 1
+    err = capsys.readouterr().err
+    assert "cannot read" in err and "bad.md" in err and "UTF-8" in err
+
+
+def test_rules_push_directory_named_md_is_skipped(monkeypatch, home, tmp_path, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    root = _team_folder(tmp_path)
+    (root / "skills" / "foo.md").mkdir()
+    calls = []
+
+    def fake(method, url, token, body=None, **kw):
+        calls.append((method, url, body))
+        if url.endswith("/api/rules"):
+            return 200, {"version": 2}
+        return 200, {"added": ["deploy", "review"], "changed": [], "removed": []}
+
+    monkeypatch.setattr(http, "request", fake)
+    assert entry_with_exit(["rules", "push", str(root)]) == 0
+    assert calls[1][2] == {"skills": {"deploy": "deploy steps", "review": "review steps"}}
+
+
+def test_rules_push_oversized_skill_makes_no_request(monkeypatch, home, tmp_path, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    root = _team_folder(tmp_path)
+    (root / "skills" / "big.md").write_text("a" * 20001, encoding="utf-8")
+    _no_request(monkeypatch)
+    assert entry_with_exit(["rules", "push", str(root)]) == 1
+    assert "is too long: 20001 characters, limit 20000" in capsys.readouterr().err
+
+
+def test_rules_push_put_failure_says_rules_were_pushed(monkeypatch, home, tmp_path, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+
+    def fake(method, url, token, body=None, **kw):
+        if url.endswith("/api/rules"):
+            return 200, {"version": 5}
+        return 500, "boom"
+
+    monkeypatch.setattr(http, "request", fake)
+    assert entry_with_exit(["rules", "push", str(_team_folder(tmp_path))]) == 1
+    assert capsys.readouterr().err.strip() == (
+        "skills upload failed (500): boom; the rules were already pushed as v5")

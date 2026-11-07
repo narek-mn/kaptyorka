@@ -213,6 +213,17 @@ def _rules_call(method: str, path: str, body):
     return got[1]
 
 
+def _read_team_file(path: Path):
+    """The file's text, or None after printing why it cannot be read."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        print(f"cannot read {path}: not UTF-8 text", file=sys.stderr)
+    except OSError as e:
+        print(f"cannot read {path}: {e.strerror or e}", file=sys.stderr)
+    return None
+
+
 def _rules_push(args) -> int:
     from kaptyorka import rules
     from kaptyorka.store import KaptyorkaError
@@ -222,21 +233,40 @@ def _rules_push(args) -> int:
     if not rules_file.is_file():
         print(f"no RULES.md in {root}")
         return 1
-    skill_files = sorted((root / "skills").glob("*.md")) if (root / "skills").is_dir() else []
+    text = _read_team_file(rules_file)
+    if text is None:
+        return 1
+    if len(text) > rules.MAX_TEXT:
+        print(f"{rules_file} is too long: {len(text)} characters, limit {rules.MAX_TEXT}", file=sys.stderr)
+        return 1
+    skills_dir = root / "skills"
+    skill_files = sorted(f for f in skills_dir.glob("*.md") if not f.is_dir()) if skills_dir.is_dir() else []
     skills = {}
-    for f in skill_files:  # every name is checked before anything is uploaded
+    for f in skill_files:  # everything is read and checked before anything is uploaded
         try:
-            skills[rules.check_name(f.stem)] = f.read_text(encoding="utf-8")
+            name = rules.check_name(f.stem)
         except KaptyorkaError as e:
             print(f"{f.name}: {e}", file=sys.stderr)
             return 1
-    text = rules_file.read_text(encoding="utf-8")
+        body = _read_team_file(f)
+        if body is None:
+            return 1
+        if len(body) > rules.MAX_TEXT:
+            print(f"{f} is too long: {len(body)} characters, limit {rules.MAX_TEXT}", file=sys.stderr)
+            return 1
+        skills[name] = body
     sent = _rules_call("POST", "/api/rules", {"text": text})
     if sent is None:
         return 1
-    done = _rules_call("PUT", "/api/skills", {"skills": skills})
-    if done is None:
+    got = _admin_call("PUT", "/api/skills", {"skills": skills})
+    if got is None:
         return 1
+    if got[0] != 200:
+        answer = got[1] if isinstance(got[1], str) else f"hub answered {got[0]}"
+        print(f"skills upload failed ({got[0]}): {answer}; the rules were already pushed as v{sent['version']}",
+              file=sys.stderr)
+        return 1
+    done = got[1]
     print(f"team rules v{sent['version']}; skills: {len(done['added'])} added, "
           f"{len(done['changed'])} changed, {len(done['removed'])} removed")
     if not skill_files and done["removed"]:  # no skills/ folder: the push replaced the whole set
