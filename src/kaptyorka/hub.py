@@ -495,6 +495,17 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             tell(asker, f"the manager says wait on {project}: {reason}")
             store.log_add("manager", "work_decide", f"request {request_id}: wait — {reason}")
             return f"request {request_id}: told them to wait"
+        row = next((p for p in store.people() if p["id"] == r["person_id"]), None)
+        boss = store.agent(r["boss_key"])
+        who = replace(principal, person_id=r["person_id"], person_name=row["name"] if row else "",
+                      role=row["role"] if row else "member")  # the asker's rights, not the manager's
+        if not (store.may_write_project(project, who)
+                or (boss is not None and boss.project == project and not ws.registered(project))):
+            mm.request_decide(request_id, "refused", reason)
+            note = f"the manager could not start {project} for you: you no longer have the write role"
+            tell(asker, note)
+            store.log_add("manager", "work_decide", f"request {request_id}: refused — {reason}")
+            return note
         usable, reasons = ws.candidates_for(r["person_id"], project, machine)
         chosen = ws.choose(usable, project, r["tool"], now, r["person_id"])
         if chosen is None:
@@ -506,7 +517,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             store.log_add("manager", "work_decide",
                           f"request {request_id}: asker gone — {reason}")
             return f"request {request_id}: the asker's session is gone; told them on the page"
-        w = ws.create(replace(principal, person_id=r["person_id"]), project, r["task"], chosen,
+        w = ws.create(who, project, r["task"], chosen,
                       r["tool"], r["boss_key"], r["resume"], chosen["occupied"])
         mm.request_decide(request_id, f"start {w['host']}", reason, w["name"])
         wake_bridges()

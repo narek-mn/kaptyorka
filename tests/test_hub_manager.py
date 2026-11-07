@@ -299,10 +299,24 @@ def test_decide_machine_starts_worker_for_asker(hub):
 def test_decide_refuses_machine_without_use(hub):
     mgr, me = manager_online(hub)
     b, _, bob = busy_setup(hub)
+    a_id = next(p["id"] for p in hub.store.people() if p["name"] == "alice")
+    b2 = bridge(hub, a_id, host="box-2")  # alice's own, not shared, not granted to bob
     ask(hub, bob)
-    err = call_error(mgr, me, "work_decide", request_id=1, machine="box-9", reason="try")
-    assert "no machine named box-9" in err
-    assert hub.ws.by_name("proj-a-w1") is None and hub.mm.request(1)["decided_at"] is None
+    err = call_error(mgr, me, "work_decide", request_id=1, machine="box-2", reason="try")
+    assert "no machine named box-2 that you may use" in err
+    assert hub.ws.by_name("proj-a-w1") is None and poll(hub, b2) == []
+    assert hub.mm.request(1)["decided_at"] is None
+
+
+def test_decide_refused_when_asker_lost_write(hub):
+    mgr, me = manager_online(hub)
+    _, bob_id, bob = busy_setup(hub)
+    ask(hub, bob)
+    hub.store.grant_project("proj-a", bob_id, "read", "test")
+    out = run(call(mgr, me, "work_decide", request_id=1, machine="box-1", reason="ok"))
+    note = "the manager could not start proj-a for you: you no longer have the write role"
+    assert out == note and hub.ws.by_name("proj-a-w1") is None
+    assert hub.mm.request(1)["decision"] == "refused" and note in inbox(bob, BOSS)
 
 
 def test_decide_after_asker_left(hub, clock):
