@@ -203,3 +203,55 @@ def test_stop_hub_down_codex_prints_empty_json_claude_nothing(home, monkeypatch,
 def test_stop_codex_not_joined_prints_empty_json(home, capsys):
     assert hook.main("codex", "stop", _stdin("t1")) == 0
     assert capsys.readouterr().out.strip() == "{}"
+
+
+def test_stop_sends_the_folders_git_read_now(home, monkeypatch, capsys):
+    import subprocess
+    from types import SimpleNamespace
+    from urllib.parse import parse_qs, urlsplit
+
+    join("http://127.0.0.1:1")
+    gets, runs = [], []
+
+    def fake_request(method, url, token, headers=None, timeout=None):
+        gets.append((url, timeout))
+        return 200, {"decision": "ok"}
+
+    def fake_run(args, **kw):
+        runs.append((args, kw))
+        out = {"rev-parse": "main\n", "status": " M a.py\n", "log": "fix the bug\n"}[args[3]]
+        return SimpleNamespace(returncode=0, stdout=out)
+
+    monkeypatch.setattr(hook.http, "request", fake_request)
+    for tool in ("claude-code", "codex"):
+        gets.clear()
+        runs.clear()
+        hook.main(tool, "stop", _stdin("s9"), run=fake_run)
+        url, _ = gets[0]
+        assert urlsplit(url).path == "/api/done-check"
+        assert parse_qs(urlsplit(url).query) == {"branch": ["main"], "subject": ["fix the bug"],
+                                                 "dirty": ["1"]}
+        assert {a[2] for a, _ in runs} == {"/w/proj-a"}
+        assert all(kw["env"]["GIT_OPTIONAL_LOCKS"] == "0" and kw["timeout"] <= hook.GIT_S
+                   for _, kw in runs)
+    capsys.readouterr()
+
+    def no_repo(args, **kw):
+        return SimpleNamespace(returncode=128, stdout="")
+
+    gets.clear()
+    hook.main("claude-code", "stop", _stdin("s9"), run=no_repo)
+    assert gets[0][0].endswith("/api/done-check")  # not a repo: no parameters
+
+    def slow(args, **kw):
+        raise subprocess.TimeoutExpired(args, kw["timeout"])
+
+    gets.clear()
+    hook.main("codex", "stop", _stdin("t9"), run=slow)  # git too slow: the check still runs
+    assert gets[0][0].endswith("/api/done-check")
+    monkeypatch.setattr(hook, "identify", lambda machine, workspace=None:
+                        Identity("cursor:pc:/w/proj-a", machine, "cursor", "proj-a"))
+    gets.clear()
+    runs.clear()
+    hook.main("cursor", "stop", json.dumps({}), run=fake_run)  # Cursor's stop reads no git
+    assert gets[0][0].endswith("/api/done-check") and runs == []

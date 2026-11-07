@@ -29,10 +29,12 @@ def _cached(key: Tuple[str, str], ttl: float, make: Callable[[], object]):
     return value
 
 
-def git(cwd: str, run=subprocess.run) -> Optional[dict]:
-    """Branch, dirty flag and last subject of the repo at cwd; None when it is not one."""
+def git(cwd: str, run=subprocess.run, cached: bool = True,
+        budget: float = GIT_BUDGET_S) -> Optional[dict]:
+    """Branch, dirty flag and last subject of the repo at cwd; None when it is not one.
+    cached=False reads it now (the stop hook), within `budget` seconds."""
     def make() -> Optional[dict]:
-        deadline = time.monotonic() + GIT_BUDGET_S  # one budget for all calls on this folder
+        deadline = time.monotonic() + budget  # one budget for all calls on this folder
 
         def out(*args: str) -> Optional[str]:
             left = max(deadline - time.monotonic(), 0.01)
@@ -50,6 +52,8 @@ def git(cwd: str, run=subprocess.run) -> Optional[dict]:
                 "dirty": None if status is None else bool(status.strip()),
                 "subject": (subject or "").strip()}
 
+    if not cached:
+        return make()
     return _cached(("git", cwd), GIT_TTL_S, make)  # type: ignore[return-value]
 
 

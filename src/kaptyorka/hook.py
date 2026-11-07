@@ -1,13 +1,16 @@
 """`kaptyorka hook <tool> <event>`: print the hub's brief for this session. Silent on any failure."""
 import json
 import os
+import subprocess
 import time
 from typing import Callable, Dict
+from urllib.parse import urlencode
 
-from kaptyorka import http, paths
+from kaptyorka import facts, http, paths
 from kaptyorka.identity import Identity, identify
 
 TIMEOUT_S = 3
+GIT_S = 1  # the stop hook's own git read, inside TIMEOUT_S
 
 # (event, brief) -> what the tool expects on stdout
 FORMATTERS: Dict[str, Callable[[str, str], str]] = {
@@ -21,8 +24,8 @@ FORMATTERS: Dict[str, Callable[[str, str], str]] = {
 }
 
 
-def main(tool: str, event: str, stdin: str = "") -> int:
-    out = _run(tool, event, stdin)
+def main(tool: str, event: str, stdin: str = "", run=subprocess.run) -> int:
+    out = _run(tool, event, stdin, run)
     if not out and (tool == "cursor" or (tool == "codex" and event == "stop")):
         out = "{}"  # Cursor may treat an empty stdout as a failed hook; Codex needs JSON on exit 0
     if out:
@@ -30,7 +33,23 @@ def main(tool: str, event: str, stdin: str = "") -> int:
     return 0
 
 
-def _run(tool: str, event: str, stdin: str) -> str:
+def _git_query(cwd: str, run, deadline: float) -> str:
+    """The folder's git state read now, as done-check query parameters ("" when none): the
+    bridge reports git once a minute, so a commit made just before the stop would be missed."""
+    def quiet(args, **kw):  # never take git's optional locks: a hook must not slow the repo
+        return run(args, env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"}, **kw)
+
+    budget = min(GIT_S, deadline - time.monotonic() - 0.5)  # leave time for the request
+    g = facts.git(cwd, quiet, cached=False, budget=budget) if budget > 0 else None
+    if not g:
+        return ""
+    q = {"branch": g["branch"], "subject": g["subject"]}
+    if g.get("dirty") is not None:
+        q["dirty"] = "1" if g["dirty"] else "0"
+    return "?" + urlencode(q)
+
+
+def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
     try:
         cfg = paths.load_config()
         fmt = FORMATTERS.get(tool)
@@ -68,7 +87,10 @@ def _run(tool: str, event: str, stdin: str) -> str:
 
         reason = ""
         if stop:
-            status, check = get("/api/done-check")
+            query = ""
+            if tool in ("claude-code", "codex"):
+                query = _git_query(data.get("cwd") or os.getcwd(), run, deadline)
+            status, check = get("/api/done-check" + query)
             if status == 200 and isinstance(check, dict) and check.get("decision") == "block":
                 reason = str(check.get("reason") or "")
             if tool in ("claude-code", "codex"):
