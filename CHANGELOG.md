@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+- Team rules and skills: the admin uploads a folder with `kaptyorka rules push <dir>` (`RULES.md` and `skills/*.md`; admin device only). The rules text is in every start brief, first, and is cut first when the brief is over 6,000 characters. Skills are written to `~/.claude/skills/team-<name>/` by the bridge, and removed by `leave`. Claude Code reads that folder, OpenCode and Cursor read it as a compatibility path; Codex gets the rules text only.
+- New agent tools `rules()`, `propose_rule(text, evidence)` and `conflict(rule_a, rule_b)`. Proposals: the admin accepts (a new version of the team rules) or rejects with a reason sent to the proposer's session, on the new Rules tab. 23 agent tools in all.
+- Team tab: three marks per session's tool. R (the start-brief hook is installed), H (all kaptyorka hooks) and S (the team skills folder is current); a dash means unknown or not applicable.
+- Limits: rules and skills 20,000 characters each, 50 skills, skill names 1 to 48 lowercase letters, digits and single hyphens; proposals 2,000 characters, evidence 4,000, 20 open per person; conflicts 1,000 characters per rule.
+- The proposals list (`GET /api/proposals`) no longer sends the session key or the person id to the browser.
+- New file in `~/.kaptyorka`: `skills.json`, the team skill names and version the bridge last wrote.
+- Upgrade: no need to run `kaptyorka join` again for this part. Skills appear by themselves once the bridge updates.
+
 ## 0.4.0
 
 - Project state notes: each registered project has one, with five headings in this order: What it is, Where it stands, Decisions, Open problems, How to run and test. New agent tools `state(project)`, `state_write(project, text)` and `decide(project, text)`, which adds a dated line to the project's `decisions` note (`project=""` for team decisions). 20 agent tools in all.

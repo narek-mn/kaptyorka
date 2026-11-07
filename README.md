@@ -110,6 +110,8 @@ The link works once. If your human gives you a hub address and a token instead, 
 
 Push means a running session gets a message without anyone typing. Pull only means the agent sees it at the next turn.
 
+`join` does not write skills. Once the hub has team skills, the bridge writes them to `~/.claude/skills/team-<name>/` (see "Team rules and skills").
+
 `join` also starts a small background service, `kaptyorka-bridge`, that delivers messages.
 
 A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join` again (or `kaptyorka doctor --fix`). Codex asks once before it runs a new hook: approve it with `/hooks` in Codex.
@@ -142,6 +144,8 @@ A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join`
 | `adopt` | Take over one of your unattended workers |
 | `close_worker` | End one of your workers |
 
+The hub offers 23 tools in all.
+
 `work(project, task, machine="", tool="claude-code", resume="")` starts a worker. `tool` is `claude-code`, `codex` or `opencode`. `adopt(name)` and `close_worker(name)` take the worker's name.
 
 Rename a Claude Code session with `/rename <name>` and agents can reach it by that name: `send(to="<name>", ...)`.
@@ -152,15 +156,50 @@ Each registered project has a state note. It has five headings, in this order: W
 
 At the start of a session the hub gives the agent a short brief. It has five parts, in this order:
 
-1. Team rules (empty for now).
+1. Team rules, first (see "Team rules and skills").
 2. Who you are, and who is online.
 3. The projects you may read.
 4. Your project: its state note, its git activity of the last 7 days, and the branches that have open sessions.
 5. Your unread messages.
 
-The brief is at most 6,000 characters. When it is too long, the hub cuts the rules first, then the project list, then the git activity, then the end of the state note. Unread messages are never cut. The brief is kept for 10 seconds per session, so quick repeats are cheap. A new unread message, or a brief that just delivered messages, is the exception: the next start builds it again.
+The brief is at most 6,000 characters. When it is too long, the hub cuts the rules first (the brief then points to `rules()`, which gives the full text), then the project list, then the git activity, then the end of the state note. Unread messages are never cut. The brief is kept for 10 seconds per session, so quick repeats are cheap. A new unread message, or a brief that just delivered messages, is the exception: the next start builds it again.
 
 The bridge reports each session folder's git branch, last commit and whether it has changes. The hub keeps this git activity for 30 days. The project view shows the last 20 changes of branch or commit.
+
+## Team rules and skills
+
+The team's rules and skills are kept in a private folder on the admin's machine: `RULES.md` holds the rules, and `skills/*.md` holds one skill per file. The admin uploads the folder with:
+
+```bash
+kaptyorka rules push <dir>
+```
+
+Only the admin's device can push. The rules text is replaced as a new version. The skill set is replaced as a whole, so a skill removed from the folder is removed from the team. Limits: rules up to 20,000 characters, each skill up to 20,000, at most 50 skills. A skill name uses lowercase letters, digits and single hyphens, 1 to 48 characters.
+
+Every session sees the rules in its start brief, under this heading:
+
+> Team rules (project rules in this repo override these; these override your personal rules):
+
+Project rules stay in the project's own repo. The hub keeps only the team rules.
+
+Skills land on each machine by themselves. The bridge writes each one to `~/.claude/skills/team-<name>/SKILL.md`. Claude Code reads that folder directly. OpenCode and Cursor read `~/.claude/skills` as a compatibility path (checked against opencode.ai/docs/skills and cursor.com/docs/context/skills on 2026-11-07). Codex gets the rules text only. Each file carries a marker line and is replaced when the team's version changes. A folder without the marker is never touched. The bridge picks up a new version within a heartbeat (10 seconds).
+
+The **Team** tab shows three marks for each session's tool:
+
+- **R**: the hook that carries the start brief is installed.
+- **H**: all kaptyorka hooks are installed.
+- **S**: the team skills folder is current.
+
+A dash means unknown (an older bridge) or not applicable (Codex has no skills folder). When a tool misses its hooks or skills, its brief says so: "Harness on this tool: rules only (hooks or skills missing; run kaptyorka doctor --fix)."
+
+Agents can suggest rules, and report clashes. The brief tells each agent when to do this:
+
+- When its person corrects it the same way twice, the agent calls `propose_rule(text, evidence)`. The admin accepts it, which appends it to the team rules as a new version, or rejects it with a reason. The reason is sent to the proposer's session. The Rules tab lists open proposals.
+- When two rules clash and the agent must ask its person, it calls `conflict(rule_a, rule_b)`. This logs the clash for the admin to fix the text.
+
+Limits: a proposal text 2,000 characters, its evidence 4,000, each rule in a conflict 1,000, and 20 open proposals per person.
+
+<img src="docs/screens/rules.png" width="720" alt="The Rules tab: team rules, skills, proposals and conflicts">
 
 ## The done check
 
@@ -299,6 +338,7 @@ Everything is in `~/.kaptyorka`:
 - `inbox/`: files saved with `fetch_file`
 - `workers/<name>.log`: what a worker printed, on the machine that runs it
 - `folders.json`: project folders the bridge learned from sessions
+- `skills.json`: the team skill names and version the bridge last wrote, on each joined machine
 - `backup-pass`: the passphrase for encrypted backups, on the hub only (mode 0600); keep a copy elsewhere
 - `launched.json`: the bridge's memory of the start and stop orders it already ran, so an order sent again is never run twice (it is not a list of workers)
 - `bridge.log`
@@ -316,6 +356,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka revoke <person> <project>` | Admin: take it away; or `machine:<host>` |
 | `kaptyorka machine owner <host> <person>` | Admin: name a machine's owner |
 | `kaptyorka who` | List sessions online |
+| `kaptyorka rules push <dir>` | Admin: upload the team rules folder (`RULES.md` and `skills/*.md`) |
 | `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
 | `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |
 | `kaptyorka fleet list` | Admin: list machines |
@@ -324,7 +365,7 @@ Everything is in `~/.kaptyorka`:
 
 ## Leave, stop, update, remove
 
-- `kaptyorka leave` takes this machine off the hub: the bridge and everything `join` set up in your agent tools and shell rc files (your own entries stay). kaptyorka stays installed, and so does the hub if it runs here. `kaptyorka join` brings the machine back.
+- `kaptyorka leave` takes this machine off the hub: the bridge and everything `join` set up in your agent tools and shell rc files (your own entries stay), and the team skill folders the bridge wrote (`~/.claude/skills/team-*`; only those with its marker). kaptyorka stays installed, and so does the hub if it runs here. `kaptyorka join` brings the machine back.
 - `kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot. `kaptyorka join` or `kaptyorka start` starts them again.
 - `kaptyorka update` installs the latest version (pipx) and restarts the services that were running; stopped ones stay off.
 - `kaptyorka remove` takes kaptyorka off this machine: the services, everything `join` set up in your agent tools and shell rc files (your own entries stay), `~/.kaptyorka`, and the pipx install. On the hub machine it asks first, because it deletes all team messages and notes.
@@ -333,13 +374,15 @@ Everything is in `~/.kaptyorka`:
 
 ```
 src/kaptyorka/
-  cli.py        the commands: start, join, invite, people, project, grant, revoke, doctor, fleet, backup, restore, leave, stop, update, remove
+  cli.py        the commands: start, join, invite, people, project, grant, revoke, rules, doctor, fleet, backup, restore, leave, stop, update, remove
   hub.py        hub app: MCP tools and plain routes behind a device token
   http.py       small HTTP client used by the other parts
   store.py      SQLite storage: people, devices, agents, messages, notes
   bridge.py     per-machine bridge: reports sessions, pushes messages, starts workers
   workers.py    hub side of workers: states, linking, adopt, close
   memory.py     state notes, git activity and the done check
+  rules.py      team rules, skills, proposals and conflicts in the hub
+  skills_sync.py writes the team skills into ~/.claude/skills
   brief.py      the start brief: sections, budget, cache
   backup.py     `kaptyorka backup` and `kaptyorka restore`
   launch.py     starts and stops a worker on a machine
