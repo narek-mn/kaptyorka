@@ -600,8 +600,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if foreign(principal, agent.person_id) is not None:
             raise KaptyorkaError(ON_SHARED)
         w = ws.close(principal, name)
+        off = ""
+        if name == "manager":  # what the admin closed must not be relaunched by the tick
+            mm.set_enabled(False, principal.person_name)
+            off = "; the manager is switched off until kaptyorka start --manager"
         wake_bridges()
-        return f"closing `{name}`" + (f"; {w['note']}" if w.get("note") else "")
+        return f"closing `{name}`" + (f"; {w['note']}" if w.get("note") else "") + off
 
     @server.tool()
     @_tool_errors

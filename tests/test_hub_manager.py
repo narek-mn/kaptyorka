@@ -486,3 +486,28 @@ def test_page_answers_the_manager_without_a_door(hub):
     status, body = http.request("POST", hub.url + "/api/send", btok,
                                 {"to": "pc-1/codex/proj-b", "text": "hi"})
     assert status == 400 and "no door" in body
+
+
+def test_admin_closing_the_manager_switches_it_off(hub, clock):
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    ack(hub, b, o)
+    mtoken = json.loads(hub.config.read_text())["token"]
+    hub.store.seen("claude:m1", f"manager@{HOST}", "claude-code", "manager",
+                   principal=hub.store.authenticate(mtoken))
+    http.request("POST", hub.url + "/bridge/worker", b.token,
+                 {"worker": "manager", "key": "claude:m1"})
+    # a member cannot close it
+    _, bob = member(hub, "bob", role=None)
+    assert "no worker manager of yours" in call_error(bob, ident("k:bob"), "close_worker",
+                                                      name="manager")
+    assert hub.mm.enabled() is True
+    answer = run(call(as_token(hub, b.token), ident("k:root"), "close_worker", name="manager"))
+    assert answer.endswith("; the manager is switched off until kaptyorka start --manager")
+    assert hub.mm.enabled() is False
+    clock[0] += 120
+    beat(hub, b)
+    hub.tick()
+    assert [x for x in orders(hub, b) if x.get("kind") != "close"] == []

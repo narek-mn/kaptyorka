@@ -34,6 +34,20 @@ def _outbound_ip() -> str:
         return "127.0.0.1"
 
 
+MANAGER_NOTE = ("manager: starts by itself through this machine's bridge; if its first launch "
+                "fails with \"does not trust\", run claude once in ~/.kaptyorka/manager and accept the prompt")
+
+
+def _apply_manager(store, args) -> None:
+    """Set the hub's manager switch from the flags; logged only when it changes."""
+    from kaptyorka.manager import ManagerStore
+
+    on = not getattr(args, "no_manager", False)
+    mm = ManagerStore(store)
+    if mm.enabled() != on:
+        mm.set_enabled(on, "hub")
+
+
 def _serve(args) -> int:
     token = _token()
     if args.foreground:
@@ -44,15 +58,20 @@ def _serve(args) -> int:
         from kaptyorka.store import Store
 
         store = Store(paths.home() / "hub.db", legacy_token=token)
+        _apply_manager(store, args)
         stop = threading.Event()
         threading.Thread(target=prune_loop, args=(store, stop), daemon=True).start()
-        uvicorn.run(build_app(store, manager_url=f"http://127.0.0.1:{args.port}"),
+        uvicorn.run(build_app(store, manager_url=getattr(args, "manager_url", None)
+                                  or f"http://127.0.0.1:{args.port}"),
                     host="0.0.0.0", port=args.port, log_level="warning",
                     timeout_graceful_shutdown=3)  # open agent streams must not hold up a stop
         return 0
     exe = str(Path(sys.argv[0]).resolve())
     try:
-        lines = service.install("kaptyorka-hub", [exe, "serve", "--foreground", "--port", str(args.port)])
+        cmd = [exe, "serve", "--foreground", "--port", str(args.port)]
+        if getattr(args, "no_manager", False):
+            cmd.append("--no-manager")
+        lines = service.install("kaptyorka-hub", cmd)
     except service.ServiceError as e:
         print(e, file=sys.stderr)
         return 1
@@ -60,12 +79,21 @@ def _serve(args) -> int:
         print(line, file=sys.stderr)
     url = f"http://{args.host or _outbound_ip()}:{args.port}"
     admin = _admin_device(token)
+    from kaptyorka.store import Store
+
+    store = Store(paths.home() / "hub.db", legacy_token=token)
+    try:
+        _apply_manager(store, args)
+    finally:
+        store.close()
     cfg = paths.load_config()
     if not cfg.get("hub") or not cfg.get("token"):  # this machine joins as the admin
         paths.save_config({"hub": url, "token": admin, "machine": _default_name()})
     print(f"hub:   {url}\npage:  {url}/#t={admin}")
     print(f"\njoin this machine: kaptyorka join --hub {url} --token {admin}"
           "\ninvite teammates: kaptyorka invite <name>")
+    if not getattr(args, "no_manager", False):
+        print(MANAGER_NOTE)
     return 0
 
 
@@ -122,9 +150,11 @@ def _start(args) -> int:
     args.port = args.port or saved.get("port", 8765)
     args.host = args.host or saved.get("host")
     args.foreground = False
+    args.no_manager = args.no_manager or (not args.manager and saved.get("manager") is False)
     rc = _serve(args)
     if rc == 0:
-        saved_file.write_text(json.dumps({"port": args.port, "host": args.host}))
+        saved_file.write_text(json.dumps({"port": args.port, "host": args.host,
+                                          "manager": not args.no_manager}))
     return rc
 
 
@@ -549,6 +579,9 @@ def entry() -> None:
     s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
     s.add_argument("--port", type=int, help="hub port (default 8765)")
     s.add_argument("--host", help="address shown to the team (default: this machine's IP)")
+    m = s.add_mutually_exclusive_group()
+    m.add_argument("--no-manager", action="store_true", help="do not keep a manager session")
+    m.add_argument("--manager", action="store_true", help="keep a manager session (the default)")
     s.set_defaults(run=_start)
     j = sub.add_parser("join", help="connect this machine's agents to the hub (again, with no flags)")
     j.add_argument("invite", nargs="?", help="invite link from your admin")
@@ -570,6 +603,8 @@ def entry() -> None:
     v.add_argument("--port", type=int, default=8765)
     v.add_argument("--host")
     v.add_argument("--foreground", action="store_true")
+    v.add_argument("--no-manager", action="store_true")
+    v.add_argument("--manager-url")
     v.set_defaults(run=_serve)
     i = sub.add_parser("invite")
     i.add_argument("person")

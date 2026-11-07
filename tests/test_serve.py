@@ -4,6 +4,7 @@ import subprocess
 import sys
 from unittest import mock
 
+import json
 import pytest
 
 from kaptyorka import cli, paths, service
@@ -83,7 +84,7 @@ def test_start_makes_admin_device_once_and_joins_this_machine(home, capsys, monk
     assert admin != shared
     assert outs[0] == ["hub:   http://10.0.0.5:9999", f"page:  http://10.0.0.5:9999/#t={admin}",
                        "", f"join this machine: kaptyorka join --hub http://10.0.0.5:9999 --token {admin}",
-                       "invite teammates: kaptyorka invite <name>"]
+                       "invite teammates: kaptyorka invite <name>", cli.MANAGER_NOTE]
     assert shared not in "\n".join(outs[0])
     for f in ("hub-token", "admin-token"):
         assert (paths.home() / f).stat().st_mode & 0o777 == 0o600
@@ -474,7 +475,7 @@ def test_start_again_uses_saved_port_and_host(home, capsys, monkeypatch):
         with pytest.raises(SystemExit):
             run_cli(["start", *args])
     out = capsys.readouterr().out.splitlines()
-    assert out[0] == out[5] == "hub:   http://10.0.0.5:9999"
+    assert out[0] == out[6] == "hub:   http://10.0.0.5:9999"
     assert seen[0] == seen[1] and seen[1][-2:] == ["--port", "9999"]
 
 
@@ -538,3 +539,70 @@ def test_service_unit_files_are_private_even_when_they_existed(home):
     service.install("svc", ["x"], run=ok, platform="darwin", sleep=lambda s: None, env={"K": "sk-1"})
     plist = home / "Library/LaunchAgents/io.kaptyorka.svc.plist"
     assert stat.S_IMODE(plist.stat().st_mode) == 0o600
+
+
+def _unit_cmds(monkeypatch):
+    cmds = []
+    monkeypatch.setattr(service, "install", lambda name, cmd, **k: cmds.append(list(cmd)) or [])
+    return cmds
+
+
+def _manager_flag():
+    from kaptyorka.manager import ManagerStore
+    from kaptyorka.store import Store
+
+    store = Store(paths.home() / "hub.db")
+    try:
+        return ManagerStore(store).enabled()
+    finally:
+        store.close()
+
+
+def test_start_no_manager_persists_and_disables(home, capsys, monkeypatch):
+    cmds = _unit_cmds(monkeypatch)
+    with pytest.raises(SystemExit) as e:
+        run_cli(["start", "--port", "9999", "--host", "10.0.0.5", "--no-manager"])
+    assert e.value.code == 0
+    assert json.loads((paths.home() / "hub.json").read_text())["manager"] is False
+    assert "--no-manager" in cmds[-1] and cli.MANAGER_NOTE not in capsys.readouterr().out
+    assert _manager_flag() is False
+    with pytest.raises(SystemExit):  # no flag: keeps what hub.json says
+        run_cli(["start"])
+    assert "--no-manager" in cmds[-1] and _manager_flag() is False
+
+
+def test_start_manager_flag_turns_it_back_on(home, capsys, monkeypatch):
+    cmds = _unit_cmds(monkeypatch)
+    with pytest.raises(SystemExit):
+        run_cli(["start", "--port", "9999", "--host", "10.0.0.5", "--no-manager"])
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        run_cli(["start", "--manager"])
+    assert cli.MANAGER_NOTE in capsys.readouterr().out
+    assert json.loads((paths.home() / "hub.json").read_text())["manager"] is True
+    assert "--no-manager" not in cmds[-1] and _manager_flag() is True
+    with pytest.raises(SystemExit):
+        run_cli(["start", "--manager", "--no-manager"])
+
+
+def test_no_manager_changes_nothing(tmp_path, monkeypatch):
+    from conftest import start_hub
+    from kaptyorka.manager import ManagerStore
+    from kaptyorka.store import Store
+
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "kh"))
+    store = Store(tmp_path / "hub.db", legacy_token="T")
+    ManagerStore(store).set_enabled(False, "hub")
+    stop = start_hub(store, manager_url="http://127.0.0.1:9")
+    try:
+        stop.app.state.tick()
+        stop.app.state.tick()
+        with store.lock:
+            names = [r["name"] for r in store.db.execute("SELECT name FROM people")]
+            devices = store.db.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+            notices = store.db.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        assert "manager" not in names and devices == 1 and notices == 0
+        assert not (tmp_path / "kh").exists() or not list((tmp_path / "kh").rglob("*"))
+    finally:
+        stop()
+        store.close()
