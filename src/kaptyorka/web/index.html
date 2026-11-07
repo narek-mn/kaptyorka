@@ -1935,7 +1935,9 @@ tr.archived b { color: var(--dim); }
         el("table", { "class": "stack" }, [el("thead", null, [el("tr", null, head.map(function (h) { return el("th", { text: h }); }))]), tb])
       ]));
     });
-    if (!fleet.machines.length) box.appendChild(el("div", { "class": "panel" }, [el("div", { "class": "empty-row", text: "No machines yet. Invite a person on the People tab; their machines appear here when they join." })]));
+    if (!fleet.machines.length) box.appendChild(el("div", { "class": "panel" }, [el("div", { "class": "empty-row", text: isAdmin()
+      ? "No machines yet. Invite a person on the People tab; their machines appear here when they join."
+      : "No machines yet. Run kaptyorka join with your invite link on your machine." })]));
   }
   function renderFleet() {
     $("n-machines").textContent = fleet.machines.length;

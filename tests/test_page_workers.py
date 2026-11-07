@@ -45,3 +45,10 @@ def test_warnings_banner_and_attach_code(html):
 def test_auto_update_switch_sends_on(html):
     assert 'role: "switch"' in html or "role=\"switch\"" in html
     assert re.search(r'"/auto_update", \{ on: !', html)
+
+
+def test_machines_empty_state_fits_the_viewer(html):
+    """A member has no People tab: their empty Machines tab names their own next step."""
+    assert ('text: isAdmin()\n      ? "No machines yet. Invite a person on the People tab; their machines appear'
+            ' here when they join."\n      : "No machines yet. Run kaptyorka join with your invite link on your'
+            ' machine."') in html
