@@ -122,3 +122,21 @@ def test_conflict_logged(rs, store, alice):
     assert any(e["kind"] == "conflict" for e in store.log())
     with pytest.raises(KaptyorkaError):
         rs.conflict(alice, "k", "proj-a", "a" * 1001, "b")
+
+
+def test_conflicts_capped_per_session(rs, alice):
+    for i in range(20):
+        rs.conflict(alice, "k", "proj-a", f"a{i}", "b")
+    with pytest.raises(KaptyorkaError, match="this session has logged 20 conflicts; ask your person"):
+        rs.conflict(alice, "k", "proj-a", "a", "b")
+    assert rs.conflict(alice, "k2", "proj-a", "a", "b")  # another session still may
+
+
+def test_proposals_for_one_person_filter_before_the_limit(rs, store, alice):
+    bid = person(store, "bob")[0]
+    bob = Principal(bid, "bob", "member", 2, "bob-laptop", False, False)
+    mine = rs.propose(alice, "k", "mine", "e")
+    for i in range(3):
+        rs.propose(bob, "k2", f"bob {i}", "e")
+    assert [p["id"] for p in rs.proposals(limit=2, person_id=alice.person_id)] == [mine]
+    assert len(rs.proposals(limit=2)) == 2

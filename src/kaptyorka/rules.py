@@ -15,6 +15,7 @@ MAX_PROPOSAL = 2000
 MAX_EVIDENCE = 4000
 MAX_CONFLICT = 1000
 MAX_OPEN = 20
+MAX_CONFLICTS = 20  # per session
 HEADING = "Team rules (project rules in this repo override these; these override your personal rules):"
 TRAILER = ("If your person corrects you the same way twice, call propose_rule(text, evidence). "
            "If two rules clash and you must ask your person, call conflict(rule_a, rule_b) "
@@ -160,13 +161,19 @@ class RulesStore:
         self.store.log_add(principal.person_name, "propose", f"proposal {pid}: {text[:80]}")
         return pid
 
-    def proposals(self, status: Optional[str] = None, limit: int = 100) -> List[dict]:
+    def proposals(self, status: Optional[str] = None, limit: int = 100,
+                  person_id: Optional[int] = None) -> List[dict]:
         q = ("SELECT p.*, pe.name AS person FROM proposals p"
              " JOIN people pe ON pe.id = p.person_id")
-        args: list = []
+        where, args = [], []
         if status:
-            q += " WHERE p.status=?"
+            where.append("p.status=?")
             args.append(status)
+        if person_id is not None:
+            where.append("p.person_id=?")
+            args.append(person_id)
+        if where:
+            q += " WHERE " + " AND ".join(where)
         q += " ORDER BY p.id DESC LIMIT ?"
         with self.lock:
             rows = self.db.execute(q, args + [limit]).fetchall()
@@ -203,6 +210,11 @@ class RulesStore:
         if len(rule_a) > MAX_CONFLICT or len(rule_b) > MAX_CONFLICT:
             raise KaptyorkaError(f"rule text too long: limit {MAX_CONFLICT}")
         with self.lock:
+            n = self.db.execute("SELECT COUNT(*) FROM conflicts WHERE session_key=?",
+                                (session_key,)).fetchone()[0]
+            if n >= MAX_CONFLICTS:
+                raise KaptyorkaError(f"this session has logged {MAX_CONFLICTS} conflicts;"
+                                     " ask your person to fix the rules")
             cid = self.db.execute(
                 "INSERT INTO conflicts (person_id, session_key, project, rule_a, rule_b, time)"
                 " VALUES (?,?,?,?,?,?)",

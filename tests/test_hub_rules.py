@@ -4,6 +4,7 @@ from helpers import call, call_error, person, run
 from kaptyorka import http
 from kaptyorka.brief import RULES_POINTER
 from kaptyorka.rules import HEADING, TRAILER
+from kaptyorka.store import ONLINE_S
 
 ADMIN = "T"
 S1 = {"key": "claude:s1", "machine": "box-1", "tool": "claude-code", "project": "proj-a"}
@@ -90,6 +91,8 @@ def test_reject_notifies_proposer_only(hub):
     run(call(as_token(hub, tb), S1, "propose_rule", text="no tabs", evidence="e"))
     assert http.request("GET", hub.url + "/api/proposals", ta)[1] == []
     assert len(http.request("GET", hub.url + "/api/proposals", tb)[1]) == 1
+    hub.store.clock = lambda t=hub.store.clock(): t + ONLINE_S + 1  # the proposer's session went away
+    assert "claude:s1" not in {x.key for x in hub.store.online()}
     http.request("POST", hub.url + "/api/proposals/1", ADMIN, {"accept": False, "reason": "too vague"})
     assert "too vague" in run(call(as_token(hub, tb), S1, "inbox"))[0]["text"]
     assert run(call(as_token(hub, ta), S2, "inbox")) == []
@@ -122,3 +125,18 @@ def test_decide_accept_must_be_bool(hub):
     status, body = http.request("POST", hub.url + "/api/proposals/1", ADMIN, {"accept": "yes"})
     assert status == 400 and "accept must be true or false" in body
     assert http.request("GET", hub.url + "/api/proposals?status=open", ADMIN)[1][0]["id"] == 1
+
+
+def test_member_sees_own_proposal_behind_100_newer_ones(hub):
+    from kaptyorka.rules import RulesStore
+
+    _, ta = person(hub.store, "alice")
+    bid, _ = person(hub.store, "bob")
+    run(call(as_token(hub, ta), S1, "propose_rule", text="mine", evidence="e"))
+    rs = RulesStore(hub.store)
+    with hub.store.lock:
+        hub.store.db.executemany(
+            "INSERT INTO proposals (person_id, session_key, text, evidence, status, time)"
+            " VALUES (?, 'k', ?, 'e', 'rejected', 0)", [(bid, f"bob {i}") for i in range(100)])
+    assert len(rs.proposals()) == 100
+    assert [p["text"] for p in http.request("GET", hub.url + "/api/proposals", ta)[1]] == ["mine"]

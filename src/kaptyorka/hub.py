@@ -838,9 +838,8 @@ def build_app(store: Store) -> Starlette:
     @server.custom_route("/api/proposals", methods=["GET"])
     async def api_proposals(request: Request) -> Response:
         principal = request.scope["state"]["principal"]
-        rows = rs.proposals(request.query_params.get("status") or None)
-        if not principal.is_admin():
-            rows = [r for r in rows if r["person_id"] == principal.person_id]
+        rows = rs.proposals(request.query_params.get("status") or None,
+                            person_id=None if principal.is_admin() else principal.person_id)
         return JSONResponse([{k: v for k, v in r.items() if k not in ("session_key", "person_id")}
                              for r in rows])
 
