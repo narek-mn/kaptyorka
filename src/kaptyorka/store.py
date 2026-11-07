@@ -241,9 +241,10 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
-        from kaptyorka import memory, workers  # here: workers imports this module
+        from kaptyorka import memory, rules, workers  # here: workers imports this module
         workers.ensure_schema(self.db)
         memory.ensure_schema(self.db)
+        rules.ensure_schema(self.db)
         self._migrate(legacy_token)
         self.sends: Dict[str, List[float]] = {}
 
