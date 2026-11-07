@@ -255,6 +255,10 @@ def note_undo(store, principal: Principal, topic: str, project: Optional[str]) -
     project = project or None
     may_delete_note(store, principal, project, topic)
     with store.lock:
+        if store.db.execute("SELECT 1 FROM notes WHERE topic=? AND project IS ? AND"
+                            " deleted_at IS NULL", (topic, project)).fetchone():
+            raise KaptyorkaError(f"a new note named {topic} exists;"
+                                 " delete it first to bring the old one back")
         n = store.db.execute("UPDATE notes SET deleted_at=NULL WHERE topic=? AND project IS ? AND"
                              " deleted_at>=?", (topic, project, store.clock() - UNDO_S)).rowcount
     if n == 0:

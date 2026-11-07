@@ -437,3 +437,13 @@ def test_log_page_before_and_kind(store):
     assert len(admin_ops.log_page(store, 2, "alice", None, None)) == 2
     with pytest.raises(KaptyorkaError, match="no log group"):
         admin_ops.log_page(store, 10, None, "nope", None)
+
+
+def test_undo_refuses_when_a_new_note_took_the_name(store, board):
+    alice = board["alice"]
+    store.notes_write_from_web("alice", "plan", "old", "proj-a", principal=alice)
+    admin_ops.note_delete(store, alice, "plan", "proj-a")
+    store.notes_write_from_web("alice", "plan", "new", "proj-a", principal=alice)
+    with pytest.raises(KaptyorkaError, match="a new note named plan exists; delete it first"):
+        admin_ops.note_undo(store, alice, "plan", "proj-a")
+    assert [n.text for n in store.note_history("plan", alice, "proj-a")] == ["new"]
