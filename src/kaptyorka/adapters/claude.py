@@ -11,7 +11,7 @@ from typing import Callable, List, Optional
 from kaptyorka.adapters.base import (DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, login_output,
                                      merge_json)
 
-CLAUDE_CODE_TESTED = "2.1.318"
+CLAUDE_CODE_TESTED = "2.1.319"
 
 
 def _newer(version: str) -> bool:
