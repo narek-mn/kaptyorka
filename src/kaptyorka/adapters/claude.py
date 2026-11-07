@@ -51,7 +51,8 @@ class ClaudeAdapter:
         return shutil.which("claude") is not None
 
     def logged_in(self, run: Callable) -> Optional[bool]:
-        out = login_output("claude", ["auth", "status"], run)
+        # logged out it exits 1 with the same JSON on stdout: the JSON decides, not the exit code
+        out = login_output("claude", ["auth", "status"], run, any_exit=True, with_stderr=False)
         try:
             state = json.loads(out).get("loggedIn") if out else None
         except (ValueError, AttributeError):

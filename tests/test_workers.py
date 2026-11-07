@@ -818,7 +818,7 @@ def test_warning_for_a_tool_not_logged_in(store, ws, alice, clock):
                       "logins": {"claude-code": False, "codex": None, "opencode": True}}, {})
     got = ws.warnings(clock[0], "0.3.0")
     assert [w["text"] for w in got] == [
-        "box-1: Claude Code is not logged in. Run `claude auth login` there."]
+        "box-1 (alice): Claude Code is not logged in. Run `claude auth login` there."]
     assert got[0]["host"] == "box-1" and got[0]["person"] == "alice"
 
 

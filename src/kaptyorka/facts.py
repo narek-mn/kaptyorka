@@ -15,6 +15,7 @@ from kaptyorka.adapters.base import write_atomic
 GIT_TTL_S = 30
 GIT_BUDGET_S = 2
 VERSION_TTL_S = 600
+LOGGED_OUT_TTL_S = 60  # a "not logged in" is checked again soon: the person may log in
 COMMANDS = {"claude-code": "claude", "opencode": "opencode", "codex": "codex", "cursor": "cursor-agent"}
 _cache: Dict[Tuple[str, str], Tuple[float, object]] = {}
 
@@ -65,7 +66,7 @@ def _tool_version(tool: str, run) -> str:
             return ""
         try:
             r = run([exe, "--version"], capture_output=True, text=True, timeout=5)
-        except (subprocess.TimeoutExpired, OSError):
+        except Exception:
             return ""
         lines = (r.stdout or "").strip().splitlines() if r.returncode == 0 else []
         return lines[0].strip() if lines else ""
@@ -74,15 +75,16 @@ def _tool_version(tool: str, run) -> str:
 
 
 def _logins(installed: list, run) -> Dict[str, Optional[bool]]:
-    """Per installed tool: logged in, not, or None when unknown; at most every 10 minutes."""
-    def make() -> Dict[str, Optional[bool]]:
-        out: Dict[str, Optional[bool]] = {}
-        for a in installed:
-            check = getattr(a, "logged_in", None)  # a test double may not have one
-            out[a.tool] = check(run) if check else None
-        return out
-
-    return _cached(("logins", ""), VERSION_TTL_S, make)  # type: ignore[return-value]
+    """Per installed tool: logged in, not, or None when unknown; at most every 10 minutes,
+    every minute while it is not logged in."""
+    out: Dict[str, Optional[bool]] = {}
+    for a in installed:
+        key = ("login", a.tool)
+        hit = _cache.get(key)
+        ttl = LOGGED_OUT_TTL_S if hit and hit[1] is False else VERSION_TTL_S
+        check = getattr(a, "logged_in", None)  # a test double may not have one
+        out[a.tool] = _cached(key, ttl, lambda: check(run) if check else None)  # type: ignore
+    return out
 
 
 def _rules_in_place(adapter, home: Path) -> bool:

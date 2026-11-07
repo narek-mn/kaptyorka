@@ -459,6 +459,27 @@ def test_worker_on_shared_box_cannot_start_adopt_or_close(hub, alice, clock):
     assert run(call(box, own, "close_worker", name="proj-a-w2")).startswith("closing `proj-a-w2`")
 
 
+def test_member_sees_only_own_machine_logins(hub, alice):
+    pid, client = alice
+    bob_id, _ = member(hub, "bob")
+    logins = {"claude-code": False, "codex": True}
+
+    def box(host):
+        b = bridge(hub, bob_id, host=host)
+        assert heartbeat(hub, b.token, host, extra={"facts": {
+            "host": host, "os_user": "u", "tools": {"claude-code": "2.1"}, "logins": logins}})[0] == 200
+        hub.store.device_set_shared(b.device_id, True)
+        return b
+    granted, other = box("box-2"), box("box-3")
+    hub.store.grant_machine("box-2", pid, by="test")
+    machines = http.request("GET", hub.url + "/api/machines", client.token)[1]
+    devices = {d["id"]: d for m in machines for d in m["devices"]}
+    assert devices[granted.device_id]["facts"]["logins"] == logins  # bob's account on a box she may use
+    assert devices[granted.device_id]["facts"]["tools"] == {"claude-code": "2.1"}
+    assert other.device_id not in devices and "box-3" not in [m.get("host") for m in machines]
+    assert http.request("GET", hub.url + "/api/warnings", client.token)[0] == 403
+
+
 def test_machines_hide_other_peoples_folders_and_commits(hub, alice):
     pid, client = alice
     bob_id, bob = member(hub, "bob")

@@ -208,7 +208,7 @@ OPENCODE_EMPTY = "\x1b[90mâ”Œ  Credentials ~/.local/share/opencode/auth.json\nâ”
 
 def test_logins_from_tool_commands(monkeypatch, tmp_path):
     monkeypatch.setattr(facts.shutil, "which", lambda n: "/bin/" + n)
-    run = Run({"auth status": (0, SECRET), "login status": (0, "Logged in using ChatGPT\n"),
+    run = Run({"auth status": (1, SECRET), "login status": (0, "Logged in using ChatGPT\n"),
                "auth list": (0, OPENCODE_EMPTY), "--version": (0, "1.0\n")})
     m = facts.machine(_login_adapters(tmp_path), run)
     assert m["logins"] == {"claude-code": False, "codex": True, "opencode": False, "cursor": None}
@@ -227,7 +227,10 @@ def test_login_states_per_output(monkeypatch, tmp_path):
     assert claude.logged_in(Run({"auth": (0, '{"loggedIn": true}')})) is True
     assert claude.logged_in(Run({"auth": (0, "not json")})) is None
     assert claude.logged_in(Run({"auth": (0, '{"loggedIn": "yes"}')})) is None
-    assert claude.logged_in(Run({"auth": (1, '{"loggedIn": true}')})) is None
+    assert claude.logged_in(Run({"auth": (1, '{"loggedIn": true}')})) is True  # the JSON decides
+    assert claude.logged_in(Run({"auth": (1, '{"loggedIn": false, "authMethod": "none"}')})) is False
+    assert claude.logged_in(Run({"auth": (1, '{"loggedIn": false}', "warning: noise\n")})) is False
+    assert claude.logged_in(Run({"auth": (1, "")})) is None
     assert codex.logged_in(Run({"login": (0, "Not logged in\n")})) is False
     assert codex.logged_in(Run({"login": (1, "", "Not logged in\n")})) is False  # its real shape
     assert codex.logged_in(Run({"login": OSError()})) is None
@@ -249,6 +252,30 @@ def test_login_check_timeout_is_unknown(monkeypatch, tmp_path):
 
 def test_logins_hold_only_booleans(monkeypatch, tmp_path):
     monkeypatch.setattr(facts.shutil, "which", lambda n: "/bin/" + n)
-    m = facts.machine(_login_adapters(tmp_path)[:1], Run({"auth status": (0, SECRET)}))
+    m = facts.machine(_login_adapters(tmp_path)[:1], Run({"auth status": (1, SECRET)}))
     assert m["logins"] == {"claude-code": False}
     assert "alice@example.com" not in json.dumps(m) and "proj-a" not in json.dumps(m)
+
+
+def test_login_check_that_crashes_is_unknown(monkeypatch, tmp_path):
+    monkeypatch.setattr(facts.shutil, "which", lambda n: "/bin/" + n)
+    bad = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    run = Run({"auth status": bad, "login status": bad, "auth list": bad, "--version": bad})
+    m = facts.machine(_login_adapters(tmp_path), run)
+    assert m["logins"] == {"claude-code": None, "codex": None, "opencode": None, "cursor": None}
+    assert m["tools"] == {"claude-code": "", "codex": "", "opencode": "", "cursor": ""}
+
+
+def test_not_logged_in_is_checked_again_after_a_minute(monkeypatch, tmp_path):
+    monkeypatch.setattr(facts.shutil, "which", lambda n: "/bin/" + n)
+    now = [1000.0]
+    monkeypatch.setattr(facts.time, "monotonic", lambda: now[0])
+    claude = _login_adapters(tmp_path)[:1]
+    out = Run({"auth status": (1, '{"loggedIn": false}')})
+    assert facts._logins(claude, out) == {"claude-code": False}
+    now[0] += 30
+    assert facts._logins(claude, Run({"auth status": (0, '{"loggedIn": true}')})) == {"claude-code": False}
+    now[0] += 31  # 61 s after the "not logged in"
+    assert facts._logins(claude, Run({"auth status": (0, '{"loggedIn": true}')})) == {"claude-code": True}
+    now[0] += 300  # a yes is kept for 10 minutes
+    assert facts._logins(claude, Run({"auth status": (1, '{"loggedIn": false}')})) == {"claude-code": True}

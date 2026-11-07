@@ -878,7 +878,7 @@ class WorkerStore:
                     add(rest, f"{tool} on {who} is set up but its kaptyorka hooks are missing")
             for tool, ok in (facts.get("logins") or {}).items():
                 if ok is False and tool in LOGIN_COMMANDS:
-                    add(rest, f"{host}: {TOOL_NAMES[tool]} is not logged in."
+                    add(rest, f"{who}: {TOOL_NAMES[tool]} is not logged in."
                         f" Run `{LOGIN_COMMANDS[tool]}` there.")
             if d["shared"] and facts.get("tmux") is False:
                 add(rest, f"{who} has no tmux: only Claude Code workers can run there")

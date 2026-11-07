@@ -12,7 +12,6 @@ import os
 import shlex
 import shutil
 import socket
-import subprocess
 import sys
 import tempfile
 import threading
@@ -66,19 +65,20 @@ LOGIN_COMMANDS = {"claude-code": "claude auth login", "codex": "codex login",
                   "opencode": "opencode auth login"}
 
 
-def login_output(command: str, args: List[str], run: Callable, any_exit: bool = False) -> Optional[str]:
+def login_output(command: str, args: List[str], run: Callable, any_exit: bool = False,
+                 with_stderr: bool = True) -> Optional[str]:
     """Stdout of the tool's login status command; None if it is missing, fails or hangs.
-    any_exit: stdout and stderr together, whatever the exit code.
+    any_exit: the output whatever the exit code, stderr added unless with_stderr is False.
     The output may name the account: callers keep only a yes or no from it."""
     exe = shutil.which(command)
     if not exe:
         return None
     try:
         r = run([exe, *args], capture_output=True, text=True, timeout=5)
-    except (subprocess.TimeoutExpired, OSError):
+    except Exception:  # a hang, a missing file, undecodable output: never stop the heartbeat
         return None
     if any_exit:
-        return (r.stdout or "") + (r.stderr or "")
+        return (r.stdout or "") + ((r.stderr or "") if with_stderr else "")
     return (r.stdout or "") if r.returncode == 0 else None
 
 

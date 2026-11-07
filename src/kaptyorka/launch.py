@@ -126,11 +126,12 @@ class Launcher:
         if self.platform.startswith("linux") and shutil.which("systemd-run"):
             # worker names are the primary key, so the only scope that can carry this name
             # belongs to an ended row; stopping it is safe, and systemd-run refuses a name in use
-            try:
-                self.run(["systemctl", "--user", "stop", f"kaptyorka-worker-{name}.scope"],
-                         capture_output=True, timeout=5)
-            except Exception:
-                pass
+            for verb in ("stop", "reset-failed"):  # reset-failed: a failed unit also keeps the name
+                try:
+                    self.run(["systemctl", "--user", verb, f"kaptyorka-worker-{name}.scope"],
+                             capture_output=True, timeout=5)
+                except Exception:
+                    pass
             argv = ["systemd-run", "--user", "--scope", "--quiet", "--unit",
                     f"kaptyorka-worker-{name}", *argv]
         else:

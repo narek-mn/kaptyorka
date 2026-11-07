@@ -175,7 +175,8 @@ def test_detach_uses_systemd_scope_on_linux_and_setsid_on_mac(home, with_systemd
 def test_detach_clears_a_leftover_scope(home, with_systemd):
     run, popen = FakeRun(), FakePopen()
     make(home, run=run, popen=popen).detach(["tmux", "new-session"], "/w", "w1")
-    assert run.calls == [["systemctl", "--user", "stop", "kaptyorka-worker-w1.scope"]]
+    assert run.calls == [["systemctl", "--user", "stop", "kaptyorka-worker-w1.scope"],
+                         ["systemctl", "--user", "reset-failed", "kaptyorka-worker-w1.scope"]]
     assert popen.calls[0][0][:6] == ["systemd-run", "--user", "--scope", "--quiet", "--unit",
                                      "kaptyorka-worker-w1"]
 
@@ -190,7 +191,7 @@ def test_detach_ignores_a_failed_scope_stop(home, with_systemd, err):
         raise err
     popen = FakePopen()
     make(home, run=run, popen=popen).detach(["tmux", "new-session"], "/w", "w1")
-    assert seen == [5] and popen.calls[0][0][0] == "systemd-run"
+    assert seen == [5, 5] and popen.calls[0][0][0] == "systemd-run"
 
 
 def test_detach_without_systemd_run_starts_a_new_session(home, no_systemd):
