@@ -22,6 +22,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from kaptyorka import __version__, brief
+from kaptyorka import rules as rules_mod
 from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.brief import message_text
 from kaptyorka.hub_feed import feed, session_row
@@ -62,7 +63,9 @@ INSTRUCTIONS = (
     "yours; adopt(name) takes over an unattended one; close_worker(name) ends one. "
     "state(project) reads the project's state note; state_write(project, text) updates it "
     "(five headings: What it is, Where it stands, Decisions, Open problems, How to run and test); "
-    "decide(project, text) records one decision."
+    "decide(project, text) records one decision. "
+    "rules() reads the team rules; propose_rule(text, evidence) suggests one after your person "
+    "corrected you twice; conflict(rule_a, rule_b) reports two rules that clash."
 )
 
 
@@ -108,6 +111,7 @@ def build_app(store: Store) -> Starlette:
     sent = {"event": asyncio.Event()}  # set and replaced after each send; wakes bridge polls
     ws = WorkerStore(store)
     ms = MemoryStore(store)
+    rs = rules_mod.RulesStore(store)
     brief_cache: dict = {}  # per session key; see brief.cached
     decide_lock = threading.Lock()
 
@@ -430,6 +434,37 @@ def build_app(store: Store) -> Starlette:
         wake_bridges()
         return f"closing `{name}`" + (f"; {w['note']}" if w.get("note") else "")
 
+    @server.tool()
+    @_tool_errors
+    def rules(ctx: Context) -> str:
+        """The team rules, with their version."""
+        caller(ctx)
+        cur = rs.current()
+        if not cur["text"]:
+            return "No team rules yet."
+        return f"Team rules v{cur['version']}:\n" + cur["text"]
+
+    @server.tool()
+    @_tool_errors
+    def propose_rule(text: str, evidence: str, ctx: Context) -> str:
+        """Suggest a team rule when your person corrected you the same way twice. Say what
+        the rule is and what happened (evidence). The admin decides."""
+        agent, principal = caller(ctx)
+        if principal.legacy:
+            raise KaptyorkaError(OWN_TOKEN)
+        pid = rs.propose(principal, agent.key, text, evidence)
+        return f"Proposal {pid} filed; the admin decides on the Rules tab."
+
+    @server.tool()
+    @_tool_errors
+    def conflict(rule_a: str, rule_b: str, ctx: Context) -> str:
+        """Report two rules that clash, when you had to ask your person which one wins."""
+        agent, principal = caller(ctx)
+        if principal.legacy:
+            raise KaptyorkaError(OWN_TOKEN)
+        cid = rs.conflict(principal, agent.key, session_project(agent, principal), rule_a, rule_b)
+        return f"Conflict {cid} logged for the admin."
+
     @server.custom_route("/bridge/heartbeat", methods=["POST"])
     @_bad_request
     async def bridge_heartbeat(request: Request) -> Response:
@@ -460,7 +495,8 @@ def build_app(store: Store) -> Starlette:
                              "auto_update": own and ws.auto_update(principal.device_id),
                              "projects": [] if principal.legacy else
                              [p["name"] for p in store.projects_for(principal)],
-                             "you": principal.person_name, "shared": principal.shared})
+                             "you": principal.person_name, "shared": principal.shared,
+                             "skills_version": rs.skills_version()})
 
     @server.custom_route("/bridge/poll", methods=["GET"])
     @_bad_request
@@ -548,7 +584,9 @@ def build_app(store: Store) -> Starlette:
                                                   session_project(agent, principal)))
             return PlainTextResponse("\n\n".join(p for p in parts if p))
         return PlainTextResponse(brief.cached(
-            agent.key, lambda: brief.compose(store, ws, ms, agent, principal),
+            agent.key, lambda: brief.compose(
+                store, ws, ms, agent, principal,
+                rules_text=rules_mod.rules_text(rs.current()["text"])),
             unread=lambda: brief.unread_count(store, agent.key), now=store.clock(),
             cache=brief_cache))
 
@@ -750,6 +788,89 @@ def build_app(store: Store) -> Starlette:
     @server.custom_route("/api/legacy/on", methods=["POST"])
     async def api_legacy_on(request: Request) -> Response:
         return await legacy_toggle(request, True)
+
+    @server.custom_route("/api/rules", methods=["GET"])
+    async def api_rules(request: Request) -> Response:
+        cur = rs.current()
+        return JSONResponse({**cur, "skills": [
+            {"name": k["name"], "author": k["author"], "time": k["time"], "size": len(k["text"])}
+            for k in rs.skills()], "skills_version": rs.skills_version()})
+
+    @server.custom_route("/api/rules", methods=["POST"])
+    @_bad_request
+    async def api_rules_set(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        try:
+            n = rs.set_rules(str(body["text"]), request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return JSONResponse({"version": n})
+
+    @server.custom_route("/api/rules/history", methods=["GET"])
+    async def api_rules_history(request: Request) -> Response:
+        return JSONResponse(rs.history())
+
+    @server.custom_route("/api/skills", methods=["PUT"])
+    @_bad_request
+    async def api_skills_set(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        items = body["skills"]
+        if not isinstance(items, dict):
+            return PlainTextResponse("skills must be an object of name: text", status_code=400)
+        try:
+            return JSONResponse(rs.set_skills({str(k): str(v) for k, v in items.items()},
+                                              request.scope["state"]["principal"].person_name))
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+
+    @server.custom_route("/bridge/skills", methods=["GET"])
+    async def bridge_skills(request: Request) -> Response:
+        return JSONResponse({"version": rs.skills_version(),
+                             "skills": [{"name": k["name"], "text": k["text"]}
+                                        for k in rs.skills()]})
+
+    @server.custom_route("/api/proposals", methods=["GET"])
+    async def api_proposals(request: Request) -> Response:
+        principal = request.scope["state"]["principal"]
+        rows = rs.proposals(request.query_params.get("status") or None)
+        if not principal.is_admin():
+            rows = [r for r in rows if r["person_id"] == principal.person_id]
+        return JSONResponse(rows)
+
+    @server.custom_route("/api/proposals/{pid:int}", methods=["POST"])
+    @_bad_request
+    async def api_proposal_decide(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        by = request.scope["state"]["principal"].person_name
+        pid = request.path_params["pid"]
+        accept, reason = bool(body["accept"]), str(body.get("reason", ""))
+        try:
+            row = rs.decide(pid, accept, reason, by)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=409 if "already" in str(e) else 400)
+        if accept:
+            text = (f"Your rule proposal {pid} was accepted by {by}: team rules are now "
+                    f"v{rs.current()['version']}.")
+        else:
+            text = f"Your rule proposal {pid} was rejected by {by}: {reason}"
+        tell(row["session_key"], text)
+        return JSONResponse({"status": row["status"]})
+
+    @server.custom_route("/api/conflicts", methods=["GET"])
+    async def api_conflicts(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        return JSONResponse(rs.conflicts())
 
     @server.custom_route("/api/people", methods=["GET"])
     async def api_people(request: Request) -> Response:

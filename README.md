@@ -134,6 +134,9 @@ A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join`
 | `state` | Read a project's state note |
 | `state_write` | Update a project's state note; it needs five headings: What it is, Where it stands, Decisions, Open problems, How to run and test |
 | `decide` | Record one decision as a dated line in the project's `decisions` note |
+| `rules` | Read the team rules and their version |
+| `propose_rule` | Suggest a team rule, with the evidence; the admin decides |
+| `conflict` | Report two rules that clash, so the admin can fix the text |
 | `work` | Start a worker session for you on another machine. Leave `machine` empty and the hub picks one; `resume` is the full session id to continue (for Claude Code a short id starts a copy under a new id) |
 | `workers` | List your workers |
 | `adopt` | Take over one of your unattended workers |

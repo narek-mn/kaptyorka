@@ -62,9 +62,9 @@ def _check_scope(scope: str) -> None:
                              "project rules live in the project repo")
 
 
-def _check_text(text: str) -> None:
+def _check_text(text: str, what: str = "rules") -> None:
     if len(text) > MAX_TEXT:
-        raise KaptyorkaError(f"rules text too long: limit {MAX_TEXT}")
+        raise KaptyorkaError(f"{what} text too long: limit {MAX_TEXT}")
 
 
 class RulesStore:
@@ -119,7 +119,7 @@ class RulesStore:
             raise KaptyorkaError(f"too many skills: limit {MAX_SKILLS}")
         for name, text in items.items():
             check_name(name)
-            _check_text(text)
+            _check_text(text, "skill")
         with self.lock:
             old = {r["name"]: r["text"] for r in self._skills(scope)}
             added = sorted(n for n in items if n not in old)

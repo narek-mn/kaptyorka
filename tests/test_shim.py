@@ -49,7 +49,8 @@ def test_shim_hub_down(home):
             assert names == {"who", "send", "inbox", "status", "notes_list", "notes_read",
                              "notes_write", "projects", "knock", "answer", "door_close",
                              "request_access", "fetch_file", "work", "workers", "adopt",
-                             "close_worker", "state", "state_write", "decide"}
+                             "close_worker", "state", "state_write", "decide",
+                             "rules", "propose_rule", "conflict"}
             t0 = time.monotonic()
             r = await c.call_tool("who", {})
             assert time.monotonic() - t0 < 5
