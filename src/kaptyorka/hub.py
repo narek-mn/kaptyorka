@@ -841,7 +841,8 @@ def build_app(store: Store) -> Starlette:
         rows = rs.proposals(request.query_params.get("status") or None)
         if not principal.is_admin():
             rows = [r for r in rows if r["person_id"] == principal.person_id]
-        return JSONResponse(rows)
+        return JSONResponse([{k: v for k, v in r.items() if k not in ("session_key", "person_id")}
+                             for r in rows])
 
     @server.custom_route("/api/proposals/{pid:int}", methods=["POST"])
     @_bad_request

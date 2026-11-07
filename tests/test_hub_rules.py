@@ -71,6 +71,7 @@ def test_propose_and_accept_makes_new_version(hub):
     assert out == "Proposal 1 filed; the admin decides on the Rules tab."
     rows = http.request("GET", hub.url + "/api/proposals?status=open", ADMIN)[1]
     assert [r["id"] for r in rows] == [1]
+    assert "session_key" not in rows[0] and "person_id" not in rows[0]
     assert http.request("POST", hub.url + "/api/proposals/1", tok, {"accept": True})[0] == 403
     assert http.request("POST", hub.url + "/api/proposals/1", ADMIN, {"accept": True})[0] == 200
     cur = http.request("GET", hub.url + "/api/rules", tok)[1]
