@@ -280,3 +280,14 @@ def test_backup_nightly_rejects_bad_dest(home, capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["backup", "-oProxy=x", "--nightly"])
     assert e.value.code != 0
+
+
+def test_backup_nightly_warns_without_gpg(home, monkeypatch, capsys):
+    import shutil
+    from kaptyorka import service
+
+    monkeypatch.setattr(shutil, "which", lambda n: None)
+    monkeypatch.setattr(service, "install_timer", lambda *a, **kw: ["installed t"])
+    with pytest.raises(SystemExit):
+        entry_with(["backup", "alice@box-1:/srv/b", "--nightly"])
+    assert "gpg not found: nightly backups will be unencrypted" in capsys.readouterr().out

@@ -69,12 +69,16 @@ WantedBy=default.target
 """
 
 
-def timer_text(name: str, argv: List[str], platform: str) -> str:
+def timer_text(name: str, argv: List[str], platform: str,
+               env: Optional[Dict[str, str]] = None) -> str:
     """The unit for a job that runs every day at 03:00 local time (launchd: one plist;
     systemd: the .timer unit, which starts `name`.service)."""
     if platform == "darwin":
         args = "".join(f"\n    <string>{escape(a)}</string>" for a in argv)
         log = escape(str(paths.home() / f"{name}.log"))
+        env_xml = "".join(f"\n    <key>{escape(k)}</key><string>{escape(v)}</string>"
+                          for k, v in (env or {}).items())
+        env_xml = f"\n  <key>EnvironmentVariables</key>\n  <dict>{env_xml}\n  </dict>" if env_xml else ""
         return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -82,7 +86,7 @@ def timer_text(name: str, argv: List[str], platform: str) -> str:
   <key>Label</key><string>io.kaptyorka.{name}</string>
   <key>ProgramArguments</key>
   <array>{args}
-  </array>
+  </array>{env_xml}
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key><integer>3</integer>
@@ -105,24 +109,34 @@ WantedBy=timers.target
 """
 
 
-def oneshot_text(name: str, argv: List[str]) -> str:
+def oneshot_text(name: str, argv: List[str], env: Optional[Dict[str, str]] = None) -> str:
+    env_lines = "".join(_systemd_env(k, v) + "\n" for k, v in (env or {}).items())
     return f"""[Unit]
 Description={name}
 
 [Service]
-Type=oneshot
+{env_lines}Type=oneshot
 ExecStart={shlex.join(argv).replace("%", "%%")}
 """
 
 
+def timer_env() -> Dict[str, str]:
+    """What a timer job needs from this shell: PATH (launchd's is minimal) and the data folder."""
+    env = {"PATH": os.environ.get("PATH", "")} if os.environ.get("PATH") else {}
+    if os.environ.get("KAPTYORKA_HOME"):
+        env["KAPTYORKA_HOME"] = os.environ["KAPTYORKA_HOME"]
+    return env
+
+
 def install_timer(name: str, argv: List[str], run: Callable = subprocess.run,
-                  platform: str = sys.platform) -> List[str]:
+                  platform: str = sys.platform, env: Optional[Dict[str, str]] = None) -> List[str]:
     """Run `argv` every day at 03:00. Returns the lines to print."""
     sh = _runner(run)
+    env = timer_env() if env is None else env
     if platform == "darwin":
         plist = Path.home() / "Library/LaunchAgents" / f"io.kaptyorka.{name}.plist"
         plist.parent.mkdir(parents=True, exist_ok=True)
-        _write_private(plist, timer_text(name, argv, "darwin"))
+        _write_private(plist, timer_text(name, argv, "darwin", env))
         domain = f"gui/{os.getuid()}"
         sh("launchctl", "enable", f"{domain}/io.kaptyorka.{name}")
         sh("launchctl", "bootout", domain, str(plist))
@@ -131,7 +145,7 @@ def install_timer(name: str, argv: List[str], run: Callable = subprocess.run,
     d = Path.home() / ".config/systemd/user"
     d.mkdir(parents=True, exist_ok=True)
     svc, tim = d / f"{name}.service", d / f"{name}.timer"
-    _write_private(svc, oneshot_text(name, argv))
+    _write_private(svc, oneshot_text(name, argv, env))
     _write_private(tim, timer_text(name, argv, "linux"))
     sh("systemctl", "--user", "daemon-reload", must=True)
     sh("systemctl", "--user", "enable", "--now", f"{name}.timer", must=True)

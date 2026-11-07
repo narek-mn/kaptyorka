@@ -4,6 +4,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import select
 import socket
 import subprocess
@@ -423,6 +424,8 @@ def _backup(args) -> int:
     if args.nightly:
         try:
             backup._check_dest(args.dest)
+            if not shutil.which("gpg"):
+                print("gpg not found: nightly backups will be unencrypted")
             for line in service.install_timer("kaptyorka-backup",
                                               [str(Path(sys.argv[0]).resolve()), "backup", args.dest]):
                 print(line)

@@ -36,6 +36,14 @@ def make(home: Path, run: Callable = subprocess.run, now: Callable = time.time) 
     """Write a tar of hub.db and files/ into a temp folder; encrypt it when gpg is installed."""
     stamp = time.strftime("%Y%m%d-%H%M", time.localtime(now()))
     out = Path(tempfile.mkdtemp(prefix="kaptyorka-backup-"))
+    try:
+        return _make(home, run, out, stamp)
+    except BaseException:
+        shutil.rmtree(out, ignore_errors=True)  # never leave a plaintext tar behind
+        raise
+
+
+def _make(home: Path, run: Callable, out: Path, stamp: str) -> Tuple[Path, bool]:
     tar = out / f"kaptyorka-{stamp}.tar"
     stage = out / "stage"
     stage.mkdir()
@@ -94,12 +102,46 @@ def run_backup(home: Path, dest: str, run: Callable = subprocess.run, out: Calla
     return 0
 
 
-def _replace(path: Path, aside: Path) -> None:
-    if aside.is_dir() and not aside.is_symlink():
-        shutil.rmtree(aside)
-    elif aside.exists() or aside.is_symlink():
-        aside.unlink()
-    path.rename(aside)
+def _rm(p: Path) -> None:
+    if p.is_dir() and not p.is_symlink():
+        shutil.rmtree(p)
+    elif p.exists() or p.is_symlink():
+        p.unlink()
+
+
+def _swap_in(home: Path, new: Path) -> None:
+    """Move the current data aside as *.before-restore, put the new data in place, and only
+    then delete the older *.before-restore copies. On failure, put everything back."""
+    moved = []  # (path, aside, prev): current data now at aside, older aside at prev (or None)
+    try:
+        for name in ("hub.db", "hub.db-wal", "hub.db-shm", "files"):
+            path, aside = home / name, home / f"{name}.before-restore"
+            if not path.exists():
+                continue
+            prev = None
+            if aside.exists() or aside.is_symlink():
+                prev = home / f"{name}.before-restore.old"
+                _rm(prev)
+                aside.rename(prev)
+            moved.append((path, aside, prev))
+            path.rename(aside)
+        (new / "hub.db").rename(home / "hub.db")
+        if (new / "files").is_dir():
+            (new / "files").rename(home / "files")
+    except BaseException:
+        for path, aside, prev in reversed(moved):
+            try:
+                _rm(path)
+                if aside.exists():
+                    aside.rename(path)
+                if prev is not None and prev.exists():
+                    prev.rename(aside)
+            except OSError:
+                pass
+        raise
+    for _, _, prev in moved:
+        if prev is not None:
+            _rm(prev)
 
 
 def restore(home: Path, file: Path, run: Callable = subprocess.run, out: Callable = print) -> int:
@@ -143,14 +185,11 @@ def restore(home: Path, file: Path, run: Callable = subprocess.run, out: Callabl
         except (tarfile.TarError, OSError) as e:
             out(f"restore: cannot read {file.name}: {e}")
             return 1
-        for name in ("hub.db", "hub.db-wal", "hub.db-shm"):
-            if (home / name).exists():
-                _replace(home / name, home / f"{name}.before-restore")
-        if (home / "files").exists():
-            _replace(home / "files", home / "files.before-restore")
-        (new / "hub.db").rename(home / "hub.db")
-        if (new / "files").is_dir():
-            (new / "files").rename(home / "files")
+        try:
+            _swap_in(home, new)
+        except OSError as e:
+            out(f"restore: failed, old data put back: {e}")
+            return 1
     finally:
         shutil.rmtree(work, ignore_errors=True)
     out(f"restored {file}; start the hub again with kaptyorka start")

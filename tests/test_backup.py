@@ -215,3 +215,46 @@ def test_remove_lists_backup_timer(home, monkeypatch):
     monkeypatch.setattr(service, "remove", lambda n, **k: seen.append(n) or [])
     remove.main(adapters=[], run=fake_run([]), platform="linux", isatty=False)
     assert "kaptyorka-backup" in seen
+
+
+def test_make_failure_leaves_no_temp_folder(hub, monkeypatch, tmp_path):
+    monkeypatch.setattr(backup.shutil, "which", lambda n: "/usr/bin/gpg")
+    monkeypatch.setattr(backup.tempfile, "tempdir", str(tmp_path / "tmp"))
+    (tmp_path / "tmp").mkdir()
+    with pytest.raises(RuntimeError):
+        backup.make(hub, fake_run([], fail=("gpg",)))
+    assert list((tmp_path / "tmp").iterdir()) == []
+
+
+def test_timer_carries_path_and_home(home, monkeypatch):
+    monkeypatch.setenv("PATH", "/opt/homebrew/bin:/usr/bin")
+    calls = []
+    service.install_timer("kaptyorka-backup", ["/k", "backup", "a@h:p"], run=fake_run(calls), platform="linux")
+    svc = (home / ".config/systemd/user/kaptyorka-backup.service").read_text()
+    assert 'Environment="PATH=/opt/homebrew/bin:/usr/bin"' in svc
+    assert f'Environment="KAPTYORKA_HOME={home / ".kaptyorka"}"' in svc
+    service.install_timer("kaptyorka-backup", ["/k", "backup", "a@h:p"], run=fake_run(calls), platform="darwin")
+    plist = (home / "Library/LaunchAgents/io.kaptyorka.kaptyorka-backup.plist").read_text()
+    assert "<key>PATH</key><string>/opt/homebrew/bin:/usr/bin</string>" in plist
+    assert "<key>KAPTYORKA_HOME</key>" in plist
+
+
+def test_restore_failure_puts_old_data_back(hub, monkeypatch):
+    monkeypatch.setattr(backup.shutil, "which", lambda n: None)
+    path, _ = backup.make(hub, fake_run([]))
+    (hub / "files.before-restore").mkdir()
+    (hub / "files.before-restore" / "older").write_text("o")
+    real = backup.Path.rename
+
+    def flaky(self, target):
+        if self.name == "hub.db" and self.parent.name == "new":
+            raise OSError("disk full")
+        return real(self, target)
+
+    monkeypatch.setattr(backup.Path, "rename", flaky)
+    lines = []
+    assert backup.restore(hub, path, fake_run([]), out=lines.append) == 1
+    monkeypatch.undo()
+    assert (hub / "hub.db").exists() and (hub / "files" / "a.txt").exists()
+    assert (hub / "files.before-restore" / "older").exists()
+    assert "put back" in lines[0]
