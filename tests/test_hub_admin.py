@@ -221,3 +221,10 @@ def test_log_kinds_and_paging_routes(app):
     status, page = call(app, "alice", "GET", f"/api/log?kind=people&before={all_rows[0]['id']}")
     assert status == 200 and page and all(r["kind"] in ("person", "role") for r in page)
     assert call(app, "alice", "GET", "/api/log?kind=nope")[0] == 400
+    assert kinds[-1] == {"kind": "other", "label": "Other"}
+    assert call(app, "alice", "GET", "/api/log?kind=other")[0] == 200
+
+
+def test_note_delete_without_topic(app):
+    assert call(app, "alice", "DELETE", "/api/notes") == (400, "topic is empty")
+    assert call(app, "alice", "DELETE", "/api/notes?topic=%20") == (400, "topic is empty")

@@ -163,3 +163,12 @@ def test_page_proposal_decision_reaches_person(hub):
     assert http.request("POST", f"{hub.url}/api/proposals/{body['id']}", ta, {"accept": True})[0] == 200
     msgs = http.request("GET", hub.url + "/api/feed", tok)[1]["messages"]
     assert any("accepted" in m["text"] for m in msgs)
+
+
+def test_page_proposal_needs_text(hub):
+    _, tok = person(hub.store, "bob")
+    for body in ({}, {"text": "  "}, {"text": None}):
+        assert http.request("POST", hub.url + "/api/proposals", tok, body) == (400, "the rule text is empty")
+    _, pid = http.request("POST", hub.url + "/api/proposals", tok, {"text": "be kind"})
+    row = http.request("GET", hub.url + "/api/proposals", tok)[1][0]
+    assert row["evidence"] == "" and row["id"] == pid["id"]

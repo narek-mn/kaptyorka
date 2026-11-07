@@ -932,8 +932,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     async def api_note_delete(request: Request) -> Response:
         q = request.query_params
         try:
+            if not (q.get("topic") or "").strip():
+                raise KaptyorkaError("topic is empty")
             admin_ops.note_delete(store, request.scope["state"]["principal"],
-                                  q.get("topic") or "", q.get("project") or None)
+                                  q["topic"], q.get("project") or None)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
@@ -971,9 +973,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if denied:
             return denied
         q = request.query_params
-        limit = max(1, min(int(q.get("limit") or 200), 1000))
         try:
-            return JSONResponse(admin_ops.log_page(store, limit, q.get("person") or None,
+            return JSONResponse(admin_ops.log_page(store, int(q.get("limit") or 200), q.get("person") or None,
                                                    q.get("kind") or None,
                                                    int(q.get("before") or 0) or None))
         except KaptyorkaError as e:
@@ -985,7 +986,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if denied:
             return denied
         return JSONResponse([{"kind": g, "label": g.capitalize()}
-                             for g, _ in admin_ops.log_kinds()])
+                             for g in [g for g, _ in admin_ops.log_kinds()] + ["other"]])
 
     @server.custom_route("/api/settings", methods=["GET"])
     async def api_settings(request: Request) -> Response:
@@ -1118,8 +1119,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         p = request.scope["state"]["principal"]
         if p.legacy or p.person_id is None:
             return PlainTextResponse(OWN_TOKEN, status_code=400)
-        text, evidence = str(body["text"]), str(body.get("evidence", ""))
+        text, evidence = str(body.get("text") or "").strip(), str(body.get("evidence") or "")
         try:
+            if not text:
+                raise KaptyorkaError("the rule text is empty")
             check_secrets(text)
             check_secrets(evidence)
             pid = rs.propose(p, f"web:{p.person_name}", text, evidence)

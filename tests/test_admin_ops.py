@@ -447,3 +447,28 @@ def test_undo_refuses_when_a_new_note_took_the_name(store, board):
     with pytest.raises(KaptyorkaError, match="a new note named plan exists; delete it first"):
         admin_ops.note_undo(store, alice, "plan", "proj-a")
     assert [n.text for n in store.note_history("plan", alice, "proj-a")] == ["new"]
+
+
+def test_team_note_owner_ignores_deleted_versions(store, board, clock):
+    bob, carol = board["bob"], board["carol"]
+    store.notes_write_from_web("bob", "idea", "old")
+    admin_ops.note_delete(store, bob, "idea", None)
+    clock[0] += 5
+    store.notes_write_from_web("carol", "idea", "new")
+    with pytest.raises(KaptyorkaError, match="only the admin or the person who started"):
+        admin_ops.note_delete(store, bob, "idea", None)
+    assert admin_ops.note_delete(store, carol, "idea", None) == 1
+    with pytest.raises(KaptyorkaError, match="only the admin or the person who started"):
+        admin_ops.note_undo(store, bob, "idea", None)
+    assert admin_ops.note_undo(store, carol, "idea", None) == 1  # her own deletion
+
+
+def test_undo_brings_back_only_the_last_deletion(store, board, clock):
+    alice = board["alice"]
+    store.notes_write_from_web("alice", "plan", "v1", "proj-a", principal=alice)
+    admin_ops.note_delete(store, alice, "plan", "proj-a")
+    clock[0] += 5
+    store.notes_write_from_web("alice", "plan", "v2", "proj-a", principal=alice)
+    admin_ops.note_delete(store, alice, "plan", "proj-a")
+    assert admin_ops.note_undo(store, alice, "plan", "proj-a") == 1
+    assert [n.text for n in store.note_history("plan", alice, "proj-a")] == ["v2"]

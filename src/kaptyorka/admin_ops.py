@@ -217,8 +217,10 @@ def project_remove(store, name: str, by: Principal) -> dict:
 UNDO_S = 600  # a deleted note can come back this long
 
 
-def may_delete_note(store, principal: Principal, project: Optional[str], topic: str) -> None:
-    """Raise unless the principal may delete (or undo the deletion of) this note."""
+def may_delete_note(store, principal: Principal, project: Optional[str], topic: str,
+                    undo: bool = False) -> None:
+    """Raise unless the principal may delete (or undo the deletion of) this note. Who started
+    a team note is read from its live versions, or for an undo from the deleted ones."""
     if principal.legacy or principal.person_id is None:
         raise KaptyorkaError("use your own device token to delete notes")
     project = project or None
@@ -228,10 +230,19 @@ def may_delete_note(store, principal: Principal, project: Optional[str], topic: 
             return
         if principal.is_admin():
             return
-        first = store.db.execute("SELECT author FROM notes WHERE project IS NULL AND topic=?"
-                                 " ORDER BY id LIMIT 1", (topic,)).fetchone()
+        stamp = _last_deleted(store, project, topic)
+        first = store.db.execute(
+            "SELECT author FROM notes WHERE project IS NULL AND topic=? AND deleted_at IS ?"
+            " ORDER BY id LIMIT 1", (topic, stamp if undo else None)).fetchone()
     if first is None or first["author"] != principal.person_name:
         raise KaptyorkaError("only the admin or the person who started a team note can delete it")
+
+
+def _last_deleted(store, project: Optional[str], topic: str) -> Optional[float]:
+    """When the note was last deleted, if that was within the undo time. Under the lock."""
+    row = store.db.execute("SELECT MAX(deleted_at) AS t FROM notes WHERE topic=? AND project IS ?"
+                           " AND deleted_at>=?", (topic, project, store.clock() - UNDO_S)).fetchone()
+    return row["t"]
 
 
 def _note_name(project: Optional[str], topic: str) -> str:
@@ -252,15 +263,17 @@ def note_delete(store, principal: Principal, topic: str, project: Optional[str])
 
 
 def note_undo(store, principal: Principal, topic: str, project: Optional[str]) -> int:
+    """Bring back the versions of the last deletion of a note, within ten minutes."""
     project = project or None
-    may_delete_note(store, principal, project, topic)
+    may_delete_note(store, principal, project, topic, undo=True)
     with store.lock:
         if store.db.execute("SELECT 1 FROM notes WHERE topic=? AND project IS ? AND"
                             " deleted_at IS NULL", (topic, project)).fetchone():
             raise KaptyorkaError(f"a new note named {topic} exists;"
                                  " delete it first to bring the old one back")
+        stamp = _last_deleted(store, project, topic)
         n = store.db.execute("UPDATE notes SET deleted_at=NULL WHERE topic=? AND project IS ? AND"
-                             " deleted_at>=?", (topic, project, store.clock() - UNDO_S)).rowcount
+                             " deleted_at=?", (topic, project, stamp)).rowcount if stamp else 0
     if n == 0:
         raise KaptyorkaError(f"nothing to undo for {topic}")
     store.log_add(principal.person_name, "note_undo", _note_name(project, topic))
