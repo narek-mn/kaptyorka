@@ -20,6 +20,7 @@ from kaptyorka.store import MAX_FILE
 TIMEOUT_S = 4.5  # whole call, connection included: the agent hears back within 5 s
 HEARTBEAT_S = 10
 OPENCODE_META = "ai.opencode/sessionID"  # OpenCode V2 tags each tool call with its session
+NO_MANAGER_CONFIG = "kaptyorka: the manager's config is missing on this machine; no hub"
 TRANSPORT_ERRORS = (types.CONNECTION_CLOSED, types.REQUEST_TIMEOUT)  # the client's, not the hub's
 FALLBACK_TOOLS = ["who", "send", "inbox", "status", "notes_list", "notes_read", "notes_write",
                   "projects", "knock", "answer", "door_close", "request_access", "fetch_file",
@@ -160,7 +161,7 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
 
     async with anyio.create_task_group() as tg:
         relay = Relay(url, _headers(cfg, None), tg)
-        found = {"ident": None}
+        found = {"ident": None, "off": False}  # off: the manager's folder without its config
 
         async def identify() -> None:
             # Retried on each call until found: Claude Code may start the shim before it
@@ -170,9 +171,14 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 return
             ident = await anyio.to_thread.run_sync(
                 lambda: identity.identify(cfg.get("machine", ""), workspace=workspace))
-            if ident and ident.cwd:  # a session in the manager's folder runs on its config
+            if ident and paths.in_manager_folder(ident.cwd):  # only the manager's config
                 own = await anyio.to_thread.run_sync(paths.load_config, ident.cwd)
-                if own.get("hub") and own.get("token") and own != cfg:
+                found["off"] = not (own.get("hub") and own.get("token"))
+                if found["off"]:
+                    found["ident"] = None
+                    await relay.drop(relay.client)
+                    return
+                if own != cfg:
                     cfg.clear()
                     cfg.update(own)
                     relay.url = cfg["hub"]
@@ -186,8 +192,10 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                     tg.start_soon(_heartbeat, cfg, ident)  # Cursor has no bridge to find its sessions
 
         async def list_tools(ctx, params) -> types.ListToolsResult:
+            r = None
             try:
-                r = await relay.use(lambda c: c.list_tools())
+                if not found["off"]:
+                    r = await relay.use(lambda c: c.list_tools())
             except MCPError:
                 r = None
             if r is not None:
@@ -212,6 +220,8 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
             else:
                 await identify()
                 use = relay
+            if found["off"]:
+                return _error(NO_MANAGER_CONFIG)
             args = dict(params.arguments or {})
             f = args.get("file")
             try:

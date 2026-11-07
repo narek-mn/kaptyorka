@@ -18,27 +18,24 @@ def config_path() -> Path:
     return Path(override) if os.path.isabs(override) else home() / "config.json"
 
 
-def manager_config(cwd: Optional[str]) -> Optional[Path]:
-    """The manager's config file when `cwd` is the manager's folder and the file exists."""
+def in_manager_folder(cwd: Optional[str]) -> bool:
     if not cwd:
-        return None
+        return False
     try:
-        if Path(cwd).resolve() != (home() / MANAGER_DIR).resolve():
-            return None
+        return Path(cwd).resolve() == (home() / MANAGER_DIR).resolve()
     except (OSError, RuntimeError):
-        return None
-    p = home() / MANAGER_CONFIG
-    return p if p.is_file() else None
+        return False
 
 
 def load_config(cwd: Optional[str] = None) -> dict:
-    """This machine's config; for a session in the manager's folder, the manager's."""
-    p = manager_config(cwd)
-    if p is not None:
+    """This machine's config; for a session in the manager's folder only the manager's, and
+    {} (no hub) when that file is missing or unreadable: never the admin's."""
+    if in_manager_folder(cwd):
         try:
-            return json.loads(p.read_text())
+            cfg = json.loads((home() / MANAGER_CONFIG).read_text())
         except (OSError, ValueError):
-            pass
+            return {}
+        return cfg if isinstance(cfg, dict) else {}
     try:
         return json.loads(config_path().read_text())
     except FileNotFoundError:

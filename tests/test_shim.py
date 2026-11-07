@@ -8,6 +8,7 @@ import anyio
 from mcp import Client, StdioServerParameters
 
 from kaptyorka import paths
+from kaptyorka import shim as shim_mod
 from kaptyorka.store import Store
 
 from conftest import start_hub
@@ -231,9 +232,15 @@ def test_shim_in_the_manager_folder_uses_the_manager_token(hub, home):
         async with shim(home, hub.url, ident=ident) as c:
             r = await c.call_tool("status", {"text": "here"})
             assert not r.is_error, text(r)
-    anyio.run(go, ident)  # no manager config yet: the normal one
-    a = hub.store.agent("claude:m")
-    assert a.person_id != mid and a.machine == "pc"
+    async def off(ident):
+        async with shim(home, hub.url, ident=ident) as c:
+            await c.list_tools()
+            r = await c.call_tool("status", {"text": "here"})
+            assert r.is_error and text(r) == shim_mod.NO_MANAGER_CONFIG
+    anyio.run(off, ident)  # no manager config: no hub at all, never the normal token
+    (paths.home() / manager.CONFIG).write_text("{not json")
+    anyio.run(off, ident)
+    assert hub.store.agent("claude:m") is None and hub.store.online() == []
     (paths.home() / manager.CONFIG).write_text(json.dumps(
         {"hub": hub.url, "token": token, "machine": "manager@box-1", "person": "manager"}))
     ident = {**ident, "key": "claude:m2"}

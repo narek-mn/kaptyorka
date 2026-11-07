@@ -230,7 +230,7 @@ def test_load_config_by_folder(tmp_path, monkeypatch):
     paths.save_config({"token": "normal"})
     folder = paths.home() / manager.DIR
     folder.mkdir()
-    assert paths.load_config(str(folder)) == {"token": "normal"}  # no manager file yet
+    assert paths.load_config(str(folder)) == {}  # no manager file: no hub, never the normal
     (paths.home() / manager.CONFIG).write_text(json.dumps({"token": "mgr"}))
     assert paths.load_config(str(folder)) == {"token": "mgr"}
     assert paths.load_config(str(folder) + "/") == {"token": "mgr"}
@@ -239,3 +239,5 @@ def test_load_config_by_folder(tmp_path, monkeypatch):
     assert paths.load_config(str(link)) == {"token": "mgr"}  # resolved
     for other in (None, "", str(tmp_path), str(folder / "sub"), "/home/u/manager"):
         assert paths.load_config(other) == {"token": "normal"}
+    (paths.home() / manager.CONFIG).write_text("{bad")
+    assert paths.load_config(str(folder)) == {}

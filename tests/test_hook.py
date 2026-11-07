@@ -299,7 +299,8 @@ def test_hook_in_the_manager_folder_uses_the_manager_config(hub, home, monkeypat
     assert set(used) == {token}
 
 
-def test_hook_manager_folder_without_its_config_uses_the_normal_one(hub, home, monkeypatch):
+def test_hook_manager_folder_without_its_config_stays_off_the_hub(hub, home, monkeypatch,
+                                                                  capsys):
     from kaptyorka import manager
     join(hub.url)
     folder = paths.home() / manager.DIR
@@ -307,5 +308,8 @@ def test_hook_manager_folder_without_its_config_uses_the_normal_one(hub, home, m
     monkeypatch.setattr(hook, "identify", lambda machine, workspace=None:
                         Identity("claude:m", machine, "claude-code", "manager"))
     used = _tokens(monkeypatch)
-    hook.main("claude-code", "start", json.dumps({"cwd": str(folder)}))
-    assert used and set(used) == {"T"}
+    assert hook.main("claude-code", "start", json.dumps({"cwd": str(folder)})) == 0
+    (paths.home() / manager.CONFIG).write_text("{not json")  # unreadable: the same
+    assert hook.main("claude-code", "start", json.dumps({"cwd": str(folder)})) == 0
+    assert used == [] and capsys.readouterr().out == ""
+    assert hub.store.agent("claude:m") is None
