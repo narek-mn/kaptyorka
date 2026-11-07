@@ -1,6 +1,7 @@
 """`kaptyorka hook <tool> <event>`: print the hub's brief for this session. Silent on any failure."""
 import json
 import os
+import time
 from typing import Callable, Dict
 
 from kaptyorka import http, paths
@@ -22,8 +23,8 @@ FORMATTERS: Dict[str, Callable[[str, str], str]] = {
 
 def main(tool: str, event: str, stdin: str = "") -> int:
     out = _run(tool, event, stdin)
-    if not out and tool == "cursor":
-        out = "{}"  # Cursor may treat an empty stdout as a failed hook
+    if not out and (tool == "cursor" or (tool == "codex" and event == "stop")):
+        out = "{}"  # Cursor may treat an empty stdout as a failed hook; Codex needs JSON on exit 0
     if out:
         print(out)
     return 0
@@ -58,9 +59,12 @@ def _run(tool: str, event: str, stdin: str) -> str:
         if ident is None:
             return ""
 
+        deadline = time.monotonic() + TIMEOUT_S  # one budget for all calls of this hook
+
         def get(path: str):
+            left = max(deadline - time.monotonic(), 0.1)
             return http.request("GET", f"{cfg['hub']}{path}", cfg["token"],
-                                headers=ident.headers(), timeout=TIMEOUT_S)
+                                headers=ident.headers(), timeout=left)
 
         reason = ""
         if stop:

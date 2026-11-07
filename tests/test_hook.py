@@ -165,10 +165,13 @@ def test_stop_cursor_followup_is_reason_then_brief(hub, home, monkeypatch, capsy
     hook.main("cursor", "stop", json.dumps({}))
     assert json.loads(capsys.readouterr().out) == {}
     _signal(hub, key, "cursor")
+    _signal(hub, "codex:x1", "codex")  # a known sender
+    hub.store.send("codex:x1", "pc/cursor/proj-a", "hello cursor")
     hook.main("cursor", "stop", json.dumps({}))
     followup = json.loads(capsys.readouterr().out)["followup_message"]
     reason, _, brief = followup.partition("\n\n")
     assert reason.startswith("You did work in proj-a (done)")
+    assert "hello cursor" in brief
 
 
 def test_opencode_prompt_brief_carries_the_reminder_without_blocking(hub, home, monkeypatch, capsys):
@@ -185,3 +188,18 @@ def test_opencode_prompt_brief_carries_the_reminder_without_blocking(hub, home, 
     with hub.store.lock:
         assert hub.store.db.execute("SELECT blocked_at FROM done_checks WHERE key='opencode:o1'"
                                     ).fetchone()[0] is None
+
+
+def test_stop_hub_down_codex_prints_empty_json_claude_nothing(home, monkeypatch, capsys):
+    join("http://127.0.0.1:1")
+    assert hook.main("codex", "stop", _stdin("t1")) == 0
+    assert capsys.readouterr().out.strip() == "{}"
+    assert hook.main("claude-code", "stop", _stdin("s1")) == 0
+    assert capsys.readouterr().out == ""
+    assert hook.main("codex", "prompt", _stdin("t1")) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_stop_codex_not_joined_prints_empty_json(home, capsys):
+    assert hook.main("codex", "stop", _stdin("t1")) == 0
+    assert capsys.readouterr().out.strip() == "{}"
