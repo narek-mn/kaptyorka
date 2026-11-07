@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0
+
+- Project state notes: each registered project has one, with five headings in this order: What it is, Where it stands, Decisions, Open problems, How to run and test. New agent tools `state(project)`, `state_write(project, text)` and `decide(project, text)`, which adds a dated line to the project's `decisions` note (`project=""` for team decisions). 20 agent tools in all.
+- Start brief: five parts in order (team rules, for later; who you are and who is online; the projects you may read; your project's state note, its git activity of the last 7 days and the branches with open sessions; unread messages), at most 6,000 characters, kept 10 seconds per session.
+- Git activity: the bridge reports each session folder's branch, last commit and changes; the hub keeps it 30 days.
+- The done check: a session that did work in a project it may write (a new commit, its folder going from changed to clean, or a status with the word "done") and did not write the state note since is asked once, at stop, to call `state_write`. A read-only session is never asked; `status("done: no state change")` clears it. Claude Code and Codex block the stop once; Cursor gets the reason as the next follow-up message; OpenCode gets it as a reminder on its next prompt.
+- New stop hook for Claude Code and Codex: on a machine joined before, run `kaptyorka join` again (or `kaptyorka doctor --fix`). Codex users approve the new hook once with `/hooks`.
+- Page: the Notes tab shows the project's state and recent git activity when a project's note is open.
+- New commands: `kaptyorka backup <user@host:path>` (encrypted with gpg when installed, passphrase in `~/.kaptyorka/backup-pass`, keep a copy; a plain tar otherwise, and it says so), `backup --nightly` (every day at 03:00) and `kaptyorka restore <file>` (stop the hub first; the old data stays as `*.before-restore`).
+- New file in `~/.kaptyorka`: `backup-pass`.
+
 ## 0.3.0
 
 - Workers: `work` starts a session for you on another machine (Claude Code, Codex or OpenCode); `workers` lists yours; `adopt` takes over an unattended worker; `close_worker` ends one (17 agent tools in all). The boss gets an attach line. A busy folder gets a worktree on branch `work/<worker-name>`. Nothing is bypassed: workers use the account's own permission settings, and the boss is told when a Claude Code worker waits for one.

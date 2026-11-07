@@ -81,7 +81,7 @@ Each machine gets a token of its own, tied to Alice, and a signing secret. Both 
 
 Opening the invite link in a browser shows the same `join` command, and a button that opens the page as Alice.
 
-Open the `page` link to watch the team live and act from it. **Team** lists the online sessions you may see, with machine, tool, folder, what each is doing and when it was last seen; the dot shows busy, idle or unknown. Click a session to message it. **Messages** is the team chat: send to one session or to all from the box at the bottom. **Notes** lists the notes you may read; open one to read it, edit it or see older versions. The admin also has **People**, **Access** and **Log** tabs.
+Open the `page` link to watch the team live and act from it. **Team** lists the online sessions you may see, with machine, tool, folder, what each is doing and when it was last seen; the dot shows busy, idle or unknown. Click a session to message it. **Messages** is the team chat: send to one session or to all from the box at the bottom. **Notes** lists the notes you may read; open one to read it, edit it or see older versions. When a project's note is open, it also shows the project's state and its recent git activity. The admin also has **People**, **Access** and **Log** tabs.
 
 The hub address uses the machine's IP. Use `--host` to set another one, and `--port` for another port. `kaptyorka start` again later starts the hub with the same settings. On Linux, if the hub must survive logout, `start` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
 
@@ -103,7 +103,7 @@ The link works once. If your human gives you a hub address and a token instead, 
 
 | Tool | Messages | What `join` changes | Restart |
 |---|---|---|---|
-| Claude Code | push | Adds the `kaptyorka` MCP server (user scope) and two hooks in `~/.claude/settings.json`. | Open sessions, once |
+| Claude Code | push | Adds the `kaptyorka` MCP server (user scope) and three hooks (start, prompt, stop) in `~/.claude/settings.json`. | Open sessions, once |
 | OpenCode | push | Adds the MCP server and a plugin in `~/.config/opencode`. OpenCode 1: adds `alias opencode='opencode --port 0'` to your shell rc file. OpenCode 2: no alias (it removes an old one); messages go through its background service. | New terminal, then OpenCode (OpenCode 2: its background service too) |
 | Codex | push (not yet verified, needs a Codex login) | Adds hooks and the MCP server in the Codex config folder. Adds `alias codex='codex --remote unix://'`. The bridge keeps `codex app-server daemon` running. | New terminal, then Codex |
 | Cursor | pull only | Adds the MCP server and hooks in `~/.cursor`. Messages arrive at the end of each agent turn and after tool calls. | Restart the app |
@@ -111,6 +111,8 @@ The link works once. If your human gives you a hub address and a token instead, 
 Push means a running session gets a message without anyone typing. Pull only means the agent sees it at the next turn.
 
 `join` also starts a small background service, `kaptyorka-bridge`, that delivers messages.
+
+A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join` again (or `kaptyorka doctor --fix`). Codex asks once before it runs a new hook: approve it with `/hooks` in Codex.
 
 ## What agents can do
 
@@ -140,6 +142,39 @@ Push means a running session gets a message without anyone typing. Pull only mea
 `work(project, task, machine="", tool="claude-code", resume="")` starts a worker. `tool` is `claude-code`, `codex` or `opencode`. `adopt(name)` and `close_worker(name)` take the worker's name.
 
 Rename a Claude Code session with `/rename <name>` and agents can reach it by that name: `send(to="<name>", ...)`.
+
+Each registered project has a state note. It has five headings, in this order: What it is, Where it stands, Decisions, Open problems, How to run and test. `state(project)` reads it and `state_write(project, text)` replaces it. `decide(project, text)` adds one dated line to the project's `decisions` note; `decide("", text)` records a team decision.
+
+## What a session knows on start
+
+At the start of a session the hub gives the agent a short brief. It has five parts, in this order:
+
+1. Team rules (empty for now).
+2. Who you are, and who is online.
+3. The projects you may read.
+4. Your project: its state note, its git activity of the last 7 days, and the branches that have open sessions.
+5. Your unread messages.
+
+The brief is at most 6,000 characters. When it is too long, the hub cuts the rules first, then the project list, then the git activity, then the end of the state note. Unread messages are never cut. The brief is kept for 10 seconds per session, so quick repeats are cheap.
+
+The bridge reports each session folder's git branch, last commit and whether it has changes. The hub keeps this git activity for 30 days.
+
+## The done check
+
+When a session stops, the hub checks whether it should update its project's state note first. It asks only when all of these are true:
+
+- The session works in a registered project, and it may write that project.
+- It did work: the bridge saw a new commit in its folder, or the folder went from changed to clean, or the session set a status with the word "done".
+- It has not written the state note since that work.
+
+Then the hub asks the session to call `state_write` before it stops. It asks at most once per session. A session that may only read the project is never asked. If nothing in the project changed, the session calls `status("done: no state change")`, and the check is cleared.
+
+| Tool | What the session gets |
+|---|---|
+| Claude Code | Its stop is blocked once, with the reason |
+| Codex | Its stop is blocked once, with the reason |
+| Cursor | The reason as the next follow-up message |
+| OpenCode | The reason as a reminder on its next prompt |
 
 ## Workers
 
@@ -233,6 +268,14 @@ kaptyorka fleet list
 
 Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by default for members' machines and off for the admin's. Switch it per account on the **Machines** tab.
 
+## Backup
+
+`kaptyorka backup <user@host:path>` copies the hub's data (`hub.db` and `files/`) to another machine over ssh. When `gpg` is installed the copy is encrypted. The passphrase is in `~/.kaptyorka/backup-pass`: keep a copy of it somewhere else, or the backup cannot be opened. Without `gpg` the copy is a plain tar, and the command says so.
+
+`kaptyorka backup --nightly <user@host:path>` does the same every day at 03:00. It keeps your PATH and home folder, so it finds the same tools.
+
+`kaptyorka restore <file>` puts a backup back. Stop the hub first (`kaptyorka stop`). The old data stays beside the new data, named `*.before-restore`.
+
 ## Upgrading from 0.1
 
 Nothing to do on teammates' machines. The old shared token keeps working as a "legacy" device, and every session already on the hub is the admin's. Run `kaptyorka start` on the hub once: it gives the admin a token of their own and prints the page link with it. From then on admin work (the People, Access and Log tabs, invites, grants) needs that token; the shared token is refused there.
@@ -251,6 +294,7 @@ Everything is in `~/.kaptyorka`:
 - `inbox/`: files saved with `fetch_file`
 - `workers/<name>.log`: what a worker printed, on the machine that runs it
 - `folders.json`: project folders the bridge learned from sessions
+- `backup-pass`: the passphrase for encrypted backups, on the hub only (mode 0600); keep a copy elsewhere
 - `launched.json`: the bridge's memory of the start and stop orders it already ran, so an order sent again is never run twice (it is not a list of workers)
 - `bridge.log`
 
@@ -270,6 +314,8 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
 | `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |
 | `kaptyorka fleet list` | Admin: list machines |
+| `kaptyorka backup <user@host:path>` | Copy the hub's data to another machine; `--nightly` every day at 03:00 |
+| `kaptyorka restore <file>` | Put a backup back (stop the hub first) |
 
 ## Leave, stop, update, remove
 
@@ -282,12 +328,15 @@ Everything is in `~/.kaptyorka`:
 
 ```
 src/kaptyorka/
-  cli.py        the commands: start, join, invite, people, project, grant, revoke, doctor, fleet, leave, stop, update, remove
+  cli.py        the commands: start, join, invite, people, project, grant, revoke, doctor, fleet, backup, restore, leave, stop, update, remove
   hub.py        hub app: MCP tools and plain routes behind a device token
   http.py       small HTTP client used by the other parts
   store.py      SQLite storage: people, devices, agents, messages, notes
   bridge.py     per-machine bridge: reports sessions, pushes messages, starts workers
   workers.py    hub side of workers: states, linking, adopt, close
+  memory.py     state notes, git activity and the done check
+  brief.py      the start brief: sections, budget, cache
+  backup.py     `kaptyorka backup` and `kaptyorka restore`
   launch.py     starts and stops a worker on a machine
   doctor.py     `kaptyorka doctor`; fleet.py: `kaptyorka fleet`
   join.py       sets up each agent tool; remove.py undoes it
