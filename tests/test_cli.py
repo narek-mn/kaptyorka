@@ -319,8 +319,9 @@ def test_rules_push_uploads_rules_and_skills(monkeypatch, home, tmp_path, capsys
 
     monkeypatch.setattr(http, "request", fake)
     assert entry_with_exit(["rules", "push", str(root)]) == 0
-    assert calls[0] == ("POST", "http://h:1/api/rules", "adm", {"text": "use tabs\n"})
-    assert calls[1] == ("PUT", "http://h:1/api/skills", "adm",
+    assert calls[0] == ("GET", "http://h:1/api/rules", "adm", None)
+    assert calls[1] == ("POST", "http://h:1/api/rules", "adm", {"text": "use tabs\n"})
+    assert calls[2] == ("PUT", "http://h:1/api/skills", "adm",
                         {"skills": {"deploy": "deploy steps", "review": "review steps"}})
     assert capsys.readouterr().out.strip() == "team rules v3; skills: 2 added, 1 changed, 0 removed"
 
@@ -391,7 +392,7 @@ def test_rules_push_directory_named_md_is_skipped(monkeypatch, home, tmp_path, c
 
     monkeypatch.setattr(http, "request", fake)
     assert entry_with_exit(["rules", "push", str(root)]) == 0
-    assert calls[1][2] == {"skills": {"deploy": "deploy steps", "review": "review steps"}}
+    assert calls[2][2] == {"skills": {"deploy": "deploy steps", "review": "review steps"}}
 
 
 def test_rules_push_oversized_skill_makes_no_request(monkeypatch, home, tmp_path, capsys):
@@ -415,3 +416,42 @@ def test_rules_push_put_failure_says_rules_were_pushed(monkeypatch, home, tmp_pa
     assert entry_with_exit(["rules", "push", str(_team_folder(tmp_path))]) == 1
     assert capsys.readouterr().err.strip() == (
         "skills upload failed (500): boom; the rules were already pushed as v5")
+
+
+def _hub_with_rules(monkeypatch, hub_text):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    calls = []
+
+    def fake(method, url, token, body=None, **kw):
+        calls.append((method, url))
+        if url.endswith("/api/rules"):
+            return 200, ({"version": 5, "text": hub_text} if method == "GET" else {"version": 6})
+        return 200, {"added": [], "changed": [], "removed": []}
+
+    monkeypatch.setattr(http, "request", fake)
+    return calls
+
+
+def test_rules_push_refuses_when_hub_has_rules_not_in_file(monkeypatch, home, tmp_path, capsys):
+    calls = _hub_with_rules(monkeypatch, "use tabs\n\nno force pushes\nsmall commits\n")
+    assert entry_with_exit(["rules", "push", str(_team_folder(tmp_path))]) == 1
+    assert calls == [("GET", "http://h:1/api/rules")]
+    assert capsys.readouterr().err.splitlines() == [
+        "the hub has rules not in RULES.md (edited on the page or accepted proposals):",
+        "  no force pushes", "  small commits", "add them to RULES.md or push with --force"]
+
+
+def test_rules_push_force_skips_the_check(monkeypatch, home, tmp_path, capsys):
+    calls = _hub_with_rules(monkeypatch, "use tabs\nno force pushes\n")
+    assert entry_with_exit(["rules", "push", "--force", str(_team_folder(tmp_path))]) == 0
+    assert [c[0] for c in calls] == ["POST", "PUT"]
+    assert "team rules v6" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("hub_text", ["use tabs\n", "", "  use tabs  \n\n"])
+def test_rules_push_same_or_subset_pushes(monkeypatch, home, tmp_path, hub_text):
+    root = _team_folder(tmp_path)
+    (root / "RULES.md").write_text("use tabs\nsmall commits\n", encoding="utf-8")
+    calls = _hub_with_rules(monkeypatch, hub_text)
+    assert entry_with_exit(["rules", "push", str(root)]) == 0
+    assert [c[0] for c in calls] == ["GET", "POST", "PUT"]

@@ -255,6 +255,20 @@ def _rules_push(args) -> int:
             print(f"{f} is too long: {len(body)} characters, limit {rules.MAX_TEXT}", file=sys.stderr)
             return 1
         skills[name] = body
+    if not args.force:  # rules accepted or edited on the page live only on the hub
+        cur = _rules_call("GET", "/api/rules", None)
+        if cur is None:
+            return 1
+        have = {line.strip() for line in text.splitlines()}
+        missing = [line.strip() for line in str(cur.get("text") or "").splitlines()
+                   if line.strip() and line.strip() not in have]
+        if missing:
+            print("the hub has rules not in RULES.md (edited on the page or accepted proposals):",
+                  file=sys.stderr)
+            for line in missing:
+                print("  " + line, file=sys.stderr)
+            print("add them to RULES.md or push with --force", file=sys.stderr)
+            return 1
     sent = _rules_call("POST", "/api/rules", {"text": text})
     if sent is None:
         return 1
@@ -598,6 +612,7 @@ def entry() -> None:
     rl = sub.add_parser("rules").add_subparsers(dest="rules_cmd", required=True)
     rp = rl.add_parser("push", help="upload a team rules folder: RULES.md and skills/*.md")
     rp.add_argument("dir", metavar="dir")
+    rp.add_argument("--force", action="store_true", help="replace the hub's rules even if it has lines not in RULES.md")
     rp.set_defaults(run=_rules_push)
     m = sub.add_parser("mcp")
     m.add_argument("--workspace")
