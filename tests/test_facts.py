@@ -187,3 +187,65 @@ def test_harness_layers_per_tool(home, monkeypatch):
     plugin.parent.mkdir(parents=True)
     plugin.write_text("x")
     assert facts.harness(ads, home, False)["opencode"] == {"rules": True, "hooks": False, "skills": False}
+
+
+def _login_adapters(home):
+    from kaptyorka.adapters.claude import ClaudeAdapter
+    from kaptyorka.adapters.codex import CodexAdapter
+    from kaptyorka.adapters.cursor import CursorAdapter
+    from kaptyorka.adapters.opencode import OpenCodeAdapter
+
+    real = [ClaudeAdapter(home=home), CodexAdapter(home=home), OpenCodeAdapter(home=home),
+            CursorAdapter(home=home)]
+    return [SimpleNamespace(tool=a.tool, installed=lambda: True, logged_in=a.logged_in)
+            for a in real]
+
+
+SECRET = '{"loggedIn": false, "email": "alice@example.com", "orgName": "proj-a"}'
+OPENCODE_EMPTY = "\x1b[90m┌  Credentials ~/.local/share/opencode/auth.json\n│\n└  \x1b[1m0\x1b[0m credentials\x1b[0m\n"
+
+
+def test_logins_from_tool_commands(monkeypatch, tmp_path):
+    monkeypatch.setattr(facts.shutil, "which", lambda n: "/bin/" + n)
+    run = Run({"auth status": (0, SECRET), "login status": (0, "Logged in using ChatGPT\n"),
+               "auth list": (0, OPENCODE_EMPTY), "--version": (0, "1.0\n")})
+    m = facts.machine(_login_adapters(tmp_path), run)
+    assert m["logins"] == {"claude-code": False, "codex": True, "opencode": False, "cursor": None}
+    login_calls = [c for c in run.calls if "--version" not in c[0]]
+    assert [c[0] for c in login_calls] == [["/bin/claude", "auth", "status"],
+                                           ["/bin/codex", "login", "status"],
+                                           ["/bin/opencode", "auth", "list"]]
+    assert all(c[1] == {"capture_output": True, "text": True, "timeout": 5} for c in login_calls)
+    facts.machine(_login_adapters(tmp_path), run)  # cached for 10 minutes
+    assert len([c for c in run.calls if "--version" not in c[0]]) == 3
+
+
+def test_login_states_per_output(monkeypatch, tmp_path):
+    monkeypatch.setattr(facts.shutil, "which", lambda n: "/bin/" + n)
+    claude, codex, opencode, cursor = _login_adapters(tmp_path)
+    assert claude.logged_in(Run({"auth": (0, '{"loggedIn": true}')})) is True
+    assert claude.logged_in(Run({"auth": (0, "not json")})) is None
+    assert claude.logged_in(Run({"auth": (0, '{"loggedIn": "yes"}')})) is None
+    assert claude.logged_in(Run({"auth": (1, '{"loggedIn": true}')})) is None
+    assert codex.logged_in(Run({"login": (0, "Not logged in\n")})) is False
+    assert codex.logged_in(Run({"login": (0, "something else\n")})) is None
+    assert opencode.logged_in(Run({"auth": (0, "└  2 credentials\n")})) is True
+    assert opencode.logged_in(Run({"auth": (0, "no list here\n")})) is None
+    assert opencode.logged_in(Run({"auth": OSError()})) is None
+    monkeypatch.setattr(facts.shutil, "which", lambda n: None)
+    assert claude.logged_in(Run({"auth": (0, '{"loggedIn": true}')})) is None
+
+
+def test_login_check_timeout_is_unknown(monkeypatch, tmp_path):
+    monkeypatch.setattr(facts.shutil, "which", lambda n: "/bin/" + n)
+    run = Run({"auth status": subprocess.TimeoutExpired("claude", 5),
+               "login status": (0, "Not logged in\n"), "auth list": (0, "└  1 credentials\n")})
+    m = facts.machine(_login_adapters(tmp_path), run)
+    assert m["logins"] == {"claude-code": None, "codex": False, "opencode": True, "cursor": None}
+
+
+def test_logins_hold_only_booleans(monkeypatch, tmp_path):
+    monkeypatch.setattr(facts.shutil, "which", lambda n: "/bin/" + n)
+    m = facts.machine(_login_adapters(tmp_path)[:1], Run({"auth status": (0, SECRET)}))
+    assert m["logins"] == {"claude-code": False}
+    assert "alice@example.com" not in json.dumps(m) and "proj-a" not in json.dumps(m)

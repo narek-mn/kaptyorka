@@ -7,11 +7,13 @@ import shlex
 import time
 from typing import List, Optional, Tuple
 
+from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES
 from kaptyorka.orders import sign
 from kaptyorka.secrets_check import check_secrets
 from kaptyorka.store import ONLINE_S, PROJECT_NAME, KaptyorkaError, Principal, Store, _check_length, _person
 
 MAX_FACT = 200
+MAX_ERROR = 500  # a no-show error names the folder and the log
 UNATTENDED_S = 120  # boss offline this long: the worker is unattended
 ABANDONED_S = 86400  # unattended this long: abandoned
 GONE_S = 600  # the worker's own session offline this long: closed
@@ -136,6 +138,9 @@ def clean_facts(facts: dict) -> dict:
             out[key] = _str_map(facts[key], kind)
     if isinstance(facts.get("harness"), dict):
         out["harness"] = _harness(facts["harness"])
+    if isinstance(facts.get("logins"), dict):
+        out["logins"] = {t: v for t, v in facts["logins"].items()
+                         if t in TOOL_NAMES and (v is None or isinstance(v, bool))}
     return out
 
 
@@ -467,7 +472,7 @@ class WorkerStore:
 
     def fail(self, worker: str, error: str, device_id: int) -> bool:
         """The bridge could not start a worker it took: it fails with the bridge's error."""
-        error = (error or "")[:MAX_FACT] or "launch failed"
+        error = (error or "")[:MAX_ERROR] or "launch failed"
         with self.lock:
             w = self._row(worker)
             if w is None or w["state"] != "starting" or w["device_id"] != device_id:
@@ -871,6 +876,10 @@ class WorkerStore:
             for tool, ok in (facts.get("hooks_ok") or {}).items():
                 if ok is False:
                     add(rest, f"{tool} on {who} is set up but its kaptyorka hooks are missing")
+            for tool, ok in (facts.get("logins") or {}).items():
+                if ok is False and tool in LOGIN_COMMANDS:
+                    add(rest, f"{host}: {TOOL_NAMES[tool]} is not logged in."
+                        f" Run `{LOGIN_COMMANDS[tool]}` there.")
             if d["shared"] and facts.get("tmux") is False:
                 add(rest, f"{who} has no tmux: only Claude Code workers can run there")
         for w in workers:

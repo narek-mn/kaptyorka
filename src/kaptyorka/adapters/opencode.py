@@ -18,7 +18,7 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from kaptyorka.adapters.base import DeliveryError, Session, add_alias, merge_json, remove_alias
+from kaptyorka.adapters.base import DeliveryError, Session, add_alias, login_output, merge_json, remove_alias
 
 TIMEOUT_S = 5
 ALIAS = "alias opencode='opencode --port 0'"
@@ -318,6 +318,11 @@ class OpenCodeAdapter:
 
     def installed(self) -> bool:
         return shutil.which("opencode") is not None
+
+    def logged_in(self, run: Callable) -> Optional[bool]:
+        out = re.sub(r"\x1b\[[0-9;]*m", "", login_output("opencode", ["auth", "list"], run) or "")
+        found = re.search(r"(\d+)\s+credentials", out)  # its list ends with "N credentials"
+        return int(found.group(1)) > 0 if found else None
 
     def sessions(self) -> List[Session]:
         from kaptyorka.identity import proc_cwd

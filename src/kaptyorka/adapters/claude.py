@@ -8,7 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from kaptyorka.adapters.base import DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, merge_json
+from kaptyorka.adapters.base import (DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, login_output,
+                                     merge_json)
 
 CLAUDE_CODE_TESTED = "2.1.318"
 
@@ -48,6 +49,14 @@ class ClaudeAdapter:
 
     def installed(self) -> bool:
         return shutil.which("claude") is not None
+
+    def logged_in(self, run: Callable) -> Optional[bool]:
+        out = login_output("claude", ["auth", "status"], run)
+        try:
+            state = json.loads(out).get("loggedIn") if out else None
+        except (ValueError, AttributeError):
+            return None
+        return state if isinstance(state, bool) else None
 
     def sessions(self) -> List[Session]:
         out = []

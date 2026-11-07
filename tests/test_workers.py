@@ -804,6 +804,24 @@ def test_clean_facts_keeps_harness_known_tools_only():
     assert "harness" not in clean_facts({"harness": "x", "load": 1})
 
 
+
+def test_clean_facts_logins():
+    got = clean_facts({"logins": {"claude-code": False, "codex": None, "opencode": "yes",
+                                  "cursor": True, "vim": True}})
+    assert got["logins"] == {"claude-code": False, "codex": None, "cursor": True}
+    assert "logins" not in clean_facts({"logins": "x"})
+
+
+def test_warning_for_a_tool_not_logged_in(store, ws, alice, clock):
+    a = device(store, alice, "box-1", "alice")[0]
+    ws.facts_seen(a, {"version": "0.3.0", "tmux": True,
+                      "logins": {"claude-code": False, "codex": None, "opencode": True}}, {})
+    got = ws.warnings(clock[0], "0.3.0")
+    assert [w["text"] for w in got] == [
+        "box-1: Claude Code is not logged in. Run `claude auth login` there."]
+    assert got[0]["host"] == "box-1" and got[0]["person"] == "alice"
+
+
 # the manager worker
 
 

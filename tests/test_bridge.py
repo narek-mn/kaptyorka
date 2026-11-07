@@ -572,12 +572,28 @@ def test_bridge_reports_timeout_after_two_minutes(team):
     team.bridge.heartbeat()
     w = team.worker()
     assert w["state"] == "failed"
-    assert w["error"] == ("the session did not show up within 2 minutes;"
-                          " see ~/.kaptyorka/workers/proj-a-w1.log")
+    assert w["error"] == ("the session did not show up within 2 minutes; check that Claude Code"
+                          f" is logged in and trusts the folder {team.folder} (open it there"
+                          " once); see ~/.kaptyorka/workers/proj-a-w1.log")
     assert team.bridge.pending == {}
     assert team.run.calls == [["claude", "stop", "ab12cd34"]]  # nothing left running
     assert "worker proj-a-w1 did not show up within 2 minutes; stopped its session" in team.lines
 
+
+
+def test_no_show_error_names_missing_login(team):
+    team.work()
+    team.bridge.poll_once(0)
+    order, result = team.bridge.pending["proj-a-w1"][:2]
+    team.bridge.pending["proj-a-w1"] = (order, result, time.monotonic() - 121)
+    team.bridge._facts = {"logins": {"claude-code": False}}
+    team.bridge._facts_at = time.monotonic()
+    team.bridge.heartbeat()
+    w = team.worker()
+    assert w["state"] == "failed"
+    assert w["error"] == ("Claude Code is not logged in on this machine; the session could not"
+                          " start. Run `claude auth login` there.")
+    assert team.run.calls == [["claude", "stop", "ab12cd34"]]
 
 def test_worker_closed_while_starting_gets_its_session_closed(team):
     team.work()

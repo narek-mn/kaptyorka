@@ -11,7 +11,7 @@ from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
 from kaptyorka import __version__, facts, http, identity, orders, paths, skills_sync
-from kaptyorka.adapters.base import Adapter, write_atomic
+from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES, Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
 HEARTBEAT_S = 10
@@ -233,6 +233,17 @@ class Bridge:
         except LaunchError as e:
             self.log(f"worker {name} {why}; stopping its session failed: {e}")
 
+    def _no_show(self, name: str, order: dict) -> str:
+        """Why a started worker never showed up, as far as this machine knows."""
+        tool = order.get("tool") or ""
+        label = TOOL_NAMES.get(tool, tool)
+        if (self._facts.get("logins") or {}).get(tool) is False and tool in LOGIN_COMMANDS:
+            return (f"{label} is not logged in on this machine; the session could not start."
+                    f" Run `{LOGIN_COMMANDS[tool]}` there.")
+        return (f"the session did not show up within 2 minutes; check that {label} is logged in"
+                f" and trusts the folder {order.get('folder')} (open it there once);"
+                f" see ~/.kaptyorka/workers/{name}.log")
+
     def _check_pending(self, sessions: list) -> None:
         """Tell the hub each started worker's session key once it shows up, or that it never
         did (then stop what was started, so nothing is left running unwatched)."""
@@ -256,9 +267,7 @@ class Bridge:
                     elif status == 204:
                         self.pending.pop(name, None)
                 elif time.monotonic() - started > SHOW_UP_S:
-                    status = self._worker({"worker": name, "error": (
-                        "the session did not show up within 2 minutes;"
-                        f" see ~/.kaptyorka/workers/{name}.log")})
+                    status = self._worker({"worker": name, "error": self._no_show(name, order)})
                     if status in (204, 404, 410):
                         self.pending.pop(name, None)
                         self._stop(name, order, "did not show up within 2 minutes")

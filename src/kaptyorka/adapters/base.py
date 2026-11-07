@@ -10,7 +10,9 @@ Session keys, one per tool, identical in shim, hook and bridge:
 import json
 import os
 import shlex
+import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -52,6 +54,29 @@ class Adapter(Protocol):
 
     def unconfigure(self) -> List[str]:
         """Undo configure: remove only our entries; return one line per thing removed."""
+
+    def logged_in(self, run: Callable) -> Optional[bool]:
+        """Whether the tool has a login; None when unknown."""
+        return None
+
+
+TOOL_NAMES = {"claude-code": "Claude Code", "codex": "Codex", "opencode": "OpenCode",
+              "cursor": "Cursor"}
+LOGIN_COMMANDS = {"claude-code": "claude auth login", "codex": "codex login",
+                  "opencode": "opencode auth login"}
+
+
+def login_output(command: str, args: List[str], run: Callable) -> Optional[str]:
+    """Stdout of the tool's login status command; None if it is missing, fails or hangs.
+    The output may name the account: callers keep only a yes or no from it."""
+    exe = shutil.which(command)
+    if not exe:
+        return None
+    try:
+        r = run([exe, *args], capture_output=True, text=True, timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return (r.stdout or "") if r.returncode == 0 else None
 
 
 _cwd_lock = threading.Lock()

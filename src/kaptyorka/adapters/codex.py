@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from kaptyorka import __version__
-from kaptyorka.adapters.base import (DeliveryError, Session, add_alias, connect_unix, drop_hooks, is_our_hook, merge_json,
-                                     remove_alias, write_atomic)
+from kaptyorka.adapters.base import (DeliveryError, Session, add_alias, connect_unix, drop_hooks, is_our_hook,
+                                     login_output, merge_json, remove_alias, write_atomic)
 
 TIMEOUT_S = 5
 RESTART_EVERY_S = 60
@@ -190,6 +190,12 @@ class CodexAdapter:
 
     def installed(self) -> bool:
         return shutil.which("codex") is not None
+
+    def logged_in(self, run: Callable) -> Optional[bool]:
+        out = login_output("codex", ["login", "status"], run) or ""
+        if "Not logged in" in out:
+            return False
+        return True if "Logged in" in out else None
 
     def _state(self, state: str) -> None:
         if state != self._daemon:

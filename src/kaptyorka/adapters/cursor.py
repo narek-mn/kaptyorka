@@ -20,6 +20,9 @@ class CursorAdapter:
     def installed(self) -> bool:
         return self.dir.exists() or shutil.which("cursor") is not None
 
+    def logged_in(self, run: Callable) -> Optional[bool]:
+        return None  # no login status command is known
+
     def sessions(self) -> List[Session]:
         return []  # presence comes from the shim
 

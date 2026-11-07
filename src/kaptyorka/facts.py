@@ -73,6 +73,18 @@ def _tool_version(tool: str, run) -> str:
     return _cached(("version", tool), VERSION_TTL_S, make)  # type: ignore[return-value]
 
 
+def _logins(installed: list, run) -> Dict[str, Optional[bool]]:
+    """Per installed tool: logged in, not, or None when unknown; at most every 10 minutes."""
+    def make() -> Dict[str, Optional[bool]]:
+        out: Dict[str, Optional[bool]] = {}
+        for a in installed:
+            check = getattr(a, "logged_in", None)  # a test double may not have one
+            out[a.tool] = check(run) if check else None
+        return out
+
+    return _cached(("logins", ""), VERSION_TTL_S, make)  # type: ignore[return-value]
+
+
 def _rules_in_place(adapter, home: Path) -> bool:
     """The one hook (or plugin) that carries the start brief is installed."""
     tool = adapter.tool
@@ -121,6 +133,7 @@ def machine(adapters: list, run=subprocess.run, platform: str = sys.platform,
             "load": load, "cpus": os.cpu_count() or 1,
             "tools": {a.tool: _tool_version(a.tool, run) for a in installed},
             "hooks_ok": hooks_ok, "version": __version__,
+            "logins": _logins(installed, run),
             "harness": harness(adapters, Path.home(), skills_current)}
 
 
