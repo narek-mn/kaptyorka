@@ -82,3 +82,39 @@ def test_add_person_shows_link(admin_page):
     assert page.wait('document.querySelector("#invites-open li b")?.textContent') == "bob"
     page.js('document.querySelector("#invite button[title=Close]").click()')
     assert page.js('document.getElementById("invite").hidden')
+
+
+def test_member_asks_for_access(tmp_path):
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    person(store, "alice", "admin")
+    _, token = person(store, "bob")
+    store.project_register("proj-a", by="alice")
+    try:
+        with chrome() as page:
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+            page.wait('!document.getElementById("my-access").hidden')
+            assert page.js('document.getElementById("my-access-rows").textContent').startswith(
+                "ProjectsNone yet. Ask below.")
+            # a wrong name: the hub's answer shows under the form
+            page.js('document.getElementById("ask-target").value = "nope"')
+            page.js('document.querySelector("#ask-access button[type=submit]").click()')
+            assert page.wait('!document.getElementById("ask-err").hidden && '
+                             'document.getElementById("ask-err").textContent') == "no project named nope"
+            page.js('document.getElementById("ask-role").value = "write"')
+            page.js('document.getElementById("ask-target").value = "proj-a"')
+            page.js('document.getElementById("ask-why").value = "to review"')
+            page.js('document.querySelector("#ask-access button[type=submit]").click()')
+            asked = page.wait('[...document.querySelectorAll("#my-access-rows .tag")]'
+                              '.map(t => t.textContent).find(t => t.includes("proj-a"))')
+            assert asked.startswith("write access to project proj-a") and asked.endswith("pending")
+            assert page.js('document.getElementById("ask-err").hidden')
+            assert page.js('document.getElementById("ask-target").value') == ""
+            assert [(r["person"], r["target"], r["role"], r["why"]) for r in store.requests()] == \
+                [("bob", "proj-a", "write", "to review")]
+            # the admin-only parts stay away
+            assert page.js('document.getElementById("team-key").hidden')
+    finally:
+        stop()
+        store.close()

@@ -366,7 +366,7 @@ def test_page_inline_confirm_holds_the_panel():
     assert "function confirmInline(anchor, text, yesLabel, onYes, opt)" in html
     assert 'e.key === "Escape"' in html and "holding.isConnected" in html
     assert '!busy("machines") && changed("fleet"' in html  # close-worker confirm survives too
-    for text in ('"Revoke " + d.name + "? It stops working at once."',
+    for text in ('"Revoke " + (d.legacy ? "Shared token (old machines)" : d.name) + "? It stops working at once."',
                  '"Machines still on the shared token stop working until they join again."',
                  '"Close worker " + w.name + "? Its session stops."',
                  '" a manager? A manager session can decide work requests and message anyone."',

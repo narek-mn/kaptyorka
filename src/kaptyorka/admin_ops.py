@@ -256,6 +256,7 @@ SENTENCES = {
     "device": _match(r"device (.+) of (.+)", "{0} added a device {1} for {2}"),
     "invite": _match(r"invite for (.+)", "{0} made an invite link for {1}"),
     "invite_cancel": _match(r"invite for (.+)", "{0} cancelled the invite link for {1}"),
+    "device_shared": _match(r"device (.+) of (.+) (on|off)", "{0} turned sharing {3} for {2}'s device {1}"),
     "join": _match(r"device (.+)", "{0} joined with the device {1}"),
     "project_register": _match(r"(.+)", "{0} registered the project {1}"),
     "project_updated": _match(r"(.+)", "{0} changed the description of {1}"),

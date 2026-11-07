@@ -111,6 +111,7 @@ ADDED_COLUMNS = [
     ("agents", "device_id", "INTEGER"),
     ("rekeys", "secret", "TEXT NOT NULL DEFAULT ''"),
     ("agents", "cwd", "TEXT NOT NULL DEFAULT ''"),
+    ("requests", "role", "TEXT NOT NULL DEFAULT 'read'"),
 ]
 
 
@@ -714,15 +715,21 @@ class Store:
             " JOIN people p ON p.id=r.person_id LEFT JOIN people d ON d.id=r.decided_by"
             f" WHERE {where} ORDER BY r.id", args)
         return [{"id": r["id"], "person": r["person"], "person_id": r["person_id"],
-                 "kind": r["kind"], "target": r["target"], "why": r["why"],
+                 "kind": r["kind"], "target": r["target"], "role": r["role"], "why": r["why"],
                  "created": r["created"], "decided_at": r["decided_at"],
                  "decision": r["decision"], "decided_by": r["decided_by_name"]} for r in rows]
 
-    def request_access(self, person_id: int, kind: str, target: str, why: str = "") -> int:
-        """Ask for read access to a project or for use of a machine. Asking again for the same
-        thing while it is pending returns the same id."""
+    def request_access(self, person_id: int, kind: str, target: str, why: str = "",
+                       role: str = "read") -> int:
+        """Ask for read or write access to a project or for use of a machine; the role is a wish,
+        the admin picks the role on approve. Asking again for the same thing while it is pending
+        returns the same id and keeps the latest reason and role."""
         if kind not in ("project", "machine"):
             raise KaptyorkaError("kind must be project or machine")
+        if role not in ("read", "write"):
+            raise KaptyorkaError("role must be read or write")
+        if kind == "machine":
+            role = "read"
         if len(why) > MAX_ABOUT:
             raise KaptyorkaError(f"why is too long (max {MAX_ABOUT} characters)")
         with self.lock:
@@ -745,12 +752,13 @@ class Store:
             row = self.db.execute("SELECT id FROM requests WHERE person_id=? AND kind=? AND target=?"
                                   " AND decided_at IS NULL", (person_id, kind, target)).fetchone()
             if row:
+                self.db.execute("UPDATE requests SET role=? WHERE id=?", (role, row["id"]))
                 if why:
                     self.db.execute("UPDATE requests SET why=? WHERE id=?", (why, row["id"]))
                 return row["id"]
-            rid = self.db.execute("INSERT INTO requests (person_id, kind, target, why, created)"
-                                  " VALUES (?,?,?,?,?)",
-                                  (person_id, kind, target, why, self.clock())).lastrowid
+            rid = self.db.execute("INSERT INTO requests (person_id, kind, target, role, why, created)"
+                                  " VALUES (?,?,?,?,?,?)",
+                                  (person_id, kind, target, role, why, self.clock())).lastrowid
         self.log_add(who["name"], "request", f"{kind}:{target}")
         return rid
 

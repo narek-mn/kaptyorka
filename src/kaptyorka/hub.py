@@ -1365,7 +1365,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         body = await request.json()
         try:
             rid = store.request_access(principal.person_id, str(body["kind"]),
-                                       str(body["target"]), str(body.get("why") or ""))
+                                       str(body["target"]), str(body.get("why") or ""),
+                                       str(body.get("role") or "read"))
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"id": rid})

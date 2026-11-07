@@ -290,6 +290,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 .invite input { flex: 1; min-width: 0; height: 28px; padding: 0 8px; font: 12px var(--mono); }
 .log-kind { color: var(--blue); white-space: nowrap; }
 .log-time { color: var(--dim); white-space: nowrap; }
+#audit th:nth-child(1) { width: 110px; }
+#audit th:nth-child(2) { width: 140px; }
 
 /* machines */
 #warn-banner {
@@ -395,6 +397,22 @@ tr.archived b { color: var(--dim); }
 .swl[aria-checked="true"] .switch::after { transform: translateX(14px); background: var(--green); }
 .dec { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 
+/* member: my access and the ask form, above the sessions */
+#my-access { flex: none; margin-bottom: 14px; }
+.mine-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; align-items: baseline; padding: 10px 14px; }
+.mine-rows > span { font-size: 12px; color: var(--faint); }
+.mine-rows .none { font-size: 12px; color: var(--faint); }
+.mine-rows .cell-tags .tag[title] { cursor: help; }
+.ask { border-top: 1px solid var(--line); border-bottom: 0; color: var(--text); }
+.ask b { font-weight: 600; color: #f0f0f6; margin-right: 4px; }
+.ask #ask-target { width: 180px; }
+.ask #ask-why { flex: 1; min-width: 180px; max-width: 420px; }
+#ask-err { padding: 0 14px 10px; }
+.team-key { flex: none; padding: 8px 2px 0; }
+.who .where { display: none; }
+.sw-label { display: none; }
+.filter-btn { display: none; }
+
 @media (max-width: 720px) {
   header { gap: 10px; padding: 0 16px; }
   .brand span { display: none; }
@@ -403,6 +421,8 @@ tr.archived b { color: var(--dim); }
   main { padding: 12px 16px 16px; }
   .bar { margin-bottom: 8px; }
   .chips { flex-direction: column; align-items: stretch; }
+  .filter-btn { display: inline-flex; align-self: flex-start; margin-bottom: 8px; }
+  .chips.folded { display: none; }
   .chips .group + .group { margin-left: 0; padding-left: 0; border-left: 0; }
   .legend { gap: 12px; }
   #team thead { display: none; }
@@ -420,6 +440,11 @@ tr.archived b { color: var(--dim); }
   #team .c-plain { display: none; }
   #team .status { grid-column: 2 / 4; max-width: none; white-space: normal; color: var(--dim); }
   #team .status:empty { display: none; }
+  #team .who .where { display: block; color: var(--dim); }
+  .team-key { display: none; }
+  .mine-rows { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .mine-rows > span:not(:first-child) { margin-top: 6px; }
+  .ask #ask-target, .ask #ask-why { flex: 1 1 100%; width: auto; max-width: none; min-width: 0; }
   .msg { padding: 9px 12px; }
   .compose { flex-wrap: wrap; padding: 8px; }
   .compose label { flex: none; }
@@ -427,6 +452,10 @@ tr.archived b { color: var(--dim); }
   .compose textarea { flex-basis: 100%; order: 5; }
   .compose .btn.primary { order: 6; margin-left: auto; }
   nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  nav::-webkit-scrollbar { display: none; }
+  /* more tabs past the right edge: they fade out there */
+  nav.more-right { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+                   mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); }
   .tab { padding: 0 8px; }
   .sep { margin: 15px 2px; }
   .viewer > svg, .viewer b, .viewer .role { display: none; }
@@ -437,7 +466,29 @@ tr.archived b { color: var(--dim); }
   .live { margin-left: 10px; }
   .knock { flex-wrap: wrap; }
   .knock .acts { flex-basis: 100%; align-items: stretch; }
-  .admin table { min-width: 560px; }
+  /* People, Access and Log: each row a card, its buttons on their own line */
+  #people thead, #access thead, #audit thead { display: none; }
+  #people table, #people tbody, #people tr, #people td,
+  #access table, #access tbody, #access tr, #access td,
+  #audit table, #audit tbody, #audit tr, #audit td { display: block; }
+  #people tr, #access tr, #audit tr { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  #people tbody tr:last-child, #access tbody tr:last-child, #audit tbody tr:last-child { border-bottom: 0; }
+  #people td, #access td, #audit td { padding: 0; border: 0; }
+  #people td + td, #access td + td { margin-top: 8px; }
+  #people td.empty-row, #access td.empty-row, #audit td.empty-row { padding: 4px 0; }
+  #access tr.group td { padding: 0; }
+  #people td.c-act, #access td.c-act { display: flex; flex-wrap: wrap; gap: 6px; text-align: left; white-space: normal; }
+  #people td.c-act:empty, #access td.c-act:empty { display: none; }
+  #people td.c-act .btn + .btn, #access td.c-act .btn + .btn, #access td.c-act select + .btn { margin-left: 0; }
+  #access td.seen { text-align: left; }
+  .dev { flex-wrap: wrap; row-gap: 4px; }
+  .confirm { max-width: 100%; justify-content: flex-start; }
+  #audit tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; }
+  /* the sentence names the person: the card is the sentence and its time */
+  #audit td.l-person { display: none; }
+  #audit td.l-time { grid-column: 2; grid-row: 1; font-size: 12px; padding-top: 1px; }
+  #audit td.l-what { grid-column: 1; grid-row: 1; }
+  #audit .phead .inline { margin-left: 0; }
   .notes { grid-template-columns: minmax(0, 1fr); }
   .project-info { grid-template-columns: minmax(0, 1fr); max-height: 50vh; overflow-y: auto; }
   .notes.reading .topics, .notes:not(.reading) .doc { display: none; }
@@ -452,6 +503,10 @@ tr.archived b { color: var(--dim); }
   .stack td { padding: 0; border: 0; min-width: 0; }
   .stack td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--faint); }
   .stack td.empty-row { grid-column: 1 / -1; }
+  .stack td.nil { display: none; }
+  .stack td.c-plain { white-space: normal; }
+  .stack td.h-auto { display: flex; align-items: center; gap: 8px; }
+  .sw-label { display: inline; font-size: 12px; color: var(--dim); }
   #hosts table { table-layout: auto; }
   .w-name, .h-acct { grid-column: 1 / 4; }
   .w-state, .h-auto { grid-column: 4; grid-row: 1; justify-self: end; }
@@ -534,6 +589,20 @@ tr.archived b { color: var(--dim); }
   </header>
   <main>
     <section id="team" role="tabpanel">
+      <div class="panel" id="my-access" hidden>
+        <div class="phead">My access</div>
+        <div class="mine-rows" id="my-access-rows"></div>
+        <form class="sentence ask" id="ask-access" autocomplete="off">
+          <b>Ask for</b>
+          <select id="ask-role" aria-label="Role"><option value="read">read</option><option value="write">write</option></select>
+          <select id="ask-kind" aria-label="What"><option value="project">access to project</option><option value="machine">use of machine</option></select>
+          <input id="ask-target" list="ask-names" placeholder="Name" aria-label="Name" maxlength="80" required>
+          <datalist id="ask-names"></datalist>
+          <input id="ask-why" placeholder="Why (optional)" aria-label="Why" maxlength="500">
+          <button type="submit" class="btn small primary"><svg width="13" height="13"><use href="#i-send"/></svg>Send</button>
+        </form>
+        <div class="err" id="ask-err" hidden></div>
+      </div>
       <div class="bar">
         <div class="legend">
           <span title="Working on a task"><i class="dot busy"></i>busy</span>
@@ -557,9 +626,11 @@ tr.archived b { color: var(--dim); }
         </table>
         <div class="blank" id="team-empty" hidden><svg width="40" height="40"><use href="#i-team"/></svg>No sessions online. Open your coding tool in a project folder on a joined machine and it appears here.</div>
       </div>
+      <div class="hint team-key" id="team-key" title="After the tool name: does it get the team rules text, run the kaptyorka hooks, have the team skills" hidden>R rules text · H hooks · S skills</div>
     </section>
     <section id="messages" role="tabpanel" hidden>
-      <div class="chips" id="chips"></div>
+      <button type="button" class="btn small filter-btn" id="chips-toggle" aria-expanded="false" aria-controls="chips" hidden>Filter</button>
+      <div class="chips folded" id="chips"></div>
       <div id="knocks"></div>
       <div class="chat">
         <div class="panel" id="log"></div>
@@ -707,7 +778,7 @@ tr.archived b { color: var(--dim); }
         </div>
         <div class="err" id="log-err" hidden></div>
         <table>
-          <thead><tr><th>Time</th><th>Person</th><th>What</th><th>Detail</th></tr></thead>
+          <thead><tr><th>When</th><th>Person</th><th>What</th></tr></thead>
           <tbody id="log-rows"></tbody>
         </table>
       </div>
@@ -728,6 +799,7 @@ tr.archived b { color: var(--dim); }
   var rules = null, rulesAt = 0, rulesUi = { edit: false, rejecting: null };
   var holding = null, holdClose = null;  /* an open inline confirm or edit: refreshes leave its panel alone */
   var peopleUi = { revoked: {}, invitesOpen: false }, invites = [], savedHost = null;
+  var myAccess = null, chipsOpen = false;
 
   function store(fn) { try { return fn(window.localStorage); } catch (e) { return null; } }
 
@@ -883,11 +955,30 @@ tr.archived b { color: var(--dim); }
       b.setAttribute("aria-selected", b.dataset.view === v ? "true" : "false");
     });
     VIEWS.concat(ADMIN_VIEWS).forEach(function (id) { $(id).hidden = id !== v; });
+    var cur = document.querySelector('.tab[data-view="' + v + '"]');
+    if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
+    navFade();
     history.replaceState(null, "", location.pathname + (v === "team" ? "" : "#view=" + v));
     if (v === "messages") { markClipped(); toBottom(); }
     if (v === "machines") loadFleet(true);
     if (v === "rules") loadRules(true);
     if (v === "people") loadInvites();
+    if (v === "team") loadAccess();
+  }
+  /* the tab bar fades at the right edge while more tabs sit past it */
+  var navWidth = 0;
+  function navFade() {
+    var n = document.querySelector("nav");
+    n.classList.toggle("more-right", n.scrollLeft + n.clientWidth < n.scrollWidth - 2);
+  }
+  /* a count that appears widens the tabs: keep the open tab in view when the bar's width changes */
+  function navKeep() {
+    var n = document.querySelector("nav");
+    if (n.scrollWidth === navWidth) return;
+    navWidth = n.scrollWidth;
+    var cur = n.querySelector('.tab[aria-selected="true"]');
+    if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
+    navFade();
   }
 
   /* where a name lives: from the online list, else from the name itself */
@@ -938,6 +1029,7 @@ tr.archived b { color: var(--dim); }
     agents.forEach(function (a) {
       var act = ACT[a.activity] || "";
       var who = a.label ? [el("b", { text: a.label }), el("small", { text: a.name })] : [el("b", { text: a.name })];
+      who.push(el("small", { "class": "where", text: [a.person, a.machine, a.project].filter(Boolean).join(" \u00b7 ") }));
       if (a.role === "manager") who[0].appendChild(el("span", { "class": "role", title: "the team's manager session", text: "manager" }));
       if (a.doors && a.doors.length) {
         who.push(el("small", { "class": "doors", title: "Open doors: " + a.doors.join(", ") },
@@ -949,7 +1041,7 @@ tr.archived b { color: var(--dim); }
         el("td", { "class": "who" }, who),
         el("td", { "class": "c-plain", text: a.person || "" }),
         el("td", { "class": "c-plain", text: a.machine }),
-        el("td", { "class": "c-plain" }, [document.createTextNode(a.tool), harnessMarks(a.harness)]),
+        el("td", { "class": "c-plain" }, [document.createTextNode(a.tool), isAdmin() ? harnessMarks(a.harness) : null]),
         el("td", { "class": "c-plain" + (hidden(a) ? " private" : ""), text: a.project }),
         el("td", { "class": "status", title: a.status || null, text: a.status || "" }),
         (function () { var td = el("td"); seenCell(td, a); return td; })()
@@ -964,12 +1056,14 @@ tr.archived b { color: var(--dim); }
       body.appendChild(tr);
     });
     $("team-empty").hidden = agents.length > 0;
+    $("team-key").hidden = !isAdmin() || !agents.length;
     document.querySelector("#team table").hidden = agents.length === 0;
   }
 
   function renderChips() {
     var box = $("chips");
     box.textContent = "";
+    box.classList.toggle("folded", !chipsOpen);
     var sets = { machine: {}, project: {} };
     feed.agents.forEach(function (a) { sets.machine[a.machine] = 1; if (!hidden(a)) sets.project[a.project] = 1; });
     feed.messages.forEach(function (m) {
@@ -1006,6 +1100,12 @@ tr.archived b { color: var(--dim); }
       });
       box.appendChild(doors);
     }
+    /* on a phone the chips fold behind one button that names the filter in use */
+    var t = $("chips-toggle"), on = [filter.machine, filter.project].filter(Boolean);
+    t.textContent = on.length ? "Filter: " + on.join(", ") : "Filter";
+    t.setAttribute("aria-expanded", chipsOpen ? "true" : "false");
+    t.setAttribute("aria-pressed", on.length ? "true" : "false");
+    t.hidden = !box.childNodes.length;
   }
 
   /* pending knocks for the viewer: the person answers here, or the admin for anyone */
@@ -1383,7 +1483,7 @@ tr.archived b { color: var(--dim); }
       function devRow(d) {
         var gone = d.revoked_at != null;
         var rv = gone ? null : button("Revoke", "danger", function () {
-          confirmInline(rv, "Revoke " + d.name + "? It stops working at once.", "Revoke", function () {
+          confirmInline(rv, "Revoke " + (d.legacy ? "Shared token (old machines)" : d.name) + "? It stops working at once.", "Revoke", function () {
             return act("people-err", "/api/devices/" + d.id + "/revoke");
           });
         });
@@ -1459,8 +1559,54 @@ tr.archived b { color: var(--dim); }
     }
   }
 
+  /* member: what I may use, what I asked for, and the form to ask for more */
+  function loadAccess() {
+    if (!me || isAdmin() || view !== "team") return;
+    get("/api/me/access").then(function (a) { myAccess = a; renderMyAccess(); }, function () {});
+  }
+  function renderMyAccess() {
+    $("my-access").hidden = !myAccess || isAdmin();
+    if (!myAccess || !changed("my-access", [myAccess, fleet.machines, feed && feed.agents.map(function (a) { return [a.machine, a.project]; })])) return;
+    var rows = $("my-access-rows");
+    rows.textContent = "";
+    function line(cap, items, none) {
+      rows.appendChild(el("span", { text: cap }));
+      rows.appendChild(items.length ? el("div", { "class": "cell-tags" }, items) : el("div", { "class": "none", text: none }));
+    }
+    line("Projects", myAccess.projects.map(function (p) {
+      return el("span", { "class": "tag", title: p.description || null }, [p.name, el("small", { text: p.role })]);
+    }), "None yet. Ask below.");
+    line("Machines", myAccess.machines.map(function (m) {
+      return el("span", { "class": "tag", title: m.owner ? "Owner: " + m.owner : null }, [m.host,
+        m.owner === me.person ? el("small", { text: "yours" }) : null]);
+    }), "None yet.");
+    if (myAccess.requests.length) line("Asked", myAccess.requests.map(function (r) {
+      return el("span", { "class": "tag", title: r.why || null }, [wanted(r), el("small", null, [timeEl(r.created)]),
+        el("span", { "class": "state open", text: r.status })]);
+    }), "");
+    askNames();
+    tick();
+  }
+  /* names to pick from: what the viewer sees on the page and does not have yet */
+  function askNames() {
+    if (!myAccess) return;
+    var kind = $("ask-kind").value, have = {}, names = {};
+    (kind === "project" ? myAccess.projects.map(function (p) { return p.name; })
+                        : myAccess.machines.map(function (m) { return m.host; })).forEach(function (n) { have[n] = 1; });
+    myAccess.requests.forEach(function (r) { if (r.kind === kind) have[r.target] = 1; });
+    if (kind === "machine") fleet.machines.forEach(function (m) { names[m.host] = 1; });
+    (feed ? feed.agents : []).forEach(function (a) {
+      var n = kind === "machine" ? a.machine : hidden(a) ? null : a.project;
+      if (n) names[n] = 1;
+    });
+    options($("ask-names"), Object.keys(names).filter(function (n) { return !have[n]; }).sort());
+    $("ask-role").hidden = kind !== "project";
+  }
+
   /* admin: Access */
-  function wanted(r) { return r.kind === "project" ? "access to project " + r.target : "use of machine " + r.target; }
+  function wanted(r) {
+    return r.kind === "project" ? (r.role === "write" ? "write" : "read") + " access to project " + r.target : "use of machine " + r.target;
+  }
   var GRANT_HINT = { read: "read: see notes and sessions", write: "write: also edit notes and start workers",
                      manage: "manage: also give access" };
   function grantHint() { $("grant-hint").textContent = GRANT_HINT[$("grant-role").value] + ". Giving access again changes the role."; }
@@ -1478,7 +1624,7 @@ tr.archived b { color: var(--dim); }
       var role = null;
       if (r.kind === "project") {
         role = el("select", { "class": "own", "aria-label": "Role for " + r.person });
-        options(role, ["read", "write"], "read");
+        options(role, ["read", "write"], r.role === "write" ? "write" : "read");
       }
       var deny = button("Deny", "", function () {
         confirmInline(deny, "Deny " + r.person + "'s request?", "Deny", function (why) {
@@ -1626,13 +1772,12 @@ tr.archived b { color: var(--dim); }
     body.textContent = "";
     rows.forEach(function (r) {
       body.appendChild(el("tr", null, [
-        el("td", { "class": "log-time", title: full(r.time), text: new Date(r.time * 1000).toLocaleString() }),
-        el("td", { "class": "c-plain", text: r.person }),
-        el("td", { "class": "log-kind", text: r.kind }),
-        el("td", { "class": "text", text: r.detail })
+        el("td", { "class": "log-time l-time" }, [timeEl(r.time)]),
+        el("td", { "class": "c-plain l-person", text: r.person }),
+        el("td", { "class": "text l-what", title: r.kind + (r.detail ? ": " + r.detail : ""), text: r.sentence || r.kind + ": " + r.detail })
       ]));
     });
-    if (!rows.length) body.appendChild(el("tr", null, [el("td", { colspan: "4", "class": "empty-row", text: "Nothing logged" })]));
+    if (!rows.length) body.appendChild(el("tr", null, [el("td", { colspan: "3", "class": "empty-row", text: "Nothing logged" })]));
   }
   function loadLog() {
     if (!logPerson) { logRows = null; seen.audit = null; render(); return; }
@@ -1723,6 +1868,10 @@ tr.archived b { color: var(--dim); }
       list.appendChild(el("li", null, [icon("i-warn", 14), el("span", { text: w.text }), el("small", { text: w.person })]));
     });
   }
+  /* an unknown fact shows a dash in the table; a phone card leaves it out */
+  function fact(cls, label, value) {
+    return el("td", { "class": cls + (value ? "" : " nil"), "data-label": label, text: value || "\u2014" });
+  }
   function renderHosts() {
     var box = $("hosts"), admin = isAdmin();
     box.textContent = "";
@@ -1750,11 +1899,11 @@ tr.archived b { color: var(--dim); }
             el("div", null, [el("b", { text: d.person }),
               el("small", { title: d.last_used ? full(d.last_used) : null,
                             text: d.os_user + (d.online ? "" : d.last_used ? " · seen " + ago(Date.now() / 1000 - d.last_used) : " · never seen") })])])]),
-          el("td", { "class": "c-plain", "data-label": "Version", text: f.version || d.version || "—" }),
-          el("td", { "class": "c-plain", "data-label": "Load", text: f.load != null && f.cpus ? (+f.load).toFixed(1) + " / " + f.cpus + " cpus" : "—" }),
-          el("td", { "class": "c-plain", "data-label": "tmux", text: f.tmux === true ? "yes" : f.tmux === false ? "no" : "—" }),
-          el("td", { "class": "h-wide", "data-label": "Tools" }, [toolTags]),
-          el("td", { "class": "h-wide", "data-label": "Folders" }, [folders])
+          fact("c-plain", "Version", f.version || d.version),
+          fact("c-plain", "Load", f.load != null && f.cpus ? (+f.load).toFixed(1) + " / " + f.cpus + " cpus" : ""),
+          fact("c-plain", "tmux", f.tmux === true ? "yes" : f.tmux === false ? "no" : ""),
+          el("td", { "class": "h-wide" + (toolTags.childNodes.length ? "" : " nil"), "data-label": "Tools" }, [toolTags]),
+          el("td", { "class": "h-wide" + (folders.childNodes.length ? "" : " nil"), "data-label": "Folders" }, [folders])
         ];
         if (admin) {
           var sw = el("button", { "class": "switch", type: "button", role: "switch", "aria-checked": d.auto_update ? "true" : "false",
@@ -1762,7 +1911,7 @@ tr.archived b { color: var(--dim); }
           sw.addEventListener("click", function () {
             quiet(act("device-err", "/api/devices/" + d.id + "/auto_update", { on: !d.auto_update }));
           });
-          row.push(el("td", { "class": "h-auto" }, [sw]));
+          row.push(el("td", { "class": "h-auto" }, [el("span", { "class": "sw-label", text: "Auto-update" }), sw]));
         }
         tb.appendChild(el("tr", null, row));
       });
@@ -1951,6 +2100,7 @@ tr.archived b { color: var(--dim); }
       if (!busy("audit") && changed("audit", [feed.log, feed.settings, feed.people, logPerson, logRows])) renderLog();
       if (logPerson && changed("log-src", feed.log)) loadLog();
     }
+    navKeep();
     tick();
   }
 
@@ -1979,6 +2129,7 @@ tr.archived b { color: var(--dim); }
         loadFleet();
         loadRules();
         if (view === "people") loadInvites();
+        loadAccess();
         clearTimeout(timer);
         timer = setTimeout(poll, 2000);
       })
@@ -2043,6 +2194,19 @@ tr.archived b { color: var(--dim); }
       .then(function () { $("ret-days").blur(); }));
   });
   $("log-person").addEventListener("change", function () { logPerson = $("log-person").value; loadLog(); });
+  $("ask-kind").addEventListener("change", askNames);
+  $("ask-access").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var target = $("ask-target").value.trim(), kind = $("ask-kind").value;
+    if (!target) return;
+    api("/api/requests", { kind: kind, target: target, why: $("ask-why").value.trim(),
+                           role: kind === "project" ? $("ask-role").value : "read" })
+      .then(function () { $("ask-err").hidden = true; $("ask-target").value = ""; $("ask-why").value = ""; loadAccess(); })
+      .catch(function (x) { $("ask-err").hidden = false; $("ask-err").textContent = x.message; });
+  });
+  $("chips-toggle").addEventListener("click", function () { chipsOpen = !chipsOpen; renderChips(); });
+  document.querySelector("nav").addEventListener("scroll", navFade, { passive: true });
+  window.addEventListener("resize", function () { navWidth = 0; navKeep(); });
   function boot() {
     get("/api/me").then(start).catch(function () {
       if ($("app").hidden) return;  /* locked: the token was refused */
@@ -2051,7 +2215,7 @@ tr.archived b { color: var(--dim); }
   }
   function start(m) {
     me = m;
-    seen = {}; feed = null; invites = []; myProjects = [];
+    seen = {}; feed = null; invites = []; myProjects = []; myAccess = null;
     $("viewer-name").textContent = m.person;
     $("viewer-initial").textContent = m.person.charAt(0).toUpperCase();
     $("viewer").title = "Signed in as " + m.person + " on " + m.device;

@@ -150,3 +150,25 @@ def test_log_rows_have_sentences(app):
     rows = call(app, "alice", "GET", "/api/log")[1]
     assert rows[0]["sentence"] == "alice registered the project proj-a"
     assert all("sentence" in r for r in rows)
+
+
+def test_request_carries_the_wished_role(app):
+    s = app.store
+    s.project_register("proj-a", by="alice")
+    status, body = call(app, "bob", "POST", "/api/requests",
+                        {"kind": "project", "target": "proj-a", "role": "write"})
+    assert status == 200
+    assert call(app, "bob", "POST", "/api/requests",
+                {"kind": "project", "target": "proj-a", "role": "manage"}) == (400, "role must be read or write")
+    assert [r["role"] for r in call(app, "bob", "GET", "/api/me/access")[1]["requests"]] == ["write"]
+    assert [(r["person"], r["role"]) for r in call(app, "alice", "GET", "/api/feed")[1]["requests"]] == \
+        [("bob", "write")]
+    # asking again with read changes the wish; the same request stays
+    assert call(app, "bob", "POST", "/api/requests", {"kind": "project", "target": "proj-a"})[1] == body
+    assert [r["role"] for r in s.requests()] == ["read"]
+
+
+def test_feed_log_rows_have_sentences(app):
+    app.store.project_register("proj-a", by="alice")
+    rows = call(app, "alice", "GET", "/api/feed")[1]["log"]
+    assert "alice registered the project proj-a" in [r["sentence"] for r in rows]

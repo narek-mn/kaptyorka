@@ -102,7 +102,7 @@ def feed(store: Store, principal: Principal, ws=None) -> dict:
             "projects": [{**p, "members": members.get(p["name"], [])}
                          for p in store.projects_for(principal) if not p.get("archived")],
             "archived_projects": [p for p in store.projects_for(principal) if p.get("archived")],
-            "log": store.log(200),
+            "log": [{**r, "sentence": admin_ops.log_sentence(r)} for r in store.log(200)],
             "settings": {"retention_days": store.retention_days()},
         })
     return out
