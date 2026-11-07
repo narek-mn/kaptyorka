@@ -545,8 +545,14 @@ class WorkerStore:
             return row["name"] if row else ""
 
     def registered(self, project: str) -> bool:
+        """True for a registered project, and for a removed (archived) one: its name is never
+        someone's own unregistered folder."""
         with self.lock:
-            return self.store._registered(project)
+            return self.store._registered(project) or self.store._archived(project)
+
+    def archived(self, project: str) -> bool:
+        with self.lock:
+            return self.store._archived(project)
 
     def device_exists(self, device_id: int) -> bool:
         with self.lock:

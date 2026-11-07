@@ -498,3 +498,32 @@ def test_names_that_read_as_ssh_options_are_dropped(hub, alice):
     assert hub.ws.facts(dev).get("os_user", "") == ""
     assert "-o" not in {m["host"][:2] for m in hub.store.machines(
         hub.store.authenticate(ADMIN))}
+
+
+def remove_project(hub, name="proj-a"):
+    """The admin removes (archives) a project, as DELETE /api/projects/<name> does."""
+    from kaptyorka import admin_ops
+    from kaptyorka.store import Principal
+
+    a = next(p for p in hub.store.people() if p["role"] == "admin")
+    admin_ops.project_remove(hub.store, name, Principal(a["id"], a["name"], "admin", 0, "", False,
+                                                        False))
+
+
+def test_work_refused_in_removed_project_even_from_its_folder(hub, alice):
+    pid, client = alice
+    bridge(hub, pid)
+    remove_project(hub)  # alice's grant goes; her boss session still runs in folder proj-a
+    err = call_error(client, BOSS, "work", project="proj-a", task="x")
+    assert err.endswith(": proj-a was removed; ask the admin to register it again")
+    assert hub.ws.list(hub.store.authenticate(client.token)) == []
+    hub.store.project_register("proj-b", by="test")  # an unrelated folder still works as before
+    assert "write role" in call_error(client, BOSS, "work", project="proj-b", task="x")
+
+
+def test_removed_project_activity_is_the_admins(hub, alice):
+    hub.store.notes_write_from_web("test", "state", "where it stands", project="proj-a")
+    remove_project(hub)
+    status, body = http.request("GET", hub.url + "/api/projects/proj-a/activity", ADMIN)
+    assert status == 200 and body["state"] == "where it stands"
+    assert http.request("GET", hub.url + "/api/projects/proj-a/activity", alice[1].token)[0] == 403

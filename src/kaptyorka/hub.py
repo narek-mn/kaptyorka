@@ -37,6 +37,7 @@ MAX_WAIT_S = 25
 TICK_S = 15
 OWN_TOKEN = ("use your own device token: run kaptyorka join with an invite, or ask the admin to"
              " assign this machine")
+REMOVED = "{project} was removed; ask the admin to register it again"
 ON_SHARED = "a worker on a shared account cannot start, adopt or close workers; ask your boss"
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
        "style-src 'unsafe-inline'; img-src 'self' data:")
@@ -510,6 +511,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             raise KaptyorkaError(OWN_TOKEN)
         if foreign(principal, agent.person_id) is not None:
             raise KaptyorkaError(ON_SHARED)
+        if ws.archived(project):
+            raise KaptyorkaError(REMOVED.format(project=project))
         if not (store.may_write_project(project, principal)
                 or (agent.project == project and not ws.registered(project))):
             raise KaptyorkaError(f"you may not start workers in {project}: that takes the write"
@@ -580,6 +583,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         boss = store.agent(r["boss_key"])
         who = replace(principal, person_id=r["person_id"], person_name=row["name"] if row else "",
                       role=row["role"] if row else "member")  # the asker's rights, not the manager's
+        if ws.archived(project):
+            mm.request_decide(request_id, "refused", reason)
+            note = REMOVED.format(project=project)
+            tell(asker, note)
+            store.log_add("manager", "work_decide", f"request {request_id}: refused — {reason}")
+            return note
         if not (store.may_write_project(project, who)
                 or (boss is not None and boss.project == project and not ws.registered(project))):
             mm.request_decide(request_id, "refused", reason)

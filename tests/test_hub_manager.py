@@ -273,6 +273,20 @@ def test_busy_goes_to_manager_when_online(hub):
     assert hub.mm.request(1)["boss_key"] == "k:boss" and poll(hub, b) == []
 
 
+def test_decide_refuses_a_removed_project(hub):
+    from test_hub_workers import remove_project
+
+    mgr, me = manager_online(hub)
+    b, _, bob = busy_setup(hub)
+    ask(hub, bob)
+    remove_project(hub)  # bob's boss session still runs in folder proj-a
+    out = run(call(mgr, me, "work_decide", request_id=1, machine="box-1", reason="ok"))
+    assert out == "proj-a was removed; ask the admin to register it again"
+    assert out in inbox(bob, BOSS)
+    assert hub.mm.request(1)["decision"] == "refused" and hub.ws.by_name("proj-a-w1") is None
+    assert poll(hub, b) == []
+
+
 def test_busy_without_manager_unchanged(hub):
     _, _, bob = busy_setup(hub)
     assert ask(hub, bob) == ("busy: box-1 has alice's session in that folder; ask again later or"
