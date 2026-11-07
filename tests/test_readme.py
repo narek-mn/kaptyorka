@@ -38,5 +38,6 @@ def test_readme_done_check_and_brief_cache_wording():
     assert "Git cannot tell who made the commit" in done and 'status("done: no state change")' in done
     assert "read the folder's git themselves" in done
     brief = r.split("## What a session knows on start", 1)[1].split("\n## ", 1)[0]
-    assert "kept for 10 seconds per session" in brief and "just delivered messages" in brief
+    assert "keeps each session's brief for 10 seconds" in brief and "never keeps a brief that delivered messages" in brief
+    assert "count of unread messages has changed" in brief
     assert "makes `backup-pass` right away" in r

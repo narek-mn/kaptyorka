@@ -162,7 +162,7 @@ At the start of a session the hub gives the agent a short brief. It has five par
 4. Your project: its state note, its git activity of the last 7 days, and the branches that have open sessions.
 5. Your unread messages.
 
-The brief is at most 6,000 characters. When it is too long, the hub cuts the rules first (the brief then points to `rules()`, which gives the full text), then the project list, then the git activity, then the end of the state note. Unread messages are never cut. The brief is kept for 10 seconds per session, so quick repeats are cheap. A new unread message, or a brief that just delivered messages, is the exception: the next start builds it again.
+The brief is at most 6,000 characters. When it is too long, the hub cuts the rules text first (the brief keeps the rules heading and the line on `propose_rule` and `conflict`, and points to `rules()`, which gives the full text), then the project list, then the git activity, then the end of the state note. Unread messages are never cut. The hub keeps each session's brief for 10 seconds, so quick repeats are cheap. It builds a fresh one when the session's count of unread messages has changed since, and it never keeps a brief that delivered messages.
 
 The bridge reports each session folder's git branch, last commit and whether it has changes. The hub keeps this git activity for 30 days. The project view shows the last 20 changes of branch or commit.
 
@@ -174,15 +174,15 @@ The team's rules and skills are kept in a private folder on the admin's machine:
 kaptyorka rules push <dir>
 ```
 
-Only the admin's device can push. The rules text is replaced as a new version. The skill set is replaced as a whole, so a skill removed from the folder is removed from the team. Limits: rules up to 20,000 characters, each skill up to 20,000, at most 50 skills. A skill name uses lowercase letters, digits and single hyphens, 1 to 48 characters.
+Only the admin's device can push. The admin can also change the rules on the page: the **Edit** button on the Rules tab, and accepting a proposal, each save a new version on the hub only. A push replaces the rules text with `RULES.md` as a new version. So before it uploads, `rules push` reads the hub's current text; if a line there is not in `RULES.md`, it prints those lines and stops. Copy them into `RULES.md`, or run `kaptyorka rules push --force <dir>` to replace them anyway. The skill set is replaced as a whole, so a skill removed from the folder is removed from the team. Limits: rules up to 20,000 characters, each skill up to 20,000, at most 50 skills. A skill name uses lowercase letters, digits and single hyphens, 1 to 48 characters.
 
-Every session sees the rules in its start brief, under this heading:
+Every session sees the rules in its start brief, under this heading. The hub builds the brief from the current version, so a new version reaches a session's next brief within 10 seconds (the brief cache):
 
 > Team rules (project rules in this repo override these; these override your personal rules):
 
 Project rules stay in the project's own repo. The hub keeps only the team rules.
 
-Skills land on each machine by themselves. The bridge writes each one to `~/.claude/skills/team-<name>/SKILL.md`. Claude Code reads that folder directly. OpenCode and Cursor read `~/.claude/skills` as a compatibility path (checked against opencode.ai/docs/skills and cursor.com/docs/context/skills on 2026-11-07). Codex gets the rules text only. Each file carries a marker line and is replaced when the team's version changes. A folder without the marker is never touched. The bridge picks up a new version within a heartbeat (10 seconds).
+Skills land on each machine by themselves. The bridge writes each one to `~/.claude/skills/team-<name>/SKILL.md`. Claude Code reads that folder directly. OpenCode and Cursor read `~/.claude/skills` as a compatibility path (checked against opencode.ai/docs/skills and cursor.com/docs/context/skills on 2026-11-07). Codex gets the rules text only. Each file carries a marker line and is replaced when the team's version changes. A folder without the marker is never touched. The bridge sends a heartbeat every 10 seconds; the hub's answer carries the current skills version, and when it differs from the one on disk the bridge fetches and writes the skills in that same heartbeat, so a new version lands within about 10 seconds.
 
 The **Team** tab shows three marks for each session's tool:
 
@@ -197,9 +197,7 @@ Agents can suggest rules, and report clashes. The brief tells each agent when to
 - When its person corrects it the same way twice, the agent calls `propose_rule(text, evidence)`. The admin accepts it, which appends it to the team rules as a new version, or rejects it with a reason. The reason is sent to the proposer's session. The Rules tab lists open proposals.
 - When two rules clash and the agent must ask its person, it calls `conflict(rule_a, rule_b)`. This logs the clash for the admin to fix the text.
 
-Limits: a proposal text 2,000 characters, its evidence 4,000, each rule in a conflict 1,000, and 20 open proposals per person.
-
-<img src="docs/screens/rules.png" width="720" alt="The Rules tab: team rules, skills, proposals and conflicts">
+Limits: a proposal text 2,000 characters, its evidence 4,000, each rule in a conflict 1,000, 20 open proposals per person, and 20 conflicts per session.
 
 ## The done check
 
@@ -356,7 +354,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka revoke <person> <project>` | Admin: take it away; or `machine:<host>` |
 | `kaptyorka machine owner <host> <person>` | Admin: name a machine's owner |
 | `kaptyorka who` | List sessions online |
-| `kaptyorka rules push <dir>` | Admin: upload the team rules folder (`RULES.md` and `skills/*.md`) |
+| `kaptyorka rules push [--force] <dir>` | Admin: upload the team rules folder (`RULES.md` and `skills/*.md`); stops if the hub has rule lines not in `RULES.md`, unless `--force` |
 | `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
 | `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |
 | `kaptyorka fleet list` | Admin: list machines |
