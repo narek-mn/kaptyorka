@@ -595,7 +595,7 @@ tr.archived b { color: var(--dim); }
           <b>Ask for</b>
           <select id="ask-role" aria-label="Role"><option value="read">read</option><option value="write">write</option></select>
           <select id="ask-kind" aria-label="What"><option value="project">access to project</option><option value="machine">use of machine</option></select>
-          <input id="ask-target" list="ask-names" placeholder="Name" aria-label="Name" maxlength="80" required>
+          <input id="ask-target" list="ask-names" placeholder="Project name" aria-label="Name" maxlength="80" required>
           <datalist id="ask-names"></datalist>
           <input id="ask-why" placeholder="Why (optional)" aria-label="Why" maxlength="500">
           <button type="submit" class="btn small primary"><svg width="13" height="13"><use href="#i-send"/></svg>Send</button>
@@ -1466,7 +1466,7 @@ tr.archived b { color: var(--dim); }
         }, { title: "The link stops working" })]);
     })));
   }
-  var LEGACY_TITLE = "The device the old shared token logs in as. Revoke it when every machine has its own token.";
+  var LEGACY_TITLE = "The device the old shared token logs in as. Switch the shared token off under Old machines when every machine has its own token.";
   var MANAGER_HINT = "The team's manager session runs as this account";
   function isManagerAccount(p) { return p.name === "manager" && p.role === "manager"; }
   function roleCell(p) {
@@ -1488,8 +1488,9 @@ tr.archived b { color: var(--dim); }
     feed.people.forEach(function (p) {
       function devRow(d) {
         var gone = d.revoked_at != null;
-        var rv = gone ? null : button("Revoke", "danger", function () {
-          confirmInline(rv, "Revoke " + (d.legacy ? "Shared token (old machines)" : d.name) + "? It stops working at once.", "Revoke", function () {
+        /* the shared token is switched off in Old machines, not revoked here */
+        var rv = gone || d.legacy ? null : button("Revoke", "danger", function () {
+          confirmInline(rv, "Revoke " + d.name + "? It stops working at once.", "Revoke", function () {
             return act("people-err", "/api/devices/" + d.id + "/revoke");
           });
         });
@@ -1514,7 +1515,8 @@ tr.archived b { color: var(--dim); }
         if (open) gone.forEach(function (d) { devs.appendChild(devRow(d)); });
       }
       if (!p.devices.length) devs.appendChild(el("span", { "class": "hint", text: "No devices yet" }));
-      var acts = [button([icon("i-link", 13), "Invite"], "", function () { quiet(invite(p.name)); })];
+      /* the manager account runs on the hub machine: an invite would hand someone its powers */
+      var acts = isManagerAccount(p) ? [] : [button([icon("i-link", 13), "Invite"], "", function () { quiet(invite(p.name)); })];
       if (p.role !== "admin" && !isManagerAccount(p)) {
         var rm = button("Remove", "danger", function () {
           confirmInline(rm, "Remove " + p.name + "? Their devices stop working at once; their messages and notes stay.", "Remove",
@@ -2209,6 +2211,9 @@ tr.archived b { color: var(--dim); }
   });
   $("log-person").addEventListener("change", function () { logPerson = $("log-person").value; loadLog(); });
   $("ask-kind").addEventListener("change", askNames);
+  $("ask-kind").addEventListener("change", function () {
+    $("ask-target").placeholder = $("ask-kind").value === "machine" ? "Machine name" : "Project name";
+  });
   $("ask-access").addEventListener("submit", function (e) {
     e.preventDefault();
     var target = $("ask-target").value.trim(), kind = $("ask-kind").value;

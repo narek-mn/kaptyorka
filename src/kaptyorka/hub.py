@@ -1139,7 +1139,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         person = store.person_by_name(str(body["person"]))
         if person is None:
             return PlainTextResponse("no such person", status_code=404)
-        code = store.invite_create(person["id"], by=request.scope["state"]["principal"].person_name)
+        try:
+            code = store.invite_create(person["id"],
+                                       by=request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"code": code, "url": f"{hub_url(request)}/i/{code}",
                              "expires": admin_ops.invite_expires(store, code)})
 

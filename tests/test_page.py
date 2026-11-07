@@ -109,4 +109,4 @@ def test_log_rows_are_sentences(hub):
 
 def test_shared_token_revoke_uses_plain_label(hub):
     html = page(hub)
-    assert '"Revoke " + (d.legacy ? "Shared token (old machines)" : d.name) + "? It stops working at once."' in html
+    assert '"Revoke " + d.name + "? It stops working at once."' in html

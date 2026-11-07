@@ -366,7 +366,7 @@ def test_page_inline_confirm_holds_the_panel():
     assert "function confirmInline(anchor, text, yesLabel, onYes, opt)" in html
     assert 'e.key === "Escape"' in html and "holding.isConnected" in html
     assert '!busy("machines") && changed("fleet"' in html  # close-worker confirm survives too
-    for text in ('"Revoke " + (d.legacy ? "Shared token (old machines)" : d.name) + "? It stops working at once."',
+    for text in ('"Revoke " + d.name + "? It stops working at once."',
                  '"Machines still on the shared token stop working until they join again."',
                  '"Close worker " + w.name + "? Its session stops."',
                  '" a manager? A manager session can decide work requests and message anyone."',
@@ -449,7 +449,7 @@ def test_page_remove_says_which_workers_may_still_run():
     html = page_html()
     assert 'id="people-ok"' in html and "removedLine(p.name, r)" in html
     assert '" may still run on " + w.host + "; close it on that machine."' in html
-    assert "The device the old shared token logs in as. Revoke it when every machine has its own token." in html
+    assert "The device the old shared token logs in as. Switch the shared token off under Old machines when every machine has its own token." in html
 
 
 def test_register_again_keeps_description(app):
@@ -464,3 +464,15 @@ def test_register_again_keeps_description(app):
     assert status == 204
     proj = next(p for p in get(app, "boss", "/api/feed")["projects"] if p["name"] == "proj")
     assert proj["description"] == "the web shop"
+
+
+def test_page_push_review_fixes():
+    html = page_html()
+    # no invite for the manager account: whoever redeemed it would act as the manager
+    assert 'var acts = isManagerAccount(p) ? [] : [button([icon("i-link", 13), "Invite"]' in html
+    # the shared token has one control, the switch under Old machines; no Revoke on its row
+    assert 'var rv = gone || d.legacy ? null : button("Revoke", "danger"' in html
+    assert '"Switch shared token off"' in html or "Switch shared token off" in html
+    # the ask field names what to type for the chosen kind
+    assert 'id="ask-target" list="ask-names" placeholder="Project name"' in html
+    assert '$("ask-target").placeholder = $("ask-kind").value === "machine" ? "Machine name" : "Project name";' in html

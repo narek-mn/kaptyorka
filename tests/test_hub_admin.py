@@ -79,6 +79,14 @@ def test_invite_routes(app):
     assert call(app, "alice", "DELETE", f"/api/invites/{inv['code']}")[0] == 404
 
 
+def test_manager_account_cannot_be_invited(app):
+    """Whoever redeemed such an invite would act as the manager."""
+    person(app.store, "manager", "manager")
+    status, text = call(app, "alice", "POST", "/api/invites", {"person": "manager"})
+    assert (status, text) == (400, "the manager account cannot be invited; it runs on the hub machine")
+    assert call(app, "alice", "GET", "/api/invites")[1] == []
+
+
 def test_project_routes(app):
     app.store.project_register("proj-a", by="alice")
     assert call(app, "alice", "POST", "/api/projects/proj-a", {"description": "the app"})[0] == 204

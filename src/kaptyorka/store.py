@@ -396,9 +396,12 @@ class Store:
         code = secrets.token_urlsafe(16)
         now = self.clock()
         with self.lock:
-            row = self.db.execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
+            row = self.db.execute("SELECT name, role FROM people WHERE id=?", (person_id,)).fetchone()
             if row is None:
                 raise KaptyorkaError("no such person")
+            if (row["name"], row["role"]) == ("manager", "manager"):  # manager.PERSON
+                # whoever redeemed it would act as the manager
+                raise KaptyorkaError("the manager account cannot be invited; it runs on the hub machine")
             self.db.execute("INSERT INTO invites (code, person_id, created, expires)"
                             " VALUES (?,?,?,?)", (code, person_id, now, now + ttl_s))
         self.log_add(by or row["name"], "invite", f"invite for {row['name']}")
