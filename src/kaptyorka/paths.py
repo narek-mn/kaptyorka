@@ -1,6 +1,10 @@
 import json
 import os
 from pathlib import Path
+from typing import Optional
+
+MANAGER_DIR = "manager"  # the manager session's folder under home()
+MANAGER_CONFIG = "manager-config.json"  # its config, under home(): outside its working folder
 
 
 def home() -> Path:
@@ -14,7 +18,27 @@ def config_path() -> Path:
     return Path(override) if os.path.isabs(override) else home() / "config.json"
 
 
-def load_config() -> dict:
+def manager_config(cwd: Optional[str]) -> Optional[Path]:
+    """The manager's config file when `cwd` is the manager's folder and the file exists."""
+    if not cwd:
+        return None
+    try:
+        if Path(cwd).resolve() != (home() / MANAGER_DIR).resolve():
+            return None
+    except (OSError, RuntimeError):
+        return None
+    p = home() / MANAGER_CONFIG
+    return p if p.is_file() else None
+
+
+def load_config(cwd: Optional[str] = None) -> dict:
+    """This machine's config; for a session in the manager's folder, the manager's."""
+    p = manager_config(cwd)
+    if p is not None:
+        try:
+            return json.loads(p.read_text())
+        except (OSError, ValueError):
+            pass
     try:
         return json.loads(config_path().read_text())
     except FileNotFoundError:

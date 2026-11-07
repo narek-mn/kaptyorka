@@ -217,3 +217,28 @@ def test_shim_fetch_file_saves_to_inbox(hub, home):
             r = await c.call_tool("fetch_file", {"id": 999})
             assert r.is_error and "no such file" in text(r)
     anyio.run(go)
+
+
+def test_shim_in_the_manager_folder_uses_the_manager_token(hub, home):
+    from kaptyorka import manager
+    mid = hub.store.person_create("manager", "manager", "test")
+    token = hub.store.device_add(mid, "manager", "test")
+    folder = paths.home() / manager.DIR
+    folder.mkdir()
+    ident = {**IDENT, "key": "claude:m", "project": "manager", "cwd": str(folder)}
+
+    async def go(ident):
+        async with shim(home, hub.url, ident=ident) as c:
+            r = await c.call_tool("status", {"text": "here"})
+            assert not r.is_error, text(r)
+    anyio.run(go, ident)  # no manager config yet: the normal one
+    a = hub.store.agent("claude:m")
+    assert a.person_id != mid and a.machine == "pc"
+    (paths.home() / manager.CONFIG).write_text(json.dumps(
+        {"hub": hub.url, "token": token, "machine": "manager@box-1", "person": "manager"}))
+    ident = {**ident, "key": "claude:m2"}
+    anyio.run(go, ident)
+    a = hub.store.agent("claude:m2")
+    assert a.person_id == mid and a.machine == "manager@box-1"
+    anyio.run(go, {**IDENT, "key": "claude:o", "cwd": str(home / "proj-a")})
+    assert hub.store.agent("claude:o").person_id != mid

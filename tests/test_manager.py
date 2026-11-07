@@ -68,17 +68,19 @@ def test_ensure_account_once_and_rotates_after_revoke(store, ms):
 
 def test_write_files_never_drops_token(tmp_path, ms):
     d = tmp_path / "m"
+    conf = paths.home() / manager.CONFIG  # outside the session's working folder
     ms.write_files(d, "http://hub", "tok1", "be kind")
-    cfg = json.loads((d / "config.json").read_text())
+    assert not (d / "config.json").exists()
+    cfg = json.loads(conf.read_text())
     assert cfg["hub"] == "http://hub" and cfg["token"] == "tok1" and cfg["person"] == "manager"
     assert cfg["machine"].startswith("manager@")
-    assert os.stat(d / "config.json").st_mode & 0o777 == 0o600
+    assert os.stat(conf).st_mode & 0o777 == 0o600
     ms.write_files(d, "http://hub", None, "be kind v2")
-    assert json.loads((d / "config.json").read_text())["token"] == "tok1"
+    assert json.loads(conf.read_text())["token"] == "tok1"
     assert "be kind v2" in (d / "CLAUDE.md").read_text()
     d2 = tmp_path / "n"
-    ms.write_files(d2, "http://hub", None, "")
-    assert not (d2 / "config.json").exists() and (d2 / "CLAUDE.md").exists()
+    ms.write_files(d2, "http://hub", None, "", config=tmp_path / "n.json")
+    assert not (tmp_path / "n.json").exists() and (d2 / "CLAUDE.md").exists()
     assert ms.rules_written_version() is None
     ms.mark_rules_written(3)
     assert ms.rules_written_version() == 3
@@ -203,19 +205,37 @@ def test_config_path_ignores_relative_or_empty_override(tmp_path, monkeypatch, v
 
 def test_config_written_0600_and_survives_failure(tmp_path, ms, monkeypatch):
     d = tmp_path / "m"
+    conf = tmp_path / "manager-config.json"
     os.umask(0o022)
-    ms.write_files(d, "http://hub", "tok1", "r")
-    assert os.stat(d / "config.json").st_mode & 0o777 == 0o600
-    assert not (d / "config.json.tmp").exists()
+    ms.write_files(d, "http://hub", "tok1", "r", config=conf)
+    assert os.stat(conf).st_mode & 0o777 == 0o600
+    assert not (tmp_path / "manager-config.json.tmp").exists()
 
     real = os.replace
 
     def boom(src, dst):
-        if str(dst).endswith("config.json"):
+        if str(dst).endswith("manager-config.json"):
             raise OSError("disk full")
         real(src, dst)
     monkeypatch.setattr(os, "replace", boom)
     with pytest.raises(OSError):
-        ms.write_files(d, "http://hub", "tok2", "r")
-    assert json.loads((d / "config.json").read_text())["token"] == "tok1"
-    assert not (d / "config.json.tmp").exists()
+        ms.write_files(d, "http://hub", "tok2", "r", config=conf)
+    assert json.loads(conf.read_text())["token"] == "tok1"
+    assert not (tmp_path / "manager-config.json.tmp").exists()
+
+
+def test_load_config_by_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "h"))
+    monkeypatch.delenv("KAPTYORKA_CONFIG", raising=False)
+    paths.save_config({"token": "normal"})
+    folder = paths.home() / manager.DIR
+    folder.mkdir()
+    assert paths.load_config(str(folder)) == {"token": "normal"}  # no manager file yet
+    (paths.home() / manager.CONFIG).write_text(json.dumps({"token": "mgr"}))
+    assert paths.load_config(str(folder)) == {"token": "mgr"}
+    assert paths.load_config(str(folder) + "/") == {"token": "mgr"}
+    link = tmp_path / "ln"
+    link.symlink_to(folder)
+    assert paths.load_config(str(link)) == {"token": "mgr"}  # resolved
+    for other in (None, "", str(tmp_path), str(folder / "sub"), "/home/u/manager"):
+        assert paths.load_config(other) == {"token": "normal"}

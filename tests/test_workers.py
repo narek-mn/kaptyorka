@@ -820,8 +820,7 @@ def manager_setup(store):
 
 def test_create_manager_order_has_env_and_folder(store, ws, clock):
     admin, mid, row = manager_setup(store)
-    w = ws.create_manager(admin, mid, row, "/h/.kaptyorka/manager", "/h/.kaptyorka/manager/"
-                          "config.json", "hello manager")
+    w = ws.create_manager(admin, mid, row, "/h/.kaptyorka/manager", "hello manager")
     assert w["name"] == "manager" and w["project"] == "manager" and w["tool"] == "claude-code"
     assert w["state"] == "starting" and w["folder"] == "/h/.kaptyorka/manager"
     assert w["worktree"] is False and w["person"] == "manager"
@@ -832,22 +831,22 @@ def test_create_manager_order_has_env_and_folder(store, ws, clock):
     [item] = ws.offer(row["id"])
     order = {k: v for k, v in item.items() if k != "launch"}
     assert order["folder"] == "/h/.kaptyorka/manager" and order["manager"] is True
-    assert order["env"] == {"KAPTYORKA_CONFIG": "/h/.kaptyorka/manager/config.json"}
+    assert "env" not in order
     assert order["person"] == "root" and order["first_message"] == "hello manager"
     assert verify(order, secret_hash(store, row["id"]), clock[0], ()) is None
     with pytest.raises(KaptyorkaError, match="already running"):
-        ws.create_manager(admin, mid, row, "/x", "/x/config.json", "again")
+        ws.create_manager(admin, mid, row, "/x", "again")
     # an ended manager is replaced, its old order no longer offered
     with store.lock:
         store.db.execute("UPDATE workers SET state='closed' WHERE name='manager'")
     clock[0] += 61
-    assert ws.create_manager(admin, mid, row, "/x", "/x/c.json", "again")["folder"] == "/x"
+    assert ws.create_manager(admin, mid, row, "/x", "again")["folder"] == "/x"
     assert [i["first_message"] for i in ws.offer(row["id"])] == ["again"]
 
 
 def test_manager_never_unattended(store, ws, clock):
     admin, mid, row = manager_setup(store)
-    ws.create_manager(admin, mid, row, "/m", "/m/config.json", "hi")
+    ws.create_manager(admin, mid, row, "/m", "hi")
     assert ws.link("manager", "claude:m", row["id"])
     assert store.agent("claude:m").person_id == mid
     with store.lock:  # the page boss is an admin who left long ago: still not unattended
@@ -877,3 +876,35 @@ def test_manager_column_added_to_an_old_workers_table(tmp_path):
     ensure_schema(db)
     assert "manager" in [r[1] for r in db.execute("PRAGMA table_info(workers)")]
     db.close()
+
+
+def manager_token(store, mid):
+    token = store.device_add(mid, "manager", "test")
+    with store.lock:
+        store.db.execute("UPDATE devices SET host='box-1' WHERE person_id=?", (mid,))
+    return store.authenticate(token)
+
+
+def test_manager_links_after_its_own_call_first_launch_and_relaunch(store, ws, clock):
+    admin, mid, row = manager_setup(store)
+    mp = manager_token(store, mid)
+    ws.create_manager(admin, mid, row, "/m", "hi")
+    store.seen("claude:m1", "manager@box-1", "claude-code", "manager", principal=mp)
+    assert ws.link("manager", "claude:m1", row["id"])  # its hook came before the bridge
+    a = store.agent("claude:m1")
+    assert ws.by_name("manager")["state"] == "up"
+    assert (a.person_id, a.device_id) == (mid, mp.device_id)  # keeps its own device
+    with store.lock:  # session gone; the hub starts a new one with a new key
+        store.db.execute("UPDATE workers SET state='closed', error='session gone'")
+    ws.create_manager(admin, mid, row, "/m", "hi")
+    store.seen("claude:m2", "manager@box-1", "claude-code", "manager", principal=mp)
+    assert ws.link("manager", "claude:m2", row["id"])
+    assert ws.by_name("manager")["key"] == "claude:m2"
+    # another person's session is still refused, manager or not
+    with store.lock:
+        store.db.execute("UPDATE workers SET state='closed'")
+    ws.create_manager(admin, mid, row, "/m", "hi")
+    bob = person(store, "bob")[0]
+    bp = principal(store, bob)
+    store.seen("claude:b", "box-1", "claude-code", "proj-a", principal=bp)
+    assert not ws.link("manager", "claude:b", row["id"])

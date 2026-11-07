@@ -242,25 +242,12 @@ def test_find_key(launcher):
     assert launcher.find_key(j, sessions) is None
 
 
-def test_launcher_env_allowlist(home, no_systemd, monkeypatch):
-    monkeypatch.setenv("PATH_KEEP", "1")
-    monkeypatch.delenv("KAPTYORKA_CONFIG", raising=False)
+def test_manager_order_gets_no_extra_environment(home, no_systemd):
+    (home / ".kaptyorka" / "manager").mkdir(parents=True)
     popen = FakePopen()
-    make(home, popen=popen).detach(["claude", "--bg"], "/w", "manager", {
-        "KAPTYORKA_CONFIG": "/m/config.json", "PATH": "/evil", "LD_PRELOAD": "/x.so"})
-    env = popen.calls[0][1]["env"]
-    assert env["KAPTYORKA_CONFIG"] == "/m/config.json" and env["PATH_KEEP"] == "1"
-    assert env["PATH"] != "/evil" and "LD_PRELOAD" not in env
-    for bad in ({"KAPTYORKA_CONFIG": "rel.json"}, {"KAPTYORKA_CONFIG": 5}, "junk", None):
-        popen = FakePopen()
-        make(home, popen=popen).detach(["claude", "--bg"], "/w", "manager", bad)
-        assert "KAPTYORKA_CONFIG" not in popen.calls[0][1]["env"]
-    # launch passes the order's env through
-    (home / "m").mkdir()
-    popen = FakePopen()
-    make(home, popen=popen).launch(order(manager=True, folder=str(home / "m"),
+    make(home, popen=popen).launch(order(manager=True, folder=str(home / ".kaptyorka" / "manager"),
                                          env={"KAPTYORKA_CONFIG": "/m/config.json"}))
-    assert popen.calls[0][1]["env"]["KAPTYORKA_CONFIG"] == "/m/config.json"
+    assert popen.calls[0][1]["env"] is launch_mod.os.environ
 
 
 def test_folder_override(home):
@@ -275,6 +262,6 @@ def test_folder_override(home):
     assert launcher.folder_for(order(manager=True, folder=str(m), worktree=True)) \
         == (str(m), False)
     assert run.calls == []  # never a worktree
-    for bad in ("", "rel/manager", str(home / "gone"), None):
+    for bad in ("", "rel/manager", str(home / "gone"), None, str(home / "manager")):
         with pytest.raises(LaunchError, match="no manager folder"):
             launcher.folder_for(order(manager=True, project="manager", folder=bad))

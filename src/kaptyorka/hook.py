@@ -51,16 +51,17 @@ def _git_query(cwd: str, run, deadline: float) -> str:
 
 def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
     try:
-        cfg = paths.load_config()
-        fmt = FORMATTERS.get(tool)
-        if not fmt or not cfg.get("hub") or not cfg.get("token"):
-            return ""
         try:
             data = json.loads(stdin or "{}")
         except ValueError:
             data = {}
         if not isinstance(data, dict):
             data = {}
+        here = data.get("cwd") if isinstance(data.get("cwd"), str) else None
+        cfg = paths.load_config(here or os.getcwd())  # the manager's folder: its own config
+        fmt = FORMATTERS.get(tool)
+        if not fmt or not cfg.get("hub") or not cfg.get("token"):
+            return ""
         stop = event == "stop"
         if stop and data.get("stop_hook_active") is True and tool in ("claude-code", "codex"):
             return "{}" if tool == "codex" else ""  # never block twice in one stop sequence

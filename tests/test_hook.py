@@ -255,3 +255,57 @@ def test_stop_sends_the_folders_git_read_now(home, monkeypatch, capsys):
     runs.clear()
     hook.main("cursor", "stop", json.dumps({}), run=fake_run)  # Cursor's stop reads no git
     assert gets[0][0].endswith("/api/done-check") and runs == []
+
+
+def _manager_config(hub):
+    """The manager's account on the hub and its config file; (person id, token, folder)."""
+    from kaptyorka import manager
+    mid = hub.store.person_create("manager", "manager", "test")
+    token = hub.store.device_add(mid, "manager", "test")
+    (paths.home() / manager.CONFIG).write_text(json.dumps(
+        {"hub": hub.url, "token": token, "machine": "manager@box-1", "person": "manager"}))
+    folder = paths.home() / manager.DIR
+    folder.mkdir()
+    return mid, token, folder
+
+
+def _tokens(monkeypatch):
+    used = []
+    real = hook.http.request
+
+    def spy(method, url, token, *a, **kw):
+        used.append(token)
+        return real(method, url, token, *a, **kw)
+    monkeypatch.setattr(hook.http, "request", spy)
+    return used
+
+
+def test_hook_in_the_manager_folder_uses_the_manager_config(hub, home, monkeypatch, capsys):
+    join(hub.url)
+    mid, token, folder = _manager_config(hub)
+    monkeypatch.setattr(hook, "identify", lambda machine, workspace=None:
+                        Identity("claude:m", machine, "claude-code", "manager"))
+    used = _tokens(monkeypatch)
+    hook.main("claude-code", "start", json.dumps({"cwd": str(folder)}))
+    assert used and set(used) == {token}
+    assert hub.store.agent("claude:m").person_id == mid
+    assert hub.store.agent("claude:m").machine == "manager@box-1"
+    used.clear()
+    hook.main("claude-code", "start", json.dumps({"cwd": str(home / "proj-a")}))
+    assert used and set(used) == {"T"}  # any other folder: the normal config
+    used.clear()
+    monkeypatch.chdir(folder)  # no cwd in the input: the hook's own folder
+    hook.main("claude-code", "start", "")
+    assert set(used) == {token}
+
+
+def test_hook_manager_folder_without_its_config_uses_the_normal_one(hub, home, monkeypatch):
+    from kaptyorka import manager
+    join(hub.url)
+    folder = paths.home() / manager.DIR
+    folder.mkdir()
+    monkeypatch.setattr(hook, "identify", lambda machine, workspace=None:
+                        Identity("claude:m", machine, "claude-code", "manager"))
+    used = _tokens(monkeypatch)
+    hook.main("claude-code", "start", json.dumps({"cwd": str(folder)}))
+    assert used and set(used) == {"T"}

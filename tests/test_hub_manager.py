@@ -36,7 +36,8 @@ def hub(tmp_path, clock, monkeypatch):
     stop = start_hub(store, manager_url=URL)
     yield SimpleNamespace(url=f"http://127.0.0.1:{stop.port}", store=store, mm=mm,
                           ws=WorkerStore(store), tick=stop.app.state.tick,
-                          folder=tmp_path / "kh" / manager.DIR)
+                          folder=tmp_path / "kh" / manager.DIR,
+                          config=tmp_path / "kh" / manager.CONFIG)
     stop()
     store.close()
 
@@ -89,25 +90,45 @@ def test_manager_tick_writes_files_and_rewrites_on_rules_change(hub):
     hub.tick()  # no admin bridge yet: the account and files, but no launch
     assert hub.mm.person_id() is not None and state(hub) is None
     assert os.stat(hub.folder).st_mode & 0o777 == 0o700
-    cfg = json.loads((hub.folder / "config.json").read_text())
+    assert not (hub.folder / "config.json").exists()  # outside the session's folder
+    assert os.stat(hub.config).st_mode & 0o777 == 0o600
+    cfg = json.loads(hub.config.read_text())
     assert cfg["hub"] == URL and cfg["person"] == "manager"
     assert cfg["machine"] == f"manager@{HOST}"
     assert hub.store.authenticate(cfg["token"]).role == "manager"
     assert "No team rules yet." in (hub.folder / "CLAUDE.md").read_text()
     hub.tick()
-    assert json.loads((hub.folder / "config.json").read_text()) == cfg
+    assert json.loads(hub.config.read_text()) == cfg
     RulesStore(hub.store).set_rules("always run the tests", "root")
     hub.tick()
     assert "always run the tests" in (hub.folder / "CLAUDE.md").read_text()
-    assert json.loads((hub.folder / "config.json").read_text()) == cfg  # same token
+    assert json.loads(hub.config.read_text()) == cfg  # same token
     (hub.folder / "CLAUDE.md").unlink()
     hub.tick()
     assert "always run the tests" in (hub.folder / "CLAUDE.md").read_text()
-    (hub.folder / "config.json").unlink()  # a lost token: a new one, the old one revoked
+    hub.config.unlink()  # a lost token: a new one, the old one revoked
     hub.tick()
-    new = json.loads((hub.folder / "config.json").read_text())
+    new = json.loads(hub.config.read_text())
     assert new["token"] != cfg["token"] and hub.store.authenticate(cfg["token"]) is None
     assert hub.store.authenticate(new["token"]).role == "manager"
+
+
+def test_lost_config_rotates_at_most_once_an_hour(hub, clock):
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    first = json.loads(hub.config.read_text())["token"]
+    hub.config.unlink()
+    hub.tick()
+    second = json.loads(hub.config.read_text())["token"]
+    hub.config.unlink()
+    clock[0] += 60
+    hub.tick()  # within the hour: no new token, the file stays missing
+    assert not hub.config.exists() and hub.store.authenticate(second).role == "manager"
+    assert hub.store.authenticate(first) is None
+    clock[0] += 3600
+    hub.tick()
+    assert json.loads(hub.config.read_text())["token"] != second
+    assert hub.store.authenticate(second) is None
 
 
 def test_manager_relaunch_limits(hub, clock):
@@ -118,10 +139,14 @@ def test_manager_relaunch_limits(hub, clock):
     [o1] = orders(hub, b)
     assert o1["worker"] == "manager" and o1["manager"] is True and o1["person"] == "root"
     assert o1["folder"] == str(hub.folder) and o1["first_message"] == MANAGER_FIRST
-    assert o1["env"] == {"KAPTYORKA_CONFIG": str(hub.folder / "config.json")}
+    assert "env" not in o1
     hub.tick()
     assert orders(hub, b) == [] and state(hub) == "starting"  # one at a time
     ack(hub, b, o1)
+    # its hook reaches the hub (manager token) before the bridge links it
+    mtoken = json.loads(hub.config.read_text())["token"]
+    hub.store.seen("claude:m1", f"manager@{HOST}", "claude-code", "manager",
+                   principal=hub.store.authenticate(mtoken))
     assert http.request("POST", hub.url + "/bridge/worker", b.token,
                         {"worker": "manager", "key": "claude:m1"})[0] == 204
     assert state(hub) == "up" and hub.store.agent("claude:m1").person_id == hub.mm.person_id()
@@ -136,23 +161,28 @@ def test_manager_relaunch_limits(hub, clock):
     hub.tick()
     [o2] = orders(hub, b)
     assert o2["id"] != o1["id"] and state(hub) == "starting"
-    ack(hub, b, o2, ok=False, error="claude: not found")
-    hub.tick()
-    assert "worker `manager` failed to start: claude: not found" in page_texts(hub)
-    clock[0] += 121  # two launches within the hour: no third
+    ack(hub, b, o2)  # the new session links under its new key
+    hub.store.seen("claude:m2", f"manager@{HOST}", "claude-code", "manager",
+                   principal=hub.store.authenticate(mtoken))
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "manager", "key": "claude:m2"})[0] == 204
+    assert state(hub) == "up" and hub.ws.by_name("manager")["key"] == "claude:m2"
+    # gone again: two launches within the hour, so no third
+    clock[0] += ONLINE_S + GONE_S + 130
     beat(hub, b)
     hub.tick()
-    assert orders(hub, b) == [] and state(hub) == "failed"
+    assert orders(hub, b) == [] and state(hub) == "closed"
     assert hub.mm.may_launch(clock[0]) == (False, "the manager was launched twice in the"
                                                   " last hour")
-    assert MANAGER_FAILED not in page_texts(hub)  # one failure so far
     # an hour later it may start again; two failures in an hour: the page hears it once
     clock[0] += 3600
     beat(hub, b)
     hub.tick()
     [o3] = orders(hub, b)
-    ack(hub, b, o3, ok=False, error="boom")
+    ack(hub, b, o3, ok=False, error="claude: not found")
     hub.tick()
+    assert "worker `manager` failed to start: claude: not found" in page_texts(hub)
+    assert MANAGER_FAILED not in page_texts(hub)  # one failure so far
     clock[0] += 121
     beat(hub, b)
     hub.tick()

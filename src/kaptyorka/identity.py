@@ -14,7 +14,7 @@ import os
 import socket
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote
@@ -26,11 +26,12 @@ class Identity:
     machine: str
     tool: str
     project: str
+    cwd: str = field(default="", compare=False)  # the session's folder; never sent
 
     def headers(self) -> dict:
         """Percent-encoded, since header values must be ASCII; the hub unquotes them."""
         return {f"X-Kaptyorka-{k.capitalize()}": quote(v, safe="")
-                for k, v in asdict(self).items()}
+                for k, v in asdict(self).items() if k != "cwd"}
 
 
 def _ps(pid: int) -> Optional[Tuple[int, str]]:
@@ -115,7 +116,8 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
     sid = os.environ.get("KAPTYORKA_OPENCODE_SESSION") or os.environ.get("OPENCODE_SESSION_ID")
     if sid:
         project = os.path.basename(os.getcwd().rstrip("/"))
-        return Identity(f"opencode:{sid}", machine, "opencode", project) if project else None
+        return Identity(f"opencode:{sid}", machine, "opencode", project,
+                        os.getcwd()) if project else None
     for tool_pid, comm in ancestors(pid):
         tool = _tool(tool_pid, comm)
         if tool:
@@ -142,7 +144,7 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
     project = os.path.basename(cwd.rstrip("/"))
     if not key or not project:
         return None
-    return Identity(key, machine, tool, project)
+    return Identity(key, machine, tool, project, cwd)
 
 
 def facts() -> dict:

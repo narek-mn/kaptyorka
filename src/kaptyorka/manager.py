@@ -6,14 +6,15 @@ import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from kaptyorka import rules
+from kaptyorka import paths, rules
 from kaptyorka.adapters.base import write_atomic
 from kaptyorka.store import ONLINE_S, Store
 
 PERSON = "manager"
 DEVICE = "manager"
 WORKER = "manager"
-DIR = "manager"  # under paths.home()
+DIR = paths.MANAGER_DIR  # under paths.home()
+CONFIG = paths.MANAGER_CONFIG  # under paths.home(), outside the session's working folder
 RELAUNCH_S = 120
 MAX_LAUNCHES_PER_HOUR = 2
 REQUEST_TTL_S = 3600
@@ -152,15 +153,17 @@ class ManagerStore:
                             (host, admin["os_user"] if admin else "", pid, DEVICE))
         return token
 
-    def write_files(self, dir: Path, hub_url: str, token: Optional[str], rules_text: str) -> None:
+    def write_files(self, dir: Path, hub_url: str, token: Optional[str], rules_text: str,
+                    config: Optional[Path] = None) -> None:
+        """CLAUDE.md in `dir`; with a token, the config (default paths.home()/CONFIG)."""
         dir = Path(dir)
         dir.mkdir(parents=True, exist_ok=True)
         write_atomic(dir / "CLAUDE.md", claude_md(rules_text))
         if token:
             cfg = {"hub": hub_url, "token": token,
                    "machine": f"{PERSON}@{self._host_of_account() or _host()}", "person": PERSON}
-            path = dir / "config.json"
-            tmp = dir / "config.json.tmp"
+            path = Path(config) if config is not None else paths.home() / CONFIG
+            tmp = path.with_name(path.name + ".tmp")
             try:
                 tmp.unlink()
             except FileNotFoundError:

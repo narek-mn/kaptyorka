@@ -1,4 +1,5 @@
 """`kaptyorka mcp`: a stdio MCP server that relays to the hub with its session's identity."""
+import dataclasses
 import json
 import os
 from typing import Dict, Optional
@@ -169,6 +170,14 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 return
             ident = await anyio.to_thread.run_sync(
                 lambda: identity.identify(cfg.get("machine", ""), workspace=workspace))
+            if ident and ident.cwd:  # a session in the manager's folder runs on its config
+                own = await anyio.to_thread.run_sync(paths.load_config, ident.cwd)
+                if own.get("hub") and own.get("token") and own != cfg:
+                    cfg.clear()
+                    cfg.update(own)
+                    relay.url = cfg["hub"]
+                    found["ident"] = None  # new token: reconnect below
+                ident = dataclasses.replace(ident, machine=cfg.get("machine", ""))
             if ident and ident != found["ident"]:
                 found["ident"] = ident
                 relay.headers = _headers(cfg, ident)

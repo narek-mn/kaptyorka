@@ -88,7 +88,10 @@ def start_hub(store, port: int = 0, **app_kw):
 def hub(tmp_path):
     from kaptyorka.store import Store
 
+    from kaptyorka.manager import ManagerStore
+
     store = Store(tmp_path / "hub.db", legacy_token="T")
+    ManagerStore(store).set_enabled(False, "test")  # no manager files racing the test's home
     stop = start_hub(store)
     yield SimpleNamespace(url=f"http://127.0.0.1:{stop.port}", token="T", store=store)
     stop()

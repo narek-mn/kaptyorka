@@ -20,18 +20,6 @@ TMUX_WAIT_S = 10  # `tmux new-session -d` returns at once
 BACKGROUNDED = re.compile(r"backgrounded · ([0-9a-f]{8})\b")
 
 
-ENV_KEYS = ("KAPTYORKA_CONFIG",)  # the only variables an order may set: the manager's account
-
-
-def _env(extra):
-    """The bridge's environment, plus the allowed order variables (absolute paths only)."""
-    if not isinstance(extra, dict):
-        return os.environ
-    add = {k: v for k, v in extra.items()
-           if k in ENV_KEYS and isinstance(v, str) and os.path.isabs(v)}
-    return {**os.environ, **add} if add else os.environ
-
-
 class LaunchError(Exception):
     """A worker could not be started or stopped; the text goes to the hub."""
 
@@ -62,11 +50,13 @@ class Launcher:
         return any((getattr(s, "cwd", "") or "").rstrip("/") == folder for s in sessions)
 
     def folder_for(self, order: dict, sessions: Iterable = ()) -> Tuple[str, bool]:
-        if order.get("manager") is True:  # the manager's own folder, as given; never a worktree
+        if order.get("manager") is True:  # only the manager's own folder; never a worktree
             folder = order.get("folder")
+            want = paths.home() / paths.MANAGER_DIR
             if not isinstance(folder, str) or not os.path.isabs(folder) \
-                    or not os.path.isdir(folder):
-                raise LaunchError(f"no manager folder {folder!r} on this machine")
+                    or not os.path.isdir(folder) or Path(folder).resolve() != want.resolve():
+                raise LaunchError(f"no manager folder {folder!r} on this machine"
+                                  f" (it must be {want})")
             return folder.rstrip("/") or folder, False
         project = str(order.get("project") or "")
         learned = facts._learned().get(project)
@@ -115,9 +105,8 @@ class Launcher:
                     "--prompt", first]
         raise LaunchError(f"no worker support for {tool}")
 
-    def detach(self, argv: List[str], folder: str, name: str, env=None) -> str:
+    def detach(self, argv: List[str], folder: str, name: str) -> str:
         """Start argv outside the bridge's process group and service, output to its log.
-        `env`: the order's extra variables; only ENV_KEYS with an absolute path pass.
         Returns what it printed."""
         logs = paths.home() / "workers"
         logs.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -132,7 +121,7 @@ class Launcher:
         with open(log_path, "ab") as out:
             start = out.tell()
             try:
-                proc = self.popen(argv, cwd=folder, env=_env(env), stdin=subprocess.DEVNULL,
+                proc = self.popen(argv, cwd=folder, env=os.environ, stdin=subprocess.DEVNULL,
                                   stdout=out, stderr=subprocess.STDOUT, **kw)
             except OSError as e:
                 raise LaunchError(f"could not start {argv[0]}: {e}")
@@ -156,7 +145,7 @@ class Launcher:
         name = self._name(order)
         folder, worktree = self.folder_for(order, sessions)
         argv = self.command(order, folder)
-        output = self.detach(argv, folder, name, order.get("env"))
+        output = self.detach(argv, folder, name)
         job = None
         if order.get("tool") == "claude-code":
             m = BACKGROUNDED.search(output)

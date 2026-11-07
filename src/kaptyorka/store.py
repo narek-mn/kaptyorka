@@ -140,9 +140,8 @@ MAX_CWD = 200
 
 
 def manager_folder() -> str:
-    """The manager's folder on the hub machine: manager.DIR under the hub's home."""
-    from kaptyorka import manager  # here: manager imports this module
-    return str(paths.home() / manager.DIR)
+    """The manager's folder on the hub machine, under the hub's home."""
+    return str(paths.home() / paths.MANAGER_DIR)
 
 
 def clean(value, cap: int) -> str:

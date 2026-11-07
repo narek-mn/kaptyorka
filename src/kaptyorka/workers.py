@@ -349,11 +349,11 @@ class WorkerStore:
             return self._dict(self._row(name))
 
     def create_manager(self, admin_person_id: int, manager_person_id: int, device: dict,
-                       folder: str, config_path: str, first_message: str) -> dict:
+                       folder: str, first_message: str) -> dict:
         """The manager worker on the admin's own bridge (`device`: a devices row, as
         ManagerStore.admin_device gives it). Its boss is the admin's page; `link` gives its
-        session to the manager person. The order runs in `folder` exactly, with only
-        KAPTYORKA_CONFIG added to the environment. An ended manager row is replaced."""
+        session to the manager person. The order runs in `folder` exactly, where the hook and
+        the MCP shim pick the manager's config. An ended manager row is replaced."""
         from kaptyorka.manager import WORKER  # here: manager imports the store
         with self.lock:
             now = self.clock()
@@ -376,7 +376,7 @@ class WorkerStore:
                 "issued": now, "worker": WORKER, "person": admin, "tool": "claude-code",
                 "project": "manager", "folder": folder, "worktree": False, "task": task,
                 "boss": admin, "resume": None, "first_message": first_message,
-                "manager": True, "env": {"KAPTYORKA_CONFIG": config_path}})
+                "manager": True})
             return self._dict(self._row(WORKER))
 
     def offer(self, device_id: int) -> List[dict]:
@@ -425,7 +425,12 @@ class WorkerStore:
                                   (key,)).fetchone()
             owner = self.db.execute("SELECT person_id FROM devices WHERE id=?",
                                     (device_id,)).fetchone()
-            if row is not None and (
+            # the manager's own session may have called the hub (its token) before this link
+            own = w["manager"] and row is not None and row["person_id"] == w["boss_person"] \
+                and row["device_id"] is not None and self.db.execute(
+                    "SELECT 1 FROM devices WHERE id=? AND person_id=? AND revoked_at IS NULL",
+                    (row["device_id"], w["boss_person"])).fetchone() is not None
+            if row is not None and not own and (
                     row["person_id"] not in (None, owner["person_id"], w["boss_person"])
                     or row["device_id"] not in (None, device_id)):
                 return False  # someone else's session
@@ -438,9 +443,11 @@ class WorkerStore:
                 dev = self.db.execute("SELECT name FROM devices WHERE id=?",
                                       (device_id,)).fetchone()
                 self.store._touch(key, dev["name"], w["tool"], w["project"], self.clock())
-            # the session belongs to the boss's group, whoever's bridge reports it
-            self.db.execute("UPDATE agents SET person_id=?, device_id=? WHERE key=?",
-                            (w["boss_person"], device_id, key))
+            # the session belongs to the boss's group, whoever's bridge reports it; the
+            # manager's session keeps its own device
+            if not own:
+                self.db.execute("UPDATE agents SET person_id=?, device_id=? WHERE key=?",
+                                (w["boss_person"], device_id, key))
             return True
 
     def state(self, worker: str, device_id: int) -> Optional[str]:

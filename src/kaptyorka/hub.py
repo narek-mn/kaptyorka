@@ -179,12 +179,14 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if ws.notify(to_key, text):
             wake_bridges()
 
-    def manager_files(host: str) -> None:
-        """The manager's account, CLAUDE.md and config.json; written again when the rules
-        changed or a file is missing. A lost config.json means a lost token: a new one."""
+    def manager_files(host: str, now: float) -> None:
+        """The manager's account, CLAUDE.md and config; written again when the rules changed
+        or a file is missing. A lost config means a lost token: a new one, once an hour."""
         folder = paths.home() / manager.DIR
         token = mm.ensure_account(host, "hub")
-        if token is None and not (folder / "config.json").exists():
+        if token is None and not (paths.home() / manager.CONFIG).exists() \
+                and mm.push_once("manager-rotate", now, 3600):
+            print("kaptyorka: the manager's config is missing; issuing a new token", flush=True)
             for d in store.devices(mm.person_id()):
                 if d["name"] == manager.DEVICE and d["revoked_at"] is None:
                     store.device_revoke(d["id"], "hub")
@@ -201,7 +203,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if not mm.enabled():
             return
         host = identity.facts()["host"]
-        manager_files(host)
+        manager_files(host, now)
         admin = mm.admin_device(host)
         if admin is not None and mm.failures_last_hour(now) >= 2 \
                 and mm.push_once("manager-failed", now, 3600):
@@ -211,8 +213,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if not ok or admin is None:
             return
         folder = paths.home() / manager.DIR
-        ws.create_manager(admin["person_id"], mm.person_id(), admin, str(folder),
-                          str(folder / "config.json"), MANAGER_FIRST)
+        ws.create_manager(admin["person_id"], mm.person_id(), admin, str(folder), MANAGER_FIRST)
         mm.record_launch(now)
         wake_bridges()
 
