@@ -1909,8 +1909,9 @@ class Store:
             self._check_project(project, principal)
             rows = self.db.execute(
                 "SELECT topic, author, time, project FROM notes WHERE id IN"
-                " (SELECT MAX(id) FROM notes GROUP BY COALESCE(project, ''), topic)"
-                " AND project IS ? ORDER BY id DESC", (project,)).fetchall()
+                " (SELECT MAX(id) FROM notes WHERE deleted_at IS NULL"
+                " GROUP BY COALESCE(project, ''), topic)"
+                " AND project IS ? AND deleted_at IS NULL ORDER BY id DESC", (project,)).fetchall()
             return [dict(r) for r in rows]
 
     def notes_read(self, topic: str, principal: Optional[Principal] = None,
@@ -1925,7 +1926,8 @@ class Store:
         with self.lock:
             self._check_project(project, principal)
             rows = self.db.execute(
-                "SELECT * FROM notes WHERE topic=? AND project IS ? ORDER BY id DESC",
+                "SELECT * FROM notes WHERE topic=? AND project IS ? AND deleted_at IS NULL"
+                " ORDER BY id DESC",
                 (topic, project)).fetchall()
             return [Note(r["topic"], r["text"], r["author"], r["time"], r["project"])
                     for r in rows]

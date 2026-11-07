@@ -181,3 +181,43 @@ def test_feed_log_rows_have_sentences(app):
     app.store.project_register("proj-a", by="alice")
     rows = call(app, "alice", "GET", "/api/feed")[1]["log"]
     assert "alice registered the project proj-a" in [r["sentence"] for r in rows]
+
+
+def test_note_delete_and_undo_routes(app):
+    app.store.project_register("proj-a", by="alice")
+    app.store.grant_project("proj-a", app.ids["bob"], "write", "alice")
+    app.store.grant_project("proj-a", app.ids["carol"], "read", "alice")
+    note = {"topic": "plan", "text": "v1", "project": "proj-a"}
+    assert call(app, "bob", "POST", "/api/notes", note)[0] == 204
+
+    def topics(who):
+        return [n["topic"] for n in call(app, who, "GET", "/api/feed")[1]["notes"]]
+
+    assert topics("bob") == ["plan"]
+    assert call(app, "bob", "DELETE", "/api/notes?topic=plan&project=proj-a")[0] == 204
+    assert topics("bob") == []
+    assert call(app, "bob", "POST", "/api/notes/undo", {"topic": "plan", "project": "proj-a"})[0] == 204
+    assert topics("bob") == ["plan"]
+
+
+def test_member_cannot_delete_read_only_note(app):
+    app.store.project_register("proj-a", by="alice")
+    app.store.grant_project("proj-a", app.ids["carol"], "read", "alice")
+    call(app, "alice", "POST", "/api/notes", {"topic": "plan", "text": "v1", "project": "proj-a"})
+    status, text = call(app, "carol", "DELETE", "/api/notes?topic=plan&project=proj-a")
+    assert status == 400 and text.startswith("no access to project proj-a")
+    status, text = call(app, "alice", "DELETE", "/api/notes?topic=nope&project=proj-a")
+    assert (status, text) == (400, "no note named nope")
+
+
+def test_log_kinds_and_paging_routes(app):
+    assert call(app, "bob", "GET", "/api/log/kinds") == (403, "admin only")
+    assert call(app, "bob", "GET", "/api/log?kind=people")[0] == 403
+    status, kinds = call(app, "alice", "GET", "/api/log/kinds")
+    assert status == 200 and kinds[0] == {"kind": "people", "label": "People"}
+    for who, kind in (("alice", "person"), ("alice", "grant"), ("bob", "role"), ("carol", "grant")):
+        app.store.log_add(who, kind, "x")
+    all_rows = call(app, "alice", "GET", "/api/log")[1]
+    status, page = call(app, "alice", "GET", f"/api/log?kind=people&before={all_rows[0]['id']}")
+    assert status == 200 and page and all(r["kind"] in ("person", "role") for r in page)
+    assert call(app, "alice", "GET", "/api/log?kind=nope")[0] == 400

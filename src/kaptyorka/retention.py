@@ -2,7 +2,7 @@ import sys
 import threading
 import time
 
-from kaptyorka import memory
+from kaptyorka import admin_ops, memory
 
 
 def _stderr(line: str) -> None:
@@ -18,6 +18,10 @@ def prune_loop(store, stop: threading.Event, interval_s: float = 86400, report=_
                 report(f"retention: deleted {out['messages']} messages, {out['files']} files")
         except Exception as e:  # a failed prune must not stop the next one
             report(f"retention: prune failed: {e}")
+        try:
+            admin_ops.purge_deleted_notes(store, time.time())
+        except Exception as e:
+            report(f"retention: note purge failed: {e}")
         try:
             out = memory.prune(store, time.time())
             if any(out.values()):

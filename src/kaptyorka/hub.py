@@ -30,6 +30,7 @@ from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
 from kaptyorka.memory import MemoryStore, check_state
+from kaptyorka.secrets_check import check_secrets
 from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, clean
 from kaptyorka.workers import MAX_FACT, WorkerStore, _git as clean_git, clean_facts, safe_name
 
@@ -926,6 +927,28 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
 
+    @server.custom_route("/api/notes", methods=["DELETE"])
+    @_bad_request
+    async def api_note_delete(request: Request) -> Response:
+        q = request.query_params
+        try:
+            admin_ops.note_delete(store, request.scope["state"]["principal"],
+                                  q.get("topic") or "", q.get("project") or None)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/notes/undo", methods=["POST"])
+    @_bad_request
+    async def api_note_undo(request: Request) -> Response:
+        body = await request.json()
+        try:
+            admin_ops.note_undo(store, request.scope["state"]["principal"],
+                                str(body["topic"]), str(body.get("project") or "") or None)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return Response(status_code=204)
+
     limiter = RateLimiter()  # shared by token checks (Auth) and failed invite redeems
 
     def admin_only(request: Request) -> "Response | None":
@@ -949,8 +972,20 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return denied
         q = request.query_params
         limit = max(1, min(int(q.get("limit") or 200), 1000))
-        return JSONResponse([{**r, "sentence": admin_ops.log_sentence(r)}
-                             for r in store.log(limit, q.get("person") or None)])
+        try:
+            return JSONResponse(admin_ops.log_page(store, limit, q.get("person") or None,
+                                                   q.get("kind") or None,
+                                                   int(q.get("before") or 0) or None))
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+
+    @server.custom_route("/api/log/kinds", methods=["GET"])
+    async def api_log_kinds(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        return JSONResponse([{"kind": g, "label": g.capitalize()}
+                             for g, _ in admin_ops.log_kinds()])
 
     @server.custom_route("/api/settings", methods=["GET"])
     async def api_settings(request: Request) -> Response:
@@ -1075,6 +1110,22 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                             person_id=None if principal.is_admin() else principal.person_id)
         return JSONResponse([{k: v for k, v in r.items() if k not in ("session_key", "person_id")}
                              for r in rows])
+
+    @server.custom_route("/api/proposals", methods=["POST"])
+    @_bad_request
+    async def api_proposal_add(request: Request) -> Response:
+        body = await request.json()
+        p = request.scope["state"]["principal"]
+        if p.legacy or p.person_id is None:
+            return PlainTextResponse(OWN_TOKEN, status_code=400)
+        text, evidence = str(body["text"]), str(body.get("evidence", ""))
+        try:
+            check_secrets(text)
+            check_secrets(evidence)
+            pid = rs.propose(p, f"web:{p.person_name}", text, evidence)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return JSONResponse({"id": pid})
 
     @server.custom_route("/api/proposals/{pid:int}", methods=["POST"])
     @_bad_request

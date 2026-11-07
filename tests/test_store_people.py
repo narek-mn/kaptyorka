@@ -318,10 +318,11 @@ def test_retention_setting_store(tmp_path):
 def test_prune_loop_runs(tmp_path, monkeypatch):
     import threading
 
-    from kaptyorka import memory
+    from kaptyorka import admin_ops, memory
 
     monkeypatch.setattr(memory, "prune", lambda store, now: {"git_facts": 0, "done_checks": 0,
                                                              "state_writes": 0})  # Fake has no database
+    monkeypatch.setattr(admin_ops, "purge_deleted_notes", lambda store, now: 0)
 
     from kaptyorka.retention import prune_loop
 
@@ -342,9 +343,10 @@ def test_prune_loop_runs(tmp_path, monkeypatch):
 def test_prune_loop_one_failure_does_not_skip_the_other(monkeypatch):
     import threading
 
-    from kaptyorka import memory
+    from kaptyorka import admin_ops, memory
     from kaptyorka.retention import prune_loop
 
+    monkeypatch.setattr(admin_ops, "purge_deleted_notes", lambda store, now: 0)
     for store_fails in (True, False):
         ran, lines, stop = [], [], threading.Event()
 
@@ -516,3 +518,21 @@ def test_manager_cannot_take_a_real_admin_session(tmp_path, mhome):
     s.seen("k:m", "manager@box-1", "claude", "manager", principal=pm)
     assert s.agent("k:m").person_id == mid
     s.close()
+
+
+def test_prune_loop_purges_deleted_notes(monkeypatch):
+    import threading
+
+    from kaptyorka import admin_ops, memory
+    from kaptyorka.retention import prune_loop
+
+    purged, stop = [], threading.Event()
+    monkeypatch.setattr(admin_ops, "purge_deleted_notes", lambda store, now: purged.append(now))
+    monkeypatch.setattr(memory, "prune", lambda store, now: stop.set() or {})
+
+    class Fake:
+        def prune(self, now):
+            return {"messages": 0, "files": 0}
+
+    prune_loop(Fake(), stop, interval_s=0.01, report=lambda line: None)
+    assert len(purged) == 1

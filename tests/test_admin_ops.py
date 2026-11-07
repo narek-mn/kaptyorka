@@ -338,7 +338,102 @@ def test_schema_adds_removed_at_to_an_older_people_table(tmp_path):
     db = sqlite3.connect(str(tmp_path / "x.db"))
     db.execute("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)")
     db.execute("CREATE TABLE projects (name TEXT PRIMARY KEY)")
+    db.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, topic TEXT)")
     admin_ops.ensure_schema(db)
     admin_ops.ensure_schema(db)
+    assert "deleted_at" in [r[1] for r in db.execute("PRAGMA table_info(notes)")]
     assert "removed_at" in [r[1] for r in db.execute("PRAGMA table_info(people)")]
     assert "archived_at" in [r[1] for r in db.execute("PRAGMA table_info(projects)")]
+
+
+# notes: delete and undo, the log in groups
+
+@pytest.fixture
+def board(store, ids):
+    store.project_register("proj-a", by="alice")
+    store.grant_project("proj-a", ids["bob"], "write", "alice")
+    store.grant_project("proj-a", ids["carol"], "read", "alice")
+    return {n: who(store, n) for n in ("alice", "bob", "carol")}
+
+
+def test_note_delete_hides_everywhere(store, board):
+    alice = board["alice"]
+    store.notes_write_from_web("alice", "plan", "v1", "proj-a", principal=alice)
+    store.notes_write_from_web("alice", "plan", "v2", "proj-a", principal=alice)
+    assert admin_ops.note_delete(store, alice, "plan", "proj-a") == 2
+    assert store.notes_list(alice, "proj-a") == []
+    assert store.notes_read("plan", alice, "proj-a") is None
+    assert store.log(5)[0]["kind"] == "note_delete"
+    with pytest.raises(KaptyorkaError, match="no note named plan"):
+        admin_ops.note_delete(store, alice, "plan", "proj-a")
+
+
+def test_note_undo_restores_all_versions(store, board, clock):
+    alice = board["alice"]
+    store.notes_write_from_web("alice", "plan", "v1", "proj-a", principal=alice)
+    store.notes_write_from_web("alice", "plan", "v2", "proj-a", principal=alice)
+    admin_ops.note_delete(store, alice, "plan", "proj-a")
+    assert admin_ops.note_undo(store, board["bob"], "plan", "proj-a") == 2
+    history = store.note_history("plan", alice, "proj-a")
+    assert len(history) == 2 and history[0].text == "v2"
+    admin_ops.note_delete(store, alice, "plan", "proj-a")
+    clock[0] += admin_ops.UNDO_S + 1
+    with pytest.raises(KaptyorkaError, match="nothing to undo for plan"):
+        admin_ops.note_undo(store, alice, "plan", "proj-a")
+
+
+def test_note_delete_needs_write(store, board):
+    store.notes_write_from_web("alice", "plan", "v1", "proj-a", principal=board["alice"])
+    with pytest.raises(KaptyorkaError, match="no access"):
+        admin_ops.note_delete(store, board["carol"], "plan", "proj-a")
+    assert admin_ops.note_delete(store, board["bob"], "plan", "proj-a") == 1
+
+
+def test_team_note_delete_admin_or_author(store, board):
+    bob, carol, alice = board["bob"], board["carol"], board["alice"]
+    store.notes_write_from_web("bob", "idea", "v1")
+    store.notes_write_from_web("carol", "idea", "v2")
+    with pytest.raises(KaptyorkaError, match="only the admin or the person who started"):
+        admin_ops.note_delete(store, carol, "idea", None)
+    assert admin_ops.note_delete(store, bob, "idea", None) == 2
+    admin_ops.note_undo(store, alice, "idea", None)
+    assert admin_ops.note_delete(store, alice, "idea", None) == 2
+    shared = replace(alice, legacy=True)
+    with pytest.raises(KaptyorkaError, match="own device token"):
+        admin_ops.note_undo(store, shared, "idea", None)
+
+
+def test_purge_removes_only_old_deleted_notes(store, board, clock):
+    alice = board["alice"]
+    for t in ("old", "recent", "live"):
+        store.notes_write_from_web("alice", t, "x", "proj-a", principal=alice)
+    admin_ops.note_delete(store, alice, "old", "proj-a")
+    clock[0] += 9 * 60
+    admin_ops.note_delete(store, alice, "recent", "proj-a")
+    clock[0] += 2 * 60
+    assert admin_ops.purge_deleted_notes(store, clock[0]) == 1
+    rows = store.db.execute("SELECT topic FROM notes ORDER BY topic").fetchall()
+    assert [r["topic"] for r in rows] == ["live", "recent"]
+    assert any(r["kind"] == "note_delete" for r in store.log(10))
+
+
+def test_log_kinds_cover_every_sentence_kind():
+    groups = dict(admin_ops.log_kinds())
+    seen = [k for ks in groups.values() for k in ks]
+    assert sorted(seen) == sorted(set(seen)) and set(admin_ops.KNOWN_KINDS) <= set(seen)
+    assert list(groups)[0] == "people" and list(groups)[-1] == "sign-ins"
+
+
+def test_log_page_before_and_kind(store):
+    for who_, kind in (("alice", "person"), ("alice", "grant"), ("alice", "role"),
+                       ("bob", "mystery"), ("alice", "page_login")):
+        store.log_add(who_, kind, "x")
+    rows = store.log(5)
+    third = rows[2]["id"]
+    older = admin_ops.log_page(store, 10, None, None, third)
+    assert [r["id"] for r in older] == [r["id"] for r in rows[3:]] and "sentence" in older[0]
+    assert {r["kind"] for r in admin_ops.log_page(store, 10, None, "people", None)} == {"person", "role"}
+    assert [r["kind"] for r in admin_ops.log_page(store, 10, None, "other", None)] == ["mystery"]
+    assert len(admin_ops.log_page(store, 2, "alice", None, None)) == 2
+    with pytest.raises(KaptyorkaError, match="no log group"):
+        admin_ops.log_page(store, 10, None, "nope", None)

@@ -140,3 +140,26 @@ def test_member_sees_own_proposal_behind_100_newer_ones(hub):
             " VALUES (?, 'k', ?, 'e', 'rejected', 0)", [(bid, f"bob {i}") for i in range(100)])
     assert len(rs.proposals()) == 100
     assert [p["text"] for p in http.request("GET", hub.url + "/api/proposals", ta)[1]] == ["mine"]
+
+
+def test_page_proposal_refuses_shared_token(hub):
+    status, body = http.request("POST", hub.url + "/api/proposals", ADMIN, {"text": "x", "evidence": "y"})
+    assert status == 400 and body.startswith("use your own device token")
+
+
+def test_page_proposal_rejects_secrets(hub):
+    _, tok = person(hub.store, "bob")
+    status, body = http.request("POST", hub.url + "/api/proposals", tok,
+                                {"text": "key sk-ant-" + "a" * 40, "evidence": ""})
+    assert status == 400 and body.startswith("looks like a secret")
+
+
+def test_page_proposal_decision_reaches_person(hub):
+    _, tok = person(hub.store, "bob")
+    _, ta = person(hub.store, "alice", "admin")
+    status, body = http.request("POST", hub.url + "/api/proposals", tok,
+                                {"text": "Always run tests", "evidence": "asked twice"})
+    assert status == 200
+    assert http.request("POST", f"{hub.url}/api/proposals/{body['id']}", ta, {"accept": True})[0] == 200
+    msgs = http.request("GET", hub.url + "/api/feed", tok)[1]["messages"]
+    assert any("accepted" in m["text"] for m in msgs)

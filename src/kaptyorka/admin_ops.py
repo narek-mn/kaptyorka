@@ -2,7 +2,7 @@
 as plain sentences."""
 import json
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from kaptyorka.store import MAX_ABOUT, KaptyorkaError, Principal
 
@@ -18,7 +18,8 @@ WEB_KEYS = [("messages", "sender_key"), ("messages", "to_key"), ("workers", "bos
 
 
 def ensure_schema(db) -> None:
-    for table, col in (("people", "removed_at"), ("projects", "archived_at")):
+    for table, col in (("people", "removed_at"), ("projects", "archived_at"),
+                       ("notes", "deleted_at")):
         if col not in [r[1] for r in db.execute(f"PRAGMA table_info({table})")]:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {col} REAL")
 
@@ -211,6 +212,63 @@ def project_remove(store, name: str, by: Principal) -> dict:
     return {"grants": grants, "requests": requests, "folders": folders}
 
 
+# notes: delete and undo
+
+UNDO_S = 600  # a deleted note can come back this long
+
+
+def may_delete_note(store, principal: Principal, project: Optional[str], topic: str) -> None:
+    """Raise unless the principal may delete (or undo the deletion of) this note."""
+    if principal.legacy or principal.person_id is None:
+        raise KaptyorkaError("use your own device token to delete notes")
+    project = project or None
+    with store.lock:
+        if project is not None:
+            store._check_project(project, principal, write=True)
+            return
+        if principal.is_admin():
+            return
+        first = store.db.execute("SELECT author FROM notes WHERE project IS NULL AND topic=?"
+                                 " ORDER BY id LIMIT 1", (topic,)).fetchone()
+    if first is None or first["author"] != principal.person_name:
+        raise KaptyorkaError("only the admin or the person who started a team note can delete it")
+
+
+def _note_name(project: Optional[str], topic: str) -> str:
+    return f"{project or 'team'}:{topic}"
+
+
+def note_delete(store, principal: Principal, topic: str, project: Optional[str]) -> int:
+    """Hide every version of a note; it can come back for ten minutes, then it is purged."""
+    project = project or None
+    may_delete_note(store, principal, project, topic)
+    with store.lock:
+        n = store.db.execute("UPDATE notes SET deleted_at=? WHERE topic=? AND project IS ? AND"
+                             " deleted_at IS NULL", (store.clock(), topic, project)).rowcount
+    if n == 0:
+        raise KaptyorkaError(f"no note named {topic}")
+    store.log_add(principal.person_name, "note_delete", _note_name(project, topic))
+    return n
+
+
+def note_undo(store, principal: Principal, topic: str, project: Optional[str]) -> int:
+    project = project or None
+    may_delete_note(store, principal, project, topic)
+    with store.lock:
+        n = store.db.execute("UPDATE notes SET deleted_at=NULL WHERE topic=? AND project IS ? AND"
+                             " deleted_at>=?", (topic, project, store.clock() - UNDO_S)).rowcount
+    if n == 0:
+        raise KaptyorkaError(f"nothing to undo for {topic}")
+    store.log_add(principal.person_name, "note_undo", _note_name(project, topic))
+    return n
+
+
+def purge_deleted_notes(store, now: float) -> int:
+    """Remove for good the notes deleted more than ten minutes ago."""
+    with store.lock:
+        return store.db.execute("DELETE FROM notes WHERE deleted_at<?", (now - UNDO_S,)).rowcount
+
+
 # a member's own view
 
 def my_access(store, ws, principal: Principal) -> dict:
@@ -303,7 +361,52 @@ SENTENCES = {
     "proposal": _match(r"proposal (\d+) (\w+)", "{0} {2} rule proposal {1}"),
     "conflict": _match(r"conflict (\d+) in (.+)", "{0} reported a rule conflict ({1}) in {2}"),
     "backup": _match(r"(.*)", "{0} made a backup: {1}"),
+    "note_delete": _match(r"(.+)", "{0} deleted the note {1}"),
+    "note_undo": _match(r"(.+)", "{0} brought back the note {1}"),
 }
+
+KNOWN_KINDS = tuple(SENTENCES)
+
+# the plain groups of the log page, in order, and the raw kinds each covers
+LOG_GROUPS = [
+    ("people", ["person", "person_removed", "role", "invite", "invite_cancel", "device",
+                "device_shared", "join"]),
+    ("access", ["grant", "revoke", "request", "request_decided"]),
+    ("projects", ["project_register", "project_updated", "project_removed"]),
+    ("machines", ["machine_owner", "legacy_toggle", "legacy_assign", "legacy_used", "rekeyed",
+                  "backup", "auto_update"]),
+    ("messages", ["settings", "retention", "door_open", "door_close", "knock", "knock_answer",
+                  "note_delete", "note_undo"]),
+    ("rules", ["rules", "skills", "propose", "proposal", "conflict"]),
+    ("workers", ["manager", "work_decide"]),
+    ("sign-ins", ["page_login"]),
+]
+
+
+def log_kinds() -> List[Tuple[str, List[str]]]:
+    return [(g, list(ks)) for g, ks in LOG_GROUPS]
+
+
+def log_page(store, limit: int, person: Optional[str], kind: Optional[str],
+             before: Optional[int]) -> List[dict]:
+    """Log rows newest first with their sentence; `kind` is a group name, `before` a row id."""
+    limit = max(1, min(int(limit), 1000))
+    groups = dict(LOG_GROUPS)
+    sql, args = "SELECT id, time, person, kind, detail FROM log WHERE 1=1", []
+    if person:
+        sql, args = sql + " AND person=?", args + [person]
+    if before:
+        sql, args = sql + " AND id<?", args + [int(before)]
+    if kind == "other":
+        every = [k for ks in groups.values() for k in ks]
+        sql, args = sql + f" AND kind NOT IN ({','.join('?' * len(every))})", args + every
+    elif kind:
+        if kind not in groups:
+            raise KaptyorkaError(f"no log group named {kind}")
+        sql, args = sql + f" AND kind IN ({','.join('?' * len(groups[kind]))})", args + groups[kind]
+    with store.lock:
+        rows = store.db.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
+    return [{**dict(r), "sentence": log_sentence(dict(r))} for r in rows]
 
 
 def log_sentence(row: dict) -> str:
