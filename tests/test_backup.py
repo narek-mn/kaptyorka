@@ -2,6 +2,7 @@ import shutil
 import sqlite3
 import subprocess
 import tarfile
+from pathlib import Path
 
 import pytest
 
@@ -258,3 +259,31 @@ def test_restore_failure_puts_old_data_back(hub, monkeypatch):
     assert (hub / "hub.db").exists() and (hub / "files" / "a.txt").exists()
     assert (hub / "files.before-restore" / "older").exists()
     assert "put back" in lines[0]
+
+
+def test_restore_failed_move_aside_keeps_current_data(hub, monkeypatch):
+    monkeypatch.setattr(backup.shutil, "which", lambda n: None)
+    path, _ = backup.make(hub, fake_run([]))
+    (hub / "hub.db.before-restore").write_text("older")
+    (hub / "files" / "a.txt").write_text("current")
+    c = sqlite3.connect(hub / "hub.db")
+    c.execute("insert into t values ('current')")
+    c.commit()
+    c.close()
+    real = backup.Path.rename
+
+    def flaky(self, target):
+        if self.name == "hub.db" and Path(target).name == "hub.db.before-restore":
+            raise OSError("denied")
+        return real(self, target)
+
+    monkeypatch.setattr(backup.Path, "rename", flaky)
+    lines = []
+    assert backup.restore(hub, path, fake_run([]), out=lines.append) == 1
+    monkeypatch.undo()
+    assert "put back" in lines[0]
+    rows = sqlite3.connect(hub / "hub.db").execute("select x from t").fetchall()
+    assert rows == [("hello",), ("current",)]
+    assert (hub / "files" / "a.txt").read_text() == "current"
+    assert (hub / "hub.db.before-restore").read_text() == "older"
+    assert not (hub / "hub.db.before-restore.old").exists()

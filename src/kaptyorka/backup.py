@@ -112,36 +112,40 @@ def _rm(p: Path) -> None:
 def _swap_in(home: Path, new: Path) -> None:
     """Move the current data aside as *.before-restore, put the new data in place, and only
     then delete the older *.before-restore copies. On failure, put everything back."""
-    moved = []  # (path, aside, prev): current data now at aside, older aside at prev (or None)
+    done = []  # steps that really happened: ("park", aside, prev) or ("move", path, aside)
     try:
         for name in ("hub.db", "hub.db-wal", "hub.db-shm", "files"):
             path, aside = home / name, home / f"{name}.before-restore"
             if not path.exists():
                 continue
-            prev = None
             if aside.exists() or aside.is_symlink():
                 prev = home / f"{name}.before-restore.old"
                 _rm(prev)
                 aside.rename(prev)
-            moved.append((path, aside, prev))
+                done.append(("park", aside, prev))
             path.rename(aside)
+            done.append(("move", path, aside))
         (new / "hub.db").rename(home / "hub.db")
         if (new / "files").is_dir():
             (new / "files").rename(home / "files")
     except BaseException:
-        for path, aside, prev in reversed(moved):
+        for kind, x, y in reversed(done):
             try:
-                _rm(path)
-                if aside.exists():
-                    aside.rename(path)
-                if prev is not None and prev.exists():
-                    prev.rename(aside)
+                if kind == "move":
+                    if y.exists():  # the current data is at y: put it back
+                        _rm(x)
+                        y.rename(x)
+                elif y.exists():  # y is the parked older copy: back to x
+                    y.rename(x)
             except OSError:
                 pass
         raise
-    for _, _, prev in moved:
-        if prev is not None:
-            _rm(prev)
+    for kind, _, prev in done:
+        if kind == "park":
+            try:
+                _rm(prev)
+            except OSError:
+                pass
 
 
 def restore(home: Path, file: Path, run: Callable = subprocess.run, out: Callable = print) -> int:
