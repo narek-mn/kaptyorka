@@ -374,6 +374,10 @@ td.c-act .btn, td.c-act select { vertical-align: middle; }
 .acct small { display: block; color: var(--faint); font-size: 12px; }
 .dot.on { border-color: var(--green); background: var(--green); }
 .tag.warn { color: var(--amber); border-color: rgba(245, 183, 61, .4); }
+.tag .login-off { width: 6px; height: 6px; border-radius: 50%; background: var(--red); margin-right: -2px; }
+.tag[title] { cursor: help; }
+.login-line { margin-top: 6px; font-size: 12px; color: var(--red); white-space: normal; }
+.login-line code { font: 12px var(--mono); color: var(--text); }
 .tag.busy { color: var(--green); border-color: rgba(115, 191, 105, .4); padding: 0 6px; }
 .folder { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .folder small { color: var(--faint); font: 12px var(--mono); }
@@ -2007,11 +2011,17 @@ tr.archived b { color: var(--dim); }
     var ms = $("manager-state");
     ms.textContent = "";
     if (settings) {
-      var on = settings.manager_enabled;
-      ms.appendChild(el("b", { text: "The manager session is " + (on ? "on" : "off") + "." }));
-      ms.appendChild(el("span", null, on
-        ? ["Switch it off with ", el("code", { text: "kaptyorka start --no-manager" }), " on the hub machine, or close the manager worker on Machines."]
-        : ["Turn it on with ", el("code", { text: "kaptyorka start --manager" }), " on the hub machine."]));
+      var st = settings.manager_state, why = (settings.manager_reason || "").replace(/\.$/, "");
+      ms.appendChild(el("b", { text: st === "starting" ? "The manager session is starting."
+        : st === "up" ? "The manager session is running."
+        : st === "blocked" ? "The manager session is on but cannot start: " + why + "."
+        : "The manager session is off." }));
+      ms.appendChild(el("span", null, st === "off"
+        ? ["Turn it on with ", el("code", { text: "kaptyorka start --manager" }), " on the hub machine."]
+        : ["Switch it off with ", el("code", { text: "kaptyorka start --no-manager" }), " on the hub machine",
+           st === "blocked" ? "." : ", or close the manager worker on Machines."]));
+      if (st === "blocked" && settings.manager_error)
+        ms.appendChild(el("span", { "class": "hint werr", text: "Last start failed: " + settings.manager_error }));
     }
     var lg = feed.legacy;
     $("legacy-panel").hidden = !lg.enabled && !lg.unassigned.length;
@@ -2097,6 +2107,9 @@ tr.archived b { color: var(--dim); }
      every poll while the tab is open, else every 10 s for the admin's banner */
   var STATES = ["starting", "up", "unattended", "abandoned", "failed", "closed"];
   var LIVE = { starting: 1, up: 1 };
+  /* a tool's name and its own login command, for a machine where it is not logged in */
+  var LOGINS = { "claude-code": ["Claude Code", "claude auth login"], codex: ["Codex", "codex login"],
+                 opencode: ["OpenCode", "opencode auth login"] };
   function loadFleet(force) {
     if (!me || (!force && view !== "machines" && Date.now() - fleetAt < 10000)) return;
     fleetAt = Date.now();
@@ -2187,12 +2200,18 @@ tr.archived b { color: var(--dim); }
       var head = ["Account", "Version", "Load", "tmux", "Tools", "Folders"].concat(admin ? ["Auto-update"] : []);
       var tb = el("tbody");
       m.devices.forEach(function (d) {
-        var f = d.facts || {}, tools = f.tools || {}, hooks = f.hooks_ok || {};
+        var f = d.facts || {}, tools = f.tools || {}, hooks = f.hooks_ok || {}, logins = f.logins || {};
         var toolTags = el("div", { "class": "cell-tags" }, Object.keys(tools).sort().map(function (t) {
-          var bad = hooks[t] === false;
-          return el("span", { "class": "tag" + (bad ? " warn" : ""), title: bad ? "kaptyorka hooks missing" : null },
-                    [t, el("small", { text: tools[t] || "" })]);
+          var bad = hooks[t] === false, out = logins[t] === false;
+          var why = [bad ? "kaptyorka hooks missing" : "", out ? "not logged in" : ""].filter(Boolean).join("; ");
+          return el("span", { "class": "tag" + (bad ? " warn" : ""), title: why || null },
+                    [out ? el("i", { "class": "login-off" }) : null, t, el("small", { text: tools[t] || "" })]);
         }));
+        var loginLines = Object.keys(tools).sort().filter(function (t) { return logins[t] === false && LOGINS[t]; })
+          .map(function (t) {
+            return el("div", { "class": "login-line" }, [LOGINS[t][0] + " is not logged in on this machine. Run ",
+                      el("code", { text: LOGINS[t][1] }), " there."]);
+          });
         var folders = el("div", { "class": "cell-list" }, Object.keys(d.folders || {}).sort().map(function (p) {
           var path = d.folders[p];
           var busy = fleet.workers.some(function (w) {
@@ -2210,7 +2229,7 @@ tr.archived b { color: var(--dim); }
           fact("c-plain", "Version", f.version || d.version),
           fact("c-plain", "Load", f.load != null && f.cpus ? (+f.load).toFixed(1) + " / " + f.cpus + " cpus" : ""),
           fact("c-plain", "tmux", f.tmux === true ? "yes" : f.tmux === false ? "no" : ""),
-          el("td", { "class": "h-wide", "data-label": "Tools" }, [toolTags.childNodes.length ? toolTags : el("span", { "class": "hint", text: "No tools reported yet" })]),
+          el("td", { "class": "h-wide", "data-label": "Tools" }, toolTags.childNodes.length ? [toolTags].concat(loginLines) : [el("span", { "class": "hint", text: "No tools reported yet" })]),
           el("td", { "class": "h-wide" + (folders.childNodes.length ? "" : " nil"), "data-label": "Folders" }, [folders])
         ];
         if (admin) {

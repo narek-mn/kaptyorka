@@ -32,7 +32,7 @@ from kaptyorka.manager import ManagerStore
 from kaptyorka.memory import MemoryStore, check_state
 from kaptyorka.secrets_check import check_secrets
 from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, clean
-from kaptyorka.workers import MAX_FACT, WorkerStore, _git as clean_git, clean_facts, safe_name
+from kaptyorka.workers import LIVE, MAX_FACT, WorkerStore, _git as clean_git, clean_facts, safe_name
 
 MAX_WAIT_S = 25
 TICK_S = 15
@@ -1011,10 +1011,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return denied
         now = store.clock()
         row = ws.by_name(manager.WORKER)
-        running = row is not None and row["state"] in ("starting", "up")
+        running = row is not None and row["state"] in LIVE
         reason = "" if running else mm.launch_reason(now)
-        if running:
-            state = row["state"]
+        if running:  # unattended or abandoned: the session is there, just nobody watching
+            state = "starting" if row["state"] == "starting" else "up"
         elif not mm.enabled():
             state = "off"
         else:  # nothing in the way: the next tick starts it

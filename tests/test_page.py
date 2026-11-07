@@ -201,11 +201,15 @@ def test_settings_tab(hub):
     assert "Older messages and their files are deleted every night." in sec
     assert ">Manager<" in sec and 'id="legacy-panel"' in sec
     assert "Machines that joined before personal tokens" in sec
-    assert '"The manager session is " + (on ? "on" : "off")' in html
+    assert "settings.manager_state" in html and "settings.manager_reason" in html
+    assert '"The manager session is starting."' in html and '"The manager session is running."' in html
+    assert '"The manager session is on but cannot start: " + why + "."' in html
+    assert '"The manager session is off."' in html
+    assert '"Last start failed: " + settings.manager_error' in html
     assert "Turn it on with " in html and "kaptyorka start --manager" in html
     assert "Switch it off with " in html and "kaptyorka start --no-manager" in html
-    assert " on the hub machine, or close the manager worker on Machines." in html
-    assert '"/api/settings"' in html and "manager_enabled" in html
+    assert ", or close the manager worker on Machines." in html
+    assert '"/api/settings"' in html and "manager_state" in html
     people = re.search(r'<section id="people".*?</section>', html, re.S).group(0)
     assert "legacy" not in people and "Old machines" not in people
     assert 'ADMIN_VIEWS = ["people", "access", "audit", "settings"]' in html
@@ -220,3 +224,13 @@ def test_replacing_a_machine_owner_asks_first(hub):
     html = page(hub)
     assert '" the owner of " + m.host + " instead of " + m.owner + "?"' in html
     assert '"Leave " + m.host + " without an owner?"' in html
+
+
+def test_machines_show_which_tools_are_logged_in(hub):
+    html = page(hub)
+    assert "logins = f.logins || {}" in html and "logins[t] === false" in html
+    assert '"not logged in"' in html and '"class": "login-off"' in html
+    assert '" is not logged in on this machine. Run "' in html and '" there."' in html
+    for name, cmd in [("Claude Code", "claude auth login"), ("Codex", "codex login"),
+                      ("OpenCode", "opencode auth login")]:
+        assert f'["{name}", "{cmd}"]' in html

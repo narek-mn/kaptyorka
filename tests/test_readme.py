@@ -76,3 +76,11 @@ def test_readme_people_and_access_in_page_order_and_commands_listed():
               "kaptyorka project edit", "kaptyorka project remove"]:
         assert c in commands and c in people
     assert "![" not in people
+
+
+def test_readme_says_logins_and_why_the_manager_is_not_running():
+    r = (ROOT / "README.md").read_text()
+    assert ("The Machines tab shows which agent tools are installed and logged in on each machine,"
+            " as the tools report it; a tool that is not logged in cannot run workers there.") in r
+    mgr = r.split("## The manager", 1)[1].split("\n## ", 1)[0]
+    assert "When it is not running, the Settings tab says why" in mgr

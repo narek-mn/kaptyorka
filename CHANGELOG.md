@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- The manager no longer starts twice in a row. After a failed start the hub waits two minutes before it tries again, and it does not start the manager while Claude Code is not logged in on the hub machine. The Settings tab says whether the manager session is starting, running, off, or on but unable to start, with the reason and what its last start failed on.
+- The Machines tab shows which agent tools are logged in on each machine, as each tool's own status command reports it. A tool that is not logged in gets a red dot and a line with its login command (`claude auth login`, `codex login`, `opencode auth login`), and the admin gets a warning. When a started worker never shows up, its error names the likely cause: the tool is not logged in, or it does not trust the folder yet.
+- Clean-up: on Linux, a worker's leftover system scope (`kaptyorka-worker-<name>.scope`) is stopped before a new start, so a session that ended badly no longer blocks the next one.
+
 ## 0.6.0
 
 - The manager: one Claude Code session the hub starts on the hub machine through the admin's own bridge, and keeps alive (at most twice an hour). It is a worker named `manager`, under a `manager` person and device. Attach with `claude attach manager` on the hub machine.

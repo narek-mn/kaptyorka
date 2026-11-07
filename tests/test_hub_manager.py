@@ -235,6 +235,11 @@ def test_settings_carry_the_manager_reason_and_last_error(hub, clock):
                              " WHERE name='manager'")
     s = settings()
     assert s == {**s, "manager_state": "starting", "manager_reason": "", "manager_error": ""}
+    for kept in ("unattended", "abandoned"):  # the session is there, so it is up
+        with hub.store.lock:
+            hub.store.db.execute("UPDATE workers SET state=? WHERE name='manager'", (kept,))
+        s = settings()
+        assert s == {**s, "manager_state": "up", "manager_reason": "", "manager_error": ""}
 
 
 def test_no_launch_while_claude_is_logged_out(hub, clock):

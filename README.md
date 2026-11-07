@@ -249,7 +249,7 @@ The old shared token cannot start, adopt or close workers. Use your own token.
 
 "Shared" means an account that more than one person uses. The admin marks an account as shared with the **Shared** button on the page (Access tab). A worker started there runs as that OS account. It can read everything the account can read, including the account's kaptyorka token, git keys and ssh keys. So share only an account that was set up for this. The hub does not let a worker on a shared account start, adopt or close workers; it must ask its boss. This stops mistakes. It does not stop a hostile worker. A proper identity for each worker comes in a later version.
 
-The **Machines** tab on the page shows each machine, its workers and warnings (for example an old version). It also has the auto-update switch for each account.
+The **Machines** tab on the page shows each machine, its workers and warnings (for example an old version). It also has the auto-update switch for each account. The Machines tab shows which agent tools are installed and logged in on each machine, as the tools report it; a tool that is not logged in cannot run workers there.
 
 ## The manager
 
@@ -272,7 +272,7 @@ Keeping it alive: if it stops, the hub starts it again, at most twice an hour. I
 
 Switching it off: `kaptyorka start --no-manager` (kept in `hub.json`, so a restart keeps it) or `close_worker("manager")` by the admin, or **Close** on the manager's row of the Machines tab. Switched off, it gets no notices and cannot decide, `work` answers as with no manager, and a hub that starts switched off closes a manager session still running. `kaptyorka start --manager` switches it on again. Its files are in `~/.kaptyorka/manager/` (`CLAUDE.md`: the team rules and the manager's own instructions, written again when the rules change; `settings.json` and `mcp.json`: its permissions, hooks and MCP server) and `~/.kaptyorka/manager-config.json` (its token). The config lives outside the folder, and the hooks and the tool shim use it only for a session started in that folder.
 
-On the page, the Team tab marks its session with a `manager` badge, and the Machines tab shows `manager` where a worker's boss would be.
+On the page, the Team tab marks its session with a `manager` badge, and the Machines tab shows `manager` where a worker's boss would be. When it is not running, the Settings tab says why (for example the admin's bridge on the hub machine is offline) and what its last start failed on.
 
 ## People and access
 
