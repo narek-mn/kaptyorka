@@ -13,14 +13,14 @@ def skill(home, name):
 
 def test_render_frontmatter_from_skill_description():
     out = ss.render("review", "---\nname: x\ndescription: \"Check a diff\"\n---\nBody line\n")
-    assert out == f"---\nname: team-review\ndescription: Check a diff\n---\n{ss.MARKER}\n\nBody line\n"
+    assert out == f'---\nname: "team-review"\ndescription: "Check a diff"\n---\n{ss.MARKER}\n\nBody line\n'
 
 
 def test_render_description_from_first_line():
     out = ss.render("go", "\n\nFirst line\nsecond\n")
-    assert "description: First line\n---\n" in out
+    assert 'description: "First line"\n---\n' in out
     long = ss.render("go", "x" * 500)
-    assert long.split("\n")[2] == "description: " + "x" * 200
+    assert long.split("\n")[2] == 'description: "' + "x" * 200 + '"'
 
 
 def test_sync_writes_and_removes_marked_folders(tmp_path, home):
@@ -59,3 +59,56 @@ def test_remove_all(tmp_path, home):
     assert len(ss.remove_all(tmp_path, quiet)) == 1
     assert not skill(tmp_path, "a").parent.exists() and other.exists()
     assert not (paths.home() / "skills.json").exists()
+
+
+def test_render_quotes_description():
+    assert 'description: "Review changes"\n' in ss.render("r", "# Review changes\nx")
+    assert 'description: "Check: a diff"\n' in ss.render("r", "Check: a diff")
+    assert 'name: "team-r"\n' in ss.render("r", "x")
+
+
+def test_unsafe_names_skipped(tmp_path, home):
+    logged = []
+    bad = ["..", "a/b", "/abs", "", None, 5, "x" * 300, ".hidden"]
+    ss.sync(tmp_path, "v1", [{"name": n, "text": "T"} for n in bad], logged.append)
+    assert len(logged) == len(bad)
+    assert not (tmp_path / ".claude/skills").exists() or not list((tmp_path / ".claude/skills").iterdir())
+    assert not (tmp_path / "abs").exists() and not (tmp_path / "a").exists()
+
+
+def test_symlinked_team_folder_untouched(tmp_path, home):
+    ss.sync(tmp_path, "v1", [{"name": "a", "text": "A"}], quiet)
+    real = tmp_path / "elsewhere"
+    real.mkdir()
+    (real / "SKILL.md").write_text(ss.MARKER + "orig")
+    link = tmp_path / ".claude/skills/team-x"
+    link.symlink_to(real)
+    ss.sync(tmp_path, "v2", [{"name": "x", "text": "NEW"}], quiet)
+    assert (real / "SKILL.md").read_text() == ss.MARKER + "orig" and link.is_symlink()
+    ss.sync(tmp_path, "v3", [], quiet)
+    assert link.is_symlink() and (real / "SKILL.md").exists()
+    ss.remove_all(tmp_path, quiet)
+    assert link.is_symlink() and (real / "SKILL.md").exists()
+
+
+def test_symlinked_skill_md_untouched(tmp_path, home):
+    real = tmp_path / "real.md"
+    real.write_text(ss.MARKER + "orig")
+    f = skill(tmp_path, "x")
+    f.parent.mkdir(parents=True)
+    f.symlink_to(real)
+    ss.sync(tmp_path, "v1", [{"name": "x", "text": "NEW"}], quiet)
+    ss.sync(tmp_path, "v2", [], quiet)
+    ss.remove_all(tmp_path, quiet)
+    assert f.is_symlink() and real.read_text() == ss.MARKER + "orig"
+
+
+def test_symlinked_skills_root_gets_files(tmp_path, home):
+    target = tmp_path / "dotfiles-skills"
+    target.mkdir()
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude/skills").symlink_to(target)
+    ss.sync(tmp_path, "v1", [{"name": "a", "text": "A"}], quiet)
+    assert (target / "team-a/SKILL.md").exists()
+    ss.remove_all(tmp_path, quiet)
+    assert not (target / "team-a").exists()
