@@ -328,4 +328,5 @@ def test_project_activity_route(hub):
     assert body["branches"] == {}
     assert http.request("GET", url, bob_t)[0] == 403
     assert http.request("GET", hub.url + "/api/projects/nope/activity", "T")[0] == 404
+    assert http.request("GET", hub.url + "/api/projects/nope/activity", bob_t)[0] == 403
     assert http.request("GET", url, "bad")[0] == 401

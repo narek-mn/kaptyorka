@@ -908,10 +908,11 @@ def build_app(store: Store) -> Starlette:
         """The page's project view: the state note, a week of git facts, live branches."""
         principal = request.scope["state"]["principal"]
         project = request.path_params["name"]
-        if not ws.registered(project):
-            return PlainTextResponse("no such project", status_code=404)
+        # the read check first: a non-member learns nothing, not even that the name exists
         if not store.may_read_project(project, principal):
             return PlainTextResponse("no read role in this project", status_code=403)
+        if not ws.registered(project):
+            return PlainTextResponse("no such project", status_code=404)
         state = store.notes_read("state", principal, project)
         return JSONResponse({"state": state.text if state else None,
                              "git": ms.git_recent(project, 7),

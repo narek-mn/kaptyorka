@@ -1078,7 +1078,7 @@ td.c-act .btn + .btn { margin-left: 6px; }
       el("div", { "class": "phead" }, ["State", tag]),
       el("div", { "class": "pi-body state-note" }, d.state ? stateBlocks(d.state) : [el("div", { "class": "empty", text: "No state note yet" })])]));
     var rows = d.git.map(function (g) {
-      var live = d.branches[g.branch];
+      var live = Object.prototype.hasOwnProperty.call(d.branches, g.branch) ? d.branches[g.branch] : null;
       return el("li", null, [el("b", { text: g.person || "?" }), "\u00b7",
         el("span", { "class": "branch" + (live ? " live" : ""), text: g.branch || "detached",
                      title: live ? "working now: " + live.join(", ") : null }), "\u00b7",

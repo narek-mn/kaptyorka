@@ -33,3 +33,11 @@ def test_notes_show_project_state_and_git_activity(hub):
     assert "innerHTML" not in html and "marked" not in html
     assert re.search(r'charAt\(0\) === "#"', html)
     assert "\\u00b7" in html or "·" in html
+
+
+def test_activity_branch_lookup_is_own_property(hub):
+    # a branch named "constructor" or "toString" must not pick up Object.prototype
+    html = page(hub)
+    assert "Object.prototype.hasOwnProperty.call(d.branches, g.branch)" in html
+    assert "d.branches[g.branch]" in html.split("hasOwnProperty.call(d.branches, g.branch) ?")[1].split(";")[0]
+    assert html.count("d.branches[") == 1
