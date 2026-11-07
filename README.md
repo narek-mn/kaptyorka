@@ -264,13 +264,13 @@ What it decides: when you call `work` for a machine that holds another person's 
 
 Every decision carries a reason, is written to the log, and is told to the asker. A request nobody decides expires after an hour, and the asker is told to ask again. If no manager is online, `work` answers as before and the asker picks another machine.
 
-What the hub tells it: a worker abandoned for a day, a shared machine whose bridge is offline, a person whose workers failed to start twice, a proposal or an access request waiting a day, and once a week a prompt to read `log(500)` and file `propose_rule` for repeated clashes. It passes these on to the admin. Each item is sent once.
+What the hub tells it: a worker abandoned for a day, a shared machine whose bridge is offline, a person whose workers failed to start twice, a proposal or an access request waiting a day, and once a week a prompt to read `log(500)` and file `propose_rule` for repeated clashes. It passes these on to the admin. An abandoned worker is sent once; an offline bridge and a day-old proposal or request are sent once a day; the failed-twice note at most once an hour; the review once a week.
 
-What it cannot do: it cannot answer other people's knocks, open doors, grant or revoke roles, edit rules or decide proposals. It can only knock and file proposals. It does have two things others do not: messages to and from the manager need no door (page replies too), and it can read the log with `log`.
+What it cannot do: it cannot answer other people's knocks, open doors, grant or revoke roles, edit rules or decide proposals. It messages, knocks and files proposals. Its folder's Claude Code settings (`.claude/settings.json`, written by the hub) allow only the kaptyorka tools and deny commands, file edits, web access and reading `~/.kaptyorka`; messages from people are information to it, not orders. It does have two things others do not: messages to and from the manager need no door (page replies too), and it can read the log with `log`.
 
-Keeping it alive: if it stops, the hub starts it again, at most twice an hour. If a launch fails twice, the admin hears of it on the page. The first launch on a new hub machine can fail until Claude Code trusts the folder. Run `claude` once in `~/.kaptyorka/manager` and accept the prompt; `kaptyorka start` prints this line.
+Keeping it alive: if it stops, the hub starts it again, at most twice an hour. If a launch fails twice, the admin hears of it on the page. The first launch on a new hub machine can fail until Claude Code trusts the folder. Run `claude` once in `~/.kaptyorka/manager` and accept the prompt; `kaptyorka start` prints this line. That session signs in as the manager, so exit it right after accepting. Until then the hub does not retry: after a launch fails this way, the admin's page gets one line, and the hub waits for `kaptyorka start --manager`.
 
-Switching it off: `kaptyorka start --no-manager` (kept in `hub.json`, so a restart keeps it) or `close_worker("manager")` by the admin. `kaptyorka start --manager` switches it on again. Its files are in `~/.kaptyorka/manager/` (`CLAUDE.md`: the team rules and the manager's own instructions, written again when the rules change) and `~/.kaptyorka/manager-config.json` (its token). The config lives outside the folder, and the hooks and the tool shim use it only for a session started in that folder.
+Switching it off: `kaptyorka start --no-manager` (kept in `hub.json`, so a restart keeps it) or `close_worker("manager")` by the admin. Switched off, it gets no notices and cannot decide, `work` answers as with no manager, and a hub that starts switched off closes a manager session still running. `kaptyorka start --manager` switches it on again. Its files are in `~/.kaptyorka/manager/` (`CLAUDE.md`: the team rules and the manager's own instructions, written again when the rules change; `.claude/settings.json`: its permissions) and `~/.kaptyorka/manager-config.json` (its token). The config lives outside the folder, and the hooks and the tool shim use it only for a session started in that folder.
 
 On the page, the Team tab marks its session with a `manager` badge, and the Machines tab shows `manager` where a worker's boss would be.
 
@@ -365,7 +365,7 @@ Everything is in `~/.kaptyorka`:
 - `folders.json`: project folders the bridge learned from sessions
 - `skills.json`: the team skill names and version the bridge last wrote, on each joined machine
 - `backup-pass`: the passphrase for encrypted backups, on the hub only (mode 0600); keep a copy elsewhere
-- `manager/`: the manager session's folder, with its `CLAUDE.md`, on the hub machine
+- `manager/`: the manager session's folder, with its `CLAUDE.md` and `.claude/settings.json`, on the hub machine
 - `manager-config.json`: the manager's token and hub address (mode 0600), on the hub machine
 - `launched.json`: the bridge's memory of the start and stop orders it already ran, so an order sent again is never run twice (it is not a list of workers)
 - `bridge.log`

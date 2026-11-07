@@ -47,7 +47,12 @@ def test_readme_manager_section():
     r = (ROOT / "README.md").read_text()
     m = r.split("## The manager", 1)[1].split("\n## ", 1)[0]
     for s in ["claude attach manager", "--no-manager", "work_decide", "~/.kaptyorka/manager/", "manager-config.json",
-              "cannot answer other people's knocks"]:
-        assert s in m or s in r
+              "cannot answer other people's knocks", "It messages, knocks and files proposals",
+              "signs in as the manager, so exit it", "`kaptyorka start --manager`",
+              "`.claude/settings.json`", "closes a manager session still running",
+              "an offline bridge and a day-old proposal or request are sent once a day",
+              "the failed-twice note at most once an hour", "the review once a week"]:
+        assert s in m, s
+    assert "Each item is sent once" not in m and "It can only knock" not in m
     assert "The hub offers 25 tools" in r
     assert "add `team-*/` to that repo's `.gitignore`." in r
