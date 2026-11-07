@@ -413,9 +413,11 @@ def test_page_login_and_sign_out():
     unlock = html[html.index('$("unlock").addEventListener'):html.index('$("signout")')]
     assert "location.reload" not in unlock and 'get("/api/me")' in unlock
     assert 'id="signout"' in html and 'title="Sign out"' in html and "lock(false)" in html
-    # the label shows at desktop widths; only the phone layout hides it
+    # the label shows at desktop widths; the phone layout hides it, and so does the admin's
+    # nine-tab header from 721 to 1400 px (the tab names go too, kept on hover)
     assert '<span class="label">Sign out</span>' in html
-    assert html.count(".signout .label { display: none; }") == 1
+    assert html.count(".signout .label { display: none; }") == 2
+    assert ".is-admin .tab .label, .is-admin .signout .label { display: none; }" in html
     phone = html[html.index("@media (max-width: 720px)"):]
     assert ".signout .label { display: none; }" in phone
     assert 'id="viewer-initial"' in html and ".viewer .initial { display: grid; }" in html

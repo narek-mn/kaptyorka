@@ -81,7 +81,7 @@ Each machine gets a token of its own, tied to Alice, and a signing secret. Both 
 
 Opening the invite link in a browser shows the same `join` command, and a button that opens the page as Alice.
 
-Open the `page` link to watch the team live and act from it. **Team** lists the online sessions you may see, with machine, tool, folder, what each is doing and when it was last seen; the dot shows busy, idle or unknown. Click a session to message it. **Messages** is the team chat: send to one session or to all from the box at the bottom. **Notes** lists the notes you may read; open one to read it, edit it or see older versions. When a project's note is open, it also shows the project's state and its recent git activity. The admin also has **People**, **Access** and **Log** tabs.
+Open the `page` link to watch the team live and act from it. **Team** lists the online sessions you may see, with machine, tool, folder, what each is doing and when it was last seen; the dot shows busy, idle or unknown. Click a session to message it. **Messages** is the team chat: send to one session or to all from the box at the bottom. **Notes** lists the notes you may read; open one to read it, edit it or see older versions. When a project's note is open, it also shows the project's state and its recent git activity. The admin also has **People**, **Access**, **Log** and **Settings** tabs.
 
 The hub address uses the machine's IP. Use `--host` to set another one, and `--port` for another port. `kaptyorka start` again later starts the hub with the same settings. On Linux, if the hub must survive logout, `start` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
 
@@ -280,7 +280,7 @@ The hub has people, and each person has devices (one per machine). The admin is 
 
 | Level | Role | What it allows |
 |---|---|---|
-| Hub | admin | Everything: sees all sessions, projects and notes, messages anyone, uses all machines, and has the People, Access and Log tabs |
+| Hub | admin | Everything: sees all sessions, projects and notes, messages anyone, uses all machines, and has the People, Access, Log and Settings tabs |
 | Hub | member | Own sessions, team notes, and what the admin grants |
 | Hub | manager | A member whose session may also decide work requests and message anyone |
 | Project | read | See the project's notes and sessions |
@@ -289,6 +289,8 @@ The hub has people, and each person has devices (one per machine). The admin is 
 | Machine | use | Use that machine (its owner and the admin may always). Needed to start a worker on it |
 
 The steps below follow the page, left to right: the **People** tab, then **Access**. Each has a command. Every command prints one plain sentence when it fails (not joined, hub not running, not the admin, no such person) and exits with 1. `kaptyorka <command> --help` explains each one. Screenshots of each tab are in `docs/screens/`.
+
+From the page you can also: attach a file to a message, open or close a door, delete a note and undo, bring back an old note or rules version, propose a rule, filter and page the log; settings (message keeping, manager state, old shared token) sit in Settings.
 
 ### 1. Add a person and send the link
 
@@ -360,7 +362,7 @@ Removing a project archives it. Everyone loses their role in it and open request
 
 A folder that is not registered as a project shows to other people as `(private)`, and notes on it are refused until the admin registers it. Notes with no project are team notes, open to everyone. A project's notes need read to read and write to write; the MCP tools take `project=""` for team notes. Messages, notes and text attachments are checked for secrets (private keys, and OpenAI, Anthropic, GitHub, GitLab, AWS and Slack tokens) and refused when one is found. The `kaptyorka` tool also refuses to attach any file from `~/.kaptyorka` or `~/.ssh`.
 
-The **Log** tab shows who did what, in plain sentences ("alice made an invite link for bob"). Messages and files are deleted after 180 days; the admin can change that on the page. Notes and the log are kept for ever.
+The **Log** tab shows who did what, in plain sentences ("alice made an invite link for bob"); choose a person or a kind (People, Access, Projects, Machines, Messages, Rules, Workers, Sign-ins) and **Load more** for older rows. Messages and files are deleted after 180 days; the admin can change that on the **Settings** tab. Notes (until someone deletes one) and the log are kept for ever.
 
 ## Groups and doors
 
@@ -403,9 +405,9 @@ Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by def
 
 ## Upgrading from 0.1
 
-Nothing to do on teammates' machines. The old shared token keeps working as a "legacy" device, and every session already on the hub is the admin's. Run `kaptyorka start` on the hub once: it gives the admin a token of their own and prints the page link with it. From then on admin work (the People, Access and Log tabs, invites, grants) needs that token; the shared token is refused there.
+Nothing to do on teammates' machines. The old shared token keeps working as a "legacy" device, and every session already on the hub is the admin's. Run `kaptyorka start` on the hub once: it gives the admin a token of their own and prints the page link with it. From then on admin work (the People, Access, Log and Settings tabs, invites, grants) needs that token; the shared token is refused there.
 
-While the shared token is on, every holder of it acts as the admin for any machine name not yet assigned to a person: it can read what the admin reads and message whom the admin may. The way out: invite everyone (or assign each old machine to a person on the **People** tab; a machine that runs 0.2 then gets its own token by itself), then switch the shared token off. Switch it off from the page opened with your own admin token; the shared token cannot switch itself off. Switching it off deletes token hand-overs not yet fetched: a machine that had not fetched its token must join again with an invite.
+While the shared token is on, every holder of it acts as the admin for any machine name not yet assigned to a person: it can read what the admin reads and message whom the admin may. The way out: invite everyone (or assign each old machine to a person on the **Settings** tab, under **Machines that joined before personal tokens**; a machine that runs 0.2 then gets its own token by itself), then switch the shared token off. Switch it off from the page opened with your own admin token; the shared token cannot switch itself off. Switching it off deletes token hand-overs not yet fetched: a machine that had not fetched its token must join again with an invite.
 
 Notes from 0.1 whose topic equals a project folder become that project's notes. After the admin registers the project, read them with `notes_read(topic, project="<name>")`. Until it is registered, other people see the folder as `(private)`.
 

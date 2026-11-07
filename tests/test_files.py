@@ -134,7 +134,7 @@ def test_oversize_content_length_refused_unread(hub, home):
                 break
             reply += chunk
         reply = reply.decode()
-    assert reply.startswith("HTTP/1.1 400") and "file too large: 5000001 bytes" in reply
+    assert reply.startswith("HTTP/1.1 400") and "file too large: 5.0 MB, limit 5.0 MB" in reply
     assert hub.store.db.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
 
 

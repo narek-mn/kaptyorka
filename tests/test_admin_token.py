@@ -100,4 +100,4 @@ def test_machine_owner_route(hub):
     assert [r["detail"] for r in store.log() if r["kind"] == "machine_owner"] == [
         "pc -> nobody", "pc -> ann"]
     page = http.request("GET", url + "/", "")[1]
-    assert 'apiPath("/api/machines/", m.host, "/owner"), { person: owner.value }' in page
+    assert 'apiPath("/api/machines/", m.host, "/owner"), { person: to }' in page

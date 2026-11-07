@@ -98,6 +98,18 @@ nav { display: flex; align-items: stretch; gap: 4px; }
 .live.down i { background: var(--red); box-shadow: 0 0 0 3px rgba(242, 73, 92, .2); }
 
 main { flex: 1; min-height: 0; padding: 20px 24px 24px; display: flex; flex-direction: column; }
+/* nine tabs for the admin: tighter tabs on a laptop, icons and counts only below that (names on hover) */
+@media (max-width: 1520px) { header { gap: 12px; } .tab { gap: 6px; padding: 0 10px; } }
+@media (min-width: 721px) and (max-width: 1400px) {
+  .is-admin .tab .label, .is-admin .signout .label { display: none; }
+  .is-admin #view-title { display: block; color: #fff; }
+}
+@media (min-width: 721px) and (max-width: 980px) {
+  .is-admin .brand span, .is-admin .viewer > svg, .is-admin .viewer b, .is-admin .viewer .role { display: none; }
+  .is-admin .viewer .initial { display: grid; }
+  .is-admin header { gap: 8px; } .is-admin nav { gap: 0; } .is-admin .tab { padding: 0 8px; }
+  .is-admin .signout, .is-admin .live { margin-left: 10px; }
+}
 section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; }
 
@@ -170,9 +182,16 @@ tr.mine td:first-child { box-shadow: inset 2px 0 0 var(--blue-deep); }
 .toast { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 12px; color: var(--text);
   border-bottom: 1px solid var(--line); background: rgba(61, 113, 217, .1); }
 .toast .link { margin-left: auto; font-weight: 600; }
-.propose { align-items: flex-start; }
-.propose textarea { flex: 1 1 320px; min-width: 0; max-width: 560px; min-height: 52px; padding: 6px 8px; font-size: 12px; resize: vertical; }
-.propose input { flex: 1 1 220px; min-width: 0; max-width: 420px; }
+.sentence.propose { align-items: flex-start; }
+.propose > .btn { margin-top: 20px; }
+.propose .field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 320px; min-width: 0; max-width: 560px; }
+.propose .field + .field { flex: 1 1 220px; max-width: 420px; }
+.propose label { font-size: 12px; color: var(--dim); }
+.propose textarea { min-height: 52px; padding: 6px 8px; font-size: 12px; resize: vertical; }
+.propose textarea, .propose input { width: 100%; min-width: 0; }
+.more-row { display: flex; justify-content: center; padding: 10px 14px; border-top: 1px solid var(--line); }
+.sentence code { font: 12px var(--mono); color: var(--text); }
+#manager-state b { color: var(--text); font-weight: 600; }
 #knocks { flex: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
 #knocks:empty { display: none; }
 .knock {
@@ -478,7 +497,8 @@ tr.archived b { color: var(--dim); }
   .compose .attach { padding: 0 10px; }
   .compose .attach .label { display: none; }
   .compose .file-chip { flex: 1 1 0; max-width: none; }
-  .propose textarea, .propose input { flex-basis: 100%; max-width: none; }
+  .propose .field, .propose .field + .field { flex-basis: 100%; max-width: none; }
+  .propose > .btn { margin-top: 0; }
   /* the tabs: a bar at the bottom, each icon over its name; past five, the rest under More */
   #app { padding-bottom: 58px; }
   nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; height: 58px; gap: 0;
@@ -502,19 +522,19 @@ tr.archived b { color: var(--dim); }
   .knock { flex-wrap: wrap; }
   .knock .acts { flex-basis: 100%; align-items: stretch; }
   /* People, Access and Log: each row a card, its buttons on their own line */
-  #people thead, #access thead, #audit thead { display: none; }
-  #people table, #people tbody, #people tr, #people td,
+  #people thead, #access thead, #audit thead, #settings thead { display: none; }
+  #people table, #people tbody, #people tr, #people td, #settings table, #settings tbody, #settings tr, #settings td,
   #access table, #access tbody, #access tr, #access td,
   #audit table, #audit tbody, #audit tr, #audit td { display: block; }
-  #people tr, #access tr, #audit tr { padding: 10px 14px; border-bottom: 1px solid var(--line); }
-  #people tbody tr:last-child, #access tbody tr:last-child, #audit tbody tr:last-child { border-bottom: 0; }
-  #people td, #access td, #audit td { padding: 0; border: 0; }
-  #people td + td, #access td + td { margin-top: 8px; }
-  #people td.empty-row, #access td.empty-row, #audit td.empty-row { padding: 4px 0; }
+  #people tr, #access tr, #audit tr, #settings tr { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  #people tbody tr:last-child, #access tbody tr:last-child, #audit tbody tr:last-child, #settings tbody tr:last-child { border-bottom: 0; }
+  #people td, #access td, #audit td, #settings td { padding: 0; border: 0; }
+  #people td + td, #access td + td, #settings td + td { margin-top: 8px; }
+  #people td.empty-row, #access td.empty-row, #audit td.empty-row, #settings td.empty-row { padding: 4px 0; }
   #access tr.group td { padding: 0; }
-  #people td.c-act, #access td.c-act { display: flex; flex-wrap: wrap; gap: 6px; text-align: left; white-space: normal; }
-  #people td.c-act:empty, #access td.c-act:empty { display: none; }
-  #people td.c-act .btn + .btn, #access td.c-act .btn + .btn, #access td.c-act select + .btn { margin-left: 0; }
+  #people td.c-act, #access td.c-act, #settings td.c-act { display: flex; flex-wrap: wrap; gap: 6px; text-align: left; white-space: normal; }
+  #people td.c-act:empty, #access td.c-act:empty, #settings td.c-act:empty { display: none; }
+  #people td.c-act .btn + .btn, #access td.c-act .btn + .btn, #access td.c-act select + .btn, #settings td.c-act .btn + .btn { margin-left: 0; }
   #access td.seen { text-align: left; }
   .dev { flex-wrap: wrap; row-gap: 4px; }
   .confirm { max-width: 100%; justify-content: flex-start; }
@@ -596,6 +616,7 @@ tr.archived b { color: var(--dim); }
   <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 22 20H2z"/><path d="M12 10v4.5M12 17.5v.01"/></symbol>
   <symbol id="i-signout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4H6.5A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20H14"/><path d="M10 12h10M16.5 8.5 20 12l-3.5 3.5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18.8 9.8 21.3 10.0 21.3 14.0 18.8 14.2 18.4 15.3 20.0 17.1 17.1 20.0 15.3 18.4 14.2 18.8 14.0 21.3 10.0 21.3 9.8 18.8 8.7 18.4 6.9 20.0 4.0 17.1 5.6 15.3 5.2 14.2 2.7 14.0 2.7 10.0 5.2 9.8 5.6 8.7 4.0 6.9 6.9 4.0 8.7 5.6 9.8 5.2 10.0 2.7 14.0 2.7 14.2 5.2 15.3 5.6 17.1 4.0 20.0 6.9 18.4 8.7z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></symbol>
 </svg>
 
@@ -618,6 +639,7 @@ tr.archived b { color: var(--dim); }
       <button class="tab admin-only" role="tab" data-view="people" title="People" hidden><svg width="18" height="18"><use href="#i-people"/></svg><span class="label">People</span><span class="count" id="n-people">0</span></button>
       <button class="tab admin-only" role="tab" data-view="access" title="Access" hidden><svg width="18" height="18"><use href="#i-shield"/></svg><span class="label">Access</span><span class="count" id="n-access" hidden>0</span></button>
       <button class="tab admin-only" role="tab" data-view="audit" title="Log" hidden><svg width="18" height="18"><use href="#i-list"/></svg><span class="label">Log</span></button>
+      <button class="tab admin-only" role="tab" data-view="settings" title="Settings" hidden><svg width="18" height="18"><use href="#i-gear"/></svg><span class="label">Settings</span></button>
       <button class="tab-more" id="more" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu" hidden><svg width="18" height="18"><use id="more-icon" href="#i-more"/></svg><span class="label" id="more-label">More</span></button>
     </nav>
     <div id="more-menu" role="menu" aria-label="More tabs" hidden></div>
@@ -713,8 +735,10 @@ tr.archived b { color: var(--dim); }
           <div class="inline"><button type="button" class="btn small" id="propose-btn"><svg width="13" height="13"><use href="#i-plus"/></svg>Propose a rule</button></div>
         </div>
         <form class="sentence propose" id="propose" autocomplete="off" hidden>
-          <textarea id="prop-text" rows="2" placeholder="The rule" aria-label="The rule" maxlength="2000" required></textarea>
-          <input id="prop-why" placeholder="Why (what happened)" aria-label="Why (what happened)" maxlength="4000">
+          <span class="field"><label for="prop-text">The rule</label>
+          <textarea id="prop-text" rows="2" aria-label="The rule" maxlength="2000" required></textarea></span>
+          <span class="field"><label for="prop-why">Why (what happened)</label>
+          <input id="prop-why" aria-label="Why (what happened)" maxlength="4000"></span>
           <button type="submit" class="btn small primary">Send</button>
           <button type="button" class="btn small" id="prop-cancel">Cancel</button>
         </form>
@@ -767,11 +791,6 @@ tr.archived b { color: var(--dim); }
         </table>
         <div class="invites" id="invites-open" hidden></div>
       </div>
-      <div class="panel" id="legacy-panel">
-        <div class="phead">Old machines <span class="note" id="legacy-state"></span><div class="inline" id="legacy-toggle"></div></div>
-        <div class="err" id="legacy-err" hidden></div>
-        <div id="legacy-rows"></div>
-      </div>
     </section>
     <section id="access" role="tabpanel" class="admin" hidden>
       <div class="panel" id="req-panel" hidden>
@@ -820,12 +839,7 @@ tr.archived b { color: var(--dim); }
         <div class="phead">Log
           <div class="inline">
             <select id="log-person" aria-label="Person"></select>
-            <form class="inline" id="retention" autocomplete="off">
-              <label for="ret-days">Keep messages</label>
-              <input type="number" id="ret-days" min="1" max="3650" required>
-              <span>days</span>
-              <button type="submit" class="btn small">Save</button>
-            </form>
+            <select id="log-kind" aria-label="Kind"><option value="">Everything</option></select>
           </div>
         </div>
         <div class="err" id="log-err" hidden></div>
@@ -833,6 +847,30 @@ tr.archived b { color: var(--dim); }
           <thead><tr><th>When</th><th>Person</th><th>What</th></tr></thead>
           <tbody id="log-rows"></tbody>
         </table>
+        <div class="more-row" id="log-more-row" hidden><button type="button" class="btn small" id="log-more">Load more</button></div>
+      </div>
+    </section>
+    <section id="settings" role="tabpanel" class="admin" hidden>
+      <div class="panel">
+        <div class="phead">Messages</div>
+        <form class="sentence" id="retention" autocomplete="off">
+          <label for="ret-days">Keep messages for</label>
+          <input type="number" id="ret-days" min="1" max="3650" required>
+          <span>days.</span>
+          <span>Older messages and their files are deleted every night.</span>
+          <button type="submit" class="btn small primary">Save</button>
+          <span class="ok" id="ret-ok" hidden>Saved</span>
+        </form>
+        <div class="err" id="settings-err" hidden></div>
+      </div>
+      <div class="panel">
+        <div class="phead">Manager</div>
+        <div class="sentence" id="manager-state"></div>
+      </div>
+      <div class="panel" id="legacy-panel">
+        <div class="phead">Machines that joined before personal tokens <span class="note" id="legacy-state"></span><div class="inline" id="legacy-toggle"></div></div>
+        <div class="err" id="legacy-err" hidden></div>
+        <div id="legacy-rows"></div>
       </div>
     </section>
   </main>
@@ -842,11 +880,12 @@ tr.archived b { color: var(--dim); }
 (function () {
   "use strict";
   var KEY = "kaptyorka.token";
-  var VIEWS = ["team", "messages", "notes", "rules", "machines"], ADMIN_VIEWS = ["people", "access", "audit"];
+  var VIEWS = ["team", "messages", "notes", "rules", "machines"], ADMIN_VIEWS = ["people", "access", "audit", "settings"];
   var token = null, view = "team", filter = { machine: null, project: null };
   var feed = null, seen = {}, timer = null, expanded = {}, me = null, myProjects = [];
   var note = { key: null, project: null, topic: null, mode: "read", version: 0, history: false };
-  var logPerson = "", logRows = null;
+  var logPerson = "", logKind = "", logRows = null, logFull = false, logKinds = null, LOG_PAGE = 200;
+  var settings = null;  /* GET /api/settings: what the feed does not carry (the manager switch) */
   var fleet = { machines: [], workers: [], warnings: [] }, fleetAt = 0;
   var rules = null, rulesAt = 0, rulesUi = { edit: false, rejecting: null, history: false, hist: null, version: null };
   var holding = null, holdClose = null;  /* an open inline confirm or edit: refreshes leave its panel alone */
@@ -910,7 +949,7 @@ tr.archived b { color: var(--dim); }
   function pad(n) { return (n < 10 ? "0" : "") + n; }
   function clock(t) { var d = new Date(t * 1000); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); }
   function full(t) { return new Date(t * 1000).toLocaleString(); }
-  function size(n) { return n < 1024 ? n + " B" : n < 1048576 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1) + " MB"; }
+  function size(n) { return n < 1000 ? n + " B" : n < 1e6 ? Math.round(n / 1000) + " KB" : (n / 1e6).toFixed(1) + " MB"; }
   /* relative time; the exact time on hover; refreshed after every poll */
   function timeEl(t) {
     return el("time", { "data-t": String(t), datetime: new Date(t * 1000).toISOString(), title: full(t),
@@ -999,7 +1038,7 @@ tr.archived b { color: var(--dim); }
   }
   /* after a confirm closes: draw what the refreshes skipped while it was open */
   function redrawAdmin() {
-    ["people", "access", "fleet", "invites", "messages"].forEach(function (k) { seen[k] = null; });
+    ["people", "access", "fleet", "invites", "messages", "settings"].forEach(function (k) { seen[k] = null; });
     if (feed) render();
     if (fleet) renderFleet();
     renderInvites();
@@ -1020,7 +1059,9 @@ tr.archived b { color: var(--dim); }
     moreOpen(false);
     navMore();
     history.replaceState(null, "", location.pathname + (v === "team" ? "" : "#view=" + v));
-    if (v === "messages") { markClipped(); toBottom(); }
+    if (v === "messages") { markClipped(); toBottom(); if (feed) renderDoorHint(); }
+    if (v === "audit") loadKinds();
+    if (v === "settings") loadSettings();
     if (v === "machines") loadFleet(true);
     if (v === "rules") loadRules(true);
     if (v === "people") loadInvites();
@@ -1206,9 +1247,15 @@ tr.archived b { color: var(--dim); }
   /* admin: a door between two people, chosen in a sentence that holds through refreshes */
   function openDoor(anchor, names) {
     var a = el("select", { "aria-label": "First person" }), b = el("select", { "aria-label": "Second person" });
-    options(a, names, names[0]);
-    options(b, names, names[1]);
-    a.addEventListener("change", function () { if (b.value === a.value) b.value = names.filter(function (n) { return n !== a.value; })[0]; });
+    function door(x, y) { return feed.doors.some(function (d) { return (d.a_person === x && d.b_person === y) || (d.a_person === y && d.b_person === x); }); }
+    function partner(x) {  /* the first person who has no door with x yet */
+      var others = names.filter(function (n) { return n !== x; });
+      return others.filter(function (n) { return !door(x, n); })[0] || others[0];
+    }
+    var first = names.filter(function (x) { return !door(x, partner(x)); })[0] || names[0];
+    options(a, names, first);
+    options(b, names, partner(first));
+    a.addEventListener("change", function () { if (b.value === a.value || door(a.value, b.value)) b.value = partner(a.value); });
     confirmInline(anchor, "Open a door between", "Open", function () {
       if (a.value === b.value) { $("door-err").hidden = false; $("door-err").textContent = "Choose two different people."; return Promise.reject(); }
       return act("door-err", "/api/doors", { a_person: a.value, b_person: b.value });
@@ -1217,7 +1264,7 @@ tr.archived b { color: var(--dim); }
   /* the first time a knock or door shows: one line on what a door is, once per browser */
   function renderDoorHint() {
     var any = feed.knocks.length || feed.doors.length;
-    if (doorHint === null && any) {
+    if (doorHint === null && any && view === "messages") {  /* shown means seen: only on the open tab */
       doorHint = !store(function (s) { return s.getItem("kaptyorka.door-hint"); });
       store(function (s) { s.setItem("kaptyorka.door-hint", "1"); });
     }
@@ -1299,7 +1346,6 @@ tr.archived b { color: var(--dim); }
 
   function renderMessages(jump) {
     if (!busy("chips")) renderChips();
-    renderDoorHint();
     var log = $("log");
     var stick = jump || log.scrollHeight - log.scrollTop - log.clientHeight < 40, top = log.scrollTop;
     log.textContent = "";
@@ -1446,7 +1492,7 @@ tr.archived b { color: var(--dim); }
   function toast(t) {
     clearTimeout(toastTimer);
     noteToast = t;
-    if (t) toastTimer = setTimeout(function () { noteToast = null; renderTopics(); }, 8000);
+    if (t) toastTimer = setTimeout(function () { noteToast = null; deletedKey = null; renderTopics(); }, 8000);
     renderTopics();
   }
   /* the page hides what the hub would refuse; the hub decides */
@@ -1726,40 +1772,6 @@ tr.archived b { color: var(--dim); }
         el("td", { "class": "c-act" }, acts)
       ]));
     });
-    var lg = feed.legacy;
-    $("legacy-panel").hidden = !lg.enabled && !lg.unassigned.length;
-    $("legacy-state").textContent = !lg.enabled ? "Shared token off"
-      : lg.ready_to_disable ? "Shared token on. Every old machine has its own token now." : "Shared token on";
-    var tg = $("legacy-toggle");
-    tg.textContent = "";
-    if (lg.enabled) {
-      var off = button("Switch shared token off", lg.ready_to_disable ? "primary" : "danger", function () {
-        function go() { return act("legacy-err", "/api/legacy/off"); }
-        if (lg.ready_to_disable) quiet(go());
-        else confirmInline(off, "Machines still on the shared token stop working until they join again.", "Switch off", go);
-      });
-      tg.appendChild(off);
-    } else {
-      tg.appendChild(button("Switch shared token on", "", function () { quiet(act("legacy-err", "/api/legacy/on")); }));
-    }
-    var rows = $("legacy-rows");
-    rows.textContent = "";
-    if (!lg.unassigned.length) {
-      rows.appendChild(el("div", { "class": "empty-row", text: "No old machines waiting for a person" }));
-    } else {
-      var t = el("table"), tb = el("tbody");
-      t.appendChild(tb);
-      lg.unassigned.forEach(function (m) {
-        var sel = el("select", { "aria-label": "Person for " + m });
-        options(sel, personNames(false));
-        tb.appendChild(el("tr", null, [
-          el("td", null, [el("span", { "class": "dev" }, [icon("i-machine", 14), el("b", { text: m })])]),
-          el("td", { "class": "c-act" }, [el("span", { "class": "cell-tags", style: "justify-content:flex-end" }, [sel,
-            button("Assign", "primary", function () { quiet(act("legacy-err", "/api/legacy/assign", { machine: m, person: sel.value })); })])])
-        ]));
-      });
-      rows.appendChild(t);
-    }
   }
 
   /* member: what I may use, what I asked for, and the form to ask for more */
@@ -1948,13 +1960,20 @@ tr.archived b { color: var(--dim); }
       var owner = el("select", { "class": "own", "aria-label": "Owner of " + m.host });
       options(owner, [["", "\u2014"]].concat(personNames(false)), m.owner || "");
       owner.addEventListener("change", function () {
-        quiet(act("machine-err", apiPath("/api/machines/", m.host, "/owner"), { person: owner.value }).then(function () {
-          savedHost = m.host;
-          owner.blur();
-          seen.access = null;
-          render();
-          setTimeout(function () { if (savedHost === m.host) { savedHost = null; seen.access = null; render(); } }, 2000);
-        }));
+        var to = owner.value;
+        function set() {
+          return act("machine-err", apiPath("/api/machines/", m.host, "/owner"), { person: to }).then(function () {
+            savedHost = m.host;
+            owner.blur();
+            seen.access = null;
+            render();
+            setTimeout(function () { if (savedHost === m.host) { savedHost = null; seen.access = null; render(); } }, 2000);
+          });
+        }
+        if (!m.owner) { quiet(set()); return; }  /* replacing an owner asks first */
+        owner.value = m.owner;
+        confirmInline(owner, to ? "Make " + to + " the owner of " + m.host + " instead of " + m.owner + "?"
+                                : "Leave " + m.host + " without an owner?", "Yes", set, { edit: true });
       });
       mb.appendChild(el("tr", null, [
         el("td", null, [el("span", { "class": "dev" }, [icon("i-machine", 14), el("b", { text: m.host })]),
@@ -1967,12 +1986,66 @@ tr.archived b { color: var(--dim); }
     if (!feed.machines.length) mb.appendChild(el("tr", null, [el("td", { colspan: "4", "class": "empty-row", text: "No machines yet. Invite a person on the People tab; their machines appear here when they join." })]));
   }
 
-  /* admin: Log */
-  function renderLog() {
-    options($("log-person"), [["", "Everyone"]].concat(personNames(false), ["system"]), logPerson);
+  /* admin: Settings: how long messages stay, the manager's switch (read only), the old shared token */
+  function loadSettings() {
+    if (!isAdmin() || view !== "settings") return;
+    get("/api/settings").then(function (r) { settings = r; render(); },
+      function (e) { $("settings-err").hidden = false; $("settings-err").textContent = e.message; });
+  }
+  function renderSettings() {
     var ret = $("ret-days");
     if (document.activeElement !== ret) ret.value = feed.settings.retention_days;
-    var rows = logPerson ? logRows || [] : feed.log, body = $("log-rows");
+    var ms = $("manager-state");
+    ms.textContent = "";
+    if (settings) {
+      var on = settings.manager_enabled;
+      ms.appendChild(el("b", { text: "The manager session is " + (on ? "on" : "off") + "." }));
+      ms.appendChild(el("span", null, on
+        ? ["Switch it off with ", el("code", { text: "kaptyorka start --no-manager" }), " on the hub machine."]
+        : ["Turn it on with ", el("code", { text: "kaptyorka start --manager" }), " on the hub machine."]));
+    }
+    var lg = feed.legacy;
+    $("legacy-panel").hidden = !lg.enabled && !lg.unassigned.length;
+    $("legacy-state").textContent = !lg.enabled ? "Shared token off"
+      : lg.ready_to_disable ? "Shared token on. Every old machine has its own token now." : "Shared token on";
+    var tg = $("legacy-toggle");
+    tg.textContent = "";
+    if (lg.enabled) {
+      var off = button("Switch shared token off", lg.ready_to_disable ? "primary" : "danger", function () {
+        function go() { return act("legacy-err", "/api/legacy/off"); }
+        if (lg.ready_to_disable) quiet(go());
+        else confirmInline(off, "Machines still on the shared token stop working until they join again.", "Switch off", go);
+      });
+      tg.appendChild(off);
+    } else {
+      tg.appendChild(button("Switch shared token on", "", function () { quiet(act("legacy-err", "/api/legacy/on")); }));
+    }
+    var rows = $("legacy-rows");
+    rows.textContent = "";
+    if (!lg.unassigned.length) {
+      rows.appendChild(el("div", { "class": "empty-row", text: "No old machines waiting for a person" }));
+    } else {
+      var t = el("table"), tb = el("tbody");
+      t.appendChild(tb);
+      lg.unassigned.forEach(function (m) {
+        var sel = el("select", { "aria-label": "Person for " + m });
+        options(sel, personNames(false));
+        tb.appendChild(el("tr", null, [
+          el("td", null, [el("span", { "class": "dev" }, [icon("i-machine", 14), el("b", { text: m })])]),
+          el("td", { "class": "c-act" }, [el("span", { "class": "cell-tags", style: "justify-content:flex-end" }, [sel,
+            button("Assign", "primary", function () { quiet(act("legacy-err", "/api/legacy/assign", { machine: m, person: sel.value })); })])])
+        ]));
+      });
+      rows.appendChild(t);
+    }
+  }
+
+  /* admin: Log. The feed's last 200 rows serve until a filter is set or more are loaded;
+     then the rows come from /api/log, fetched again (as many) whenever the feed's rows change */
+  function renderLog() {
+    options($("log-person"), [["", "Everyone"]].concat(personNames(false), ["system"]), logPerson);
+    if (logKinds) options($("log-kind"), [["", "Everything"]].concat(logKinds.map(function (k) { return [k.kind, k.label]; })), logKind);
+    var rows = logRows || feed.log, body = $("log-rows");
     body.textContent = "";
     rows.forEach(function (r) {
       body.appendChild(el("tr", null, [
@@ -1981,13 +2054,34 @@ tr.archived b { color: var(--dim); }
         el("td", { "class": "text l-what", title: r.kind + (r.detail ? ": " + r.detail : ""), text: r.sentence || r.kind + ": " + r.detail })
       ]));
     });
-    if (!rows.length) body.appendChild(el("tr", null, [el("td", { colspan: "3", "class": "empty-row", text: "Nothing logged" })]));
+    if (!rows.length) body.appendChild(el("tr", null, [el("td", { colspan: "3", "class": "empty-row",
+      text: logPerson || logKind ? "Nothing logged for this choice. Pick Everyone and Everything to see all." : "Nothing logged yet" })]));
+    $("log-more-row").hidden = logRows ? !logFull : feed.log.length < LOG_PAGE;
   }
-  function loadLog() {
-    if (!logPerson) { logRows = null; seen.audit = null; render(); return; }
-    get("/api/log?limit=200&person=" + encodeURIComponent(logPerson))
-      .then(function (rows) { logRows = rows; seen.audit = null; render(); })
-      .catch(function (e) { $("log-err").hidden = false; $("log-err").textContent = e.message; });
+  function logQuery(limit, before) {
+    return "/api/log?limit=" + limit + (logPerson ? "&person=" + encodeURIComponent(logPerson) : "")
+      + (logKind ? "&kind=" + encodeURIComponent(logKind) : "") + (before ? "&before=" + before : "");
+  }
+  function logFailed(e) { $("log-err").hidden = false; $("log-err").textContent = e.message; }
+  function loadLog(reset) {
+    if (reset) logRows = null;
+    if (!logPerson && !logKind && !logRows) { seen.audit = null; render(); return; }
+    var n = Math.min(1000, Math.max(LOG_PAGE, logRows ? logRows.length : 0));
+    get(logQuery(n)).then(function (rows) {
+      $("log-err").hidden = true; logRows = rows; logFull = rows.length === n; seen.audit = null; render();
+    }).catch(logFailed);
+  }
+  function loadMore() {
+    var rows = logRows || feed.log, last = rows[rows.length - 1];
+    if (!last) return;
+    $("log-more").disabled = true;
+    get(logQuery(LOG_PAGE, last.id)).then(function (more) {
+      $("log-err").hidden = true; logRows = rows.concat(more); logFull = more.length === LOG_PAGE; seen.audit = null; render();
+    }).catch(logFailed).then(function () { $("log-more").disabled = false; });
+  }
+  function loadKinds() {
+    if (logKinds || !isAdmin()) return;
+    get("/api/log/kinds").then(function (k) { logKinds = k; seen.audit = null; render(); }, logFailed);
   }
 
   /* Machines: workers, warnings (admin), one card per host; fetched apart from the feed,
@@ -2332,16 +2426,18 @@ tr.archived b { color: var(--dim); }
     var places = feed.agents.map(function (a) { return [a.name, a.machine, a.project, a.label]; });
     if (changed("messages", [feed.messages, feed.doors, places, filter])) renderMessages();
     if (changed("knocks", [feed.knocks, feed.agents.some(function (a) { return a.mine; })])) renderKnocks();
+    renderDoorHint();
     if (changed("to", places)) renderTo();
     if (note.mode === "read" && !busy("doc") && changed("notes", feed.notes)) renderNotes();
     if (feed.people) {
       $("n-people").textContent = feed.people.length;
       $("n-access").textContent = feed.requests.length;
       $("n-access").hidden = !feed.requests.length;
-      if (!busy("people") && changed("people", [feed.people, feed.legacy])) renderPeople();
+      if (!busy("people") && changed("people", feed.people)) renderPeople();
       if (!busy("access") && changed("access", [feed.requests, feed.decisions, feed.projects, feed.archived_projects, feed.machines, feed.people, savedHost])) renderAccess();
-      if (!busy("audit") && changed("audit", [feed.log, feed.settings, feed.people, logPerson, logRows])) renderLog();
-      if (logPerson && changed("log-src", feed.log)) loadLog();
+      if (!busy("audit") && changed("audit", [feed.log, feed.people, logPerson, logKind, logRows, logFull, logKinds])) renderLog();
+      if (changed("log-src", feed.log) && logRows) loadLog();
+      if (!busy("settings") && changed("settings", [feed.settings, feed.legacy, feed.people, settings])) renderSettings();
     }
     navMore();
     tick();
@@ -2372,6 +2468,7 @@ tr.archived b { color: var(--dim); }
         loadFleet();
         loadRules();
         if (view === "people") loadInvites();
+        loadSettings();
         loadAccess();
         clearTimeout(timer);
         timer = setTimeout(poll, 2000);
@@ -2433,10 +2530,15 @@ tr.archived b { color: var(--dim); }
   });
   $("retention").addEventListener("submit", function (e) {
     e.preventDefault();
-    quiet(act("log-err", "/api/settings", { retention_days: parseInt($("ret-days").value, 10) })
-      .then(function () { $("ret-days").blur(); }));
+    quiet(act("settings-err", "/api/settings", { retention_days: parseInt($("ret-days").value, 10) })
+      .then(function () {
+        $("ret-days").blur(); $("ret-ok").hidden = false;
+        setTimeout(function () { $("ret-ok").hidden = true; }, 3000);
+      }));
   });
-  $("log-person").addEventListener("change", function () { logPerson = $("log-person").value; loadLog(); });
+  $("log-person").addEventListener("change", function () { logPerson = $("log-person").value; loadLog(true); });
+  $("log-kind").addEventListener("change", function () { logKind = $("log-kind").value; loadLog(true); });
+  $("log-more").addEventListener("click", loadMore);
   $("ask-kind").addEventListener("change", askNames);
   $("ask-kind").addEventListener("change", function () {
     $("ask-target").placeholder = $("ask-kind").value === "machine" ? "Machine name" : "Project name";
@@ -2486,11 +2588,13 @@ tr.archived b { color: var(--dim); }
   function start(m) {
     me = m;
     seen = {}; feed = null; invites = []; myProjects = []; myAccess = null;
+    logPerson = logKind = ""; logRows = logKinds = settings = null;
     $("viewer-name").textContent = m.person;
     $("viewer-initial").textContent = m.person.charAt(0).toUpperCase();
     $("viewer").title = "Signed in as " + m.person + " on " + m.device;
     $("viewer-role").hidden = m.role !== "admin";
     document.querySelectorAll(".admin-only").forEach(function (n) { n.hidden = m.role !== "admin"; });
+    $("app").classList.toggle("is-admin", m.role === "admin");  /* nine tabs: the header packs tighter */
     if (m.role !== "admin") get("/api/projects").then(function (ps) { myProjects = ps; }, function () {});
     show(view);
     poll();

@@ -477,7 +477,7 @@ def test_approve_never_lowers_role(hub):
 
 def test_retention_setting(hub):
     status, body = http.request("GET", hub.url + "/api/settings", ADMIN)
-    assert status == 200 and body == {"retention_days": 180}
+    assert status == 200 and body["retention_days"] == 180
     status, _ = http.request("POST", hub.url + "/api/settings", ADMIN, {"retention_days": 30})
     assert status == 200 and hub.store.retention_days() == 30
     for bad in (0, 3651, "x"):

@@ -165,7 +165,7 @@ def test_phone_more_menu(tmp_path):
             assert page.js('document.getElementById("view-title").textContent') == "Team"
             page.js('document.getElementById("more").click()')
             items = page.wait('[...document.querySelectorAll("#more-menu button")].map(b => b.textContent)')
-            assert [i.rstrip("0123456789") for i in items] == ["Rules", "People", "Access", "Log"]
+            assert [i.rstrip("0123456789") for i in items] == ["Rules", "People", "Access", "Log", "Settings"]
             page.js('document.body.click()')  # a click outside closes it
             assert page.js('document.getElementById("more-menu").hidden')
             page.js('document.getElementById("more").click()')

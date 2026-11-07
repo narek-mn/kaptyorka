@@ -316,6 +316,8 @@ def test_log_sentences():
         ("conflict", "conflict 2 in proj-a", "alice reported a rule conflict (2) in proj-a"),
         ("request_decided", "project:proj-a -> bob: approved (already write)",
          "alice approved bob's request for the project proj-a"),
+        ("settings", "retention_days=60", "alice set message keeping to 60 days"),
+        ("machine_owner", "box-1 -> bob", "alice made bob the owner of box-1"),
         ("something_new", "x y", "something_new: x y"),
         ("grant", "odd detail", "grant: odd detail"),
     ]

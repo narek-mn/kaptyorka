@@ -225,6 +225,14 @@ def test_log_kinds_and_paging_routes(app):
     assert call(app, "alice", "GET", "/api/log?kind=other")[0] == 200
 
 
+def test_settings_show_the_manager_switch(app):
+    status, body = call(app, "alice", "GET", "/api/settings")
+    assert status == 200 and body == {"retention_days": 180, "manager_enabled": False}
+    ManagerStore(app.store).set_enabled(True, "test")
+    assert call(app, "alice", "GET", "/api/settings")[1]["manager_enabled"] is True
+    assert call(app, "bob", "GET", "/api/settings")[0] == 403
+
+
 def test_note_delete_without_topic(app):
     assert call(app, "alice", "DELETE", "/api/notes") == (400, "topic is empty")
     assert call(app, "alice", "DELETE", "/api/notes?topic=%20") == (400, "topic is empty")

@@ -102,7 +102,7 @@ def test_phone_layouts(hub):
     assert '$("more-label").textContent = cur ? cur.title : "More";' in html
     assert 'n && !n.hidden ? el("span", { "class": "count", text: n.textContent }) : null' in html
     assert "/* a click outside closes the menu */" in html and "mask-image" not in phone
-    assert "#people td.c-act, #access td.c-act { display: flex; flex-wrap: wrap;" in phone
+    assert "#people td.c-act, #access td.c-act, #settings td.c-act { display: flex; flex-wrap: wrap;" in phone
     assert "#audit td.l-what" in phone
     assert ".stack td.nil { display: none; }" in phone and '"sw-label", text: "Auto-update"' in html
     assert 'id="chips-toggle"' in html and ".chips.folded { display: none; }" in phone
@@ -166,3 +166,48 @@ def test_page_never_uses_browser_dialogs(hub):
     script = page(hub).split("<script>", 1)[1]
     assert not re.search(r"(?<![\w.])(prompt|alert|confirm)\(", script)
     assert not re.search(r"window\.(prompt|alert|confirm)\b", script)
+
+
+def test_log_kind_filter_and_load_more(hub):
+    html = page(hub)
+    audit = re.search(r'<section id="audit".*?</section>', html, re.S).group(0)
+    assert 'id="log-person"' in audit and 'id="log-kind" aria-label="Kind"' in audit
+    assert 'id="log-more"' in audit and ">Load more<" in audit
+    assert 'id="retention"' not in audit and "Keep messages" not in audit
+    assert '"/api/log/kinds"' in html and '[["", "Everything"]]' in html
+    assert '"&kind=" + encodeURIComponent(logKind)' in html and '"&before=" + ' in html
+
+
+def test_settings_tab(hub):
+    html = page(hub)
+    assert '<symbol id="i-gear"' in html
+    nav = re.search(r"<nav.*?</nav>", html, re.S).group(0)
+    tabs = re.findall(r'data-view="(\w+)"', nav)
+    assert tabs[-1] == "settings"
+    assert re.search(r'<button class="tab admin-only" role="tab" data-view="settings" title="Settings" hidden>'
+                     r'<svg[^>]*><use href="#i-gear"/>', nav)
+    sec = re.search(r'<section id="settings".*?</section>', html, re.S).group(0)
+    assert 'class="admin"' in sec
+    assert 'id="retention"' in sec and 'id="ret-days"' in sec
+    assert "Keep messages for" in sec and "<span>days.</span>" in sec
+    assert "Older messages and their files are deleted every night." in sec
+    assert ">Manager<" in sec and 'id="legacy-panel"' in sec
+    assert "Machines that joined before personal tokens" in sec
+    assert '"The manager session is " + (on ? "on" : "off")' in html
+    assert "Turn it on with " in html and "kaptyorka start --manager" in html
+    assert "Switch it off with " in html and "kaptyorka start --no-manager" in html
+    assert '"/api/settings"' in html and "manager_enabled" in html
+    people = re.search(r'<section id="people".*?</section>', html, re.S).group(0)
+    assert "legacy" not in people and "Old machines" not in people
+    assert 'ADMIN_VIEWS = ["people", "access", "audit", "settings"]' in html
+
+
+def test_proposal_fields_have_visible_labels(hub):
+    form = re.search(r'<form[^>]*id="propose".*?</form>', page(hub), re.S).group(0)
+    assert '<label for="prop-text">' in form and '<label for="prop-why">' in form
+
+
+def test_replacing_a_machine_owner_asks_first(hub):
+    html = page(hub)
+    assert '" the owner of " + m.host + " instead of " + m.owner + "?"' in html
+    assert '"Leave " + m.host + " without an owner?"' in html

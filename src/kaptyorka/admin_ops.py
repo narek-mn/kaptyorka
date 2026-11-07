@@ -380,6 +380,8 @@ SENTENCES = {
     "backup": _match(r"(.*)", "{0} made a backup: {1}"),
     "note_delete": _match(r"(.+)", "{0} deleted the note {1}"),
     "note_undo": _match(r"(.+)", "{0} brought back the note {1}"),
+    "settings": _match(r"retention_days=(\d+)", "{0} set message keeping to {1} days"),
+    "machine_owner": _match(r"(.+) -> (.+)", "{0} made {2} the owner of {1}"),
 }
 
 KNOWN_KINDS = tuple(SENTENCES)

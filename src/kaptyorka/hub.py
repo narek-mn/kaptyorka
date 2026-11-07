@@ -861,8 +861,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     async def api_file_upload(request: Request) -> Response:
         principal = request.scope["state"]["principal"]
         name = unquote(request.headers.get("x-file-name") or "") or "file"
+        def mb(n):  # as the page writes sizes
+            return f"{n / 1_000_000:.1f} MB"
+
         def too_large(n):
-            return PlainTextResponse(f"file too large: {n} bytes, limit {MAX_FILE}", status_code=400)
+            return PlainTextResponse(f"file too large: {mb(n)}, limit {mb(MAX_FILE)}", status_code=400)
 
         declared = request.headers.get("content-length") or ""
         if declared.isdigit() and int(declared) > MAX_FILE:
@@ -1009,7 +1012,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         denied = admin_only(request)
         if denied:
             return denied
-        return JSONResponse({"retention_days": store.retention_days()})
+        return JSONResponse({"retention_days": store.retention_days(), "manager_enabled": mm.enabled()})
 
     @server.custom_route("/api/settings", methods=["POST"])
     @_bad_request
