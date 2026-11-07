@@ -515,6 +515,22 @@ def test_page_answers_the_manager_without_a_door(hub):
     assert status == 400 and "no door" in body
 
 
+def test_page_sends_a_file_to_the_manager_without_a_door(hub):
+    mgr, me = manager_online(hub)
+    bob_id, btok, _ = plain(hub, "bob")
+    fid = hub.store.file_add("a.txt", b"hello", bob_id)
+    status, body = http.request("POST", hub.url + "/api/send", btok,
+                                {"to": "laptop/codex/manager", "text": "see this",
+                                 "file_id": fid})
+    assert (status, body) == (200, {"sent": 1})
+    [m] = [m for m in hub.store.messages() if m.file]
+    assert (m.text, m.file["id"]) == ("see this", fid)
+    assert [m["text"] for m in run(call(mgr, me, "inbox"))] == ["see this"]
+    status, text = http.request("POST", hub.url + "/api/send", btok,
+                                {"to": "laptop/codex/manager", "text": "again", "file_id": fid})
+    assert (status, text) == (400, "that file is not yours to send")
+
+
 def test_admin_closing_the_manager_switches_it_off(hub, clock):
     b = admin_bridge(hub)
     hub.mm.set_enabled(True, "test")

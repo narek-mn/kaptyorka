@@ -328,6 +328,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 .dev { display: flex; align-items: center; gap: 10px; min-height: 24px; }
 .dev span { color: var(--text); }
 .dev small { color: var(--faint); font-size: 12px; }
+.dev.with-hint { flex-wrap: wrap; row-gap: 2px; }
+.dev .legacy-hint { flex-basis: 100%; }
 .dev.revoked span, .dev.revoked small { color: var(--faint); }
 .empty-row { padding: 14px; color: var(--faint); font-size: 13px; }
 .invite { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: rgba(61, 113, 217, .08); font-size: 12px; color: var(--dim); }
@@ -1212,7 +1214,8 @@ tr.archived b { color: var(--dim); }
     });
     var doorPeople = (feed.people || []).filter(function (p) { return !(p.role === "manager" && p.name === "manager"); })
       .map(function (p) { return p.name; });  /* not the manager's own account */
-    if (feed.doors.length || doorPeople.length > 1) {
+    var hasDoors = feed.doors.length || doorPeople.length > 1;
+    if (hasDoors) {
       var doors = el("div", { "class": "group" }, [el("span", { "class": "cap", text: "Doors" })]);
       feed.doors.forEach(function (d) {
         var mine = me && (d.a_person === me.person || d.b_person === me.person);
@@ -1238,7 +1241,10 @@ tr.archived b { color: var(--dim); }
     }
     /* on a phone the chips fold behind one button that names the filter in use */
     var t = $("chips-toggle"), on = [filter.machine, filter.project].filter(Boolean);
-    t.textContent = on.length ? "Filter: " + on.join(", ") : "Filter";
+    /* the admin's door controls live here too, so the button says so */
+    var withDoors = isAdmin() && hasDoors;
+    t.textContent = on.length ? "Filter: " + on.join(", ") + (withDoors ? ", doors" : "")
+                              : (withDoors ? "Filter and doors" : "Filter");
     t.setAttribute("aria-expanded", chipsOpen ? "true" : "false");
     t.setAttribute("aria-pressed", on.length ? "true" : "false");
     t.hidden = !box.childNodes.length;
@@ -1560,6 +1566,7 @@ tr.archived b { color: var(--dim); }
               note = { key: null, project: null, topic: null, mode: "read", version: 0, history: false };
               deletedKey = nkey(n.project, n.topic);
               toast({ text: "Deleted " + n.topic + ".", undo: { topic: n.topic, project: n.project } });
+              poll();  /* the topic list drops it now, not at the next tick */
             }, function (e) { err.hidden = false; err.textContent = e.message; throw e; });
         });
       });
@@ -1567,7 +1574,7 @@ tr.archived b { color: var(--dim); }
     var restore = note.version > 0 && mayWrite(n) ? button([icon("i-history", 13), "Restore this version"], "primary", function () {
       restore.disabled = true;
       api("/api/notes", { topic: n.topic, text: h.text, project: n.project })
-        .then(function () { note.version = 0; seen.notes = null; renderNotes(true); })
+        .then(function () { note.version = 0; seen.notes = null; renderNotes(true); poll(); })
         .catch(function (e) { restore.disabled = false; err.hidden = false; err.textContent = e.message; });
     }, { title: "Save this text as the newest version" }) : null;
     doc.appendChild(el("div", { "class": "doc-head" }, [back, el("h2", { text: n.topic }),
@@ -1702,7 +1709,7 @@ tr.archived b { color: var(--dim); }
         }, { title: "The link stops working" })]);
     })));
   }
-  var LEGACY_TITLE = "The device the old shared token logs in as. Switch the shared token off under Old machines when every machine has its own token.";
+  var LEGACY_TITLE = "The device the old shared token logs in as. Switch the shared token off in Settings when every machine has its own token.";
   var MANAGER_HINT = "The team's manager session runs as this account";
   function isManagerAccount(p) { return p.name === "manager" && p.role === "manager"; }
   function roleCell(p) {
@@ -1724,18 +1731,20 @@ tr.archived b { color: var(--dim); }
     feed.people.forEach(function (p) {
       function devRow(d) {
         var gone = d.revoked_at != null;
-        /* the shared token is switched off in Old machines, not revoked here */
+        /* the shared token is switched off in Settings, not revoked here */
         var rv = gone || d.legacy ? null : button("Revoke", "danger", function () {
           confirmInline(rv, "Revoke " + d.name + "? It stops working at once.", "Revoke", function () {
             return act("people-err", "/api/devices/" + d.id + "/revoke");
           });
         });
-        return el("div", { "class": "dev" + (gone ? " revoked" : "") }, [
+        return el("div", { "class": "dev" + (gone ? " revoked" : "") + (d.legacy ? " with-hint" : "") }, [
           d.legacy ? el("span", { title: LEGACY_TITLE, text: "Shared token (old machines)" }) : el("span", { text: d.name }),
           d.host ? el("small", { text: d.host }) : null,
           el("small", { title: d.last_used ? full(d.last_used) : null,
                         text: gone ? "revoked" : d.last_used ? "seen " + ago(Date.now() / 1000 - d.last_used) : "never used" }),
-          rv
+          rv,
+          d.legacy && !gone ? el("small", { "class": "legacy-hint" }, ["Its switch is in ",
+            button("Settings", "", function () { show("settings"); }, { "class": "link" }), "."]) : null
         ]);
       }
       var live = p.devices.filter(function (d) { return d.revoked_at == null; });

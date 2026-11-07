@@ -913,11 +913,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     raise KaptyorkaError("no such file")
                 if row["person_id"] != p.person_id or row["message_id"] is not None:
                     raise KaptyorkaError("that file is not yours to send")
-                # a message with a file goes straight to its sessions, like the send tool
-                n = None
-            else:
-                n = ws.send_web_via_manager(p.person_name, str(body["to"]), str(body["text"]),
-                                            p.person_id, mm.person_id())
+            n = ws.send_web_via_manager(p.person_name, str(body["to"]), str(body["text"]),
+                                        p.person_id, mm.person_id(), file_id=file_id)
             if n is None:
                 n = store.send_from_web(p.person_name, str(body["to"]), str(body["text"]),
                                         person_id=p.person_id, file_id=file_id)
@@ -1099,7 +1096,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     @server.custom_route("/api/rules/history", methods=["GET"])
     async def api_rules_history(request: Request) -> Response:
-        return JSONResponse(rs.history())
+        return JSONResponse(rs.history(limit=200))
 
     @server.custom_route("/api/skills", methods=["PUT"])
     @_bad_request
@@ -1311,11 +1308,17 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return PlainTextResponse("no such device", status_code=404)
         ws.set_auto_update(request.path_params["device_id"], body["on"])
         with store.lock:
-            d = store.db.execute("SELECT name, host FROM devices WHERE id=?",
+            d = store.db.execute("SELECT d.name, d.host, p.name AS person FROM devices d"
+                                 " LEFT JOIN people p ON p.id=d.person_id WHERE d.id=?",
                                  (request.path_params["device_id"],)).fetchone()
+        if d is None:  # removed between the switch and this read
+            return PlainTextResponse("no such device", status_code=404)
         state = "default" if body["on"] is None else "on" if body["on"] else "off"
+        where = d["host"] or d["name"]
+        if d["person"]:
+            where += f" ({d['person']})"
         store.log_add(request.scope["state"]["principal"].person_name, "auto_update",
-                      f"{d['host'] or d['name']} {state}")
+                      f"{where} {state}")
         return Response(status_code=204)
 
     @server.custom_route("/api/workers", methods=["GET"])

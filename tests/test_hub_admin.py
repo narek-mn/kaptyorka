@@ -222,6 +222,12 @@ def test_log_kinds_and_paging_routes(app):
     assert status == 200 and page and all(r["kind"] in ("person", "role") for r in page)
     assert call(app, "alice", "GET", "/api/log?kind=nope")[0] == 400
     assert kinds[-1] == {"kind": "other", "label": "Other"}
+    groups = [k["kind"] for k in kinds]
+    assert groups[groups.index("projects") + 1] == "notes"
+    assert {"kind": "notes", "label": "Notes"} in kinds
+    app.store.log_add("alice", "note_delete", "x")
+    rows = call(app, "alice", "GET", "/api/log?kind=notes")[1]
+    assert rows and all(r["kind"] in ("note_delete", "note_undo") for r in rows)
     assert call(app, "alice", "GET", "/api/log?kind=other")[0] == 200
 
 
@@ -256,3 +262,12 @@ def test_attach_sends_own_file_once(app):
     assert [(m.text, m.file["id"]) for m in app.store.messages() if m.file] == [("see", fid)]
     status, text = call(app, "alice", "POST", "/api/send", {"to": to, "text": "again", "file_id": fid})
     assert (status, text) == (400, "that file is not yours to send")
+
+
+def test_rules_history_lists_more_than_twenty(app):
+    from kaptyorka.rules import RulesStore
+    rs = RulesStore(app.store)
+    for i in range(25):
+        rs.set_rules(f"rule {i}", by="alice")
+    status, rows = call(app, "alice", "GET", "/api/rules/history")
+    assert status == 200 and len(rows) == 25

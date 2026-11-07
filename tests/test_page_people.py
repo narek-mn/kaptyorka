@@ -451,7 +451,9 @@ def test_page_remove_says_which_workers_may_still_run():
     html = page_html()
     assert 'id="people-ok"' in html and "removedLine(p.name, r)" in html
     assert '" may still run on " + w.host + "; close it on that machine."' in html
-    assert "The device the old shared token logs in as. Switch the shared token off under Old machines when every machine has its own token." in html
+    assert "The device the old shared token logs in as. Switch the shared token off in Settings when every machine has its own token." in html
+    # the shared-token device says where its switch went, with a link to Settings
+    assert '["Its switch is in ",\n            button("Settings", "", function () { show("settings"); }' in html
 
 
 def test_register_again_keeps_description(app):

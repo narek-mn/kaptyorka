@@ -818,7 +818,8 @@ class WorkerStore:
             return n
 
     def send_web_via_manager(self, name: str, to: str, text: str, person_id: Optional[int],
-                             manager_pid: Optional[int]) -> Optional[int]:
+                             manager_pid: Optional[int],
+                             file_id: Optional[int] = None) -> Optional[int]:
         """A person's page writing to the manager's session needs no door. None when the
         target is anyone else (use store.send_from_web)."""
         if manager_pid is None or person_id is None or to == "all":
@@ -834,7 +835,7 @@ class WorkerStore:
             if not all(not t["key"].startswith("web:") and t["person_id"] == manager_pid
                        for t in targets):
                 return None
-            return st._insert(key, name, targets, text, now)
+            return st._insert(key, name, targets, text, now, file_id)
 
     def warnings(self, now: float, hub_version: str) -> List[dict]:
         """Things a person should look at: failed launches, offline bridges, old versions,

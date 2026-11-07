@@ -337,6 +337,7 @@ def test_log_sentences():
         ("rekeyed", "box-3", "box-3 took its own token in place of the shared one"),
         ("auto_update", "box-1 on", "alice turned auto-update on for box-1"),
         ("auto_update", "box-1 off", "alice turned auto-update off for box-1"),
+        ("auto_update", "box-1 (bob) off", "alice turned auto-update off for box-1 (bob)"),
         ("auto_update", "box-1 default", "alice set auto-update for box-1 back to the hub's default"),
         ("something_new", "x y", "something_new: x y"),
         ("grant", "odd detail", "grant: odd detail"),

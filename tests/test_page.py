@@ -106,6 +106,9 @@ def test_phone_layouts(hub):
     assert "#audit td.l-what" in phone
     assert ".stack td.nil { display: none; }" in phone and '"sw-label", text: "Auto-update"' in html
     assert 'id="chips-toggle"' in html and ".chips.folded { display: none; }" in phone
+    # the admin's door controls are behind the same fold, so its label names them
+    assert '(withDoors ? "Filter and doors" : "Filter")' in html
+    assert '"Filter: " + on.join(", ") + (withDoors ? ", doors" : "")' in html
 
 
 def test_log_rows_are_sentences(hub):
@@ -145,6 +148,9 @@ def test_notes_delete_undo_restore(hub):
     assert '"/api/notes/undo"' in html and '"Deleted " + ' in html and '"Undo"' in html
     assert '"This note was deleted."' in html
     assert html.count('"Restore this version"') == 2  # a note's old version, the rules' old version
+    # after Delete and after Restore the feed is fetched at once, not at the next poll
+    assert 'poll();  /* the topic list drops it now, not at the next tick */' in html
+    assert "note.version = 0; seen.notes = null; renderNotes(true); poll(); })" in html
 
 
 def test_rules_history_and_proposal_form(hub):
