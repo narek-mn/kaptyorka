@@ -775,3 +775,20 @@ def test_bridge_fetches_skills_once_per_version(hub, home, monkeypatch):
     b.heartbeat()
     b.heartbeat()
     assert len(gets) == 2 and "Body A2" in (home / ".claude/skills/team-a/SKILL.md").read_text()
+
+
+def test_skills_mark_unknown_until_the_hub_answers_then_current(hub, home):
+    from helpers import person
+    from kaptyorka import rules, skills_sync
+    from kaptyorka.workers import WorkerStore
+
+    rs = rules.RulesStore(hub.store)
+    rs.set_skills({"a": "Body A"}, "admin")
+    skills_sync.sync(home, rs.skills_version(), [{"name": "a", "text": "Body A"}], bridge_mod.log)
+    _, token = person(hub.store, "alice")
+    device = hub.store.authenticate(token).device_id
+    b = Bridge({**cfg(hub), "token": token}, [FakeAdapter("claude-code", "claude")], bridge_mod.log)
+    b.heartbeat()  # a restart: facts are built before any answer
+    assert WorkerStore(hub.store).facts(device)["harness"]["claude-code"]["skills"] is None
+    b.heartbeat()  # the answer's version matches what is applied here
+    assert WorkerStore(hub.store).facts(device)["harness"]["claude-code"]["skills"] is True

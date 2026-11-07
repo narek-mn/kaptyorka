@@ -54,6 +54,7 @@ class Bridge:
         self.hub: dict = {}  # the hub's last JSON answer to a heartbeat; {} before one or on 204
         self._facts: dict = {}
         self._facts_at = 0.0
+        self._skills_version: Optional[str] = None  # the hub's last skills_version; None until one comes
         self._updated_to = ""  # the hub version an update was last run for
         self._update_retry_at = 0.0
 
@@ -71,7 +72,8 @@ class Bridge:
                 info = facts.git(cwd, self.runner)
                 if info:
                     repos[cwd] = info
-            current = skills_sync.applied_version(paths.home()) == self.hub.get("skills_version", "")
+            current = None if self._skills_version is None else \
+                skills_sync.applied_version(paths.home()) == self._skills_version
             self._facts = {**identity.facts(), **facts.machine(self.adapters, self.runner, skills_current=current), "git": repos}
             self._facts_at = time.monotonic()
         return self._facts
@@ -98,6 +100,10 @@ class Bridge:
              "folders": facts.folders(projects if isinstance(projects, list) else [], objs,
                                       Path.home())})
         self.hub = answer if status == 200 and isinstance(answer, dict) else {}
+        v = self.hub.get("skills_version")
+        if isinstance(v, str) and v != self._skills_version:
+            self._skills_version = v
+            self._facts_at = 0.0  # the next facts show the skills after this sync
         self._sessions = objs
         self._report("heartbeat", None if status in (200, 204)
                      else f"hub answered {status} to heartbeat")

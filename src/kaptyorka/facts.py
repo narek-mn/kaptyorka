@@ -92,9 +92,9 @@ def _rules_in_place(adapter, home: Path) -> bool:
     return False
 
 
-def harness(adapters: list, home: Path, skills_current: bool = False) -> Dict[str, dict]:
+def harness(adapters: list, home: Path, skills_current: Optional[bool] = False) -> Dict[str, dict]:
     """Per installed tool: is the rules text, the hooks, and the team skills in place.
-    Skills are None for a tool that has no skills folder (codex)."""
+    Skills are None for a tool that has no skills folder (codex), or while skills_current is unknown."""
     out: Dict[str, dict] = {}
     for a in adapters:
         if not a.installed():
@@ -102,12 +102,13 @@ def harness(adapters: list, home: Path, skills_current: bool = False) -> Dict[st
         h = getattr(a, "home", home)
         out[a.tool] = {"rules": bool(_rules_in_place(a, h)),
                        "hooks": bool(doctor.tool_configured(a, h)),
-                       "skills": None if a.tool == "codex" else bool(skills_current)}
+                       "skills": None if a.tool == "codex" or skills_current is None
+                       else bool(skills_current)}
     return out
 
 
 def machine(adapters: list, run=subprocess.run, platform: str = sys.platform,
-            skills_current: bool = False) -> dict:
+            skills_current: Optional[bool] = False) -> dict:
     from kaptyorka import __version__
 
     try:
