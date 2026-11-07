@@ -1014,6 +1014,38 @@ class Store:
         if cwd is not None:
             self.db.execute("UPDATE agents SET cwd=? WHERE key=?", (cwd, key))
 
+    def _host_of_device(self, device_id) -> str:
+        row = self.db.execute("SELECT host FROM devices WHERE id=?", (device_id,)).fetchone()
+        return "" if row is None else row["host"]
+
+    def _manager_host(self, person_id) -> str:
+        """The host of a manager person's live device; no lock."""
+        row = self.db.execute("SELECT host FROM devices WHERE person_id=? AND revoked_at IS NULL"
+                              " AND host!='' ORDER BY id DESC LIMIT 1", (person_id,)).fetchone()
+        return "" if row is None else row["host"]
+
+    def _reports_manager(self, principal, held_person) -> bool:
+        """True when `principal` is the admin's own bridge on the manager's host and the held
+        session is the manager's: only that bridge may report it. No lock."""
+        if principal.role != "admin" or principal.legacy or principal.shared \
+                or self._role_of(held_person) != "manager":
+            return False
+        host = self._manager_host(held_person)
+        return bool(host) and self._host_of_device(principal.device_id) == host
+
+    def _manager_takes(self, principal, held, now) -> bool:
+        """True when the manager may take a session the admin's bridge saw first: a fresh row
+        of the admin's own bridge on the manager's host, in the `manager` folder. No lock."""
+        if principal.role != "manager" or self._role_of(held["person_id"]) != "admin":
+            return False
+        dev = self.db.execute("SELECT host, legacy, shared, revoked_at FROM devices WHERE id=?",
+                              (held["device_id"],)).fetchone()
+        host = self._manager_host(principal.person_id)
+        return (dev is not None and bool(host) and dev["host"] == host and not dev["legacy"]
+                and not dev["shared"] and dev["revoked_at"] is None
+                and now - held["last_seen"] < ONLINE_S and held["project"] == "manager"
+                and (held["cwd"] or "").rstrip("/").endswith("/manager"))
+
     def _role_of(self, person_id) -> Optional[str]:
         """A person's role; no lock, for use inside locked blocks."""
         row = self.db.execute("SELECT role FROM people WHERE id=?", (person_id,)).fetchone()
@@ -1027,12 +1059,11 @@ class Store:
             if principal is not None:
                 # online or not: taking the key would take its unread messages and history.
                 # The same device may (a legacy machine's rows move with assign_legacy).
-                held = self.db.execute("SELECT person_id, device_id FROM agents WHERE key=?",
-                                       (key,)).fetchone()
+                held = self.db.execute("SELECT person_id, device_id, project, cwd, last_seen"
+                                       " FROM agents WHERE key=?", (key,)).fetchone()
                 if held is not None and held["person_id"] not in (None, principal.person_id) \
                         and held["device_id"] != principal.device_id \
-                        and not (principal.role == "manager"
-                                 and self._role_of(held["person_id"]) == "admin"):
+                        and not self._manager_takes(principal, held, now):
                     raise KaptyorkaError("session key in use by another person")
             self._touch(key, machine, tool, project, now)
             if principal is not None:
@@ -1080,7 +1111,7 @@ class Store:
                 if principal is not None and held is not None and not (
                         principal.shared and held["device_id"] == principal.device_id) \
                         and held["person_id"] not in (None, principal.person_id) \
-                        and self._role_of(held["person_id"]) != "manager":
+                        and not self._reports_manager(principal, held["person_id"]):
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],
                             s["label"], s["cwd"])

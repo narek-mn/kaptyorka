@@ -371,30 +371,102 @@ def test_prune_loop_one_failure_does_not_skip_the_other(monkeypatch):
             assert len(lines) == 1 and "memory boom" in lines[0]
 
 
+def _set_host(s, token, host, **cols):
+    p = s.authenticate(token)
+    sets = ", ".join(["host=?"] + [f"{k}=?" for k in cols])
+    with s.lock:
+        s.db.execute(f"UPDATE devices SET {sets} WHERE id=?",
+                     (host, *cols.values(), p.device_id))
+
+
+def _row(s, key):
+    with s.lock:
+        return dict(s.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone())
+
+
+MS = {"key": "k:m", "tool": "claude", "project": "manager", "cwd": "/home/u/manager"}
+
+
 def test_heartbeat_keeps_manager_session(tmp_path):
     t = [1000.0]
     s = Store(tmp_path / "hub.db", clock=lambda: t[0])
     mid, tm = _member(s, "manager", "manager")
     _, ta = _member(s, "root", "admin")
+    _set_host(s, tm, "box-1")
+    _set_host(s, ta, "box-1")
     s.seen("k:m", "manager@box-1", "claude", "manager", principal=s.authenticate(tm))
     t[0] += 10
-    s.heartbeat("root@box-1", [{"key": "k:m", "tool": "claude", "project": "manager"}],
-                principal=s.authenticate(ta))
+    s.heartbeat("root@box-1", [MS], principal=s.authenticate(ta))
     a = s.agent("k:m")
     assert a.person_id == mid and a.last_seen == 1010.0
     s.close()
 
 
+def test_heartbeat_skips_manager_session_from_other_bridges(tmp_path):
+    t = [1000.0]
+    s = Store(tmp_path / "hub.db", clock=lambda: t[0])
+    mid, tm = _member(s, "manager", "manager")
+    _, tw = _member(s, "wen")
+    _, tsh = _member(s, "shr")
+    _, tl = _member(s, "leg")
+    _, tr = _member(s, "root", "admin")
+    _, tr2 = _member(s, "root2", "admin")
+    _set_host(s, tm, "box-1")
+    _set_host(s, tsh, "box-1", shared=1)
+    _set_host(s, tl, "box-1", legacy=1)
+    _set_host(s, tw, "box-1")
+    _set_host(s, tr2, "box-2")  # an admin bridge on another computer
+    s.seen("k:m", "manager@box-1", "claude", "manager", principal=s.authenticate(tm))
+    before = _row(s, "k:m")
+    t[0] += 10
+    for tok in (tw, tsh, tl, tr2):
+        s.heartbeat("evil@box-9", [{**MS, "project": "x", "cwd": "/x"}],
+                    principal=s.authenticate(tok), facts=_facts("box-9"))
+        assert _row(s, "k:m") == before
+    assert before["person_id"] == mid
+    s.close()
+
+
 def test_manager_takes_key_first_seen_by_admin_bridge(tmp_path):
-    s = Store(tmp_path / "hub.db")
+    t = [1000.0]
+    s = Store(tmp_path / "hub.db", clock=lambda: t[0])
     mid, tm = _member(s, "manager", "manager")
     aid, ta = _member(s, "root", "admin")
     _, tb = _member(s, "ben")
-    s.heartbeat("root@box-1", [{"key": "k:m", "tool": "claude", "project": "manager"}],
-                principal=s.authenticate(ta))
+    _set_host(s, tm, "box-1")
+    s.heartbeat("root@box-1", [MS], principal=s.authenticate(ta), facts=_facts("box-1"))
     assert s.agent("k:m").person_id == aid
     with pytest.raises(KaptyorkaError, match="session key in use by another person"):
         s.seen("k:m", "m", "claude", "manager", principal=s.authenticate(tb))
     s.seen("k:m", "manager@box-1", "claude", "manager", principal=s.authenticate(tm))
+    assert s.agent("k:m").person_id == mid
+    s.close()
+
+
+def test_manager_cannot_take_a_real_admin_session(tmp_path):
+    t = [1000.0]
+    s = Store(tmp_path / "hub.db", clock=lambda: t[0])
+    mid, tm = _member(s, "manager", "manager")
+    aid, ta = _member(s, "root", "admin")
+    _set_host(s, tm, "box-1")
+    pa, pm = s.authenticate(ta), s.authenticate(tm)
+    # called a tool from another folder
+    s.seen("k:real", "root@box-1", "claude", "lab", principal=pa)
+    with pytest.raises(KaptyorkaError, match="in use by another person"):
+        s.seen("k:real", "m", "claude", "lab", principal=pm)
+    # a heartbeat-only row, but not the manager folder
+    s.heartbeat("root@box-1", [{"key": "k:o", "tool": "claude", "project": "lab",
+                                "cwd": "/home/u/lab"}], principal=pa, facts=_facts("box-1"))
+    with pytest.raises(KaptyorkaError, match="in use by another person"):
+        s.seen("k:o", "m", "claude", "manager", principal=pm)
+    # the manager folder, but the admin's session went quiet
+    s.heartbeat("root@box-1", [MS], principal=pa, facts=_facts("box-1"))
+    t[0] += 60
+    with pytest.raises(KaptyorkaError, match="in use by another person"):
+        s.seen("k:m", "m", "claude", "manager", principal=pm)
+    assert s.agent("k:real").person_id == aid
+    # fresh heartbeat-only manager row on the manager's host: allowed
+    s.heartbeat("root@box-1", [MS], principal=pa, facts=_facts("box-1"))
+    s.seen("k:m", "manager@box-1", "claude", "manager", principal=pm)
     assert s.agent("k:m").person_id == mid
     s.close()

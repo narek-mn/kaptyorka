@@ -184,3 +184,23 @@ def test_config_path_override(tmp_path, monkeypatch):
     paths.save_config({"a": 1})
     assert json.loads(alt.read_text()) == {"a": 1}
     assert paths.load_config() == {"a": 1}
+
+
+def test_config_written_0600_and_survives_failure(tmp_path, ms, monkeypatch):
+    d = tmp_path / "m"
+    os.umask(0o022)
+    ms.write_files(d, "http://hub", "tok1", "r")
+    assert os.stat(d / "config.json").st_mode & 0o777 == 0o600
+    assert not (d / "config.json.tmp").exists()
+
+    real = os.replace
+
+    def boom(src, dst):
+        if str(dst).endswith("config.json"):
+            raise OSError("disk full")
+        real(src, dst)
+    monkeypatch.setattr(os, "replace", boom)
+    with pytest.raises(OSError):
+        ms.write_files(d, "http://hub", "tok2", "r")
+    assert json.loads((d / "config.json").read_text())["token"] == "tok1"
+    assert not (d / "config.json.tmp").exists()
