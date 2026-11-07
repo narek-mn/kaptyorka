@@ -442,7 +442,7 @@ def build_app(store: Store) -> Starlette:
         cur = rs.current()
         if not cur["text"]:
             return "No team rules yet."
-        return f"Team rules v{cur['version']}:\n" + cur["text"]
+        return f"Team rules v{cur['version']}:\n" + rules_mod.rules_text(cur["text"])
 
     @server.tool()
     @_tool_errors

@@ -27,7 +27,7 @@ def test_rules_tool_and_brief_heading(hub):
     a = as_token(hub, tok)
     assert run(call(a, S1, "rules")) == "No team rules yet."
     assert set_rules(hub, "be kind")[1] == {"version": 1}
-    assert run(call(a, S1, "rules")) == "Team rules v1:\nbe kind"
+    assert run(call(a, S1, "rules")) == "Team rules v1:\n" + HEADING + "\n\nbe kind\n\n" + TRAILER
     _, brief = http.request("GET", hub.url + "/api/brief?event=start", tok, headers=hdr(S1))
     assert HEADING in brief and TRAILER in brief and "be kind" in brief
 
@@ -37,8 +37,10 @@ def test_long_rules_cut_to_pointer_in_brief(hub):
     text = "x" * 7000
     set_rules(hub, text)
     _, brief = http.request("GET", hub.url + "/api/brief?event=start", tok, headers=hdr(S1))
-    assert len(brief) < 6000 and RULES_POINTER in brief
-    assert run(call(as_token(hub, tok), S1, "rules")).endswith(text)
+    assert len(brief) < 6000 and RULES_POINTER in brief and text not in brief
+    assert HEADING + "\n\n" + RULES_POINTER + "\n\n" + TRAILER in brief
+    out = run(call(as_token(hub, tok), S1, "rules"))
+    assert HEADING in out and text in out and out.endswith(TRAILER)
 
 
 def test_post_rules_member_forbidden(hub):

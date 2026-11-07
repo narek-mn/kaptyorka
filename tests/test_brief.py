@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 
 from helpers import person
-from kaptyorka import brief
+from kaptyorka import brief, rules as rules_mod
 from kaptyorka.memory import MemoryStore
 from kaptyorka.store import Store
 from kaptyorka.workers import WorkerStore
@@ -128,7 +128,7 @@ def test_brief_budget_cuts_in_order(store, ws, ms, clock, team):
     assert "Recent git activity" not in text  # then git
     assert "… (read the rest with state(project))" in text  # the state note last
     assert "# What it is\nA shop." in text and "paragraph 24" not in text
-    assert text.startswith(pointer) and "You are `" in text
+    assert text.startswith(rules_mod.HEADING + "\n\n" + pointer + "\n\n" + rules_mod.TRAILER) and "You are `" in text
     assert len(text) <= brief.BUDGET
 
     text = build(store, ws, ms, alice, rules="Team rules:\n" + "r" * 6000)

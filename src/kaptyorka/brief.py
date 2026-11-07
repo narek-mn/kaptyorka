@@ -5,6 +5,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from kaptyorka import __version__
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.hub_feed import session_row
+from kaptyorka.rules import HEADING as RULES_HEADING, TRAILER as RULES_TRAILER
 from kaptyorka.store import Agent, KaptyorkaError, Store
 
 BUDGET = 6000  # characters
@@ -162,7 +163,7 @@ def _fit(text, rules_text: str, projects: str, git: str, state: str) -> str:
     out = text(rules_text, projects, git, state)
     if len(out) <= BUDGET:
         return out
-    rules = RULES_POINTER if rules_text else ""
+    rules = RULES_HEADING + "\n\n" + RULES_POINTER + "\n\n" + RULES_TRAILER if rules_text else ""
     for projects, git in ((projects, git), ("", git), ("", "")):
         out = text(rules, projects, git, state)
         if len(out) <= BUDGET:
