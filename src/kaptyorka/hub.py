@@ -28,7 +28,7 @@ from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.memory import MemoryStore, check_state
 from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, clean
-from kaptyorka.workers import WorkerStore, _git as clean_git, clean_facts, safe_name
+from kaptyorka.workers import MAX_FACT, WorkerStore, _git as clean_git, clean_facts, safe_name
 
 MAX_WAIT_S = 25
 TICK_S = 15
@@ -560,14 +560,16 @@ def build_app(store: Store) -> Starlette:
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         q = request.query_params
-        if principal is not None and not principal.legacy and agent.cwd and (
-                "branch" in q or "subject" in q):
-            # the stop hook read the folder's git just now: a commit made seconds ago counts
+        cwd = agent.cwd[:MAX_FACT] if agent.cwd else ""
+        if principal is not None and not principal.legacy and cwd and (
+                "branch" in q or "subject" in q) and q.get("cwd", "")[:MAX_FACT] == cwd:
+            # the stop hook read the session's folder just now: a commit made seconds ago
+            # counts. Stamped with the hub's now, so the bridge's older cached read is dropped.
             dirty = {"1": True, "0": False}.get(q.get("dirty", ""))
             g = clean_git({"branch": q.get("branch", ""), "subject": q.get("subject", ""),
                            **({} if dirty is None else {"dirty": dirty})})
             try:
-                ms.git_seen(principal, principal.device_id, {agent.cwd: g},
+                ms.git_seen(principal, principal.device_id, {cwd: g},
                             ws.folders(principal.device_id))
             except Exception as e:  # history is a bonus: never fail the check over it
                 print(f"memory: stop git fact skipped: {e}", file=sys.stderr, flush=True)

@@ -1,5 +1,6 @@
 import json
 import subprocess
+import time
 from types import SimpleNamespace
 
 from kaptyorka import facts, paths
@@ -29,7 +30,10 @@ def setup_function():
 
 def test_git_reads_branch_dirty_subject_with_timeout():
     run = Run(GIT)
-    assert facts.git("/w/p", run) == {"branch": "main", "dirty": True, "subject": "fix thing"}
+    got = facts.git("/w/p", run)
+    read_at = got.pop("read_at")
+    assert got == {"branch": "main", "dirty": True, "subject": "fix thing"}
+    assert abs(read_at - time.time()) < 5  # when git ran, for the hub to drop stale resends
     assert all(c[0][:3] == ["git", "-C", "/w/p"] and 0 < c[1]["timeout"] <= 2 for c in run.calls)
 
 
@@ -52,10 +56,10 @@ def test_git_cached_for_30_seconds(monkeypatch):
     now = [100.0]
     monkeypatch.setattr(facts.time, "monotonic", lambda: now[0])
     run = Run(GIT)
-    facts.git("/w/p", run)
+    first = facts.git("/w/p", run)["read_at"]
     n = len(run.calls)
     now[0] += 29
-    facts.git("/w/p", run)
+    assert facts.git("/w/p", run)["read_at"] == first  # a cached resend keeps its read time
     assert len(run.calls) == n
     now[0] += 2
     facts.git("/w/p", run)

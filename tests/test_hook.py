@@ -229,8 +229,8 @@ def test_stop_sends_the_folders_git_read_now(home, monkeypatch, capsys):
         hook.main(tool, "stop", _stdin("s9"), run=fake_run)
         url, _ = gets[0]
         assert urlsplit(url).path == "/api/done-check"
-        assert parse_qs(urlsplit(url).query) == {"branch": ["main"], "subject": ["fix the bug"],
-                                                 "dirty": ["1"]}
+        assert parse_qs(urlsplit(url).query) == {"cwd": ["/w/proj-a"], "branch": ["main"],
+                                                 "subject": ["fix the bug"], "dirty": ["1"]}
         assert {a[2] for a, _ in runs} == {"/w/proj-a"}
         assert all(kw["env"]["GIT_OPTIONAL_LOCKS"] == "0" and kw["timeout"] <= hook.GIT_S
                    for _, kw in runs)

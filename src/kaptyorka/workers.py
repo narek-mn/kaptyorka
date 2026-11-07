@@ -90,6 +90,10 @@ def _git(value) -> Optional[dict]:
             out[k] = _cut(value[k])
     if _bool(value.get("dirty")) is not None:
         out["dirty"] = value["dirty"]
+    read_at = value.get("read_at")  # when the bridge read git; missing: the hub's now
+    if isinstance(read_at, (int, float)) and not isinstance(read_at, bool) \
+            and math.isfinite(read_at):
+        out["read_at"] = float(read_at)
     return out
 
 

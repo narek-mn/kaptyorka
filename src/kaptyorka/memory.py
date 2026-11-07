@@ -14,7 +14,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS git_facts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, host TEXT NOT NULL,
     os_user TEXT NOT NULL, person_id INTEGER, cwd TEXT NOT NULL, branch TEXT NOT NULL,
-    dirty INTEGER, subject TEXT NOT NULL, time REAL NOT NULL);
+    dirty INTEGER, subject TEXT NOT NULL, time REAL NOT NULL, read_at REAL);
 CREATE INDEX IF NOT EXISTS git_facts_cwd ON git_facts (host, os_user, cwd, id);
 CREATE INDEX IF NOT EXISTS git_facts_project ON git_facts (project, time);
 CREATE TABLE IF NOT EXISTS done_checks (
@@ -50,6 +50,8 @@ _DONE = re.compile(r"\bdone\b", re.I)
 
 def ensure_schema(db) -> None:
     db.executescript(SCHEMA)
+    if "read_at" not in [r[1] for r in db.execute("PRAGMA table_info(git_facts)")]:
+        db.execute("ALTER TABLE git_facts ADD COLUMN read_at REAL")
 
 
 def _dirty(value) -> Optional[int]:
@@ -75,8 +77,8 @@ class MemoryStore:
                 if folder == base:
                     return project
         for project, folder in folders.items():
-            if cwd == folder:
-                return project
+            if cwd == folder:  # a lone learned "proj-a--2" still belongs to proj-a
+                return _WORKTREE.sub("", project) if base != cwd else project
         return _WORKTREE.sub("", os.path.basename(cwd))
 
     @classmethod
@@ -234,17 +236,22 @@ class MemoryStore:
                     continue
                 branch, subject = g.get("branch") or "", g.get("subject") or ""
                 dirty = _dirty(g.get("dirty"))
+                read_at = g.get("read_at")
+                # when git was read (a 0.3 bridge sends none: now); never later than now
+                read_at = now if not isinstance(read_at, (int, float)) else min(read_at, now)
                 last = self.db.execute(
-                    "SELECT branch, dirty, subject FROM git_facts WHERE host=? AND os_user=?"
-                    " AND cwd=? ORDER BY id DESC LIMIT 1", (host, os_user, cwd)).fetchone()
+                    "SELECT branch, dirty, subject, read_at FROM git_facts WHERE host=? AND"
+                    " os_user=? AND cwd=? ORDER BY id DESC LIMIT 1", (host, os_user, cwd)).fetchone()
+                if last is not None and last["read_at"] is not None and read_at < last["read_at"]:
+                    continue  # read before the stored fact (a bridge resending its cache)
                 if last is not None and (last["branch"], last["dirty"], last["subject"]) == (
                         branch, dirty, subject):
                     continue
                 project = self.project_of(cwd, folders)
                 self.db.execute(
                     "INSERT INTO git_facts (project, host, os_user, person_id, cwd, branch,"
-                    " dirty, subject, time) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (project, host, os_user, person_id, cwd, branch, dirty, subject, now))
+                    " dirty, subject, time, read_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (project, host, os_user, person_id, cwd, branch, dirty, subject, now, read_at))
                 if project not in changed:
                     changed.append(project)
                 kinds = []

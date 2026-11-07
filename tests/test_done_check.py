@@ -292,17 +292,17 @@ def dhub(tmp_path, clock):
     store.close()
 
 
-def _beat(h, cwd, git):
+def _beat(h, cwd, git, keys=("claude:1",)):
     body = {"machine": "box-1", "tools": [], "folders": F,
-            "sessions": [{"key": "claude:1", "tool": "claude-code",
-                          "project": os.path.basename(cwd), "cwd": cwd}],
+            "sessions": [{"key": key, "tool": "claude-code",
+                          "project": os.path.basename(cwd), "cwd": cwd} for key in keys],
             "facts": {"host": "box-1", "os_user": "u", "git": git}}
     assert http.request("POST", h.url + "/bridge/heartbeat", h.token, body)[0] == 200
 
 
-def _stop_check(h, cwd, **params):
-    headers = {"X-Kaptyorka-Key": "claude:1", "X-Kaptyorka-Machine": "box-1",
-               "X-Kaptyorka-Tool": "claude-code", "X-Kaptyorka-Project": os.path.basename(cwd)}
+def _stop_check(h, folder, key="claude:1", **params):
+    headers = {"X-Kaptyorka-Key": key, "X-Kaptyorka-Machine": "box-1",
+               "X-Kaptyorka-Tool": "claude-code", "X-Kaptyorka-Project": os.path.basename(folder)}
     q = "?" + urlencode(params) if params else ""
     status, body = http.request("GET", h.url + "/api/done-check" + q, h.token, headers=headers)
     assert status == 200
@@ -325,9 +325,9 @@ def test_route_stop_git_params_catch_a_commit_the_bridge_never_reported(dhub, cl
     _beat(dhub, A, {A: _main()})
     clock[0] += 10
     assert _stop_check(dhub, A) == {"decision": "ok", "mode": "block"}
-    body = _stop_check(dhub, A, branch="main", subject="fix", dirty="0")
+    body = _stop_check(dhub, A, cwd=A, branch="main", subject="fix", dirty="0")
     assert body["decision"] == "block" and body["reason"] == REASON
-    _stop_check(dhub, A, branch="main", subject="fix", dirty="0")  # the same values again
+    _stop_check(dhub, A, cwd=A, branch="main", subject="fix", dirty="0")  # the same values again
     with dhub.store.lock:
         rows = dhub.store.db.execute("SELECT cwd, host, os_user, subject, dirty, project"
                                      " FROM git_facts ORDER BY id").fetchall()
@@ -338,7 +338,38 @@ def test_route_stop_git_params_catch_a_commit_the_bridge_never_reported(dhub, cl
 def test_route_stop_git_params_are_capped(dhub, clock):
     _beat(dhub, A, {A: _main()})
     clock[0] += 10
-    _stop_check(dhub, A, branch="b" * 500, subject="s" * 500, dirty="1")
+    _stop_check(dhub, A, cwd=A, branch="b" * 500, subject="s" * 500, dirty="1")
     with dhub.store.lock:
         r = dhub.store.db.execute("SELECT * FROM git_facts ORDER BY id DESC LIMIT 1").fetchone()
     assert len(r["branch"]) == len(r["subject"]) == 200 and r["dirty"] == 1
+
+
+def test_route_stop_git_from_another_folder_is_skipped(dhub, clock):
+    _beat(dhub, A, {A: _main()})
+    clock[0] += 10
+    for cwd in ("/home/alice/other-repo", ""):  # the hook read another repo, or did not say
+        q = {"cwd": cwd} if cwd else {}
+        assert _stop_check(dhub, A, branch="main", subject="fix", **q)["decision"] == "ok"
+    with dhub.store.lock:
+        assert dhub.store.db.execute("SELECT COUNT(*) FROM git_facts").fetchone()[0] == 1
+
+
+def test_bridge_cached_resend_does_not_undo_the_stop_hook_fact(dhub, clock):
+    t0 = clock[0]
+    _beat(dhub, A, {A: {**_main(), "read_at": t0}}, keys=("claude:1", "claude:2"))
+    clock[0] += 10
+    t1 = clock[0]
+    body = _stop_check(dhub, A, cwd=A, branch="main", subject="fix", dirty="0")
+    assert body["decision"] == "block"
+    dhub.ms.state_written("claude:2", "proj-a", dhub.store.agent("claude:2").person_id, t1)
+    clock[0] += 10  # the bridge resends its cached read from before the commit
+    _beat(dhub, A, {A: {**_main(), "read_at": t0}}, keys=("claude:1", "claude:2"))
+    clock[0] += 40  # then reads git again
+    _beat(dhub, A, {A: {**_main("fix"), "read_at": clock[0] - 1}}, keys=("claude:1", "claude:2"))
+    with dhub.store.lock:
+        subjects = [r[0] for r in dhub.store.db.execute("SELECT subject FROM git_facts ORDER BY id")]
+        signals = {r["key"]: (r["signal"], r["signal_at"]) for r in dhub.store.db.execute(
+            "SELECT key, signal, signal_at FROM done_checks")}
+    assert subjects == ["init", "fix"]
+    assert signals == {"claude:1": ("commit", t1), "claude:2": ("commit", t1)}  # one signal
+    assert _stop_check(dhub, A, key="claude:2") == {"decision": "ok", "mode": "block"}

@@ -50,7 +50,8 @@ def git(cwd: str, run=subprocess.run, cached: bool = True,
             return None
         return {"branch": branch.strip(),
                 "dirty": None if status is None else bool(status.strip()),
-                "subject": (subject or "").strip()}
+                "subject": (subject or "").strip(),
+                "read_at": time.time()}  # kept across cached resends: the hub drops stale ones
 
     if not cached:
         return make()

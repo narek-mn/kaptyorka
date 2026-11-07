@@ -43,7 +43,7 @@ def _git_query(cwd: str, run, deadline: float) -> str:
     g = facts.git(cwd, quiet, cached=False, budget=budget) if budget > 0 else None
     if not g:
         return ""
-    q = {"branch": g["branch"], "subject": g["subject"]}
+    q = {"cwd": cwd, "branch": g["branch"], "subject": g["subject"]}
     if g.get("dirty") is not None:
         q["dirty"] = "1" if g["dirty"] else "0"
     return "?" + urlencode(q)

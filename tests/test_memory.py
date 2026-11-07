@@ -87,6 +87,8 @@ def test_worktree_counts_as_the_project(ms):
     # a learned worktree entry never wins over its base project, whatever the order
     learned = {"proj-a--2": "/home/alice/proj-a--2", "proj-a": A}
     assert ms.project_of("/home/alice/proj-a--2", learned) == "proj-a"
+    lone = {"proj-a--2": "/home/alice/proj-a--2"}  # no base folder learned: still proj-a
+    assert ms.project_of("/home/alice/proj-a--2", lone) == "proj-a"
 
 
 def test_git_recent_window_and_person_name(ms, store, clock, p, dev):
@@ -238,3 +240,28 @@ def test_state_written_records_row(ms, store, clock):
     ms.state_written("claude:1", "proj-a", 3, clock[0])
     row = store.db.execute("SELECT project, key, person_id, time FROM state_writes").fetchone()
     assert tuple(row) == ("proj-a", "claude:1", 3, clock[0])
+
+
+def test_old_git_facts_table_gets_read_at(tmp_path):
+    import sqlite3
+
+    db = sqlite3.connect(tmp_path / "hub.db")
+    db.execute("CREATE TABLE git_facts (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT"
+               " NULL, host TEXT NOT NULL, os_user TEXT NOT NULL, person_id INTEGER, cwd TEXT NOT"
+               " NULL, branch TEXT NOT NULL, dirty INTEGER, subject TEXT NOT NULL, time REAL NOT NULL)")
+    db.commit()
+    db.close()
+    s = Store(tmp_path / "hub.db")
+    try:
+        with s.lock:
+            cols = [r[1] for r in s.db.execute("PRAGMA table_info(git_facts)")]
+        assert "read_at" in cols
+    finally:
+        s.close()
+
+
+def test_git_seen_drops_a_read_older_than_the_stored_one(ms, p, dev, clock):
+    ms.git_seen(p, dev, {A: {"branch": "main", "subject": "fix", "read_at": clock[0]}}, F)
+    ms.git_seen(p, dev, {A: {"branch": "main", "subject": "init", "read_at": clock[0] - 5}}, F)
+    ms.git_seen(p, dev, {A: {"branch": "main", "subject": "next"}}, F)  # no read_at: now
+    assert [r["subject"] for r in ms.git_recent("proj-a")] == ["next", "fix"]
