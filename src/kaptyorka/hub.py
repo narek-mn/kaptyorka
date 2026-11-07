@@ -1310,6 +1310,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if not ws.device_exists(request.path_params["device_id"]):
             return PlainTextResponse("no such device", status_code=404)
         ws.set_auto_update(request.path_params["device_id"], body["on"])
+        with store.lock:
+            d = store.db.execute("SELECT name, host FROM devices WHERE id=?",
+                                 (request.path_params["device_id"],)).fetchone()
+        state = "default" if body["on"] is None else "on" if body["on"] else "off"
+        store.log_add(request.scope["state"]["principal"].person_name, "auto_update",
+                      f"{d['host'] or d['name']} {state}")
         return Response(status_code=204)
 
     @server.custom_route("/api/workers", methods=["GET"])

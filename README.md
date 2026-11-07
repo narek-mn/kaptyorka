@@ -362,7 +362,7 @@ Removing a project archives it. Everyone loses their role in it and open request
 
 A folder that is not registered as a project shows to other people as `(private)`, and notes on it are refused until the admin registers it. Notes with no project are team notes, open to everyone. A project's notes need read to read and write to write; the MCP tools take `project=""` for team notes. Messages, notes and text attachments are checked for secrets (private keys, and OpenAI, Anthropic, GitHub, GitLab, AWS and Slack tokens) and refused when one is found. The `kaptyorka` tool also refuses to attach any file from `~/.kaptyorka` or `~/.ssh`.
 
-The **Log** tab shows who did what, in plain sentences ("alice made an invite link for bob"); choose a person or a kind (People, Access, Projects, Machines, Messages, Rules, Workers, Sign-ins) and **Load more** for older rows. Messages and files are deleted after 180 days; the admin can change that on the **Settings** tab. Notes (until someone deletes one) and the log are kept for ever.
+The **Log** tab shows who did what, in plain sentences ("alice made an invite link for bob"); choose a person or a kind (People, Access, Projects, Machines, Messages, Rules, Workers, Sign-ins, Other) and **Load more** for older rows. Messages and files are deleted after 180 days; the admin can change that on the **Settings** tab. Notes (until someone deletes one) and the log are kept for ever.
 
 ## Groups and doors
 

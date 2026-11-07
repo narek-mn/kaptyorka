@@ -557,6 +557,18 @@ def test_admin_closing_the_manager_on_the_page_switches_it_off(hub, clock):
     assert state(hub) not in ("starting", "up")
 
 
+def test_admin_closing_another_worker_on_the_page_leaves_the_switch(hub):
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.store.project_register("proj-a", by="test")
+    pid, bob = member(hub, "bob")
+    bridge(hub, pid)
+    run(call(bob, ident("k:bob"), "work", project="proj-a", task="x"))
+    status, w = http.request("POST", hub.url + "/api/workers/proj-a-w1/close", b.token)
+    assert status == 200 and w["manager"] is False
+    assert hub.mm.enabled() is True
+
+
 def test_non_admin_close_leaves_the_switch(hub):
     """The switch-off keys on the manager row and the admin; a member never reaches it."""
     admin_bridge(hub)

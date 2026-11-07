@@ -408,6 +408,8 @@ def test_auto_update_route_and_machine_rows(hub, alice):
     assert heartbeat(hub, b.token, "box-1")[1]["auto_update"] is False
     assert http.request("POST", url, ADMIN, {"on": None})[0] == 204
     assert heartbeat(hub, b.token, "box-1")[1]["auto_update"] is True  # a member's default
+    assert [r["detail"] for r in hub.store.log() if r["kind"] == "auto_update"] == [
+        "box-1 default", "box-1 off"]  # newest first
     assert http.request("GET", hub.url + "/api/warnings", client.token)[0] == 403
     status, warnings = http.request("GET", hub.url + "/api/warnings", ADMIN)
     assert status == 200 and isinstance(warnings, list)

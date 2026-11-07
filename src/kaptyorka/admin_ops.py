@@ -345,12 +345,49 @@ def _device_shared(who, d):
     return f"{who} turned sharing {m[3]} for {_device(m[1], m[2])}" if m else None
 
 
-def _match(pattern: str, template: str):
+def _match(pattern: str, template: str, flags: int = 0):
     """A sentence maker: `template` gets the person, then the pattern's groups."""
     def make(who, d):
-        m = re.fullmatch(pattern, d)
+        m = re.fullmatch(pattern, d, flags)
         return template.format(who, *m.groups()) if m else None
     return make
+
+
+def _side(key: str) -> str:
+    """A door end: a session name as is, the page as its person's name."""
+    return key[4:] if key.startswith("web:") else key
+
+
+def _door_open(who, d):
+    m = re.fullmatch(r"group #\d+ (.+) <-> (.+)", d)
+    if m:
+        return f"{who} opened a door between {m.group(1)} and {m.group(2)}"
+    m = re.fullmatch(r"(.+) <-> (.+)", d)
+    return f"{who} opened a door between {_side(m.group(1))} and {_side(m.group(2))}" if m else None
+
+
+def _door_close(who, d):
+    m = re.fullmatch(r"#(\d+)", d)
+    if m:
+        return f"{who} closed door {m.group(1)}"
+    m = re.fullmatch(r"(.+) -> (.+)", d)
+    return f"{who} closed the door between {m.group(1)} and {m.group(2)}" if m else None
+
+
+def _knock_answer(who, d):
+    m = re.fullmatch(r"#(\d+) (yes|no) (?:by .+|on the web page)", d)
+    if not m:
+        return None
+    return f"{who} {'said yes to' if m.group(2) == 'yes' else 'declined'} knock {m.group(1)}"
+
+
+def _auto_update(who, d):
+    m = re.fullmatch(r"(.+) (on|off|default)", d)
+    if not m:
+        return None
+    if m.group(2) == "default":
+        return f"{who} set auto-update for {m.group(1)} back to the hub's default"
+    return f"{who} turned auto-update {m.group(2)} for {m.group(1)}"
 
 
 SENTENCES = {
@@ -380,6 +417,16 @@ SENTENCES = {
     "backup": _match(r"(.*)", "{0} made a backup: {1}"),
     "note_delete": _match(r"(.+)", "{0} deleted the note {1}"),
     "note_undo": _match(r"(.+)", "{0} brought back the note {1}"),
+    "door_open": _door_open,
+    "door_close": _door_close,
+    "knock": _match(r"#(\d+) (.+) -> (.+)", "{0} knocked for {3} (knock {1})"),
+    "knock_answer": _knock_answer,
+    "propose": _match(r"proposal (\d+): (.*)", "{0} proposed a rule: {2}", re.S),
+    "legacy_toggle": _match(r"(on|off)", "{0} switched the shared token {1}"),
+    "legacy_assign": _match(r"(.+) -> (.+)", "{0} gave {1} (old shared token) to {2}"),
+    "legacy_used": _match(r"(.+)", "{1} still uses the old shared token"),
+    "rekeyed": _match(r"(.+)", "{1} took its own token in place of the shared one"),
+    "auto_update": _auto_update,
     "settings": _match(r"retention_days=(\d+)", "{0} set message keeping to {1} days"),
     "machine_owner": _match(r"(.+) -> (.+)", "{0} made {2} the owner of {1}"),
 }

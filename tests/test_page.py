@@ -184,7 +184,9 @@ def test_settings_tab(hub):
     nav = re.search(r"<nav.*?</nav>", html, re.S).group(0)
     tabs = re.findall(r'data-view="(\w+)"', nav)
     assert tabs[-1] == "settings"
-    assert re.search(r'<button class="tab admin-only" role="tab" data-view="settings" title="Settings" hidden>'
+    for view, title in re.findall(r'data-view="(\w+)" title="([^"]+)"', nav):
+        assert f'data-view="{view}" title="{title}" aria-label="{title}"' in nav
+    assert re.search(r'<button class="tab admin-only" role="tab" data-view="settings" title="Settings" aria-label="Settings" hidden>'
                      r'<svg[^>]*><use href="#i-gear"/>', nav)
     sec = re.search(r'<section id="settings".*?</section>', html, re.S).group(0)
     assert 'class="admin"' in sec
