@@ -108,6 +108,9 @@ tbody tr:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 th.seen { text-align: right; }
 .seen.late { color: var(--amber); }
 tr.mine td:first-child { box-shadow: inset 2px 0 0 var(--blue-deep); }
+#team .harness { margin-left: 8px; font-size: 11px; letter-spacing: 2px; }
+#team .harness i { font-style: normal; color: var(--dim); }
+#team .harness i.off { opacity: .35; text-decoration: line-through; }
 .c-plain.private { color: var(--faint); }
 .who .doors { display: flex; align-items: center; gap: 5px; color: var(--green); }
 .dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--faint); flex: none; }
@@ -738,12 +741,24 @@ td.c-act .btn + .btn { margin-left: 6px; }
     td.textContent = ago(a.last_seen_s);
   }
 
+  function harnessMarks(h) {
+    var span = el("span", { "class": "harness" });
+    var yn = function (v) { return v === true ? "yes" : v === false ? "no" : v === null && h ? "n/a" : "unknown"; };
+    span.title = h ? "rules text: " + yn(h.rules) + ", hooks: " + yn(h.hooks) + ", skills: " + yn(h.skills)
+                   : "rules text: unknown, hooks: unknown, skills: unknown";
+    [["R", "rules"], ["H", "hooks"], ["S", "skills"]].forEach(function (p) {
+      var v = h ? h[p[1]] : null;
+      span.appendChild(el("i", { "class": v === true ? "on" : v === false ? "off" : "", text: v == null ? "\u2013" : p[0] }));
+    });
+    return span;
+  }
+
   var ACT = { busy: "busy", idle: "idle" };
 
   function renderTeam() {
     var body = $("agents");
     var agents = feed.agents;
-    var shape = agents.map(function (a) { return [a.name, a.person, a.mine, a.doors, a.machine, a.tool, a.project, a.status, a.activity, a.label]; });
+    var shape = agents.map(function (a) { return [a.name, a.person, a.mine, a.doors, a.machine, a.tool, a.project, a.status, a.activity, a.label, a.harness]; });
     if (!changed("team", shape)) {
       body.querySelectorAll("td.seen").forEach(function (td, i) { seenCell(td, agents[i]); });
       return;
@@ -762,7 +777,7 @@ td.c-act .btn + .btn { margin-left: 6px; }
         el("td", { "class": "who" }, who),
         el("td", { "class": "c-plain", text: a.person || "" }),
         el("td", { "class": "c-plain", text: a.machine }),
-        el("td", { "class": "c-plain", text: a.tool }),
+        el("td", { "class": "c-plain" }, [document.createTextNode(a.tool), harnessMarks(a.harness)]),
         el("td", { "class": "c-plain" + (hidden(a) ? " private" : ""), text: a.project }),
         el("td", { "class": "status", title: a.status || null, text: a.status || "" }),
         (function () { var td = el("td"); seenCell(td, a); return td; })()

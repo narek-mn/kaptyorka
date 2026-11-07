@@ -794,3 +794,11 @@ def test_facts_drop_names_that_read_as_options():
     assert clean_facts({"os_user": "-oProxyCommand=x"})["os_user"] == ""
     assert clean_facts({"os_user": "u.name_1"})["os_user"] == "u.name_1"
     assert safe_name("-box") == "" and safe_name("box-1") == "box-1" and safe_name(3) == ""
+
+
+def test_clean_facts_keeps_harness_known_tools_only():
+    ok = {"rules": True, "hooks": False, "skills": None}
+    got = clean_facts({"harness": {"codex": ok, "vim": ok, "cursor": {"rules": 1, "hooks": True},
+                                   "opencode": {"rules": True, "hooks": True, "skills": True}}})
+    assert got["harness"] == {"codex": ok, "opencode": {"rules": True, "hooks": True, "skills": True}}
+    assert "harness" not in clean_facts({"harness": "x", "load": 1})

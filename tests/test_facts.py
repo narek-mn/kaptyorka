@@ -162,3 +162,28 @@ def test_folders_survive_unwritable_file(home, tmp_path, monkeypatch):
     d.mkdir()
     s = [Session("claude:1", "claude-code", "p", cwd=str(d))]
     assert facts.folders(["p"], s, home) == {"p": str(d)}
+
+
+def _hooks(path, events, nested, tool):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = lambda e: f"/bin/kaptyorka hook {tool} {e}"  # noqa: E731
+    hooks = {ev: [{"hooks": [{"command": cmd(n)}]} if nested else {"command": cmd(n)}]
+             for ev, n in events}
+    path.write_text(json.dumps({"hooks": hooks}))
+
+
+def test_harness_layers_per_tool(home, monkeypatch):
+    monkeypatch.setattr(facts.doctor, "tool_configured", lambda a, h: a.tool == "claude-code")
+    _hooks(home / ".claude" / "settings.json", [("SessionStart", "start")], True, "claude-code")
+    _hooks(home / ".codex" / "hooks.json", [("SessionStart", "start")], True, "codex")
+    ads = [adapter("claude-code"), adapter("codex"), adapter("cursor"), adapter("opencode"),
+           adapter("gone", installed=False)]
+    h = facts.harness(ads, home, True)
+    assert h["claude-code"] == {"rules": True, "hooks": True, "skills": True}
+    assert h["codex"] == {"rules": True, "hooks": False, "skills": None}
+    assert h["cursor"] == {"rules": False, "hooks": False, "skills": True}
+    assert h["opencode"]["rules"] is False and "gone" not in h
+    plugin = home / ".config" / "opencode" / "plugins" / "kaptyorka.js"
+    plugin.parent.mkdir(parents=True)
+    plugin.write_text("x")
+    assert facts.harness(ads, home, False)["opencode"] == {"rules": True, "hooks": False, "skills": False}

@@ -182,3 +182,34 @@ def test_brief_cache_10s_but_new_message_breaks_it(store, ws, ms, clock, team):
     assert len(calls) == 4  # expired
     assert brief.cached("b:1", lambda: ("other", 0), unread=lambda: 0, now=clock[0],
                         cache=cache) == "other"  # per session
+
+
+H_OFF = {"claude-code": {"rules": True, "hooks": False, "skills": True}}
+
+
+def test_session_row_has_harness_for_its_tool(store, ws, team):
+    from kaptyorka.hub_feed import session_row
+
+    alice, _ = team
+    ws.facts_seen(alice.device_id, {"harness": H_OFF}, {})
+    a = store.agent("a:1")
+    assert session_row(store, a, alice, {}, store.clock(), ws=ws)["harness"] == H_OFF["claude-code"]
+
+
+def test_old_bridge_shows_unknown_layers(store, ws, ms, team):
+    from kaptyorka.hub_feed import session_row
+
+    alice, _ = team
+    ws.facts_seen(alice.device_id, {"host": "box-1"}, {})
+    assert session_row(store, store.agent("a:1"), alice, {}, store.clock(), ws=ws)["harness"] is None
+    assert "Harness on this tool" not in build(store, ws, ms, alice)
+
+
+def test_brief_rules_only_line(store, ws, ms, team):
+    alice, _ = team
+    ws.facts_seen(alice.device_id, {"harness": H_OFF}, {})
+    assert "Harness on this tool: rules only (hooks or skills missing; run kaptyorka doctor --fix)." \
+        in build(store, ws, ms, alice)
+    ws.facts_seen(alice.device_id, {"harness": {"claude-code": {"rules": True, "hooks": True,
+                                                                "skills": None}}}, {})
+    assert "Harness on this tool" not in build(store, ws, ms, alice)

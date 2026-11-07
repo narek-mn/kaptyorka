@@ -73,7 +73,41 @@ def _tool_version(tool: str, run) -> str:
     return _cached(("version", tool), VERSION_TTL_S, make)  # type: ignore[return-value]
 
 
-def machine(adapters: list, run=subprocess.run, platform: str = sys.platform) -> dict:
+def _rules_in_place(adapter, home: Path) -> bool:
+    """The one hook (or plugin) that carries the start brief is installed."""
+    tool = adapter.tool
+    if tool == "claude-code":
+        return doctor._has_hooks(doctor._json(home / ".claude" / "settings.json").get("hooks"),
+                                 tool, (("SessionStart", "start"),), True)
+    if tool == "codex":
+        from kaptyorka.adapters.codex import codex_home
+
+        return doctor._has_hooks(doctor._json(codex_home(home) / "hooks.json").get("hooks"),
+                                 tool, (("SessionStart", "start"),), True)
+    if tool == "cursor":
+        return doctor._has_hooks(doctor._json(home / ".cursor" / "hooks.json").get("hooks"),
+                                 tool, (("stop", "stop"),), False)
+    if tool == "opencode":
+        return (home / ".config" / "opencode" / "plugins" / "kaptyorka.js").exists()
+    return False
+
+
+def harness(adapters: list, home: Path, skills_current: bool = False) -> Dict[str, dict]:
+    """Per installed tool: is the rules text, the hooks, and the team skills in place.
+    Skills are None for a tool that has no skills folder (codex)."""
+    out: Dict[str, dict] = {}
+    for a in adapters:
+        if not a.installed():
+            continue
+        h = getattr(a, "home", home)
+        out[a.tool] = {"rules": bool(_rules_in_place(a, h)),
+                       "hooks": bool(doctor.tool_configured(a, h)),
+                       "skills": None if a.tool == "codex" else bool(skills_current)}
+    return out
+
+
+def machine(adapters: list, run=subprocess.run, platform: str = sys.platform,
+            skills_current: bool = False) -> dict:
     from kaptyorka import __version__
 
     try:
@@ -85,7 +119,8 @@ def machine(adapters: list, run=subprocess.run, platform: str = sys.platform) ->
     return {"os_user": getpass.getuser(), "tmux": shutil.which("tmux") is not None,
             "load": load, "cpus": os.cpu_count() or 1,
             "tools": {a.tool: _tool_version(a.tool, run) for a in installed},
-            "hooks_ok": hooks_ok, "version": __version__}
+            "hooks_ok": hooks_ok, "version": __version__,
+            "harness": harness(adapters, Path.home(), skills_current)}
 
 
 def _learned() -> Dict[str, str]:

@@ -71,7 +71,8 @@ class Bridge:
                 info = facts.git(cwd, self.runner)
                 if info:
                     repos[cwd] = info
-            self._facts = {**identity.facts(), **facts.machine(self.adapters, self.runner), "git": repos}
+            current = skills_sync.applied_version(paths.home()) == self.hub.get("skills_version", "")
+            self._facts = {**identity.facts(), **facts.machine(self.adapters, self.runner, skills_current=current), "git": repos}
             self._facts_at = time.monotonic()
         return self._facts
 

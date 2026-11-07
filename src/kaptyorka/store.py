@@ -192,6 +192,7 @@ class Agent:
     host: str = ""
     started: Optional[float] = None
     cwd: str = ""
+    device_id: Optional[int] = None
 
 
 @dataclass
@@ -975,7 +976,7 @@ class Store:
         return Agent(row["key"], row["name"], row["machine"], row["tool"], row["project"],
                      row["status"], row["activity"], row["last_seen"],
                      now - row["last_seen"] < ONLINE_S, row["label"], row["person_id"],
-                     row["os_user"], row["host"], row["started"], row["cwd"])
+                     row["os_user"], row["host"], row["started"], row["cwd"], row["device_id"])
 
     def _online_rows(self, now):
         return self.db.execute("SELECT * FROM agents WHERE last_seen > ? ORDER BY rowid",

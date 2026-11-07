@@ -97,6 +97,16 @@ def _git(value) -> Optional[dict]:
     return out
 
 
+def _harness(raw: dict) -> dict:
+    out = {}
+    for tool in ("claude-code", "opencode", "codex", "cursor"):
+        h = raw.get(tool)
+        if isinstance(h, dict) and isinstance(h.get("rules"), bool) and isinstance(h.get("hooks"), bool) \
+                and (h.get("skills") is None or isinstance(h["skills"], bool)):
+            out[tool] = {"rules": h["rules"], "hooks": h["hooks"], "skills": h.get("skills")}
+    return out
+
+
 def clean_facts(facts: dict) -> dict:
     """Only the known keys, with the right types; strings cut to 200."""
     facts = facts if isinstance(facts, dict) else {}
@@ -116,6 +126,8 @@ def clean_facts(facts: dict) -> dict:
     for key, kind in (("tools", _cut), ("hooks_ok", _bool), ("git", _git)):
         if key in facts:
             out[key] = _str_map(facts[key], kind)
+    if isinstance(facts.get("harness"), dict):
+        out["harness"] = _harness(facts["harness"])
     return out
 
 

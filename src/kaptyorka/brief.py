@@ -73,6 +73,11 @@ def _you(store, ws, agent: Agent, principal, unread: int) -> str:
     else:
         line += "No one else online. "
     line += f"{_plural(unread, 'unread message')}."
+    if principal is not None:
+        mine = ws.facts(principal.device_id).get("harness", {}).get(agent.tool)
+        if mine and (mine["hooks"] is False or mine["skills"] is False):
+            line += (" Harness on this tool: rules only (hooks or skills missing;"
+                     " run kaptyorka doctor --fix).")
     topics = [n["topic"] for n in store.notes_list()]
     if topics:
         line += f" Board topics: {', '.join(topics)}."

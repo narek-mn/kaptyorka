@@ -156,7 +156,7 @@ def build_app(store: Store) -> Starlette:
         boss = ws.boss_key(mine["name"]) if mine else None  # a worker sees its boss marked
         rows = []
         for a in store.online():
-            row = {**session_row(store, a, principal, names, now, live), "you": a.key == agent.key}
+            row = {**session_row(store, a, principal, names, now, live, ws), "you": a.key == agent.key}
             if a.key == boss:
                 row["boss"] = True
             rows.append(row)
@@ -625,7 +625,7 @@ def build_app(store: Store) -> Starlette:
 
     @server.custom_route("/api/feed", methods=["GET"])
     async def api_feed(request: Request) -> Response:
-        return JSONResponse(feed(store, request.scope["state"]["principal"]))
+        return JSONResponse(feed(store, request.scope["state"]["principal"], ws))
 
     @server.custom_route("/api/files", methods=["POST"])
     async def api_file_upload(request: Request) -> Response:

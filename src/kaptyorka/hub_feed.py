@@ -20,7 +20,7 @@ def visible(store: Store, principal: Principal, person_id, project: str) -> bool
 
 
 def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: float,
-                workers: Optional[dict] = None) -> dict:
+                workers: Optional[dict] = None, ws=None) -> dict:
     """One online session as the viewer may see it (the who() rule). `workers` maps the
     sessions of live workers to their names; a worker's name shows only with its project."""
     mine = a.person_id == principal.person_id
@@ -30,6 +30,9 @@ def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: 
         row["name"] = private_name(a.name, a.machine, a.tool, a.project)
     elif workers and a.key in workers:
         row["worker"] = workers[a.key]
+    row["harness"] = None
+    if ws is not None and a.device_id is not None:
+        row["harness"] = ws.facts(a.device_id).get("harness", {}).get(a.tool)
     if mine:
         row["doors"] = [d["with"] or d["person"] for d in store.doors_for(a.key)]
     return row
@@ -62,7 +65,7 @@ def _notes(store: Store, principal: Principal) -> list:
     return out
 
 
-def feed(store: Store, principal: Principal) -> dict:
+def feed(store: Store, principal: Principal, ws=None) -> dict:
     now = store.clock()
     people = store.people()
     names = {p["id"]: p["name"] for p in people}
@@ -71,7 +74,7 @@ def feed(store: Store, principal: Principal) -> dict:
     doors = [masked(store, principal, d, (("_a", "a_session"), ("_b", "b_session")))
              for d in store.doors(sides=True) if admin or me in (d["a_person"], d["b_person"])]
     out = {
-        "agents": [session_row(store, a, principal, names, now) for a in store.online()],
+        "agents": [session_row(store, a, principal, names, now, ws=ws) for a in store.online()],
         "messages": [masked(store, principal, m, (("_from", "sender"), ("_to", "to")))
                      for m in store.messages_for(principal, 500)],
         "notes": _notes(store, principal),
