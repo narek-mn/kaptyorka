@@ -39,10 +39,13 @@ MANAGER_NOTE = ("manager: starts by itself through this machine's bridge; if its
 
 
 def _apply_manager(store, args) -> None:
-    """Set the hub's manager switch from the flags; logged only when it changes."""
+    """Switch the manager off or on from the flags; logged only when it changes.
+    Neither flag (a plain service start) leaves the stored switch alone."""
     from kaptyorka.manager import ManagerStore
 
-    on = not getattr(args, "no_manager", False)
+    off, on = getattr(args, "no_manager", False), getattr(args, "manager", False)
+    if not (off or on):
+        return
     mm = ManagerStore(store)
     if mm.enabled() != on:
         mm.set_enabled(on, "hub")

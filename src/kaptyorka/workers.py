@@ -297,7 +297,7 @@ class WorkerStore:
                                          else f"tmux attach -t ={name}")
         return {"name": row["name"], "project": row["project"], "task": row["task"],
                 "host": row["host"], "os_user": os_user, "tool": row["tool"],
-                "folder": row["folder"], "worktree": bool(row["worktree"]),
+                "folder": row["folder"], "worktree": bool(row["worktree"]), "manager": bool(row["manager"]),
                 "state": row["state"], "error": row["error"],
                 "boss": boss["name"] if boss else row["boss_key"],
                 "person": self._person_name(row["boss_person"]), "key": row["key"],

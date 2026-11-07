@@ -606,3 +606,27 @@ def test_no_manager_changes_nothing(tmp_path, monkeypatch):
     finally:
         stop()
         store.close()
+
+
+def test_plain_serve_keeps_the_switch_and_start_manager_turns_it_on(home, monkeypatch):
+    from kaptyorka.manager import ManagerStore
+    from kaptyorka.store import Store
+
+    _unit_cmds(monkeypatch)
+    store = Store(paths.home() / "hub.db", legacy_token="x")
+    ManagerStore(store).set_enabled(False, "admin")
+    store.close()
+    built = []
+    import uvicorn
+    from kaptyorka import hub
+    monkeypatch.setattr(uvicorn, "run", lambda app, **k: built.append(app))
+    monkeypatch.setattr(hub, "build_app", lambda s, **k: "app")
+    with pytest.raises(SystemExit):
+        run_cli(["serve", "--foreground", "--port", "9999"])
+    assert built == ["app"] and _manager_flag() is False
+    with pytest.raises(SystemExit):
+        run_cli(["start", "--port", "9999", "--host", "10.0.0.5"])  # plain start too
+    assert _manager_flag() is False
+    with pytest.raises(SystemExit):
+        run_cli(["start", "--manager"])
+    assert _manager_flag() is True

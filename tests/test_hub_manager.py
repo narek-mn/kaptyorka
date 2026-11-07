@@ -511,3 +511,16 @@ def test_admin_closing_the_manager_switches_it_off(hub, clock):
     beat(hub, b)
     hub.tick()
     assert [x for x in orders(hub, b) if x.get("kind") != "close"] == []
+
+
+def test_non_admin_close_leaves_the_switch(hub):
+    """The switch-off keys on the manager row and the admin; a member never reaches it."""
+    admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.store.project_register("proj-a", by="test")
+    pid, bob = member(hub, "bob")
+    bridge(hub, pid)
+    run(call(bob, ident("k:bob"), "work", project="proj-a", task="x"))
+    answer = run(call(bob, ident("k:bob"), "close_worker", name="proj-a-w1"))
+    assert "switched off" not in answer and hub.mm.enabled() is True
+    assert hub.ws.by_name("proj-a-w1")["manager"] is False
