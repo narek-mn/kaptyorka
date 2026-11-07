@@ -75,7 +75,10 @@ def test_lock_screen_takes_a_pasted_token(hub):
     _, url, _ = hub
     page = http.request("GET", url + "/", "")[1]
     assert 'id="unlock-token"' in page and 'type="password"' in page
-    assert '"#t=" + encodeURIComponent(t)' in page
+    # checked in place: kept like a #t= link, then /api/me opens the page without a reload
+    assert "store(function (s) { s.setItem(KEY, t); });" in page
+    assert 'get("/api/me").then(function (m) { $("unlock-token").value = ""; enter(); start(m); }' in page
+    assert "location.reload" not in page and '"#t=" + encodeURIComponent(t)' not in page
 
 
 def test_machine_owner_route(hub):
@@ -97,4 +100,4 @@ def test_machine_owner_route(hub):
     assert [r["detail"] for r in store.log() if r["kind"] == "machine_owner"] == [
         "pc -> nobody", "pc -> ann"]
     page = http.request("GET", url + "/", "")[1]
-    assert '"/owner", { person: owner.value }' in page
+    assert 'apiPath("/api/machines/", m.host, "/owner"), { person: owner.value }' in page
