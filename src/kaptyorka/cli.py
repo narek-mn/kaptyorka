@@ -443,13 +443,14 @@ def _project_edit(args) -> int:
 
 
 def _project_remove(args) -> int:
-    if not _confirm(f"Remove the project {args.name}? Everyone loses access; its notes stay.",
-                    args.yes):
+    if not _confirm(f"Remove {args.name}? Its notes stay, visible to you under Archived;"
+                    " people lose their roles in it.", args.yes):
         return 1
     done = _admin_json("DELETE", f"/api/projects/{quote(args.name, safe='')}")
     if done is None:
         return 1
-    print(f"removed the project {args.name}: {done['grants']} grants dropped; its notes stay")
+    print(f"removed the project {args.name}: {done['grants']} grants dropped;"
+          " its notes stay under Archived")
     return 0
 
 

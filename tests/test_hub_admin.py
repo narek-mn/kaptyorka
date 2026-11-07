@@ -84,8 +84,15 @@ def test_project_routes(app):
     assert call(app, "alice", "GET", "/api/projects")[1][0]["description"] == "the app"
     status, body = call(app, "alice", "DELETE", "/api/projects/proj-a")
     assert status == 200 and body["grants"] == 0
-    assert call(app, "alice", "GET", "/api/projects")[1] == []
+    rows = call(app, "alice", "GET", "/api/projects")[1]
+    assert [(p["name"], p.get("archived")) for p in rows] == [("proj-a", True)]
+    assert call(app, "bob", "GET", "/api/projects")[1] == []
+    assert call(app, "bob", "GET", "/api/projects/proj-a/activity")[0] == 403
+    feed = call(app, "alice", "GET", "/api/feed")[1]
+    assert feed["projects"] == [] and [p["name"] for p in feed["archived_projects"]] == ["proj-a"]
     assert call(app, "alice", "DELETE", "/api/projects/proj-a") == (404, "no project named proj-a")
+    assert call(app, "alice", "POST", "/api/projects", {"name": "proj-a"})[0] == 204
+    assert "archived" not in call(app, "alice", "GET", "/api/projects")[1][0]
 
 
 def test_request_kind_validated(app):

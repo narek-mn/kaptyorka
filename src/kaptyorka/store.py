@@ -601,10 +601,16 @@ class Store:
         if not PROJECT_NAME.match(name):
             raise KaptyorkaError("project name must be 1 to 64 letters, digits, '.', '_' or '-'")
         with self.lock:
-            if self.db.execute("SELECT 1 FROM projects WHERE name=?", (name,)).fetchone():
+            old = self.db.execute("SELECT * FROM projects WHERE name=?", (name,)).fetchone()
+            if old is not None and old["archived_at"] is None:
                 raise KaptyorkaError(f"a project named {name} already exists")
-            self.db.execute("INSERT INTO projects (name, description, repo, created) VALUES (?,?,?,?)",
-                            (name, description, repo, self.clock()))
+            if old is not None:  # a removed project comes back with its notes and no roles
+                self.db.execute("UPDATE projects SET archived_at=NULL, description=?, repo=?"
+                                " WHERE name=?", (description or old["description"],
+                                                  repo or old["repo"], name))
+            else:
+                self.db.execute("INSERT INTO projects (name, description, repo, created)"
+                                " VALUES (?,?,?,?)", (name, description, repo, self.clock()))
             if by_person_id is not None:
                 self.db.execute("INSERT OR REPLACE INTO project_access (project, person_id, role)"
                                 " VALUES (?,?,'manage')", (name, by_person_id))
@@ -612,7 +618,7 @@ class Store:
 
     def _project_target(self, project: str, person_id: int) -> str:
         """The person's name, after checking both the project and the person exist."""
-        if self.db.execute("SELECT 1 FROM projects WHERE name=?", (project,)).fetchone() is None:
+        if not self._registered(project):
             raise KaptyorkaError(f"no project named {project}")
         who = self.db.execute("SELECT name FROM people WHERE id=?", (person_id,)).fetchone()
         if who is None:
@@ -654,11 +660,19 @@ class Store:
             return self._role(project, person_id)
 
     def _registered(self, project) -> bool:
-        return self.db.execute("SELECT 1 FROM projects WHERE name=?", (project,)).fetchone() is not None
+        return self.db.execute("SELECT 1 FROM projects WHERE name=? AND archived_at IS NULL",
+                               (project,)).fetchone() is not None
+
+    def _archived(self, project) -> bool:
+        return self.db.execute("SELECT 1 FROM projects WHERE name=? AND archived_at IS NOT NULL",
+                               (project,)).fetchone() is not None
 
     def _may(self, project, principal, write) -> bool:
         """A registered project goes by role. An unregistered one is only a folder name, which
-        two people can share by chance: it belongs to whoever has a session in it."""
+        two people can share by chance: it belongs to whoever has a session in it. A removed
+        (archived) project is the admin's alone, read-only."""
+        if self._archived(project):
+            return principal.is_admin() and not write
         if principal.is_admin():
             return True
         if self._registered(project):
@@ -683,10 +697,12 @@ class Store:
             out = []
             for p in self.db.execute("SELECT * FROM projects ORDER BY name").fetchall():
                 role = self._role(p["name"], principal.person_id)
-                if role is None:
+                archived = p["archived_at"] is not None  # shown to the admin alone, read-only
+                if role is None or (archived and not principal.is_admin()):
                     continue
                 out.append({"name": p["name"], "description": p["description"], "repo": p["repo"],
-                            "role": role,
+                            "role": "read" if archived else role,
+                            **({"archived": True} if archived else {}),
                             "working_now": [r["name"] for r in online if r["project"] == p["name"]]})
             return out
 
@@ -1816,7 +1832,9 @@ class Store:
         unregistered folder name can belong to two people by chance."""
         if project is None or principal is None:
             return
-        if not self._registered(project):
+        if self._archived(project) and not self._may(project, principal, write):
+            raise KaptyorkaError(f"project {project} was removed; its notes are kept for the admin")
+        if not self._registered(project) and not self._archived(project):
             raise KaptyorkaError(f"project {project} is not registered; ask the admin to register it")
         if not self._may(project, principal, write):
             raise KaptyorkaError(f"no access to project {project}; ask with request_access")

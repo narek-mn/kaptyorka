@@ -10,10 +10,17 @@ LIVE = ("starting", "up", "unattended", "abandoned")  # workers.LIVE; workers im
 MANAGER = "manager"  # manager.PERSON; manager imports the store
 
 
+# every column that holds a page key `web:<person name>`; a removed person's are renamed with them
+WEB_KEYS = [("messages", "sender_key"), ("messages", "to_key"), ("workers", "boss_key"),
+            ("doors", "a_key"), ("doors", "b_key"), ("knocks", "from_key"), ("knocks", "to_key"),
+            ("work_requests", "boss_key"), ("state_writes", "key"), ("done_checks", "key"),
+            ("proposals", "session_key"), ("conflicts", "session_key")]
+
+
 def ensure_schema(db) -> None:
-    cols = [r[1] for r in db.execute("PRAGMA table_info(people)")]
-    if "removed_at" not in cols:
-        db.execute("ALTER TABLE people ADD COLUMN removed_at REAL")
+    for table, col in (("people", "removed_at"), ("projects", "archived_at")):
+        if col not in [r[1] for r in db.execute(f"PRAGMA table_info({table})")]:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {col} REAL")
 
 
 def _admin(by: Principal) -> None:
@@ -59,25 +66,16 @@ def remove_person(store, ws, name: str, by: Principal) -> dict:
             # the shared token speaks for them on that machine, devices or not
             raise KaptyorkaError(f"{name} still uses the old shared token on"
                                  f" {mapped['key'][len('legacy:'):]}; turn the shared token off first")
-        for dev in db.execute("SELECT * FROM devices WHERE person_id=? AND revoked_at IS NULL",
-                              (pid,)).fetchall():
-            if store._is_rekey_device(dev):  # its token must not be handed out
-                db.execute("DELETE FROM rekeys WHERE device_name=?", (dev["name"],))
-        devices = db.execute("UPDATE devices SET revoked_at=? WHERE person_id=? AND"
-                             " revoked_at IS NULL", (now, pid)).rowcount
-        db.execute("DELETE FROM invites WHERE person_id=? AND used_at IS NULL", (pid,))
-        doors = db.execute("UPDATE doors SET closed_at=? WHERE closed_at IS NULL AND"
-                           " (a_person=? OR b_person=?)", (now, pid, pid)).rowcount
-        db.execute("UPDATE knocks SET answered_at=?, answer='no' WHERE answered_at IS NULL AND"
-                   " (from_person=? OR to_person=?)", (now, pid, pid))
-        grants = db.execute("DELETE FROM project_access WHERE person_id=?", (pid,)).rowcount
-        grants += db.execute("DELETE FROM machine_access WHERE person_id=?", (pid,)).rowcount
-        requests = db.execute("DELETE FROM requests WHERE person_id=? AND decided_at IS NULL",
-                              (pid,)).rowcount
         new = f"{name} (removed)"
         if db.execute("SELECT 1 FROM people WHERE name=?", (new,)).fetchone():
             new = f"{new} #{pid}"
-        db.execute("UPDATE people SET removed_at=?, name=? WHERE id=?", (now, new, pid))
+        db.execute("BEGIN IMMEDIATE")  # all of it or none of it
+        try:
+            counts = _remove(store, pid, name, new, now)
+            db.execute("COMMIT")
+        except BaseException:
+            db.execute("ROLLBACK")
+            raise
     workers = 0
     with ws.lock:  # the close order a person's close sends; then the row says why
         for w in ws.db.execute(f"SELECT * FROM workers WHERE boss_person=? AND state IN"
@@ -87,8 +85,32 @@ def remove_person(store, ws, name: str, by: Principal) -> dict:
                           " closed_at=COALESCE(closed_at, ?) WHERE name=?", (now, w["name"]))
             workers += 1
     store.log_add(by.person_name, "person_removed", name)
-    return {"devices": devices, "workers": workers, "doors": doors, "grants": grants,
-            "requests": requests}
+    return {"devices": counts[0], "workers": workers, "doors": counts[1], "grants": counts[2],
+            "requests": counts[3]}
+
+
+def _remove(store, pid: int, name: str, new: str, now: float) -> tuple:
+    """remove_person's writes, under the lock: (devices, doors, grants, requests)."""
+    db = store.db
+    for dev in db.execute("SELECT * FROM devices WHERE person_id=? AND revoked_at IS NULL",
+                          (pid,)).fetchall():
+        if store._is_rekey_device(dev):  # its token must not be handed out
+            db.execute("DELETE FROM rekeys WHERE device_name=?", (dev["name"],))
+    devices = db.execute("UPDATE devices SET revoked_at=? WHERE person_id=? AND"
+                         " revoked_at IS NULL", (now, pid)).rowcount
+    db.execute("DELETE FROM invites WHERE person_id=? AND used_at IS NULL", (pid,))
+    doors = db.execute("UPDATE doors SET closed_at=? WHERE closed_at IS NULL AND"
+                       " (a_person=? OR b_person=?)", (now, pid, pid)).rowcount
+    db.execute("UPDATE knocks SET answered_at=?, answer='no' WHERE answered_at IS NULL AND"
+               " (from_person=? OR to_person=?)", (now, pid, pid))
+    grants = db.execute("DELETE FROM project_access WHERE person_id=?", (pid,)).rowcount
+    grants += db.execute("DELETE FROM machine_access WHERE person_id=?", (pid,)).rowcount
+    requests = db.execute("DELETE FROM requests WHERE person_id=? AND decided_at IS NULL",
+                          (pid,)).rowcount
+    db.execute("UPDATE people SET removed_at=?, name=? WHERE id=?", (now, new, pid))
+    for table, col in WEB_KEYS:  # a new person of the old name must not get their page rows
+        db.execute(f"UPDATE {table} SET {col}=? WHERE {col}=?", (f"web:{new}", f"web:{name}"))
+    return devices, doors, grants, requests
 
 
 def set_role(store, name: str, role: str, by: Principal) -> None:
@@ -139,7 +161,8 @@ def invite_cancel(store, code: str, by: Principal) -> None:
 # projects
 
 def _project(db, name: str) -> None:
-    if db.execute("SELECT 1 FROM projects WHERE name=?", (name,)).fetchone() is None:
+    if db.execute("SELECT 1 FROM projects WHERE name=? AND archived_at IS NULL",
+                  (name,)).fetchone() is None:
         raise KaptyorkaError(f"no project named {name}")
 
 
@@ -155,8 +178,8 @@ def project_update(store, name: str, description: str, by: Principal) -> None:
 
 
 def project_remove(store, name: str, by: Principal) -> dict:
-    """Unregister a project: its grants, pending requests and the folder each machine learned
-    for it go. Its notes stay."""
+    """Archive a project: its grants, pending requests and the folder each machine learned for
+    it go. Its notes stay, readable by the admin alone; registering the name again restores it."""
     _admin(by)
     db = store.db
     with store.lock:
@@ -175,7 +198,7 @@ def project_remove(store, name: str, by: Principal) -> dict:
                 db.execute("UPDATE device_facts SET folders=? WHERE device_id=?",
                            (json.dumps(known), r["device_id"]))
                 folders += 1
-        db.execute("DELETE FROM projects WHERE name=?", (name,))
+        db.execute("UPDATE projects SET archived_at=? WHERE name=?", (store.clock(), name))
     store.log_add(by.person_name, "project_removed", name)
     return {"grants": grants, "requests": requests, "folders": folders}
 

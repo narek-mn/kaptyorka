@@ -98,7 +98,8 @@ def feed(store: Store, principal: Principal, ws=None) -> dict:
             "machines": [{**m, "grants": grants.get(m["host"], [])}
                          for m in store.machines(principal)],
             "projects": [{**p, "members": members.get(p["name"], [])}
-                         for p in store.projects_for(principal)],
+                         for p in store.projects_for(principal) if not p.get("archived")],
+            "archived_projects": [p for p in store.projects_for(principal) if p.get("archived")],
             "log": store.log(200),
             "settings": {"retention_days": store.retention_days()},
         })

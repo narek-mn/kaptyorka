@@ -2,6 +2,7 @@
 access and the log read as sentences."""
 import hashlib
 import sqlite3
+from dataclasses import replace
 
 import pytest
 
@@ -121,8 +122,24 @@ def test_remove_refuses_while_shared_token_speaks_for_them(store, ws, ids):
 
 
 def test_removed_name_can_be_reused(store, ws, ids):
+    old = who(store, "bob")
+    ws.notify("web:bob", "a private notice for the old bob")
+    store.db.execute("INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool,"
+                     " project, text, created) VALUES ('web:bob', 'bob', 'web:alice', 'alice',"
+                     " '', '', '', 'hello from the old bob', 1)")
+    dev = shared_device(store, ids["alice"])
+    worker(store, "w1", ids["bob"], dev, state="closed")
+    store.db.execute("UPDATE workers SET boss_key='web:bob'")
     admin_ops.remove_person(store, ws, "bob", who(store, "alice"))
     new = store.person_create("bob", by="alice")
+    new_bob = Principal(new, "bob", "member", 0, "web", False, False)
+    assert store.messages_for(new_bob) == []
+    keys = [tuple(r) for r in store.db.execute("SELECT sender_key, to_key FROM messages ORDER BY id")]
+    assert ("hub:workers", "web:bob (removed)") in keys
+    assert all(k != "web:bob" for pair in keys for k in pair)
+    assert store.db.execute("SELECT boss_key FROM workers").fetchone()[0] == "web:bob (removed)"
+    renamed = replace(old, person_name="bob (removed)")
+    assert len(store.messages_for(renamed)) == 2  # the removed row still reaches its own
     assert new != ids["bob"] and store.person_by_name("bob")["id"] == new
     admin_ops.remove_person(store, ws, "bob", who(store, "alice"))
     names = admin_ops.names(store)
@@ -190,13 +207,49 @@ def test_project_update_and_remove_keeps_notes(store, ws, ids):
     assert s.projects_for(admin)[0]["description"] == "new words"
     done = admin_ops.project_remove(s, "proj-a", admin)
     assert done == {"grants": 1, "requests": 1, "folders": 1}
-    assert s.projects_for(admin) == [] and s.project_role("proj-a", ids["bob"]) is None
+    assert [(p["name"], p.get("archived"), p["role"]) for p in s.projects_for(admin)] == \
+        [("proj-a", True, "read")]
+    assert s.projects_for(who(s, "bob")) == [] and s.project_role("proj-a", ids["bob"]) is None
     assert ws.folders(dev) == {"proj-b": "/w/proj-b"}
     assert s.db.execute("SELECT text FROM notes WHERE project='proj-a'").fetchone()[0] == \
         "where it stands"
     assert [r["kind"] for r in s.log(3)][:2] == ["project_removed", "project_updated"]
     with pytest.raises(KaptyorkaError, match="no project named proj-a"):
         admin_ops.project_update(s, "proj-a", "x", admin)
+    with pytest.raises(KaptyorkaError, match="no project named proj-a"):
+        admin_ops.project_remove(s, "proj-a", admin)
+    with pytest.raises(KaptyorkaError, match="no project named proj-a"):
+        s.grant_project("proj-a", ids["bob"], "read", "alice")
+    with pytest.raises(KaptyorkaError, match="no project named proj-a"):
+        s.request_access(ids["bob"], "project", "proj-a")
+
+
+def test_removed_project_notes_are_the_admins_alone(store, ws, ids):
+    s, admin = store, who(store, "alice")
+    s.project_register("proj-a", "the app", by="alice")
+    s.grant_project("proj-a", ids["carol"], "write", "alice")
+    s.notes_write_from_web("alice", "state", "where it stands", project="proj-a")
+    admin_ops.project_remove(s, "proj-a", admin)
+    c = who(s, "carol")  # her grant is gone; she has a session in a folder named proj-a
+    s.seen("claude:c1", "pc", "claude-code", "proj-a", principal=c)
+    for fn in (lambda: s.notes_list(c, "proj-a"), lambda: s.notes_read("state", c, "proj-a")):
+        with pytest.raises(KaptyorkaError, match="was removed"):
+            fn()
+    with pytest.raises(KaptyorkaError, match="was removed"):
+        s.notes_write("claude:c1", "state", "mine now", project="proj-a")
+    with pytest.raises(KaptyorkaError, match="was removed"):
+        s.notes_write_from_web("alice", "state", "edit", project="proj-a", principal=admin)
+    assert not s.may_read_project("proj-a", c) and not s.may_write_project("proj-a", c)
+    assert s.notes_read("state", admin, "proj-a").text == "where it stands"
+    out = feed(s, admin)
+    assert [n["project"] for n in out["notes"]] == ["proj-a"]
+    assert [p["name"] for p in out["archived_projects"]] == ["proj-a"] and out["projects"] == []
+    assert "proj-a" not in [n["project"] for n in feed(s, c)["notes"]]
+    s.project_register("proj-a", by="alice")  # comes back with its notes and no roles
+    assert [(p["name"], p.get("archived"), p["description"]) for p in s.projects_for(admin)] == \
+        [("proj-a", None, "the app")]
+    assert s.project_role("proj-a", ids["carol"]) is None
+    assert s.notes_read("state", admin, "proj-a").text == "where it stands"
 
 
 def test_project_remove_refuses_live_worker(store, ws, ids):
@@ -247,13 +300,17 @@ def test_log_sentences():
     ]
     for kind, detail, want in cases:
         assert admin_ops.log_sentence({"person": "alice", "kind": kind, "detail": detail}) == want
-    for kind in ("work_decide", "manager", "skills", "backup"):
-        assert admin_ops.log_sentence({"person": "manager", "kind": kind, "detail": "request 1: wait"})
+    for kind, detail, want in [
+            ("work_decide", "request 1: wait — busy", "manager decided work request 1: wait — busy"),
+            ("manager", "closed: switched off", "The manager session: closed: switched off")]:
+        assert admin_ops.log_sentence({"person": "manager", "kind": kind, "detail": detail}) == want
 
 
 def test_schema_adds_removed_at_to_an_older_people_table(tmp_path):
     db = sqlite3.connect(str(tmp_path / "x.db"))
     db.execute("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)")
+    db.execute("CREATE TABLE projects (name TEXT PRIMARY KEY)")
     admin_ops.ensure_schema(db)
     admin_ops.ensure_schema(db)
     assert "removed_at" in [r[1] for r in db.execute("PRAGMA table_info(people)")]
+    assert "archived_at" in [r[1] for r in db.execute("PRAGMA table_info(projects)")]
