@@ -794,6 +794,31 @@ def test_skills_mark_unknown_until_the_hub_answers_then_current(hub, home):
     assert WorkerStore(hub.store).facts(device)["harness"]["claude-code"]["skills"] is True
 
 
+def test_skills_mark_updates_on_a_machine_just_booted(hub, home, monkeypatch):
+    """A freshly booted machine has a monotonic clock under a minute: the forced rebuild after
+    the hub's answer must not depend on the clock being past FACTS_S (this flaked in CI)."""
+    from helpers import person
+    from kaptyorka import rules, skills_sync
+    from kaptyorka.workers import WorkerStore
+
+    class Booted:  # the bridge's view of `time` only: patching the module itself would stall waits
+        monotonic = staticmethod(lambda: 10.0)
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+    monkeypatch.setattr(bridge_mod, "time", Booted())
+    rs = rules.RulesStore(hub.store)
+    rs.set_skills({"a": "Body A"}, "admin")
+    skills_sync.sync(home, rs.skills_version(), [{"name": "a", "text": "Body A"}], bridge_mod.log)
+    _, token = person(hub.store, "alice")
+    device = hub.store.authenticate(token).device_id
+    b = Bridge({**cfg(hub), "token": token}, [FakeAdapter("claude-code", "claude")], bridge_mod.log)
+    b.heartbeat()
+    assert WorkerStore(hub.store).facts(device)["harness"]["claude-code"]["skills"] is None
+    b.heartbeat()
+    assert WorkerStore(hub.store).facts(device)["harness"]["claude-code"]["skills"] is True
+
+
 def test_heartbeat_sends_git_age_not_read_at(hub, home, monkeypatch):
     proj = home / "proj-a"
     proj.mkdir()

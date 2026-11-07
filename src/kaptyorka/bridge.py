@@ -53,7 +53,7 @@ class Bridge:
         self.pending_confirm = False  # a new token is saved but the hub has not confirmed it
         self.hub: dict = {}  # the hub's last JSON answer to a heartbeat; {} before one or on 204
         self._facts: dict = {}
-        self._facts_at = 0.0
+        self._facts_at: Optional[float] = None  # monotonic time of the last build; None forces one
         self._skills_version: Optional[str] = None  # the hub's last skills_version; None until one comes
         self._updated_to = ""  # the hub version an update was last run for
         self._update_retry_at = 0.0
@@ -66,7 +66,7 @@ class Bridge:
 
     def _machine_facts(self, sessions: list) -> dict:
         """Machine facts and git state per session folder, rebuilt at most once a minute."""
-        if time.monotonic() - self._facts_at >= FACTS_S or not self._facts:
+        if self._facts_at is None or time.monotonic() - self._facts_at >= FACTS_S or not self._facts:
             repos = {}
             for cwd in {s.cwd for s in sessions if s.cwd}:
                 info = facts.git(cwd, self.runner)
@@ -116,7 +116,7 @@ class Bridge:
         v = self.hub.get("skills_version")
         if isinstance(v, str) and v != self._skills_version:
             self._skills_version = v
-            self._facts_at = 0.0  # the next facts show the skills after this sync
+            self._facts_at = None  # the next facts show the skills after this sync
         self._sessions = objs
         self._report("heartbeat", None if status in (200, 204)
                      else f"hub answered {status} to heartbeat")
