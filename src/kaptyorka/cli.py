@@ -49,6 +49,8 @@ def _apply_manager(store, args) -> None:
     mm = ManagerStore(store)
     if mm.enabled() != on:
         mm.set_enabled(on, "hub")
+    if on:
+        mm.unblock()  # the admin has made Claude Code trust the folder
 
 
 def _serve(args) -> int:

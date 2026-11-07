@@ -107,6 +107,32 @@ class ManagerStore:
         self._set("manager_enabled", "1" if on else "0")
         self.store.log_add(by, PERSON, "on" if on else "off")
 
+    def blocked(self) -> Optional[str]:
+        """Why the hub stops launching the manager until `kaptyorka start --manager`."""
+        return self._get("manager_blocked") or None
+
+    def set_blocked(self, why: str) -> None:
+        self._set("manager_blocked", why)
+
+    def unblock(self) -> None:
+        self._set("manager_blocked", "")
+
+    def trust_failure(self) -> Optional[float]:
+        """The start time of a failed manager launch Claude Code refused for trust."""
+        with self.lock:
+            row = self.db.execute("SELECT created, error FROM workers WHERE name=? AND"
+                                  " state='failed'", (WORKER,)).fetchone()
+        if row is None or "does not trust" not in (row["error"] or ""):
+            return None
+        return row["created"]
+
+    def name_taken(self) -> Optional[str]:
+        """The role of another person named `manager`, who keeps the manager from starting."""
+        with self.lock:
+            row = self.db.execute("SELECT role FROM people WHERE name=? AND role!='manager'",
+                                  (PERSON,)).fetchone()
+        return None if row is None else row["role"]
+
     def rules_written_version(self) -> Optional[int]:
         v = self._get("manager_rules_written")
         return None if v is None else int(v)
@@ -208,6 +234,8 @@ class ManagerStore:
     def may_launch(self, now: float) -> Tuple[bool, str]:
         if not self.enabled():
             return False, "the manager is switched off"
+        if self.blocked() == "trust":
+            return False, "Claude Code does not trust the manager's folder"
         with self.lock:
             live = self.db.execute("SELECT 1 FROM workers WHERE name=? AND state IN"
                                    " ('starting','up')", (WORKER,)).fetchone()

@@ -111,6 +111,9 @@ MANAGER_FIRST = ("You are the team's manager session; read CLAUDE.md in this fol
                  " the hub's messages.")
 MANAGER_FAILED = ("the manager session failed to start twice; see"
                   " ~/.kaptyorka/workers/manager.log on the hub machine")
+MANAGER_UNTRUSTED = ("the manager cannot start: Claude Code does not trust ~/.kaptyorka/manager"
+                     " on the hub machine; run claude there once, accept, then"
+                     " kaptyorka start --manager")
 
 
 def build_app(store: Store, manager_url: str = "") -> Starlette:
@@ -259,9 +262,21 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             tell(to, f"no decision on your {r['project']} request within an hour; ask again")
         if not mm.enabled():
             return
+        taken = mm.name_taken()
+        if taken is not None:
+            if mm.push_once("manager-name-taken", now, 86400):
+                print(f"kaptyorka: a person named manager already exists with role {taken};"
+                      " the manager cannot start", flush=True)
+            return
         host = identity.facts()["host"]
         manager_files(host, now)
         admin = mm.admin_device(host)
+        failed = mm.trust_failure()
+        if failed is not None and mm.push_once(f"manager-untrusted:{failed!r}", now):
+            mm.set_blocked("trust")  # relaunching cannot help; start --manager clears it
+            if admin is not None:
+                names = {p["id"]: p["name"] for p in store.people()}
+                tell(f"web:{names.get(admin['person_id'], '')}", MANAGER_UNTRUSTED)
         if admin is not None and mm.failures_last_hour(now) >= 2 \
                 and mm.push_once("manager-failed", now, 3600):
             names = {p["id"]: p["name"] for p in store.people()}

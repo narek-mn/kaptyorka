@@ -618,3 +618,62 @@ def test_two_racing_decisions_start_one_worker(hub, monkeypatch):
     errors = [r.content[0].text for r in results if r.is_error]
     assert len(errors) == 1 and "already decided" in errors[0]
     assert hub.ws.by_name("proj-a-w1") is not None and hub.ws.by_name("proj-a-w2") is None
+
+
+# a folder Claude Code does not trust: one notice, no relaunch loop
+
+TRUST = "Claude Code does not trust /h/.kaptyorka/manager; open claude there once and accept"
+
+
+def test_trust_failure_blocks_relaunch_until_start_manager(hub, clock):
+    from kaptyorka.cli import _apply_manager
+    from kaptyorka.hub import MANAGER_UNTRUSTED
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    ack(hub, b, o, ok=False, error=TRUST)
+    for _ in range(2 * 60 * 4):  # two hours of 15 s ticks, the admin's bridge online
+        clock[0] += 15
+        with hub.store.lock:
+            hub.store.db.execute("UPDATE devices SET last_used=? WHERE id=?",
+                                 (clock[0], b.device_id))
+        hub.tick()
+    assert orders(hub, b) == [] and hub.mm.may_launch(clock[0])[0] is False
+    assert hub.mm.blocked() == "trust"
+    texts = page_texts(hub)
+    assert texts.count(MANAGER_UNTRUSTED) == 1
+    assert not any("failed to start" in t for t in texts) and MANAGER_FAILED not in texts
+    _apply_manager(hub.store, SimpleNamespace(manager=True, no_manager=False))
+    assert hub.mm.blocked() is None
+    beat(hub, b)
+    hub.tick()
+    assert len(orders(hub, b)) == 1  # launched again; the old failure does not block it
+
+
+def test_other_launch_failure_does_not_block(hub):
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    ack(hub, b, o, ok=False, error="claude: not found")
+    hub.tick()
+    assert hub.mm.blocked() is None
+
+
+# a person already named manager
+
+def test_person_named_manager_reported_once_a_day(hub, clock, capsys):
+    admin_bridge(hub)
+    person(hub.store, "manager", "member")
+    hub.mm.set_enabled(True, "test")
+    for _ in range(10):
+        clock[0] += 15
+        hub.tick()
+    out = capsys.readouterr().out
+    line = "a person named manager already exists with role member; the manager cannot start"
+    assert out.count(line) == 1 and "manager tick failed" not in out
+    assert state(hub) is None
+    clock[0] += 86400
+    hub.tick()
+    assert capsys.readouterr().out.count(line) == 1

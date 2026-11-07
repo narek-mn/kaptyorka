@@ -665,7 +665,9 @@ class WorkerStore:
             for w in self.db.execute(
                     "SELECT w.name, w.boss_key, w.error FROM workers w LEFT JOIN agents b"
                     " ON b.key=w.boss_key WHERE w.state='failed' AND w.told IS NULL"
-                    " AND (w.boss_key LIKE 'web:%' OR b.last_seen > ?)",
+                    " AND (w.boss_key LIKE 'web:%' OR b.last_seen > ?)"
+                    # the hub sends its own line for this one (hub.MANAGER_UNTRUSTED)
+                    " AND NOT (w.manager=1 AND w.error LIKE '%does not trust%')",
                     (now - ONLINE_S,)).fetchall():
                 self.db.execute("UPDATE workers SET told=? WHERE name=?", (now, w["name"]))
                 notices.append((w["boss_key"],
