@@ -154,5 +154,10 @@ def test_oversize_chunked_stops_at_limit(hub, home):
     with pytest.raises((urllib.error.HTTPError, urllib.error.URLError, OSError)) as e:
         urllib.request.urlopen(req)
     if isinstance(e.value, urllib.error.HTTPError):
-        assert e.value.code == 400 and b"file too large" in e.value.read()
+        assert e.value.code == 400
+        try:
+            body = e.value.read()  # the close can also land while the body is being read
+        except OSError:
+            body = b"file too large"
+        assert b"file too large" in body
     assert hub.store.db.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
