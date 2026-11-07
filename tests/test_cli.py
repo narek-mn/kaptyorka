@@ -273,7 +273,11 @@ def test_backup_nightly_installs_timer(home, monkeypatch, capsys):
         entry_with(["backup", "alice@box-1:/srv/b", "--nightly"])
     assert e.value.code == 0
     assert got[0][0] == "kaptyorka-backup" and got[0][1][1:] == ["backup", "alice@box-1:/srv/b"]
-    assert "installed t" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "installed t" in out
+    pw = paths.home() / "backup-pass"  # made now, so a copy can be kept before the first night
+    assert pw.read_text().strip() and f"backup passphrase in {pw}, keep a copy" in out
+    assert pw.stat().st_mode & 0o777 == 0o600
 
 
 def test_backup_nightly_rejects_bad_dest(home, capsys):

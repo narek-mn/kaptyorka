@@ -155,9 +155,9 @@ At the start of a session the hub gives the agent a short brief. It has five par
 4. Your project: its state note, its git activity of the last 7 days, and the branches that have open sessions.
 5. Your unread messages.
 
-The brief is at most 6,000 characters. When it is too long, the hub cuts the rules first, then the project list, then the git activity, then the end of the state note. Unread messages are never cut. The brief is kept for 10 seconds per session, so quick repeats are cheap.
+The brief is at most 6,000 characters. When it is too long, the hub cuts the rules first, then the project list, then the git activity, then the end of the state note. Unread messages are never cut. The brief is kept for 10 seconds per session, so quick repeats are cheap. A new unread message, or a brief that just delivered messages, is the exception: the next start builds it again.
 
-The bridge reports each session folder's git branch, last commit and whether it has changes. The hub keeps this git activity for 30 days.
+The bridge reports each session folder's git branch, last commit and whether it has changes. The hub keeps this git activity for 30 days. The project view shows the last 20 changes of branch or commit.
 
 ## The done check
 
@@ -167,7 +167,9 @@ When a session stops, the hub checks whether it should update its project's stat
 - It did work: the bridge saw a new commit in its folder, or the folder went from changed to clean, or the session set a status with the word "done".
 - It has not written the state note since that work.
 
-Then the hub asks the session to call `state_write` before it stops. It asks at most once per session. A session that may only read the project is never asked. If nothing in the project changed, the session calls `status("done: no state change")`, and the check is cleared.
+Then the hub asks the session to call `state_write` before it stops. It asks at most once per session. Without a "done" status, a session is asked only after its folder showed a new commit or became clean. Git cannot tell who made the commit, so a session that only read files can be asked when someone else commits in the same folder. If nothing in the project changed, the session calls `status("done: no state change")`, and the check is cleared.
+
+The stop hooks of Claude Code and Codex read the folder's git themselves, so a commit made just before the stop counts even when the bridge has not reported it yet.
 
 | Tool | What the session gets |
 |---|---|
@@ -272,7 +274,7 @@ Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by def
 
 `kaptyorka backup <user@host:path>` copies the hub's data (`hub.db` and `files/`) to another machine over ssh. When `gpg` is installed the copy is encrypted. The passphrase is in `~/.kaptyorka/backup-pass`: keep a copy of it somewhere else, or the backup cannot be opened. Without `gpg` the copy is a plain tar, and the command says so.
 
-`kaptyorka backup --nightly <user@host:path>` does the same every day at 03:00. It keeps your PATH and home folder, so it finds the same tools.
+`kaptyorka backup --nightly <user@host:path>` does the same every day at 03:00. It keeps your PATH and home folder, so it finds the same tools. It makes `backup-pass` right away and prints its path, so you can keep a copy before the first night.
 
 `kaptyorka restore <file>` puts a backup back. Stop the hub first (`kaptyorka stop`). The old data stays beside the new data, named `*.before-restore`.
 

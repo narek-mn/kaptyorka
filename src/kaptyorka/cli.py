@@ -429,7 +429,9 @@ def _backup(args) -> int:
             for line in service.install_timer("kaptyorka-backup",
                                               [str(Path(sys.argv[0]).resolve()), "backup", args.dest]):
                 print(line)
-        except (ValueError, service.ServiceError) as e:
+            # made now, not at the first night's run, so its copy can be kept from the start
+            print(f"backup passphrase in {backup._passfile(home)}, keep a copy")
+        except (ValueError, OSError, service.ServiceError) as e:
             print(e, file=sys.stderr)
             return 1
         return 0

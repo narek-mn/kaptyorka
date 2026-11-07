@@ -29,3 +29,14 @@ def test_readme_tool_table_matches_the_hub(hub):
     listed = re.findall(r"^\| `(\w+)` \|", table, re.M)
     assert len(listed) == len(set(listed))
     assert set(listed) == tool_names(hub) == set(FALLBACK_TOOLS)
+
+
+def test_readme_done_check_and_brief_cache_wording():
+    r = (ROOT / "README.md").read_text()
+    done = r.split("## The done check", 1)[1].split("\n## ", 1)[0]
+    assert "is never asked" not in done
+    assert "Git cannot tell who made the commit" in done and 'status("done: no state change")' in done
+    assert "read the folder's git themselves" in done
+    brief = r.split("## What a session knows on start", 1)[1].split("\n## ", 1)[0]
+    assert "kept for 10 seconds per session" in brief and "just delivered messages" in brief
+    assert "makes `backup-pass` right away" in r
