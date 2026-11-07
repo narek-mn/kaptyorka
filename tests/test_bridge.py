@@ -792,3 +792,24 @@ def test_skills_mark_unknown_until_the_hub_answers_then_current(hub, home):
     assert WorkerStore(hub.store).facts(device)["harness"]["claude-code"]["skills"] is None
     b.heartbeat()  # the answer's version matches what is applied here
     assert WorkerStore(hub.store).facts(device)["harness"]["claude-code"]["skills"] is True
+
+
+def test_heartbeat_sends_git_age_not_read_at(hub, home, monkeypatch):
+    proj = home / "proj-a"
+    proj.mkdir()
+    sent = []
+    real = bridge_mod.http.request
+
+    def spy(method, url, token, body=None, *a, **kw):
+        sent.append(body)
+        return real(method, url, token, body, *a, **kw)
+
+    monkeypatch.setattr(bridge_mod.http, "request", spy)
+    a = FakeAdapter(sessions=[Session("codex:1", "codex", "proj-a", cwd=str(proj))])
+    def run(cmd, **kw):  # a repo on main
+        return subprocess.CompletedProcess(cmd, 0, "main\n", "")
+
+    Bridge(cfg(hub), [a], bridge_mod.log, run=run).heartbeat()
+    git = sent[0]["facts"]["git"]
+    assert str(proj) in git
+    assert 0 <= git[str(proj)]["age"] < 5 and "read_at" not in git[str(proj)]

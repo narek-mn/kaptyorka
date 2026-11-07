@@ -78,6 +78,19 @@ class Bridge:
             self._facts_at = time.monotonic()
         return self._facts
 
+    @staticmethod
+    def _sendable(facts_: dict) -> dict:
+        """The cached facts with each git read's `read_at` swapped for its `age` now, so the
+        hub never compares this machine's clock with its own."""
+        git = {}
+        for cwd, info in facts_.get("git", {}).items():
+            info = dict(info)
+            read_at = info.pop("read_at", None)
+            if read_at is not None:
+                info["age"] = round(max(0.0, time.time() - read_at), 1)
+            git[cwd] = info
+        return {**facts_, "git": git}
+
     def heartbeat(self) -> None:
         sessions, tools, objs = [], [], []
         for a in self.adapters:
@@ -96,7 +109,7 @@ class Bridge:
         status, answer = http.request(
             "POST", self.cfg["hub"] + "/bridge/heartbeat", self.cfg["token"],
             {"machine": self.cfg["machine"], "sessions": sessions, "tools": tools,
-             "facts": self._machine_facts(objs),
+             "facts": self._sendable(self._machine_facts(objs)),
              "folders": facts.folders(projects if isinstance(projects, list) else [], objs,
                                       Path.home())})
         self.hub = answer if status == 200 and isinstance(answer, dict) else {}

@@ -908,3 +908,12 @@ def test_manager_links_after_its_own_call_first_launch_and_relaunch(store, ws, c
     bp = principal(store, bob)
     store.seen("claude:b", "box-1", "claude-code", "proj-a", principal=bp)
     assert not ws.link("manager", "claude:b", row["id"])
+
+
+def test_clean_facts_git_age():
+    got = clean_facts({"git": {"/p": {"branch": "main", "subject": "x", "age": 12.5}}})
+    assert got["git"]["/p"]["age"] == 12.5
+    for bad in (-1, "soon", True, float("nan")):
+        assert "age" not in clean_facts({"git": {"/p": {"branch": "m", "age": bad}}})["git"]["/p"]
+    assert clean_facts({"git": {"/p": {"age": 10 ** 9}}})["git"]["/p"]["age"] == 86400
+    assert clean_facts({"git": {"/p": {"read_at": 5.0}}})["git"]["/p"]["read_at"] == 5.0

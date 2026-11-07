@@ -94,7 +94,11 @@ def _git(value) -> Optional[dict]:
             out[k] = _cut(value[k])
     if _bool(value.get("dirty")) is not None:
         out["dirty"] = value["dirty"]
-    read_at = value.get("read_at")  # when the bridge read git; missing: the hub's now
+    age = value.get("age")  # seconds since the bridge read git (0.6+): no clock compared
+    if isinstance(age, (int, float)) and not isinstance(age, bool) \
+            and math.isfinite(age) and age >= 0:
+        out["age"] = float(min(age, 86400))
+    read_at = value.get("read_at")  # 0.3-0.5 bridges: their own clock; missing: the hub's now
     if isinstance(read_at, (int, float)) and not isinstance(read_at, bool) \
             and math.isfinite(read_at):
         out["read_at"] = float(read_at)

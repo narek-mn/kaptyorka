@@ -236,9 +236,13 @@ class MemoryStore:
                     continue
                 branch, subject = g.get("branch") or "", g.get("subject") or ""
                 dirty = _dirty(g.get("dirty"))
-                read_at = g.get("read_at")
-                # when git was read (a 0.3 bridge sends none: now); never later than now
-                read_at = now if not isinstance(read_at, (int, float)) else min(read_at, now)
+                age, read_at = g.get("age"), g.get("read_at")
+                # when git was read: now - age (the bridge's clock does not count); an old
+                # bridge sends read_at (a 0.3 one none: now); never later than now
+                if isinstance(age, (int, float)):
+                    read_at = now - age
+                else:
+                    read_at = now if not isinstance(read_at, (int, float)) else min(read_at, now)
                 last = self.db.execute(
                     "SELECT branch, dirty, subject, read_at FROM git_facts WHERE host=? AND"
                     " os_user=? AND cwd=? ORDER BY id DESC LIMIT 1", (host, os_user, cwd)).fetchone()

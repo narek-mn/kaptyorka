@@ -265,3 +265,19 @@ def test_git_seen_drops_a_read_older_than_the_stored_one(ms, p, dev, clock):
     ms.git_seen(p, dev, {A: {"branch": "main", "subject": "init", "read_at": clock[0] - 5}}, F)
     ms.git_seen(p, dev, {A: {"branch": "main", "subject": "next"}}, F)  # no read_at: now
     assert [r["subject"] for r in ms.git_recent("proj-a")] == ["next", "fix"]
+
+
+def test_age_beats_clock_skew(ms, p, dev, clock):
+    # the stop hook stamps a fresh fact at now; a bridge clock 90 s ahead resends a cached
+    # read (age 70) of the older commit: read_at = now - 70 is before the stored one
+    ms.git_seen(p, dev, {A: {"branch": "main", "subject": "new", "age": 0}}, F)
+    ms.git_seen(p, dev, {A: {"branch": "main", "subject": "old", "age": 70}}, F)
+    with ms.lock:
+        rows = ms.db.execute("SELECT subject, read_at FROM git_facts").fetchall()
+    assert [(r["subject"], r["read_at"]) for r in rows] == [("new", clock[0])]
+
+
+def test_age_sets_read_at_from_hub_now(ms, p, dev, clock):
+    ms.git_seen(p, dev, {A: {"branch": "main", "subject": "x", "age": 30}}, F)
+    with ms.lock:
+        assert ms.db.execute("SELECT read_at FROM git_facts").fetchone()[0] == clock[0] - 30
