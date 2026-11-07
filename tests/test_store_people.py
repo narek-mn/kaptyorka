@@ -369,3 +369,32 @@ def test_prune_loop_one_failure_does_not_skip_the_other(monkeypatch):
                 "retention: deleted 2 git facts, 3 done checks, 4 state writes")
         else:
             assert len(lines) == 1 and "memory boom" in lines[0]
+
+
+def test_heartbeat_keeps_manager_session(tmp_path):
+    t = [1000.0]
+    s = Store(tmp_path / "hub.db", clock=lambda: t[0])
+    mid, tm = _member(s, "manager", "manager")
+    _, ta = _member(s, "root", "admin")
+    s.seen("k:m", "manager@box-1", "claude", "manager", principal=s.authenticate(tm))
+    t[0] += 10
+    s.heartbeat("root@box-1", [{"key": "k:m", "tool": "claude", "project": "manager"}],
+                principal=s.authenticate(ta))
+    a = s.agent("k:m")
+    assert a.person_id == mid and a.last_seen == 1010.0
+    s.close()
+
+
+def test_manager_takes_key_first_seen_by_admin_bridge(tmp_path):
+    s = Store(tmp_path / "hub.db")
+    mid, tm = _member(s, "manager", "manager")
+    aid, ta = _member(s, "root", "admin")
+    _, tb = _member(s, "ben")
+    s.heartbeat("root@box-1", [{"key": "k:m", "tool": "claude", "project": "manager"}],
+                principal=s.authenticate(ta))
+    assert s.agent("k:m").person_id == aid
+    with pytest.raises(KaptyorkaError, match="session key in use by another person"):
+        s.seen("k:m", "m", "claude", "manager", principal=s.authenticate(tb))
+    s.seen("k:m", "manager@box-1", "claude", "manager", principal=s.authenticate(tm))
+    assert s.agent("k:m").person_id == mid
+    s.close()

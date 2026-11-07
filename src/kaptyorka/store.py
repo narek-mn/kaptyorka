@@ -242,10 +242,11 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
-        from kaptyorka import memory, rules, workers  # here: workers imports this module
+        from kaptyorka import manager, memory, rules, workers  # here: workers imports this module
         workers.ensure_schema(self.db)
         memory.ensure_schema(self.db)
         rules.ensure_schema(self.db)
+        manager.ensure_schema(self.db)
         self._migrate(legacy_token)
         self.sends: Dict[str, List[float]] = {}
 
@@ -1013,6 +1014,11 @@ class Store:
         if cwd is not None:
             self.db.execute("UPDATE agents SET cwd=? WHERE key=?", (cwd, key))
 
+    def _role_of(self, person_id) -> Optional[str]:
+        """A person's role; no lock, for use inside locked blocks."""
+        row = self.db.execute("SELECT role FROM people WHERE id=?", (person_id,)).fetchone()
+        return None if row is None else row["role"]
+
     def seen(self, key: str, machine: str, tool: str, project: str,
              principal: Optional[Principal] = None) -> Agent:
         machine, tool, project = (clean(v, MAX_IDENT) for v in (machine, tool, project))
@@ -1024,7 +1030,9 @@ class Store:
                 held = self.db.execute("SELECT person_id, device_id FROM agents WHERE key=?",
                                        (key,)).fetchone()
                 if held is not None and held["person_id"] not in (None, principal.person_id) \
-                        and held["device_id"] != principal.device_id:
+                        and held["device_id"] != principal.device_id \
+                        and not (principal.role == "manager"
+                                 and self._role_of(held["person_id"]) == "admin"):
                     raise KaptyorkaError("session key in use by another person")
             self._touch(key, machine, tool, project, now)
             if principal is not None:
@@ -1071,7 +1079,8 @@ class Store:
                                        (s["key"],)).fetchone()
                 if principal is not None and held is not None and not (
                         principal.shared and held["device_id"] == principal.device_id) \
-                        and held["person_id"] not in (None, principal.person_id):
+                        and held["person_id"] not in (None, principal.person_id) \
+                        and self._role_of(held["person_id"]) != "manager":
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],
                             s["label"], s["cwd"])
