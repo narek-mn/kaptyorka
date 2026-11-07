@@ -428,3 +428,26 @@ def test_page_empty_states():
             "No team skills. Upload them with kaptyorka rules push <folder>.",
             "No proposals. Agents file one when their person corrects them the same way twice."):
         assert text in html, text
+
+
+def test_page_review_fixes():
+    html = page_html()
+    # Register again keeps the archived project's description
+    assert '"/api/projects", { name: p.name, description: p.description || "" }' in html
+    # the shared-token device is not shown by its internal name
+    assert 'd.legacy ? el("span", { title: LEGACY_TITLE, text: "Shared token (old machines)" })' in html
+    assert "The device the old shared token logs in as. Revoke it when every machine has its own token." in html
+
+
+def test_register_again_keeps_description(app):
+    from kaptyorka import admin_ops
+    s = app.store
+    s.project_register("proj", "the web shop")
+    admin_ops.project_remove(s, "proj", s.authenticate(app.tokens["boss"]))
+    gone = get(app, "boss", "/api/feed")["archived_projects"]
+    assert [p["description"] for p in gone if p["name"] == "proj"] == ["the web shop"]
+    # what the page's Register again sends
+    status, _ = post(app, "boss", "/api/projects", {"name": "proj", "description": gone[0]["description"]})
+    assert status == 204
+    proj = next(p for p in get(app, "boss", "/api/feed")["projects"] if p["name"] == "proj")
+    assert proj["description"] == "the web shop"

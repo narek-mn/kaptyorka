@@ -1360,6 +1360,7 @@ tr.archived b { color: var(--dim); }
         }, { title: "The link stops working" })]);
     })));
   }
+  var LEGACY_TITLE = "The device the old shared token logs in as. Revoke it when every machine has its own token.";
   var MANAGER_HINT = "The team's manager session runs as this account";
   function isManagerAccount(p) { return p.name === "manager" && p.role === "manager"; }
   function roleCell(p) {
@@ -1387,7 +1388,7 @@ tr.archived b { color: var(--dim); }
           });
         });
         return el("div", { "class": "dev" + (gone ? " revoked" : "") }, [
-          el("span", { text: d.name }),
+          d.legacy ? el("span", { title: LEGACY_TITLE, text: "Shared token (old machines)" }) : el("span", { text: d.name }),
           d.host ? el("small", { text: d.host }) : null,
           el("small", { title: d.last_used ? full(d.last_used) : null,
                         text: gone ? "revoked" : d.last_used ? "seen " + ago(Date.now() / 1000 - d.last_used) : "never used" }),
@@ -1558,7 +1559,7 @@ tr.archived b { color: var(--dim); }
         el("td", null, [el("b", { text: p.name }), el("div", { "class": "hint", text: p.description || "" })]),
         el("td", null, [el("span", { "class": "hint", text: "Notes kept, read-only for you" })]),
         el("td", { "class": "c-act" }, [button("Register again", "", function () {
-          quiet(act("grant-err", "/api/projects", { name: p.name }));
+          quiet(act("grant-err", "/api/projects", { name: p.name, description: p.description || "" }));
         }, { title: "Its notes come back; nobody has a role in it yet" })])
       ]));
     });
