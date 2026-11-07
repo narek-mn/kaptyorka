@@ -93,6 +93,8 @@ def feed(store: Store, principal: Principal, ws=None) -> dict:
         out.update({
             "people": [{**p, "devices": store.devices(p["id"])} for p in people],
             "requests": store.requests(),
+            "decisions": sorted((r for r in store.requests(pending_only=False) if r["decided_at"]),
+                                key=lambda r: r["decided_at"], reverse=True)[:10],
             "legacy": {"unassigned": store.legacy_unassigned(), "enabled": store.legacy_enabled(),
                        "ready_to_disable": store.legacy_ready_to_disable()},
             "machines": [{**m, "grants": grants.get(m["host"], [])}

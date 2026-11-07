@@ -1,5 +1,6 @@
 """The page per person: /api/me, the filtered feed, web sends and notes as the viewer,
 knock answers, image tokens and the invite's web login."""
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -64,7 +65,8 @@ def test_feed_filtered_for_member(app):
     assert [(n["project"], n["topic"]) for n in f["notes"]] == [(None, "team-topic")]
     assert [k["id"] for k in f["knocks"]] == [kid]
     assert f["doors"] == []
-    for extra in ("people", "requests", "legacy", "machines", "projects", "log", "settings"):
+    for extra in ("people", "requests", "decisions", "legacy", "machines", "projects", "archived_projects",
+                  "log", "settings"):
         assert extra not in f
 
     s.grant_project("proj", app.ids["ann"], "read", "boss")
@@ -333,3 +335,96 @@ def test_page_downloads_files_without_token_links(app):
     status, html = http.request("GET", app.url + "/", "")
     assert "URL.createObjectURL" in html and "revokeObjectURL" in html
     assert html.count('?t=" + encodeURIComponent(token)') == 1  # images only
+
+
+def page_html() -> str:
+    import importlib.resources
+    return (importlib.resources.files("kaptyorka") / "web/index.html").read_text()
+
+
+def test_feed_lists_recent_decisions(app):
+    s = app.store
+    s.project_register("proj")
+    for _ in range(12):
+        rid = s.request_access(app.ids["ben"], "project", "proj", "")
+        s.decide_request(rid, app.ids["boss"], False)
+    s.request_access(app.ids["ann"], "project", "proj", "pending one")
+    f = get(app, "boss", "/api/feed")
+    assert len(f["decisions"]) == 10 and all(r["decided_at"] for r in f["decisions"])
+    times = [r["decided_at"] for r in f["decisions"]]
+    assert times == sorted(times, reverse=True)
+    assert [r["person"] for r in f["requests"]] == ["ann"]
+
+
+def test_page_has_no_browser_dialogs():
+    import re
+    assert not re.search(r"\b(confirm|prompt|alert)\(", page_html())
+
+
+def test_page_inline_confirm_holds_the_panel():
+    html = page_html()
+    assert "function confirmInline(anchor, text, yesLabel, onYes, opt)" in html
+    assert 'e.key === "Escape"' in html and "holding.isConnected" in html
+    assert '!busy("machines") && changed("fleet"' in html  # close-worker confirm survives too
+    for text in ('"Revoke " + d.name + "? It stops working at once."',
+                 '"Machines still on the shared token stop working until they join again."',
+                 '"Close worker " + w.name + "? Its session stops."',
+                 '" a manager? A manager session can decide work requests and message anyone."',
+                 '"? Their devices stop working at once; their messages and notes stay."',
+                 '"? Its notes stay, visible to you under Archived; people lose their roles in it."',
+                 '"Take " + m.person + "\'s " + m.role + " access to " + p.name + "?"',
+                 '"Take " + g + "\'s use of " + m.host + "?"',
+                 '"Deny " + r.person + "\'s request?"', '"Reason (optional)"'):
+        assert text in html, text
+
+
+def test_page_people_admin_flows():
+    html = page_html()
+    assert '"Send this link to " + name + ". It works for 7 days."' in html
+    assert 'id="invites-open"' in html and '"Open invites (" + invites.length + ")"' in html
+    assert '"/api/invites"' in html and '"/api/invites/"' in html and '"DELETE"' in html
+    assert '"/api/people/", p.name, "/role"' in html and 'apiPath("/api/people/", p.name)' in html
+    assert 'gone.length + " revoked"' in html
+    assert 'id="legacy-panel"' in html and '$("legacy-panel").hidden = !lg.enabled && !lg.unassigned.length' in html
+    assert "The team's manager session runs as this account" in html
+
+
+def test_page_access_admin_flows():
+    html = page_html()
+    assert 'id="new-project"' in html and 'id="new-project-btn"' in html and '"No projects yet."' in html
+    assert re.search(r'Give <select id="grant-person"[^>]*></select>\s*<select id="grant-role"', html)
+    assert "access to <select id=\"grant-project\"" in html
+    for hint in ("read: see notes and sessions", "write: also edit notes and start workers",
+                 "manage: also give access"):
+        assert hint in html
+    assert 'el("small", { text: "admin" })' in html
+    assert 'role: role ? role.value : "read"' in html and 'reason: why || ""' in html
+    assert 'id="dec-panel"' in html and ">Recent decisions<" in html and "feed.decisions" in html
+    assert ">Who may use each machine<" in html and '"Shared with others who use this machine"' in html
+    assert 'text: "Saved"' in html
+    assert "feed.archived_projects" in html and '"Archived"' in html and '"Register again"' in html
+    assert '"\\u00b7 archived, read-only"' in html and "archived(n.project) ? null : edit" in html
+
+
+def test_page_login_and_sign_out():
+    html = page_html()
+    assert "Use the link from kaptyorka start, or ask your admin for an invite." in html
+    assert "That token did not work." in html and 'id="lock-err"' in html
+    unlock = html[html.index('$("unlock").addEventListener'):html.index('$("signout")')]
+    assert "location.reload" not in unlock and 'get("/api/me")' in unlock
+    assert 'id="signout"' in html and 'title="Sign out"' in html and "lock(false)" in html
+    assert 'id="viewer-initial"' in html and ".viewer .initial { display: grid; }" in html
+
+
+def test_page_empty_states():
+    html = page_html()
+    for text in (
+            "No sessions online. Open your coding tool in a project folder on a joined machine and it appears here.",
+            "No messages yet. Click a session on the Team tab to write to it.",
+            "No notes yet. Notes are shared documents your team and its agents keep. Start one with the Write button.",
+            "No machines yet. Join one with the link from kaptyorka start.",
+            "No workers. Ask your agent to work(project, task) and the session appears here.",
+            "No team rules yet. Write the rules every agent on the team follows. ",
+            "No team skills. Upload them with kaptyorka rules push <folder>.",
+            "No proposals. Agents file one when their person corrects them the same way twice."):
+        assert text in html, text

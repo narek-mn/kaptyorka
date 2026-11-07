@@ -42,11 +42,13 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #lock { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 22px; color: var(--faint); }
 #unlock { display: flex; gap: 8px; width: min(360px, calc(100vw - 32px)); }
 #unlock input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; font-family: var(--mono); font-size: 13px; }
+#lock .hint { text-align: center; margin: -10px 0 0; width: min(360px, calc(100vw - 32px)); font-size: 13px; color: var(--dim); }
+#lock-err { text-align: center; margin-top: -14px; width: min(360px, calc(100vw - 32px)); padding: 0; font-size: 13px; }
 
 /* top bar */
 #app { display: flex; flex-direction: column; height: 100%; }
 header {
-  display: flex; align-items: stretch; gap: 24px;
+  display: flex; align-items: stretch; gap: 16px;
   height: 52px; padding: 0 24px;
   background: var(--panel); border-bottom: 1px solid var(--line);
   flex: none;
@@ -73,6 +75,11 @@ nav { display: flex; align-items: stretch; gap: 4px; }
 .viewer b { font-weight: 500; color: var(--text); }
 .viewer .role, .who .role { padding: 1px 6px; border-radius: 3px; font-size: 11px; color: var(--blue); border: 1px solid rgba(110, 159, 255, .35); }
 .who .role { margin-left: 6px; font-weight: 400; }
+.viewer .initial { display: none; width: 26px; height: 26px; border-radius: 50%; place-content: center;
+  font-size: 12px; font-weight: 600; color: #fff; background: rgba(61, 113, 217, .3); border: 1px solid var(--blue-deep); }
+.signout { margin-left: 14px; display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; white-space: nowrap; }
+.signout:hover { color: var(--text); }
+@media (max-width: 1599px) { .signout .label { display: none; } }
 .live { margin-left: 14px; display: flex; align-items: center; flex: none; }
 .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(115, 191, 105, .18); }
 .live.down i { background: var(--red); box-shadow: 0 0 0 3px rgba(242, 73, 92, .2); }
@@ -313,7 +320,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 .attach .btn { padding: 0 7px; }
 .task { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .werr { color: var(--red); font-size: 12px; }
-td.c-act .btn + .btn { margin-left: 6px; }
+td.c-act .btn + .btn, td.c-act select + .btn { margin-left: 6px; }
+td.c-act .btn, td.c-act select { vertical-align: middle; }
 .acct { display: flex; align-items: center; gap: 9px; }
 .acct small { display: block; color: var(--faint); font-size: 12px; }
 .dot.on { border-color: var(--green); background: var(--green); }
@@ -362,6 +370,31 @@ tr.decided .prop b { color: var(--dim); }
 .reject { display: inline-flex; gap: 6px; align-items: center; }
 .reject input { width: 220px; height: 28px; padding: 0 8px; font-size: 12px; }
 
+/* inline confirm: the button gives way to the question and its answers */
+.confirm { max-width: 560px; display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; white-space: normal;
+  padding: 3px 4px 3px 9px; border: 1px solid rgba(242, 73, 92, .45); border-radius: 3px; background: rgba(242, 73, 92, .07);
+  font-size: 12px; font-weight: 400; color: var(--text); text-align: left; }
+.confirm input { width: 220px; max-width: 100%; height: 28px; padding: 0 8px; font-size: 12px; }
+.confirm.edit { display: flex; justify-content: flex-start; width: fit-content; margin-top: 4px; border-color: var(--blue-deep); background: rgba(61, 113, 217, .08); padding-left: 4px; }
+.confirm.edit input { width: 300px; }
+.link { color: var(--blue); font-size: 12px; }
+.link:hover { text-decoration: underline; }
+.sentence { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--dim); }
+.sentence select, .sentence input { height: 28px; padding: 0 8px; font-size: 12px; }
+.sentence .hint { flex-basis: 100%; }
+#new-project input[name="description"] { flex: 1; min-width: 160px; max-width: 420px; }
+.invites { padding: 8px 14px; border-top: 1px solid var(--line); }
+.invites ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.invites li { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 12px; color: var(--dim); }
+.invites li b { font-weight: 500; color: var(--text); }
+tr.group td { padding: 9px 14px 5px; font-size: 12px; color: var(--faint); }
+tr.archived b { color: var(--dim); }
+.swl { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); }
+.swl:hover { color: var(--text); }
+.swl[aria-checked="true"] .switch { background: rgba(115, 191, 105, .25); border-color: var(--green); }
+.swl[aria-checked="true"] .switch::after { transform: translateX(14px); background: var(--green); }
+.dec { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+
 @media (max-width: 720px) {
   header { gap: 10px; padding: 0 16px; }
   .brand span { display: none; }
@@ -396,8 +429,12 @@ tr.decided .prop b { color: var(--dim); }
   nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .tab { padding: 0 8px; }
   .sep { margin: 15px 2px; }
-  .viewer { display: none; }
-  .live { margin-left: auto; }
+  .viewer > svg, .viewer b, .viewer .role { display: none; }
+  .viewer .initial { display: grid; }
+  .signout { margin-left: 10px; }
+  .signout .label { display: none; }
+  #lock .hint { margin-top: -8px; }
+  .live { margin-left: 10px; }
   .knock { flex-wrap: wrap; }
   .knock .acts { flex-basis: 100%; align-items: stretch; }
   .admin table { min-width: 560px; }
@@ -467,11 +504,14 @@ tr.decided .prop b { color: var(--dim); }
   <symbol id="i-clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 22 20H2z"/><path d="M12 10v4.5M12 17.5v.01"/></symbol>
+  <symbol id="i-signout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4H6.5A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20H14"/><path d="M10 12h10M16.5 8.5 20 12l-3.5 3.5"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></symbol>
 </svg>
 
 <div id="lock"><svg width="56" height="56" aria-label="Locked"><use href="#i-lock"/></svg>
-  <form id="unlock"><input id="unlock-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your token" aria-label="Token"><button class="btn primary" type="submit">Open</button></form></div>
+  <form id="unlock"><input id="unlock-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your token" aria-label="Token"><button class="btn primary" type="submit">Open</button></form>
+  <p class="hint">Use the link from kaptyorka start, or ask your admin for an invite.</p>
+  <div class="err" id="lock-err" role="alert" hidden>That token did not work.</div></div>
 
 <div id="app" hidden>
   <div id="warn-banner" role="alert" hidden></div>
@@ -488,7 +528,8 @@ tr.decided .prop b { color: var(--dim); }
       <button class="tab admin-only" role="tab" data-view="access" title="Access" hidden><svg width="18" height="18"><use href="#i-shield"/></svg><span class="label">Access</span><span class="count" id="n-access" hidden>0</span></button>
       <button class="tab admin-only" role="tab" data-view="audit" title="Log" hidden><svg width="18" height="18"><use href="#i-list"/></svg><span class="label">Log</span></button>
     </nav>
-    <div class="viewer" id="viewer" title="Signed in"><svg width="15" height="15"><use href="#i-person"/></svg><b id="viewer-name"></b><span class="role" id="viewer-role" hidden>admin</span></div>
+    <div class="viewer" id="viewer" title="Signed in"><svg width="15" height="15"><use href="#i-person"/></svg><b id="viewer-name"></b><span class="role" id="viewer-role" hidden>admin</span><span class="initial" id="viewer-initial"></span></div>
+    <button class="signout" id="signout" type="button" title="Sign out"><svg width="16" height="16"><use href="#i-signout"/></svg><span class="label">Sign out</span></button>
     <div class="live" id="live" title="Connecting"><i></i></div>
   </header>
   <main>
@@ -514,7 +555,7 @@ tr.decided .prop b { color: var(--dim); }
           </tr></thead>
           <tbody id="agents"></tbody>
         </table>
-        <div class="blank" id="team-empty" hidden><svg width="40" height="40"><use href="#i-team"/></svg>No sessions online</div>
+        <div class="blank" id="team-empty" hidden><svg width="40" height="40"><use href="#i-team"/></svg>No sessions online. Open your coding tool in a project folder on a joined machine and it appears here.</div>
       </div>
     </section>
     <section id="messages" role="tabpanel" hidden>
@@ -591,7 +632,7 @@ tr.decided .prop b { color: var(--dim); }
         <div class="phead">People
           <form class="inline" id="add-person" autocomplete="off">
             <input id="new-name" placeholder="Name" aria-label="Name" maxlength="40" required>
-            <select id="new-role" aria-label="Role"><option value="member">member</option><option value="manager">manager</option></select>
+            <select id="new-role" aria-label="Role" title="member: works in the projects you give them. manager: can also decide work requests and message anyone."><option value="member">member</option><option value="manager">manager</option></select>
             <button type="submit" class="btn small primary"><svg width="13" height="13"><use href="#i-plus"/></svg>Add person</button>
           </form>
         </div>
@@ -601,8 +642,9 @@ tr.decided .prop b { color: var(--dim); }
           <thead><tr><th>Name</th><th>Role</th><th>Devices</th><th></th></tr></thead>
           <tbody id="people-rows"></tbody>
         </table>
+        <div class="invites" id="invites-open" hidden></div>
       </div>
-      <div class="panel">
+      <div class="panel" id="legacy-panel">
         <div class="phead">Old machines <span class="note" id="legacy-state"></span><div class="inline" id="legacy-toggle"></div></div>
         <div class="err" id="legacy-err" hidden></div>
         <div id="legacy-rows"></div>
@@ -614,23 +656,35 @@ tr.decided .prop b { color: var(--dim); }
         <div class="err" id="req-err" hidden></div>
         <table><tbody id="req-rows"></tbody></table>
       </div>
+      <div class="panel" id="dec-panel" hidden>
+        <div class="phead">Recent decisions</div>
+        <table><tbody id="dec-rows"></tbody></table>
+      </div>
       <div class="panel">
         <div class="phead">Projects
-          <form class="inline" id="grant" autocomplete="off">
-            <select id="grant-person" aria-label="Person"></select>
-            <select id="grant-project" aria-label="Project"></select>
-            <select id="grant-role" aria-label="Role"><option value="read">read</option><option value="write">write</option><option value="manage">manage</option></select>
-            <button type="submit" class="btn small primary">Grant</button>
-          </form>
+          <div class="inline"><button type="button" class="btn small" id="new-project-btn"><svg width="13" height="13"><use href="#i-plus"/></svg>New project</button></div>
         </div>
+        <form class="sentence" id="new-project" autocomplete="off" hidden>
+          <input name="name" id="np-name" placeholder="Name" aria-label="Project name" maxlength="80" required>
+          <input name="description" id="np-desc" placeholder="What it is, in a few words" aria-label="Description" maxlength="200">
+          <button type="submit" class="btn small primary">Create</button>
+          <button type="button" class="btn small" id="np-cancel">Cancel</button>
+        </form>
+        <form class="sentence" id="grant" autocomplete="off">
+          Give <select id="grant-person" aria-label="Person"></select>
+          <select id="grant-role" aria-label="Role"><option value="read">read</option><option value="write">write</option><option value="manage">manage</option></select>
+          access to <select id="grant-project" aria-label="Project"></select>
+          <button type="submit" class="btn small primary">Give access</button>
+          <span class="hint" id="grant-hint"></span>
+        </form>
         <div class="err" id="grant-err" hidden></div>
         <table>
-          <thead><tr><th>Project</th><th>People</th></tr></thead>
+          <thead><tr><th>Project</th><th>People</th><th></th></tr></thead>
           <tbody id="project-rows"></tbody>
         </table>
       </div>
       <div class="panel">
-        <div class="phead">Machines</div>
+        <div class="phead">Who may use each machine</div>
         <div class="err" id="machine-err" hidden></div>
         <table>
           <thead><tr><th>Machine</th><th>Owner</th><th>Devices</th><th>Can use</th></tr></thead>
@@ -672,6 +726,8 @@ tr.decided .prop b { color: var(--dim); }
   var logPerson = "", logRows = null;
   var fleet = { machines: [], workers: [], warnings: [] }, fleetAt = 0;
   var rules = null, rulesAt = 0, rulesUi = { edit: false, rejecting: null };
+  var holding = null, holdClose = null;  /* an open inline confirm or edit: refreshes leave its panel alone */
+  var peopleUi = { revoked: {}, invitesOpen: false }, invites = [], savedHost = null;
 
   function store(fn) { try { return fn(window.localStorage); } catch (e) { return null; } }
 
@@ -739,15 +795,22 @@ tr.decided .prop b { color: var(--dim); }
     document.querySelectorAll("time[data-t]").forEach(function (n) { n.textContent = ago(now - n.dataset.t); });
   }
 
-  function lock() {
+  /* refused: the token did not work (a 401), as against signing out */
+  function lock(refused) {
     clearTimeout(timer);
+    token = null;
     store(function (s) { s.removeItem(KEY); });
+    if (holdClose) holdClose(false);
     $("app").hidden = true;
     $("lock").hidden = false;
+    $("lock-err").hidden = !refused;
+    $("lock-err").textContent = "That token did not work.";
+    $("unlock-token").value = "";
+    $("unlock-token").focus();
   }
 
   function checked(r) {
-    if (r.status === 401) { lock(); throw new Error("unauthorized"); }
+    if (r.status === 401) { lock(true); throw new Error("unauthorized"); }
     if (!r.ok) return r.text().then(function (t) { throw new Error(t || "hub error " + r.status); });
     return r;
   }
@@ -755,24 +818,66 @@ tr.decided .prop b { color: var(--dim); }
     return fetch(path, { cache: "no-store", headers: { Authorization: "Bearer " + token } })
       .then(checked).then(function (r) { return r.json(); });
   }
-  function api(path, body) {
-    return fetch(path, { method: "POST", cache: "no-store",
+  function api(path, body, method) {
+    method = method || "POST";
+    return fetch(path, { method: method, cache: "no-store",
                          headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-                         body: JSON.stringify(body || {}) })
+                         body: method === "DELETE" ? null : JSON.stringify(body || {}) })
       .then(checked)
       .then(function (r) { clearTimeout(timer); poll(); return r; });
   }
   /* run an admin action; its error shows in the panel's error line */
-  function act(errId, path, body) {
+  function act(errId, path, body, method) {
     var e = $(errId);
-    return api(path, body).then(function (r) { e.hidden = true; return r; })
+    return api(path, body, method).then(function (r) { e.hidden = true; return r; })
       .catch(function (x) { e.hidden = false; e.textContent = x.message; throw x; });
   }
+  function apiPath(base, name, tail) { return base + encodeURIComponent(name) + (tail || ""); }
+  /* the anchor gives way to the question with yesLabel and Cancel; Esc cancels. onYes returns
+     a promise: the box closes when it resolves and stays (its error shown) when it fails.
+     opt.ask: a text field whose value goes to onYes; opt.value fills it; opt.edit: blue, not red */
+  function confirmInline(anchor, text, yesLabel, onYes, opt) {
+    opt = opt || {};
+    if (holdClose) holdClose(false);
+    var box = el("span", { "class": "confirm" + (opt.edit ? " edit" : ""), role: "group", "aria-label": text || yesLabel });
+    var input = opt.ask ? el("input", { placeholder: opt.ask, "aria-label": opt.ask, maxlength: opt.max || "500" }) : null;
+    if (input && opt.value) input.value = opt.value;
+    function close(redraw) {
+      if (holding !== box) return;
+      holding = holdClose = null;
+      if (box.parentNode) box.replaceWith(anchor);
+      if (redraw !== false) redrawAdmin();
+    }
+    var yes = button(yesLabel, opt.edit ? "primary" : "danger", function () {
+      yes.disabled = true;
+      Promise.resolve(onYes(input ? input.value.trim() : undefined))
+        .then(function () { close(); }, function () { yes.disabled = false; });
+    });
+    var no = button("Cancel", "", function () { close(); });
+    [text ? el("span", { text: text }) : null, input, yes, no].forEach(function (n) { if (n) box.appendChild(n); });
+    box.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { e.preventDefault(); close(); }
+      if (e.key === "Enter" && e.target === input) { e.preventDefault(); yes.click(); }
+    });
+    anchor.replaceWith(box);
+    holding = box; holdClose = close;
+    (input || no).focus();
+    return box;
+  }
+  /* after a confirm closes: draw what the refreshes skipped while it was open */
+  function redrawAdmin() {
+    ["people", "access", "fleet", "invites"].forEach(function (k) { seen[k] = null; });
+    if (feed) render();
+    if (fleet) renderFleet();
+    renderInvites();
+  }
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && holdClose) holdClose(); });
   function quiet(p) { p.catch(function () {}); }
   function isAdmin() { return !!me && me.role === "admin"; }
 
   function show(v) {
     if (ADMIN_VIEWS.indexOf(v) >= 0 && !isAdmin()) v = "team";
+    if (holdClose && v !== view) holdClose();  /* a confirm does not wait on a tab nobody sees */
     view = v;
     document.querySelectorAll(".tab").forEach(function (b) {
       b.setAttribute("aria-selected", b.dataset.view === v ? "true" : "false");
@@ -782,6 +887,7 @@ tr.decided .prop b { color: var(--dim); }
     if (v === "messages") { markClipped(); toBottom(); }
     if (v === "machines") loadFleet(true);
     if (v === "rules") loadRules(true);
+    if (v === "people") loadInvites();
   }
 
   /* where a name lives: from the online list, else from the name itself */
@@ -998,7 +1104,8 @@ tr.decided .prop b { color: var(--dim); }
       ]);
       log.appendChild(row);
     });
-    if (!shown.length) log.appendChild(el("div", { "class": "blank" }, [icon("i-msg", 40), "No messages"]));
+    if (!shown.length) log.appendChild(el("div", { "class": "blank" }, [icon("i-msg", 40),
+      feed.messages.length ? "No messages here" : "No messages yet. Click a session on the Team tab to write to it."]));
     markClipped();
     if (stick) toBottom(); else log.scrollTop = top;
   }
@@ -1069,7 +1176,8 @@ tr.decided .prop b { color: var(--dim); }
     feed.notes.forEach(function (n) {
       if (grouped && n.project !== last) {
         last = n.project;
-        box.appendChild(el("div", { "class": "topic-group" }, [icon(n.project ? "i-project" : "i-team", 13), n.project || "Team"]));
+        box.appendChild(el("div", { "class": "topic-group" }, [icon(n.project ? "i-project" : "i-team", 13), n.project || "Team",
+          archived(n.project) ? el("span", { title: "A removed project: its notes are kept for you, read-only", text: "\u00b7 archived, read-only" }) : null]));
       }
       var h = n.history[0], key = nkey(n.project, n.topic);
       var b = el("button", { "class": "topic", "aria-current": key === note.key ? "true" : "false" }, [
@@ -1079,6 +1187,10 @@ tr.decided .prop b { color: var(--dim); }
       b.addEventListener("click", function () { open(n.project, n.topic); });
       box.appendChild(b);
     });
+  }
+  /* a removed project's notes: the admin still reads them, nobody writes */
+  function archived(project) {
+    return !!project && (feed.archived_projects || []).some(function (p) { return p.name === project; });
   }
   function open(project, topic) {
     note = { key: nkey(project, topic), project: project, topic: topic, mode: "read", version: 0, history: false };
@@ -1099,10 +1211,10 @@ tr.decided .prop b { color: var(--dim); }
     doc.textContent = "";
     if (!feed.notes.length && note.mode === "read") {
       $("notes-grid").classList.add("reading");
-      var start = el("button", { "class": "btn primary", type: "button" }, [icon("i-plus", 14), "New topic"]);
+      var start = el("button", { "class": "btn primary", type: "button" }, [icon("i-edit", 14), "Write"]);
       start.addEventListener("click", newTopic);
       doc.appendChild(el("div", { "class": "blank" }, [icon("i-note", 40),
-        el("div", { text: "No notes yet. Agents write them with notes_write; you can start one here." }), start]));
+        el("div", { text: "No notes yet. Notes are shared documents your team and its agents keep. Start one with the Write button." }), start]));
       return;
     }
     var back = el("button", { "class": "btn small back", type: "button", title: "Topics" }, [icon("i-back", 14)]);
@@ -1119,7 +1231,7 @@ tr.decided .prop b { color: var(--dim); }
     hist.addEventListener("click", function () { note.history = !note.history; renderNotes(true); });
     doc.appendChild(el("div", { "class": "doc-head" }, [back, el("h2", { text: n.topic }),
       n.project ? el("span", { "class": "tag" }, [icon("i-project", 12), n.project]) : null,
-      el("div", { "class": "tools" }, [hist, edit])]));
+      el("div", { "class": "tools" }, [hist, archived(n.project) ? null : edit])]));
     if (note.history) {
       doc.appendChild(el("div", { "class": "history" }, n.history.map(function (v, i) {
         var b = el("button", { "class": "version", type: "button", "aria-current": i === note.version ? "true" : "false" },
@@ -1214,51 +1326,115 @@ tr.decided .prop b { color: var(--dim); }
       else { document.execCommand("copy"); ok(); }
     });
     box.textContent = "";
-    [icon("i-link", 14), el("span", { text: "Invite for " + name }), input, copy, done,
+    [icon("i-link", 14), el("span", { id: "invite-text", text: "Send this link to " + name + ". It works for 7 days." }), input, copy, done,
      button([icon("i-x", 12)], "", function () { box.hidden = true; }, { title: "Close" })]
       .forEach(function (n) { box.appendChild(n); });
     box.hidden = false;
     input.select();
   }
+  function invite(name) {
+    return act("people-err", "/api/invites", { person: name })
+      .then(function (r) { return r.json(); })
+      .then(function (b) { showInvite(name, b.url); loadInvites(); });
+  }
+  function loadInvites() {
+    if (!isAdmin()) return;
+    get("/api/invites").then(function (rows) { invites = rows; renderInvites(); }, function () {});
+  }
+  function renderInvites() {
+    var box = $("invites-open");
+    if (busy("invites-open") || !changed("invites", [invites, peopleUi.invitesOpen])) return;
+    box.textContent = "";
+    box.hidden = !invites.length;
+    if (!invites.length) return;
+    var b = button("Open invites (" + invites.length + ")", "", function () {
+      peopleUi.invitesOpen = !peopleUi.invitesOpen; renderInvites();
+    }, { id: "invites-toggle", "aria-expanded": peopleUi.invitesOpen ? "true" : "false" });
+    box.appendChild(b);
+    if (!peopleUi.invitesOpen) return;
+    box.appendChild(el("ul", null, invites.map(function (v) {
+      return el("li", null, [el("b", { text: v.person }),
+        el("span", { title: full(v.expires), text: "works until " + new Date(v.expires * 1000).toLocaleDateString() }),
+        button("Cancel", "", function () {
+          quiet(act("people-err", apiPath("/api/invites/", v.code), null, "DELETE").then(loadInvites));
+        }, { title: "The link stops working" })]);
+    })));
+  }
+  var MANAGER_HINT = "The team's manager session runs as this account";
+  function isManagerAccount(p) { return p.name === "manager" && p.role === "manager"; }
+  function roleCell(p) {
+    if (p.role === "admin" || isManagerAccount(p)) return el("td", { "class": "c-plain", text: p.role });
+    var sel = el("select", { "class": "own", "aria-label": "Role of " + p.name });
+    options(sel, ["member", "manager"], p.role);
+    sel.addEventListener("change", function () {
+      var to = sel.value;
+      function set() { return act("people-err", apiPath("/api/people/", p.name, "/role"), { role: to }); }
+      if (to !== "manager") { quiet(set()); return; }
+      sel.value = p.role;
+      confirmInline(sel, "Make " + p.name + " a manager? A manager session can decide work requests and message anyone.", "Yes", set);
+    });
+    return el("td", null, [sel]);
+  }
   function renderPeople() {
     var body = $("people-rows");
     body.textContent = "";
     feed.people.forEach(function (p) {
-      var devs = el("div", { "class": "cell-list" }, p.devices.map(function (d) {
+      function devRow(d) {
         var gone = d.revoked_at != null;
+        var rv = gone ? null : button("Revoke", "danger", function () {
+          confirmInline(rv, "Revoke " + d.name + "? It stops working at once.", "Revoke", function () {
+            return act("people-err", "/api/devices/" + d.id + "/revoke");
+          });
+        });
         return el("div", { "class": "dev" + (gone ? " revoked" : "") }, [
           el("span", { text: d.name }),
           d.host ? el("small", { text: d.host }) : null,
           el("small", { title: d.last_used ? full(d.last_used) : null,
                         text: gone ? "revoked" : d.last_used ? "seen " + ago(Date.now() / 1000 - d.last_used) : "never used" }),
-          gone ? null : button("Revoke", "danger", function () {
-            if (confirm("Revoke " + d.name + " of " + p.name + "? It stops working at once.")) quiet(act("people-err", "/api/devices/" + d.id + "/revoke"));
-          })
+          rv
         ]);
-      }));
+      }
+      var live = p.devices.filter(function (d) { return d.revoked_at == null; });
+      var gone = p.devices.filter(function (d) { return d.revoked_at != null; });
+      var devs = el("div", { "class": "cell-list" }, live.map(devRow));
+      if (gone.length) {
+        var open = !!peopleUi.revoked[p.name];
+        devs.appendChild(el("div", null, [el("button", { "class": "link", type: "button", "aria-expanded": open ? "true" : "false",
+          text: gone.length + " revoked" })]));
+        devs.lastChild.firstChild.addEventListener("click", function () {
+          peopleUi.revoked[p.name] = !open; seen.people = null; renderPeople();
+        });
+        if (open) gone.forEach(function (d) { devs.appendChild(devRow(d)); });
+      }
       if (!p.devices.length) devs.appendChild(el("span", { "class": "hint", text: "No devices yet" }));
+      var acts = [button([icon("i-link", 13), "Invite"], "", function () { quiet(invite(p.name)); })];
+      if (p.role !== "admin" && !isManagerAccount(p)) {
+        var rm = button("Remove", "danger", function () {
+          confirmInline(rm, "Remove " + p.name + "? Their devices stop working at once; their messages and notes stay.", "Remove",
+            function () { return act("people-err", apiPath("/api/people/", p.name), null, "DELETE"); });
+        });
+        acts.push(rm);
+      }
       body.appendChild(el("tr", null, [
-        el("td", null, [el("b", { text: p.name })]),
-        el("td", { "class": "c-plain", text: p.role }),
+        el("td", null, [el("b", { text: p.name }), isManagerAccount(p) ? el("div", { "class": "hint", text: MANAGER_HINT }) : null]),
+        roleCell(p),
         el("td", null, [devs]),
-        el("td", { "class": "c-act" }, [button([icon("i-link", 13), "Invite"], "", function () {
-          act("people-err", "/api/invites", { person: p.name })
-            .then(function (r) { return r.json(); })
-            .then(function (b) { showInvite(p.name, b.url); }, function () {});
-        })])
+        el("td", { "class": "c-act" }, acts)
       ]));
     });
     var lg = feed.legacy;
+    $("legacy-panel").hidden = !lg.enabled && !lg.unassigned.length;
     $("legacy-state").textContent = !lg.enabled ? "Shared token off"
       : lg.ready_to_disable ? "Shared token on. Every old machine has its own token now." : "Shared token on";
     var tg = $("legacy-toggle");
     tg.textContent = "";
     if (lg.enabled) {
-      tg.appendChild(button("Switch shared token off", lg.ready_to_disable ? "primary" : "danger", function () {
-        if (lg.ready_to_disable || confirm("Machines still on the shared token stop working until they join again. Switch it off?")) {
-          quiet(act("legacy-err", "/api/legacy/off"));
-        }
-      }));
+      var off = button("Switch shared token off", lg.ready_to_disable ? "primary" : "danger", function () {
+        function go() { return act("legacy-err", "/api/legacy/off"); }
+        if (lg.ready_to_disable) quiet(go());
+        else confirmInline(off, "Machines still on the shared token stop working until they join again.", "Switch off", go);
+      });
+      tg.appendChild(off);
     } else {
       tg.appendChild(button("Switch shared token on", "", function () { quiet(act("legacy-err", "/api/legacy/on")); }));
     }
@@ -1283,76 +1459,161 @@ tr.decided .prop b { color: var(--dim); }
   }
 
   /* admin: Access */
-  function wanted(r) { return r.kind === "project" ? "read access to project " + r.target : "use of machine " + r.target; }
-  function renderAccess() {
+  function wanted(r) { return r.kind === "project" ? "access to project " + r.target : "use of machine " + r.target; }
+  var GRANT_HINT = { read: "read: see notes and sessions", write: "write: also edit notes and start workers",
+                     manage: "manage: also give access" };
+  function grantHint() { $("grant-hint").textContent = GRANT_HINT[$("grant-role").value] + ". Giving access again changes the role."; }
+  function admins() { return feed.people.filter(function (p) { return p.role === "admin"; }).map(function (p) { return p.name; }); }
+  function newProject() {
+    $("new-project").hidden = false;
+    $("np-name").focus();
+  }
+  function renderRequests() {
     var reqs = feed.requests;
     $("req-panel").hidden = !reqs.length;
     var rb = $("req-rows");
     rb.textContent = "";
     reqs.forEach(function (r) {
+      var role = null;
+      if (r.kind === "project") {
+        role = el("select", { "class": "own", "aria-label": "Role for " + r.person });
+        options(role, ["read", "write"], "read");
+      }
+      var deny = button("Deny", "", function () {
+        confirmInline(deny, "Deny " + r.person + "'s request?", "Deny", function (why) {
+          return act("req-err", "/api/requests/" + r.id, { approve: false, reason: why || "" });
+        }, { ask: "Reason (optional)" });
+      });
       rb.appendChild(el("tr", null, [
         el("td", null, [el("b", { text: r.person }), " wants " + wanted(r),
                         r.why ? el("div", { "class": "hint", text: r.why }) : null]),
         el("td", { "class": "log-time" }, [timeEl(r.created)]),
-        el("td", { "class": "c-act" }, [
-          button("Approve", "primary", function () { quiet(act("req-err", "/api/requests/" + r.id, { approve: true })); }), " ",
-          button("Deny", "", function () { quiet(act("req-err", "/api/requests/" + r.id, { approve: false })); })])
+        el("td", { "class": "c-act" }, [role,
+          button("Approve", "primary", function () {
+            quiet(act("req-err", "/api/requests/" + r.id, { approve: true, role: role ? role.value : "read" }));
+          }, { title: role ? "Give the chosen role" : null }), deny])
       ]));
     });
+    var dec = feed.decisions || [];
+    $("dec-panel").hidden = !dec.length;
+    var db = $("dec-rows");
+    db.textContent = "";
+    dec.forEach(function (r) {
+      db.appendChild(el("tr", null, [
+        el("td", null, [el("div", { "class": "dec" }, [el("span", null, [el("b", { text: r.person }), " asked for " + wanted(r)]),
+          el("span", { "class": "state " + (r.decision === "approved" ? "accepted" : "rejected"), text: r.decision }),
+          r.decided_by ? el("span", { "class": "hint", text: "by " + r.decided_by }) : null])]),
+        el("td", { "class": "log-time seen" }, [timeEl(r.decided_at)])
+      ]));
+    });
+  }
+  function projectRow(p, admin) {
+    var tags = el("div", { "class": "cell-tags" }, p.members.map(function (m) {
+      if (admin.indexOf(m.person) >= 0) return el("span", { "class": "tag", title: "The admin may do everything" }, [m.person, el("small", { text: "admin" })]);
+      var tag = el("span", { "class": "tag" }, [m.person, el("small", { text: m.role })]);
+      var x = el("button", { "class": "x", type: "button", title: "Take " + p.name + " from " + m.person }, [icon("i-x", 11)]);
+      x.addEventListener("click", function () {
+        confirmInline(tag, "Take " + m.person + "'s " + m.role + " access to " + p.name + "?", "Yes", function () {
+          return act("grant-err", apiPath("/api/projects/", p.name, "/revoke"), { person: m.person });
+        });
+      });
+      tag.appendChild(x);
+      return tag;
+    }));
+    if (!p.members.some(function (m) { return admin.indexOf(m.person) < 0; })) tags.appendChild(el("span", { "class": "hint", text: "Only the admin" }));
+    var desc = el("div", { "class": "hint", text: p.description || "" });
+    var edit = button([icon("i-edit", 13), "Edit"], "", function () {
+      confirmInline(desc, "", "Save", function (v) {
+        return act("grant-err", apiPath("/api/projects/", p.name), { description: v });
+      }, { ask: "Description", value: p.description || "", edit: true, max: "200" });
+    }, { title: "Change the description" });
+    var rm = button("Remove", "danger", function () {
+      confirmInline(rm, "Remove " + p.name + "? Its notes stay, visible to you under Archived; people lose their roles in it.", "Remove",
+        function () { return act("grant-err", apiPath("/api/projects/", p.name), null, "DELETE"); });
+    });
+    return el("tr", null, [
+      el("td", null, [el("b", { text: p.name }), desc]),
+      el("td", null, [tags]),
+      el("td", { "class": "c-act" }, [edit, rm])
+    ]);
+  }
+  function renderAccess() {
+    renderRequests();
     options($("grant-person"), personNames(true), $("grant-person").value);
     options($("grant-project"), feed.projects.map(function (p) { return p.name; }), $("grant-project").value);
-    var pb = $("project-rows");
+    $("grant").hidden = !feed.projects.length;
+    grantHint();
+    var pb = $("project-rows"), admin = admins();
     pb.textContent = "";
-    feed.projects.forEach(function (p) {
-      var tags = el("div", { "class": "cell-tags" }, p.members.map(function (m) {
-        var x = el("button", { "class": "x", type: "button", title: "Take " + p.name + " from " + m.person }, [icon("i-x", 11)]);
-        x.addEventListener("click", function () { quiet(act("grant-err", "/api/projects/" + encodeURIComponent(p.name) + "/revoke", { person: m.person })); });
-        return el("span", { "class": "tag" }, [m.person, el("small", { text: m.role }), x]);
-      }));
-      if (!p.members.length) tags.appendChild(el("span", { "class": "hint", text: "Only the admin" }));
-      pb.appendChild(el("tr", null, [
-        el("td", null, [el("b", { text: p.name }), p.description ? el("div", { "class": "hint", text: p.description }) : null]),
-        el("td", null, [tags])
+    feed.projects.forEach(function (p) { pb.appendChild(projectRow(p, admin)); });
+    if (!feed.projects.length) {
+      var start = button([icon("i-plus", 13), "New project"], "primary", newProject);
+      pb.appendChild(el("tr", null, [el("td", { colspan: "3", "class": "empty-row" },
+        [el("div", { style: "margin-bottom:10px", text: "No projects yet." }), start])]));
+    }
+    var gone = feed.archived_projects || [];
+    if (gone.length) pb.appendChild(el("tr", { "class": "group" }, [el("td", { colspan: "3", text: "Archived" })]));
+    gone.forEach(function (p) {
+      pb.appendChild(el("tr", { "class": "archived" }, [
+        el("td", null, [el("b", { text: p.name }), el("div", { "class": "hint", text: p.description || "" })]),
+        el("td", null, [el("span", { "class": "hint", text: "Notes kept, read-only for you" })]),
+        el("td", { "class": "c-act" }, [button("Register again", "", function () {
+          quiet(act("grant-err", "/api/projects", { name: p.name }));
+        }, { title: "Its notes come back; nobody has a role in it yet" })])
       ]));
     });
-    if (!feed.projects.length) pb.appendChild(el("tr", null, [el("td", { colspan: "2", "class": "empty-row", text: "No projects yet. Add one with: kaptyorka project add <name>" })]));
     var mb = $("machine-rows");
     mb.textContent = "";
     feed.machines.forEach(function (m) {
       var devs = el("div", { "class": "cell-list" }, m.devices.map(function (d) {
-        return el("div", { "class": "dev" }, [el("span", { text: d.name }), el("small", { text: d.person }),
-          button(d.shared ? "Shared" : "Not shared", "", function () {
-            quiet(act("machine-err", "/api/devices/" + d.id + "/shared", { shared: !d.shared }));
-          }, { "aria-pressed": d.shared ? "true" : "false", title: "A shared device's sessions may belong to anyone who can use this machine" })]);
+        var sw = el("button", { "class": "swl", type: "button", role: "switch", "aria-checked": d.shared ? "true" : "false",
+                                title: "A shared device's sessions may belong to anyone who can use this machine" },
+                    [el("span", { "class": "switch" }), "Shared with others who use this machine"]);
+        sw.addEventListener("click", function () {
+          quiet(act("machine-err", "/api/devices/" + d.id + "/shared", { shared: !d.shared }));
+        });
+        return el("div", { "class": "dev" }, [el("span", { text: d.name }), el("small", { text: d.person }), sw]);
       }));
       var tags = el("div", { "class": "cell-tags" }, m.grants.map(function (g) {
+        var tag = el("span", { "class": "tag" }, [g]);
         var x = el("button", { "class": "x", type: "button", title: "Take " + m.host + " from " + g }, [icon("i-x", 11)]);
-        x.addEventListener("click", function () { quiet(act("machine-err", "/api/machines/" + encodeURIComponent(m.host) + "/revoke", { person: g })); });
-        return el("span", { "class": "tag" }, [g, x]);
+        x.addEventListener("click", function () {
+          confirmInline(tag, "Take " + g + "'s use of " + m.host + "?", "Yes", function () {
+            return act("machine-err", apiPath("/api/machines/", m.host, "/revoke"), { person: g });
+          });
+        });
+        tag.appendChild(x);
+        return tag;
       }));
       var others = personNames(true).filter(function (n) { return n !== m.owner && m.grants.indexOf(n) < 0; });
       if (others.length) {
         var add = el("select", { "aria-label": "Let someone use " + m.host });
         options(add, [["", "+ person"]].concat(others));
         add.addEventListener("change", function () {
-          if (add.value) quiet(act("machine-err", "/api/machines/" + encodeURIComponent(m.host) + "/grant", { person: add.value }));
+          if (add.value) quiet(act("machine-err", apiPath("/api/machines/", m.host, "/grant"), { person: add.value }));
         });
         tags.appendChild(add);
       }
       var owner = el("select", { "class": "own", "aria-label": "Owner of " + m.host });
-      options(owner, [["", "—"]].concat(personNames(false)), m.owner || "");
+      options(owner, [["", "\u2014"]].concat(personNames(false)), m.owner || "");
       owner.addEventListener("change", function () {
-        quiet(act("machine-err", "/api/machines/" + encodeURIComponent(m.host) + "/owner", { person: owner.value }));
+        quiet(act("machine-err", apiPath("/api/machines/", m.host, "/owner"), { person: owner.value }).then(function () {
+          savedHost = m.host;
+          owner.blur();
+          seen.access = null;
+          render();
+          setTimeout(function () { if (savedHost === m.host) { savedHost = null; seen.access = null; render(); } }, 2000);
+        }));
       });
       mb.appendChild(el("tr", null, [
         el("td", null, [el("span", { "class": "dev" }, [icon("i-machine", 14), el("b", { text: m.host })]),
                         el("div", { "class": "hint", text: m.online + " online" })]),
-        el("td", null, [owner]),
+        el("td", null, [owner, savedHost === m.host ? el("span", { "class": "ok", style: "margin-left:8px", text: "Saved" }) : null]),
         el("td", null, [devs]),
         el("td", null, [tags])
       ]));
     });
-    if (!feed.machines.length) mb.appendChild(el("tr", null, [el("td", { colspan: "4", "class": "empty-row", text: "No machines yet" })]));
+    if (!feed.machines.length) mb.appendChild(el("tr", null, [el("td", { colspan: "4", "class": "empty-row", text: "No machines yet. Join one with the link from kaptyorka start." })]));
   }
 
   /* admin: Log */
@@ -1419,11 +1680,12 @@ tr.decided .prop b { color: var(--dim); }
         }, { title: "Become its boss on this page" }));
       }
       if ((own || isAdmin()) && !/^(closed|failed)$/.test(w.state)) {
-        acts.push(button("Close", "danger", function () {
-          if (confirm("Close worker " + w.name + "? Its session stops.")) {
-            quiet(act("worker-err", "/api/workers/" + encodeURIComponent(w.name) + "/close"));
-          }
-        }));
+        var closeBtn = button("Close", "danger", function () {
+          confirmInline(closeBtn, "Close worker " + w.name + "? Its session stops.", "Close", function () {
+            return act("worker-err", "/api/workers/" + encodeURIComponent(w.name) + "/close");
+          });
+        });
+        acts.push(closeBtn);
       }
       var code = el("code", { text: w.attach });
       var copy = button([icon("i-copy", 13)], "", function () { copyCode(code, copy); }, { title: "Copy" });
@@ -1440,7 +1702,7 @@ tr.decided .prop b { color: var(--dim); }
         el("td", { "class": "c-act" }, acts)
       ]));
     });
-    if (!ws.length) body.appendChild(el("tr", null, [el("td", { colspan: "7", "class": "empty-row", text: "No workers" })]));
+    if (!ws.length) body.appendChild(el("tr", null, [el("td", { colspan: "7", "class": "empty-row", text: "No workers. Ask your agent to work(project, task) and the session appears here." })]));
   }
   function renderWarnings() {
     var all = isAdmin() ? fleet.warnings : [], ban = $("warn-banner");
@@ -1511,7 +1773,7 @@ tr.decided .prop b { color: var(--dim); }
         el("table", { "class": "stack" }, [el("thead", null, [el("tr", null, head.map(function (h) { return el("th", { text: h }); }))]), tb])
       ]));
     });
-    if (!fleet.machines.length) box.appendChild(el("div", { "class": "panel" }, [el("div", { "class": "empty-row", text: "No machines yet" })]));
+    if (!fleet.machines.length) box.appendChild(el("div", { "class": "panel" }, [el("div", { "class": "empty-row", text: "No machines yet. Join one with the link from kaptyorka start." })]));
   }
   function renderFleet() {
     $("n-machines").textContent = fleet.machines.length;
@@ -1519,7 +1781,7 @@ tr.decided .prop b { color: var(--dim); }
     /* not while someone selects an attach line */
     var sel = getSelection();
     if (sel && !sel.isCollapsed && $("machines").contains(sel.anchorNode)) return;
-    if (changed("fleet", [fleet.machines, fleet.workers])) {
+    if (!busy("machines") && changed("fleet", [fleet.machines, fleet.workers])) {
       renderWorkers();
       renderHosts();
     }
@@ -1586,12 +1848,13 @@ tr.decided .prop b { color: var(--dim); }
     if (isAdmin()) tools.appendChild(button([icon("i-edit", 13), "Edit"], "", function () { rulesUi.edit = true; renderRulesDoc(); }));
     if (r.version) doc.appendChild(el("div", { "class": "byline" }, [el("b", { text: r.author }), timeEl(r.time)]));
     doc.appendChild(el("div", { "class": "doc-body rules-text" }, r.text.trim() ? ruleBlocks(r.text)
-      : [el("div", { "class": "empty", text: "No team rules yet" })]));
+      : [el("div", { "class": "empty" }, isAdmin() ? ["No team rules yet. Write the rules every agent on the team follows. ",
+          button("Edit", "", function () { rulesUi.edit = true; renderRulesDoc(); }, { "class": "link" }), "."] : ["No team rules yet."])]));
   }
   function renderSkills() {
     var body = $("skill-rows"), ks = rules.rules.skills;
     body.textContent = "";
-    if (!ks.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "3", text: "No team skills" })]));
+    if (!ks.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "3", text: "No team skills. Upload them with kaptyorka rules push <folder>." })]));
     ks.forEach(function (k) {
       body.appendChild(el("tr", null, [el("td", { "class": "skill", text: k.name }),
         el("td", { "class": "c-plain", text: size(k.size) }),
@@ -1603,7 +1866,7 @@ tr.decided .prop b { color: var(--dim); }
     body.textContent = "";
     var ps = rules.proposals.filter(function (p) { return p.status === "open"; })
       .concat(rules.proposals.filter(function (p) { return p.status !== "open"; }));
-    if (!ps.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "5", text: "No proposals" })]));
+    if (!ps.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "5", text: "No proposals. Agents file one when their person corrects them the same way twice." })]));
     ps.forEach(function (p) {
       var what = el("div", { "class": "prop" }, [el("b", { text: p.text }),
         p.evidence ? el("small", { text: p.evidence }) : null,
@@ -1654,8 +1917,9 @@ tr.decided .prop b { color: var(--dim); }
     });
   }
 
-  /* an admin panel is not redrawn while someone is choosing or typing in it */
+  /* an admin panel is not redrawn while someone is choosing or typing in it, or answers a confirm */
   function busy(id) {
+    if (holding && holding.isConnected && $(id).contains(holding)) return true;
     var a = document.activeElement;
     return a && $(id).contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName);
   }
@@ -1682,7 +1946,7 @@ tr.decided .prop b { color: var(--dim); }
       $("n-access").textContent = feed.requests.length;
       $("n-access").hidden = !feed.requests.length;
       if (!busy("people") && changed("people", [feed.people, feed.legacy])) renderPeople();
-      if (!busy("access") && changed("access", [feed.requests, feed.projects, feed.machines, feed.people])) renderAccess();
+      if (!busy("access") && changed("access", [feed.requests, feed.decisions, feed.projects, feed.archived_projects, feed.machines, feed.people, savedHost])) renderAccess();
       if (!busy("audit") && changed("audit", [feed.log, feed.settings, feed.people, logPerson, logRows])) renderLog();
       if (logPerson && changed("log-src", feed.log)) loadLog();
     }
@@ -1700,36 +1964,45 @@ tr.decided .prop b { color: var(--dim); }
     var ctl = new AbortController(), stop = setTimeout(function () { ctl.abort(); }, 5000);
     fetch("/api/feed", { headers: { Authorization: "Bearer " + token }, cache: "no-store", signal: ctl.signal })
       .then(function (r) {
-        if (r.status === 401) { lock(); return null; }
+        if (r.status === 401) { lock(true); return null; }
         if (!r.ok) throw new Error(r.status);
         return r.text();
       })
       .then(function (text) {
         clearTimeout(stop);
-        if (text == null) return;
+        if (text == null || !token) return;  /* signed out meanwhile */
         live(true);
         feed = JSON.parse(text);
         render();
         if (view === "notes" && activity.project) loadActivity(activity.project);
         loadFleet();
         loadRules();
+        if (view === "people") loadInvites();
         clearTimeout(timer);
         timer = setTimeout(poll, 2000);
       })
-      .catch(function () { clearTimeout(stop); live(false); clearTimeout(timer); timer = setTimeout(poll, 2000); });
+      .catch(function () { clearTimeout(stop); if (!token) return; live(false); clearTimeout(timer); timer = setTimeout(poll, 2000); });
   }
 
-  /* a pasted token is kept like a #t= link */
+  /* a pasted token is kept like a #t= link; a wrong one is said so here, without a reload */
   $("unlock").addEventListener("submit", function (e) {
     e.preventDefault();
     var t = $("unlock-token").value.trim();
     if (!t) return;
-    location.replace(location.pathname + "#t=" + encodeURIComponent(t));
-    location.reload();
+    token = t;
+    store(function (s) { s.setItem(KEY, t); });
+    $("lock-err").hidden = true;
+    get("/api/me").then(function (m) { $("unlock-token").value = ""; enter(); start(m); }, function (x) {
+      if (x.message === "unauthorized") return;  /* lock(true) showed "That token did not work." */
+      $("lock-err").hidden = false;
+      $("lock-err").textContent = "The hub did not answer. Try again.";
+    });
   });
-  if (!token) return;
-  $("lock").hidden = true;
-  $("app").hidden = false;
+  $("signout").addEventListener("click", function () { lock(false); });
+  function enter() {
+    $("lock").hidden = true;
+    $("app").hidden = false;
+  }
   document.querySelectorAll(".tab").forEach(function (b) {
     b.addEventListener("click", function () { show(b.dataset.view); });
   });
@@ -1741,8 +2014,20 @@ tr.decided .prop b { color: var(--dim); }
   $("new-topic").addEventListener("click", newTopic);
   $("add-person").addEventListener("submit", function (e) {
     e.preventDefault();
-    act("people-err", "/api/people", { name: $("new-name").value.trim(), role: $("new-role").value })
-      .then(function () { $("new-name").value = ""; }, function () {});
+    var name = $("new-name").value.trim();
+    act("people-err", "/api/people", { name: name, role: $("new-role").value })
+      .then(function () { $("new-name").value = ""; $("new-name").blur(); return invite(name); })
+      .catch(function () {});
+  });
+  $("grant-role").addEventListener("change", grantHint);
+  $("new-project-btn").addEventListener("click", newProject);
+  $("np-cancel").addEventListener("click", function () { $("new-project").hidden = true; $("new-project").reset(); });
+  $("new-project").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var name = $("np-name").value.trim();
+    if (!name) return;
+    act("grant-err", "/api/projects", { name: name, description: $("np-desc").value.trim() })
+      .then(function () { $("new-project").reset(); $("new-project").hidden = true; seen.access = null; }, function () {});
   });
   $("grant").addEventListener("submit", function (e) {
     e.preventDefault();
@@ -1765,7 +2050,9 @@ tr.decided .prop b { color: var(--dim); }
   }
   function start(m) {
     me = m;
+    seen = {}; feed = null; invites = []; myProjects = [];
     $("viewer-name").textContent = m.person;
+    $("viewer-initial").textContent = m.person.charAt(0).toUpperCase();
     $("viewer").title = "Signed in as " + m.person + " on " + m.device;
     $("viewer-role").hidden = m.role !== "admin";
     document.querySelectorAll(".admin-only").forEach(function (n) { n.hidden = m.role !== "admin"; });
@@ -1773,7 +2060,7 @@ tr.decided .prop b { color: var(--dim); }
     show(view);
     poll();
   }
-  boot();
+  if (token) { enter(); boot(); }
 })();
 </script>
 </body>
