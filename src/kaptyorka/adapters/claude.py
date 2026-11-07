@@ -34,6 +34,18 @@ def hooks(kaptyorka: str) -> dict:
     return {event: [hook_entry(kaptyorka, name)] for event, name in HOOKS}
 
 
+def _same_start(pid: int, proc_start) -> Optional[bool]:
+    """Whether the process started when the session file says (Linux /proc); None when it cannot tell."""
+    if proc_start is None:
+        return None
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        start = stat[stat.rindex(")") + 2:].split()[19]  # field 22; the name in () may hold spaces
+    except (OSError, ValueError, IndexError):
+        return None
+    return str(proc_start) == start
+
+
 class ClaudeAdapter:
     tool = "claude-code"
     prefix = "claude"
@@ -68,8 +80,12 @@ class ClaudeAdapter:
                 data = json.loads(f.read_text())
                 cwd = data["cwd"]
                 session_id = data["sessionId"]
-                if not os.path.exists(data["messagingSocketPath"]):
-                    continue  # pid reused by another process, or a session that closed badly
+                started = _same_start(pid, data.get("procStart"))
+                if started is False:
+                    continue  # pid reused by another process
+                sock_path = data.get("messagingSocketPath")
+                if sock_path is not None and not started and not os.path.exists(sock_path):
+                    continue  # pid reused, or a session that closed badly
             except (OSError, ValueError, KeyError, TypeError):
                 continue  # dead process, or a half-written file
             version = str(data.get("version", ""))
@@ -90,7 +106,7 @@ class ClaudeAdapter:
             try:
                 data = json.loads(f.read_text())
                 if data["sessionId"] == wanted:
-                    return int(f.stem), data["messagingSocketPath"]
+                    return int(f.stem), data.get("messagingSocketPath")
             except (OSError, ValueError, KeyError, TypeError):
                 continue
         raise ValueError("no session file with that id")
@@ -98,6 +114,9 @@ class ClaudeAdapter:
     def deliver(self, key: str, text: str) -> None:
         try:
             pid, sock_path = self._find(key)
+            if sock_path is None:
+                raise DeliveryError(f"claude session {key}: no inbox socket (restricted session); "
+                                    "it reads the hub on its next turn")
             keys = sorted(self.dir.glob(f"{pid}.*.key"), key=lambda p: p.stat().st_mtime)
             token = json.loads(keys[-1].read_text())["peerToken"] if keys else None
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:

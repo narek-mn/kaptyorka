@@ -105,9 +105,44 @@ def test_socket_push_multiline_text(home, sock_dir):
 
 
 def test_sessions_skip_missing_socket(home, tmp_path):
-    write_session_file(home, pid=os.getpid(), sock=tmp_path / "gone.sock")  # pid reused
-    write_session_file(home, pid=os.getppid())  # no socket path at all
+    write_session_file(home, pid=os.getpid(), sock=tmp_path / "gone.sock")  # no procStart: socket rule decides
     assert ClaudeAdapter(home).sessions() == []
+
+
+def own_start_time() -> str:
+    """Field 22 (starttime) of /proc/<pid>/stat for this test process."""
+    stat = Path(f"/proc/{os.getpid()}/stat").read_text()
+    return stat[stat.rindex(")") + 2:].split()[19]
+
+
+linux_proc = pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="needs /proc")
+
+
+def test_session_without_inbox_socket_is_listed(home):
+    write_session_file(home, pid=os.getpid(), extra={"messagingSocketPath": None})  # a --restricted session
+    assert [s.key for s in ClaudeAdapter(home).sessions()] == [f"claude:sid-{os.getpid()}"]
+
+
+@linux_proc
+def test_session_with_wrong_proc_start_is_skipped(home):
+    write_session_file(home, pid=os.getpid(), extra={"messagingSocketPath": None, "procStart": "1"})  # pid reused
+    assert ClaudeAdapter(home).sessions() == []
+
+
+@linux_proc
+def test_missing_socket_with_matching_proc_start_is_listed(home, tmp_path):
+    write_session_file(home, pid=os.getpid(), sock=tmp_path / "not-yet.sock",
+                       extra={"procStart": own_start_time()})
+    assert [s.key for s in ClaudeAdapter(home).sessions()] == [f"claude:sid-{os.getpid()}"]
+
+
+def test_push_to_session_without_socket_raises_delivery_error(home):
+    write_session_file(home, pid=os.getpid(), extra={"messagingSocketPath": None})
+    key = f"claude:sid-{os.getpid()}"
+    with pytest.raises(DeliveryError) as e:
+        ClaudeAdapter(home).deliver(key, "hi")
+    assert str(e.value) == (f"claude session {key}: no inbox socket (restricted session); "
+                            "it reads the hub on its next turn")
 
 
 def test_socket_push_uses_newest_key_file(home, sock_dir):

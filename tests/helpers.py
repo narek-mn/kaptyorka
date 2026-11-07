@@ -43,7 +43,7 @@ def tool_names(hub) -> set:
 
 
 def write_session_file(home, pid, cwd="/w/proj-a", status="idle", version="2.1.318",
-                       sock=None, peer_token=None, name=None, name_source=None, session_id=None):
+                       sock=None, peer_token=None, name=None, name_source=None, session_id=None, extra=None):
     """A Claude Code session file (and its .key file when peer_token is given)."""
     import json
 
@@ -54,6 +54,7 @@ def write_session_file(home, pid, cwd="/w/proj-a", status="idle", version="2.1.3
         data["name"], data["nameSource"] = name, name_source
     if sock is not None:
         data["messagingSocketPath"] = str(sock)
+    data.update(extra or {})
     (d / f"{pid}.json").write_text(json.dumps(data))
     if peer_token is not None:
         (d / f"{pid}.ab12.key").write_text(json.dumps({"peerToken": peer_token}))
