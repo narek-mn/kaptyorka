@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple
 
 from kaptyorka.orders import sign
 from kaptyorka.secrets_check import check_secrets
-from kaptyorka.store import ONLINE_S, PROJECT_NAME, KaptyorkaError, Principal, Store, _check_length
+from kaptyorka.store import ONLINE_S, PROJECT_NAME, KaptyorkaError, Principal, Store, _check_length, _person
 
 MAX_FACT = 200
 UNATTENDED_S = 120  # boss offline this long: the worker is unattended
@@ -790,6 +790,25 @@ class WorkerStore:
             n = st._insert(sender_key, sender["name"], targets, text, now)
             st._rate_hit(sender_key, now)
             return n
+
+    def send_web_via_manager(self, name: str, to: str, text: str, person_id: Optional[int],
+                             manager_pid: Optional[int]) -> Optional[int]:
+        """A person's page writing to the manager's session needs no door. None when the
+        target is anyone else (use store.send_from_web)."""
+        if manager_pid is None or person_id is None or to == "all":
+            return None
+        st = self.store
+        name = _person(name)
+        check_secrets(text)
+        with st.lock:
+            _check_length(text)
+            now = st.clock()
+            key = f"web:{name}"
+            targets = st._targets(key, to, now, person_id)
+            if not all(not t["key"].startswith("web:") and t["person_id"] == manager_pid
+                       for t in targets):
+                return None
+            return st._insert(key, name, targets, text, now)
 
     def warnings(self, now: float, hub_version: str) -> List[dict]:
         """Things a person should look at: failed launches, offline bridges, old versions,

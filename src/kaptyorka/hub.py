@@ -845,8 +845,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         body = await request.json()
         p = request.scope["state"]["principal"]  # the body's "from" (0.1 pages) is ignored
         try:
-            n = store.send_from_web(p.person_name, str(body["to"]), str(body["text"]),
-                                    person_id=p.person_id)
+            n = ws.send_web_via_manager(p.person_name, str(body["to"]), str(body["text"]),
+                                        p.person_id, mm.person_id())
+            if n is None:
+                n = store.send_from_web(p.person_name, str(body["to"]), str(body["text"]),
+                                        person_id=p.person_id)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         wake_bridges()

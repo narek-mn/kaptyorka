@@ -472,3 +472,17 @@ def test_weekly_push_repeats_after_a_week(hub, clock):
     run(call(mgr, me, "inbox"))
     hub.tick()
     assert sum(t.startswith("weekly review") for t in drain(hub, mgr, me)) == 1
+
+
+def test_page_answers_the_manager_without_a_door(hub):
+    mgr, me = manager_online(hub)
+    _, btok, _ = plain(hub, "bob")
+    _, atok, alice = plain(hub, "alice")
+    A = ident("k:alice", machine="pc-1", project="proj-b")
+    run(call(alice, A, "inbox"))
+    assert http.request("POST", hub.url + "/api/send", btok,
+                        {"to": "laptop/codex/manager", "text": "here is my answer"})[0] == 200
+    assert [m["text"] for m in run(call(mgr, me, "inbox"))] == ["here is my answer"]
+    status, body = http.request("POST", hub.url + "/api/send", btok,
+                                {"to": "pc-1/codex/proj-b", "text": "hi"})
+    assert status == 400 and "no door" in body
