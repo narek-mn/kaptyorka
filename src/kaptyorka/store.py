@@ -257,11 +257,12 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
-        from kaptyorka import manager, memory, rules, workers  # here: workers imports this module
+        from kaptyorka import admin_ops, manager, memory, rules, workers  # they import this module
         workers.ensure_schema(self.db)
         memory.ensure_schema(self.db)
         rules.ensure_schema(self.db)
         manager.ensure_schema(self.db)
+        admin_ops.ensure_schema(self.db)
         self._migrate(legacy_token)
         self.sends: Dict[str, List[float]] = {}
 
@@ -311,7 +312,8 @@ class Store:
 
     def people(self) -> List[dict]:
         with self.lock:
-            rows = self.db.execute("SELECT id, name, role, created FROM people ORDER BY id")
+            rows = self.db.execute("SELECT id, name, role, created FROM people"
+                                   " WHERE removed_at IS NULL ORDER BY id")
             return [dict(r) for r in rows]
 
     def devices(self, person_id: int) -> List[dict]:
@@ -385,8 +387,8 @@ class Store:
 
     def person_by_name(self, name: str) -> Optional[dict]:
         with self.lock:
-            row = self.db.execute("SELECT id, name, role, created FROM people WHERE name=?",
-                                  (name.strip(),)).fetchone()
+            row = self.db.execute("SELECT id, name, role, created FROM people WHERE name=?"
+                                  " AND removed_at IS NULL", (name.strip(),)).fetchone()
             return dict(row) if row else None
 
     def invite_create(self, person_id: int, ttl_s: float = INVITE_TTL_S, by: str = "") -> str:

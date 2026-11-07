@@ -1,0 +1,259 @@
+"""The admin's store operations: removing people and projects, roles, invites, a member's own
+access and the log read as sentences."""
+import hashlib
+import sqlite3
+
+import pytest
+
+from helpers import person
+from kaptyorka import admin_ops
+from kaptyorka.hub_feed import feed
+from kaptyorka.store import KaptyorkaError, Principal, Store
+from kaptyorka.workers import WorkerStore
+
+
+@pytest.fixture
+def clock():
+    return [1_000_000.0]
+
+
+@pytest.fixture
+def store(tmp_path, clock):
+    s = Store(tmp_path / "hub.db", clock=lambda: clock[0])
+    yield s
+    s.close()
+
+
+@pytest.fixture
+def ws(store):
+    return WorkerStore(store)
+
+
+@pytest.fixture
+def ids(store):
+    return {name: person(store, name, role)[0]
+            for name, role in (("alice", "admin"), ("bob", "member"), ("carol", "member"))}
+
+
+def who(store, name):
+    p = next(x for x in admin_ops.names(store).items() if x[1] == name)
+    role = store.db.execute("SELECT role FROM people WHERE id=?", (p[0],)).fetchone()["role"]
+    return Principal(p[0], name, role, 0, "laptop", False, False)
+
+
+def shared_device(store, person_id, host="box-1"):
+    """A device with a signing secret whose bridge was seen just now."""
+    with store.lock:
+        return store.db.execute(
+            "INSERT INTO devices (person_id, name, token_hash, secret_hash, created, last_used, host)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (person_id, host, hashlib.sha256(host.encode()).hexdigest(), "s" * 64,
+             store.clock(), store.clock(), host)).lastrowid
+
+
+def worker(store, name, boss, device_id, project="proj-a", state="up"):
+    with store.lock:
+        store.db.execute(
+            "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+            " tool, key, state, created) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (name, project, "t", f"claude:{name}-boss", boss, device_id, "box-1", "claude-code",
+             f"claude:{name}", state, store.clock()))
+
+
+def test_remove_person_closes_workers_and_doors(store, ws, ids):
+    s, bob = store, ids["bob"]
+    s.project_register("proj-a", by="alice")
+    s.grant_project("proj-a", bob, "write", "alice")
+    s.db.execute("INSERT INTO machines (host, first_seen) VALUES ('box-1', 1)")
+    s.grant_machine("box-1", bob, "alice")
+    s.project_register("proj-b", by="alice")
+    s.request_access(bob, "project", "proj-b", "to read")
+    s.invite_create(bob)
+    did = s.open_door_group(bob, ids["carol"], "alice")
+    s.db.execute("INSERT INTO knocks (from_key, from_person, to_person, about, created)"
+                 " VALUES ('claude:c', ?, ?, 'hi', 1)", (ids["carol"], bob))
+    dev = shared_device(s, ids["alice"])
+    worker(s, "w1", bob, dev)
+    worker(s, "w2", bob, dev, state="closed")
+    worker(s, "w3", ids["carol"], dev)
+    done = admin_ops.remove_person(s, ws, "bob", who(s, "alice"))
+    assert done == {"devices": 1, "workers": 1, "doors": 1, "grants": 2, "requests": 1}
+    row = s.db.execute("SELECT * FROM people WHERE id=?", (bob,)).fetchone()
+    assert row["name"] == "bob (removed)" and row["removed_at"] == s.clock()
+    assert all(d["revoked_at"] for d in s.devices(bob))
+    assert s.db.execute("SELECT closed_at FROM doors WHERE id=?", (did,)).fetchone()[0]
+    assert s.db.execute("SELECT answered_at FROM knocks").fetchone()[0]
+    assert s.db.execute("SELECT COUNT(*) FROM invites WHERE person_id=?", (bob,)).fetchone()[0] == 0
+    w1 = s.db.execute("SELECT state, error FROM workers WHERE name='w1'").fetchone()
+    assert tuple(w1) == ("closed", "boss removed")
+    assert s.db.execute("SELECT state FROM workers WHERE name='w3'").fetchone()[0] == "up"
+    orders = s.db.execute("SELECT worker, kind FROM launches").fetchall()
+    assert [tuple(o) for o in orders] == [("w1", "close")]
+    assert s.log(1)[0]["kind"] == "person_removed" and s.log(1)[0]["detail"] == "bob"
+
+
+def test_remove_refusals(store, ws, ids):
+    s = store
+    person(s, "manager", "manager")
+    admin = who(s, "alice")
+    with pytest.raises(KaptyorkaError, match="you cannot remove yourself"):
+        admin_ops.remove_person(s, ws, "alice", admin)
+    other_admin = Principal(999, "x", "admin", 0, "d", False, False)
+    with pytest.raises(KaptyorkaError, match="the admin cannot be removed"):
+        admin_ops.remove_person(s, ws, "alice", other_admin)
+    with pytest.raises(KaptyorkaError, match="the manager account cannot be removed; use"
+                                             " kaptyorka start --no-manager"):
+        admin_ops.remove_person(s, ws, "manager", admin)
+    with pytest.raises(KaptyorkaError, match="no person named dave"):
+        admin_ops.remove_person(s, ws, "dave", admin)
+    with pytest.raises(KaptyorkaError, match="admin only"):
+        admin_ops.remove_person(s, ws, "carol", who(s, "bob"))
+    assert s.person_by_name("carol") is not None
+
+
+def test_remove_refuses_while_shared_token_speaks_for_them(store, ws, ids):
+    store.db.execute("INSERT INTO settings (key, value) VALUES ('legacy:box-1', ?)",
+                     (str(ids["bob"]),))
+    with pytest.raises(KaptyorkaError, match="turn the shared token off first"):
+        admin_ops.remove_person(store, ws, "bob", who(store, "alice"))
+    store.set_legacy_enabled(False, "alice")
+    admin_ops.remove_person(store, ws, "bob", who(store, "alice"))
+
+
+def test_removed_name_can_be_reused(store, ws, ids):
+    admin_ops.remove_person(store, ws, "bob", who(store, "alice"))
+    new = store.person_create("bob", by="alice")
+    assert new != ids["bob"] and store.person_by_name("bob")["id"] == new
+    admin_ops.remove_person(store, ws, "bob", who(store, "alice"))
+    names = admin_ops.names(store)
+    assert names[ids["bob"]] == "bob (removed)" and names[new] == f"bob (removed) #{new}"
+
+
+def test_removed_person_hidden_everywhere(store, ws, ids):
+    s = store
+    s.project_register("proj-a", by="alice")
+    s.grant_project("proj-a", ids["bob"], "read", "alice")
+    s.db.execute("INSERT INTO agents (key, name, machine, tool, project, last_seen, person_id)"
+                 " VALUES ('claude:b1', 'bob-pc', 'pc', 'claude-code', 'p', ?, ?)",
+                 (s.clock(), ids["bob"]))
+    admin_ops.remove_person(s, ws, "bob", who(s, "alice"))
+    assert [p["name"] for p in s.people()] == ["alice", "carol"]
+    assert s.person_by_name("bob") is None and s.person_by_name("bob (removed)") is None
+    assert s.project_members().get("proj-a", []) == []
+    out = feed(s, who(s, "alice"))
+    assert [p["name"] for p in out["people"]] == ["alice", "carol"]
+    assert [a["person"] for a in out["agents"]] == ["bob (removed)"]  # an old session
+
+
+def test_set_role_bounds(store, ids):
+    admin = who(store, "alice")
+    admin_ops.set_role(store, "bob", "manager", admin)
+    assert store.person_by_name("bob")["role"] == "manager"
+    admin_ops.set_role(store, "bob", "member", admin)
+    assert store.person_by_name("bob")["role"] == "member"
+    assert store.log(1)[0]["kind"] == "role"
+    for name, role in (("bob", "admin"), ("alice", "member")):
+        with pytest.raises(KaptyorkaError, match="the admin role cannot be given or taken here"):
+            admin_ops.set_role(store, name, role, admin)
+    with pytest.raises(KaptyorkaError, match="role must be member or manager"):
+        admin_ops.set_role(store, "bob", "boss", admin)
+    with pytest.raises(KaptyorkaError, match="admin only"):
+        admin_ops.set_role(store, "carol", "manager", who(store, "bob"))
+
+
+def test_invites_list_and_cancel(store, ws, ids, clock):
+    code = store.invite_create(ids["bob"])
+    store.invite_create(ids["carol"], ttl_s=10)
+    used = store.invite_create(ids["carol"])
+    store.invite_redeem(used, "pc")
+    clock[0] += 20
+    rows = admin_ops.invites_open(store)
+    assert [(r["code"], r["person"]) for r in rows] == [(code, "bob")]
+    assert rows[0]["expires"] == 1_000_000.0 + 7 * 86400
+    admin_ops.invite_cancel(store, code, who(store, "alice"))
+    assert admin_ops.invites_open(store) == [] and not store.invite_valid(code)
+    with pytest.raises(KaptyorkaError, match="no open invite"):
+        admin_ops.invite_cancel(store, code, who(store, "alice"))
+    with pytest.raises(KaptyorkaError, match="no open invite"):
+        admin_ops.invite_cancel(store, used, who(store, "alice"))
+
+
+def test_project_update_and_remove_keeps_notes(store, ws, ids):
+    s, admin = store, who(store, "alice")
+    s.project_register("proj-a", "old", by="alice")
+    s.grant_project("proj-a", ids["bob"], "write", "alice")
+    s.request_access(ids["carol"], "project", "proj-a", "")
+    s.notes_write_from_web("alice", "state", "where it stands", project="proj-a")
+    dev = shared_device(s, ids["alice"])
+    ws.facts_seen(dev, {}, {"proj-a": "/w/proj-a", "proj-b": "/w/proj-b"})
+    admin_ops.project_update(s, "proj-a", "new words", admin)
+    assert s.projects_for(admin)[0]["description"] == "new words"
+    done = admin_ops.project_remove(s, "proj-a", admin)
+    assert done == {"grants": 1, "requests": 1, "folders": 1}
+    assert s.projects_for(admin) == [] and s.project_role("proj-a", ids["bob"]) is None
+    assert ws.folders(dev) == {"proj-b": "/w/proj-b"}
+    assert s.db.execute("SELECT text FROM notes WHERE project='proj-a'").fetchone()[0] == \
+        "where it stands"
+    assert [r["kind"] for r in s.log(3)][:2] == ["project_removed", "project_updated"]
+    with pytest.raises(KaptyorkaError, match="no project named proj-a"):
+        admin_ops.project_update(s, "proj-a", "x", admin)
+
+
+def test_project_remove_refuses_live_worker(store, ws, ids):
+    store.project_register("proj-a", by="alice")
+    worker(store, "w1", ids["bob"], shared_device(store, ids["alice"]))
+    with pytest.raises(KaptyorkaError, match="close its workers first"):
+        admin_ops.project_remove(store, "proj-a", who(store, "alice"))
+    store.db.execute("UPDATE workers SET state='closed'")
+    admin_ops.project_remove(store, "proj-a", who(store, "alice"))
+
+
+def test_my_access_member_view(store, ws, ids):
+    s, bob = store, ids["bob"]
+    s.project_register("proj-a", "the app", by="alice")
+    s.project_register("proj-b", by="alice")
+    s.grant_project("proj-a", bob, "write", "alice")
+    s.db.execute("INSERT INTO machines (host, first_seen) VALUES ('box-1', 1)")
+    s.db.execute("INSERT INTO machines (host, first_seen) VALUES ('box-2', 1)")
+    s.grant_machine("box-1", bob, "alice")
+    s.request_access(bob, "project", "proj-b", "to help")
+    got = admin_ops.my_access(s, ws, who(s, "bob"))
+    assert got["projects"] == [{"name": "proj-a", "role": "write", "description": "the app"}]
+    assert got["machines"] == [{"host": "box-1", "owner": None, "shared": False}]
+    assert [(r["target"], r["status"]) for r in got["requests"]] == [("proj-b", "pending")]
+
+
+def test_log_sentences():
+    cases = [
+        ("grant", "project:proj-a:write -> bob", "alice gave bob write access to proj-a"),
+        ("grant", "machine:box-1 -> bob", "alice let bob use the machine box-1"),
+        ("revoke", "project:proj-a -> bob", "alice took bob's access to proj-a"),
+        ("revoke", "device laptop of bob", "alice turned off bob's device laptop"),
+        ("person", "bob created as member", "alice added bob with the role member"),
+        ("device", "device laptop of bob", "alice added a device laptop for bob"),
+        ("invite", "invite for bob", "alice made an invite link for bob"),
+        ("project_register", "proj-a", "alice registered the project proj-a"),
+        ("project_removed", "proj-a", "alice removed the project proj-a"),
+        ("person_removed", "bob", "alice removed bob from the team"),
+        ("role", "bob -> manager", "alice made bob a manager"),
+        ("page_login", "web", "alice opened the page (web)"),
+        ("rules", "team rules v3 by alice", "alice saved team rules version 3"),
+        ("proposal", "proposal 4 accepted", "alice accepted rule proposal 4"),
+        ("conflict", "conflict 2 in proj-a", "alice reported a rule conflict (2) in proj-a"),
+        ("request_decided", "project:proj-a -> bob: approved (already write)",
+         "alice approved bob's request for the project proj-a"),
+        ("something_new", "x y", "something_new: x y"),
+        ("grant", "odd detail", "grant: odd detail"),
+    ]
+    for kind, detail, want in cases:
+        assert admin_ops.log_sentence({"person": "alice", "kind": kind, "detail": detail}) == want
+    for kind in ("work_decide", "manager", "skills", "backup"):
+        assert admin_ops.log_sentence({"person": "manager", "kind": kind, "detail": "request 1: wait"})
+
+
+def test_schema_adds_removed_at_to_an_older_people_table(tmp_path):
+    db = sqlite3.connect(str(tmp_path / "x.db"))
+    db.execute("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)")
+    admin_ops.ensure_schema(db)
+    admin_ops.ensure_schema(db)
+    assert "removed_at" in [r[1] for r in db.execute("PRAGMA table_info(people)")]

@@ -2,6 +2,7 @@
 from dataclasses import asdict
 from typing import Optional
 
+from kaptyorka import admin_ops
 from kaptyorka.manager import ManagerStore
 from kaptyorka.store import PRIVATE, Agent, Principal, Store, private_name
 
@@ -72,7 +73,7 @@ def _notes(store: Store, principal: Principal) -> list:
 def feed(store: Store, principal: Principal, ws=None) -> dict:
     now = store.clock()
     people = store.people()
-    names = {p["id"]: p["name"] for p in people}
+    names = admin_ops.names(store)  # removed people too: their old sessions keep a name
     admin = principal.is_admin()
     me = principal.person_name
     mid = ManagerStore(store).person_id()

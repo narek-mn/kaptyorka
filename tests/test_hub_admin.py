@@ -1,0 +1,145 @@
+"""The admin routes for people, roles, invites and projects; a member asking for access and
+seeing their own; request decisions with a role or a reason; log sentences."""
+from types import SimpleNamespace
+
+import pytest
+
+from conftest import start_hub
+from helpers import person
+from kaptyorka import http
+from kaptyorka.manager import ManagerStore
+from kaptyorka.store import Store
+
+
+@pytest.fixture
+def app(tmp_path):
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    ids, tokens = {}, {}
+    for name, role in (("alice", "admin"), ("bob", "member"), ("carol", "member")):
+        ids[name], tokens[name] = person(store, name, role)
+    yield SimpleNamespace(url=f"http://127.0.0.1:{stop.port}", store=store, ids=ids,
+                          tokens=tokens)
+    stop()
+    store.close()
+
+
+def call(app, who, method, path, body=None):
+    return http.request(method, app.url + path, app.tokens[who], body)
+
+
+ADMIN_ROUTES = [("DELETE", "/api/people/carol", None),
+                ("POST", "/api/people/carol/role", {"role": "manager"}),
+                ("GET", "/api/invites", None),
+                ("DELETE", "/api/invites/abc", None),
+                ("POST", "/api/projects/proj-a", {"description": "x"}),
+                ("DELETE", "/api/projects/proj-a", None),
+                ("POST", "/api/requests/1", {"approve": True})]
+
+
+def test_member_routes_forbidden(app):
+    app.store.project_register("proj-a", by="alice")
+    for method, path, body in ADMIN_ROUTES:
+        status, text = call(app, "bob", method, path, body)
+        assert (status, text) == (403, "admin only"), (method, path)
+    assert app.store.person_by_name("carol") is not None
+
+
+def test_remove_person_route(app):
+    status, body = call(app, "alice", "DELETE", "/api/people/bob")
+    assert status == 200 and body == {"devices": 1, "workers": 0, "doors": 0, "grants": 0,
+                                      "requests": 0}
+    assert http.request("GET", app.url + "/api/me", app.tokens["bob"])[0] == 401
+    status, text = call(app, "alice", "DELETE", "/api/people/bob")
+    assert (status, text) == (404, "no person named bob")
+    status, text = call(app, "alice", "DELETE", "/api/people/alice")
+    assert (status, text) == (400, "you cannot remove yourself")
+    names = [p["name"] for p in call(app, "alice", "GET", "/api/people")[1]]
+    assert names == ["alice", "carol"]
+
+
+def test_role_route(app):
+    assert call(app, "alice", "POST", "/api/people/bob/role", {"role": "manager"})[0] == 204
+    assert app.store.person_by_name("bob")["role"] == "manager"
+    status, text = call(app, "alice", "POST", "/api/people/bob/role", {"role": "admin"})
+    assert (status, text) == (400, "the admin role cannot be given or taken here")
+
+
+def test_invite_routes(app):
+    status, inv = call(app, "alice", "POST", "/api/invites", {"person": "bob"})
+    assert status == 200 and inv["expires"] > app.store.clock() + 6 * 86400
+    page = http.request("GET", inv["url"], "")[1]
+    assert "This link works for 7 days" in page
+    rows = call(app, "alice", "GET", "/api/invites")[1]
+    assert [(r["code"], r["person"]) for r in rows] == [(inv["code"], "bob")]
+    assert call(app, "alice", "DELETE", f"/api/invites/{inv['code']}")[0] == 204
+    assert call(app, "alice", "GET", "/api/invites")[1] == []
+    assert call(app, "alice", "DELETE", f"/api/invites/{inv['code']}")[0] == 404
+
+
+def test_project_routes(app):
+    app.store.project_register("proj-a", by="alice")
+    assert call(app, "alice", "POST", "/api/projects/proj-a", {"description": "the app"})[0] == 204
+    assert call(app, "alice", "GET", "/api/projects")[1][0]["description"] == "the app"
+    status, body = call(app, "alice", "DELETE", "/api/projects/proj-a")
+    assert status == 200 and body["grants"] == 0
+    assert call(app, "alice", "GET", "/api/projects")[1] == []
+    assert call(app, "alice", "DELETE", "/api/projects/proj-a") == (404, "no project named proj-a")
+
+
+def test_request_kind_validated(app):
+    app.store.project_register("proj-a", by="alice")
+    status, text = call(app, "bob", "POST", "/api/requests",
+                        {"kind": "folder", "target": "proj-a", "why": ""})
+    assert (status, text) == (400, "kind must be project or machine")
+    status, text = call(app, "bob", "POST", "/api/requests", {"kind": "project", "target": "nope"})
+    assert (status, text) == (400, "no project named nope")
+    status, body = call(app, "bob", "POST", "/api/requests",
+                        {"kind": "project", "target": "proj-a", "why": "to help"})
+    assert status == 200 and isinstance(body["id"], int)
+    mine = call(app, "bob", "GET", "/api/me/access")[1]
+    assert [(r["target"], r["status"], r["why"]) for r in mine["requests"]] == \
+        [("proj-a", "pending", "to help")]
+
+
+def test_my_access_route(app):
+    s = app.store
+    s.project_register("proj-a", "the app", by="alice")
+    s.grant_project("proj-a", app.ids["bob"], "read", "alice")
+    got = call(app, "bob", "GET", "/api/me/access")[1]
+    assert got == {"projects": [{"name": "proj-a", "role": "read", "description": "the app"}],
+                   "machines": [], "requests": []}
+    assert call(app, "carol", "GET", "/api/me/access")[1]["projects"] == []
+
+
+def test_approve_with_role_and_deny_with_reason(app):
+    s = app.store
+    s.project_register("proj-a", by="alice")
+    s.project_register("proj-b", by="alice")
+    s.project_register("proj-c", by="alice")
+    ra = s.request_access(app.ids["bob"], "project", "proj-a")
+    rb = s.request_access(app.ids["bob"], "project", "proj-b")
+    rc = s.request_access(app.ids["bob"], "project", "proj-c")
+    status, text = call(app, "alice", "POST", f"/api/requests/{ra}",
+                        {"approve": True, "role": "manage"})
+    assert (status, text) == (400, "role must be read or write")
+    assert call(app, "alice", "POST", f"/api/requests/{ra}", {"approve": True, "role": "write"})[0] == 204
+    assert s.project_role("proj-a", app.ids["bob"]) == "write"
+    assert call(app, "alice", "POST", f"/api/requests/{rc}", {"approve": True})[0] == 204
+    assert s.project_role("proj-c", app.ids["bob"]) == "read"
+    s.seen("claude:b1", "pc", "claude-code", "x", principal=s.authenticate(app.tokens["bob"]))
+    assert call(app, "alice", "POST", f"/api/requests/{rb}",
+                {"approve": False, "reason": "not this month"})[0] == 204
+    texts = [(m["to_key"], m["text"]) for m in s.db.execute(
+        "SELECT to_key, text FROM messages WHERE sender_key='hub:workers'")]
+    want = "Your request for the project proj-b was denied: not this month"
+    assert texts == [("web:bob", want), ("claude:b1", want)]
+    assert s.project_role("proj-b", app.ids["bob"]) is None
+
+
+def test_log_rows_have_sentences(app):
+    app.store.project_register("proj-a", by="alice")
+    rows = call(app, "alice", "GET", "/api/log")[1]
+    assert rows[0]["sentence"] == "alice registered the project proj-a"
+    assert all("sentence" in r for r in rows)

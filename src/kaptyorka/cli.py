@@ -376,6 +376,83 @@ def _project_add(args) -> int:
                      f"project {args.name} added")
 
 
+def _admin_json(method: str, path: str, body=None):
+    """One admin call; its answer on 2xx, else None after printing the hub's sentence."""
+    got = _admin_call(method, path, body)
+    if got is None:
+        return None
+    if got[0] not in (200, 204):
+        print(got[1] if isinstance(got[1], str) and got[1] else f"hub answered {got[0]}",
+              file=sys.stderr)
+        return None
+    return got[1] if got[1] is not None else {}
+
+
+def _confirm(question: str, yes: bool) -> bool:
+    if yes:
+        return True
+    try:
+        answer = input(f"{question} [y/N] ")
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() in ("y", "yes"):
+        return True
+    print("nothing changed")
+    return False
+
+
+def _people_remove(args) -> int:
+    if not _confirm(f"Remove {args.name}? Their devices stop working at once.", args.yes):
+        return 1
+    done = _admin_json("DELETE", f"/api/people/{quote(args.name, safe='')}")
+    if done is None:
+        return 1
+    print(f"removed {args.name}: {done['devices']} devices stopped, {done['workers']} workers"
+          f" closed, {done['grants']} grants and {done['requests']} requests dropped")
+    return 0
+
+
+def _people_role(args) -> int:
+    return _admin_do("POST", f"/api/people/{quote(args.name, safe='')}/role",
+                     {"role": args.role}, f"{args.name} is now a {args.role}")
+
+
+def _invites(args) -> int:
+    if args.cancel:
+        return _admin_do("DELETE", f"/api/invites/{quote(args.cancel, safe='')}", None,
+                         "invite cancelled")
+    rows = _admin_json("GET", "/api/invites")
+    if rows is None:
+        return 1
+    if not rows:
+        print("no open invites")
+        return 0
+    now = time.time()
+    table = [("PERSON", "EXPIRES IN", "CODE")]
+    for r in rows:
+        table.append((r["person"], f"{max(0, round((r['expires'] - now) / 3600))}h", r["code"]))
+    w = [max(len(r[i]) for r in table) for i in range(2)]
+    for r in table:
+        print("  ".join(c.ljust(n) for c, n in zip(r, w)) + "  " + r[2])
+    return 0
+
+
+def _project_edit(args) -> int:
+    return _admin_do("POST", f"/api/projects/{quote(args.name, safe='')}",
+                     {"description": args.description}, f"project {args.name} updated")
+
+
+def _project_remove(args) -> int:
+    if not _confirm(f"Remove the project {args.name}? Everyone loses access; its notes stay.",
+                    args.yes):
+        return 1
+    done = _admin_json("DELETE", f"/api/projects/{quote(args.name, safe='')}")
+    if done is None:
+        return 1
+    print(f"removed the project {args.name}: {done['grants']} grants dropped; its notes stay")
+    return 0
+
+
 def _stop(args) -> int:
     try:
         for unit in ("kaptyorka-bridge", "kaptyorka-hub"):
@@ -614,7 +691,20 @@ def entry() -> None:
     i = sub.add_parser("invite")
     i.add_argument("person")
     i.set_defaults(run=_invite)
-    sub.add_parser("people").set_defaults(run=_people)
+    pp = sub.add_parser("people")
+    pp.set_defaults(run=_people)
+    ps = pp.add_subparsers(dest="people_cmd")
+    pr = ps.add_parser("remove", help="take a person off the team")
+    pr.add_argument("name")
+    pr.add_argument("--yes", action="store_true", help="do not ask first")
+    pr.set_defaults(run=_people_remove)
+    pl = ps.add_parser("role", help="make a person a member or a manager")
+    pl.add_argument("name")
+    pl.add_argument("role", choices=("member", "manager"))
+    pl.set_defaults(run=_people_role)
+    iv = sub.add_parser("invites")
+    iv.add_argument("--cancel", metavar="code")
+    iv.set_defaults(run=_invites)
     for name, run in (("grant", _grant), ("revoke", _revoke)):
         g = sub.add_parser(name)
         g.add_argument("person")
@@ -626,6 +716,14 @@ def entry() -> None:
     pa.add_argument("--repo", default="")
     pa.add_argument("--desc", default="")
     pa.set_defaults(run=_project_add)
+    pe = pj.add_parser("edit")
+    pe.add_argument("name")
+    pe.add_argument("--description", required=True)
+    pe.set_defaults(run=_project_edit)
+    px = pj.add_parser("remove")
+    px.add_argument("name")
+    px.add_argument("--yes", action="store_true", help="do not ask first")
+    px.set_defaults(run=_project_remove)
     mc = sub.add_parser("machine").add_subparsers(dest="machine_cmd", required=True)
     mo = mc.add_parser("owner")
     mo.add_argument("host")

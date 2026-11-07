@@ -22,7 +22,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from kaptyorka import __version__, brief, identity, manager, paths
+from kaptyorka import __version__, admin_ops, brief, identity, manager, paths
 from kaptyorka import rules as rules_mod
 from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.brief import message_text
@@ -164,7 +164,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         seen. A project you may not see shows as (private), in the name too."""
         agent, principal = caller(ctx)
         now = store.clock()
-        names = {p["id"]: p["name"] for p in store.people()}
+        names = admin_ops.names(store)
         live = ws.live_keys()
         mine = ws.by_key(agent.key) if agent.key in live else None
         boss = ws.boss_key(mine["name"]) if mine else None  # a worker sees its boss marked
@@ -940,7 +940,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return denied
         q = request.query_params
         limit = max(1, min(int(q.get("limit") or 200), 1000))
-        return JSONResponse(store.log(limit, q.get("person") or None))
+        return JSONResponse([{**r, "sentence": admin_ops.log_sentence(r)}
+                             for r in store.log(limit, q.get("person") or None)])
 
     @server.custom_route("/api/settings", methods=["GET"])
     async def api_settings(request: Request) -> Response:
@@ -1130,7 +1131,61 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if person is None:
             return PlainTextResponse("no such person", status_code=404)
         code = store.invite_create(person["id"], by=request.scope["state"]["principal"].person_name)
-        return JSONResponse({"code": code, "url": f"{hub_url(request)}/i/{code}"})
+        return JSONResponse({"code": code, "url": f"{hub_url(request)}/i/{code}",
+                             "expires": admin_ops.invite_expires(store, code)})
+
+    def admin_error(e: KaptyorkaError) -> Response:
+        return PlainTextResponse(str(e), status_code=404 if str(e).startswith("no ") else 400)
+
+    @server.custom_route("/api/invites", methods=["GET"])
+    async def api_invites_open(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        return JSONResponse(admin_ops.invites_open(store))
+
+    @server.custom_route("/api/invites/{code}", methods=["DELETE"])
+    async def api_invite_cancel(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        try:
+            admin_ops.invite_cancel(store, request.path_params["code"],
+                                    request.scope["state"]["principal"])
+        except KaptyorkaError as e:
+            return admin_error(e)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/people/{name}", methods=["DELETE"])
+    async def api_person_remove(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        try:
+            done = admin_ops.remove_person(store, ws, request.path_params["name"],
+                                           request.scope["state"]["principal"])
+        except KaptyorkaError as e:
+            return admin_error(e)
+        wake_bridges()  # close orders for their workers
+        return JSONResponse(done)
+
+    @server.custom_route("/api/people/{name}/role", methods=["POST"])
+    @_bad_request
+    async def api_person_role(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        try:
+            admin_ops.set_role(store, request.path_params["name"], str(body["role"]),
+                               request.scope["state"]["principal"])
+        except KaptyorkaError as e:
+            return admin_error(e)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/me/access", methods=["GET"])
+    async def api_my_access(request: Request) -> Response:
+        return JSONResponse(admin_ops.my_access(store, ws, request.scope["state"]["principal"]))
 
     @server.custom_route("/api/devices/{device_id:int}/revoke", methods=["POST"])
     async def api_device_revoke(request: Request) -> Response:
@@ -1294,6 +1349,18 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return JSONResponse(store.requests())
         return JSONResponse(store.pending_for(principal.person_id))
 
+    @server.custom_route("/api/requests", methods=["POST"])
+    @_bad_request
+    async def api_request_create(request: Request) -> Response:
+        principal = request.scope["state"]["principal"]
+        body = await request.json()
+        try:
+            rid = store.request_access(principal.person_id, str(body["kind"]),
+                                       str(body["target"]), str(body.get("why") or ""))
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return JSONResponse({"id": rid})
+
     @server.custom_route("/api/requests/{rid:int}", methods=["POST"])
     @_bad_request
     async def api_request_decide(request: Request) -> Response:
@@ -1303,11 +1370,25 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         body = await request.json()
         if not isinstance(body["approve"], bool):
             raise ValueError("approve must be true or false")
+        role, reason = str(body.get("role") or "read"), str(body.get("reason") or "").strip()
+        if role not in ("read", "write"):
+            return PlainTextResponse("role must be read or write", status_code=400)
+        principal = request.scope["state"]["principal"]
+        rid = request.path_params["rid"]
         try:
-            store.decide_request(request.path_params["rid"],
-                                 request.scope["state"]["principal"].person_id, body["approve"])
+            store.decide_request(rid, principal.person_id, body["approve"])
+            r = next(x for x in store.requests(pending_only=False) if x["id"] == rid)
+            if body["approve"] and r["kind"] == "project" and role == "write" \
+                    and store.project_role(r["target"], r["person_id"]) == "read":
+                store.grant_project(r["target"], r["person_id"], "write", principal.person_name)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
+        if not body["approve"] and reason:
+            text = f"Your request for the {r['kind']} {r['target']} was denied: {reason[:500]}"
+            for key in [f"web:{r['person']}"] + [a.key for a in store.online()
+                                                 if a.person_id == r["person_id"]]:
+                ws.notify(key, text)
+            wake_bridges()
         return Response(status_code=204)
 
     @server.custom_route("/api/projects", methods=["POST"])
@@ -1324,6 +1405,32 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
+
+    @server.custom_route("/api/projects/{name}", methods=["POST"])
+    @_bad_request
+    async def api_project_update(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        try:
+            admin_ops.project_update(store, request.path_params["name"], str(body["description"]),
+                                     request.scope["state"]["principal"])
+        except KaptyorkaError as e:
+            return admin_error(e)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/projects/{name}", methods=["DELETE"])
+    async def api_project_remove(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        try:
+            done = admin_ops.project_remove(store, request.path_params["name"],
+                                            request.scope["state"]["principal"])
+        except KaptyorkaError as e:
+            return admin_error(e)
+        return JSONResponse(done)
 
     async def project_grant(request: Request, grant: bool) -> Response:
         denied = admin_only(request)
@@ -1425,6 +1532,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         cmd = html.escape(f"kaptyorka join {hub_url(request)}/i/{code}")
         body = (f"<h1>Join the team hub</h1><pre>{cmd}</pre>"
                 "<p>Paste this link to your agent and say: join this.</p>"
+                "<p>This link works for 7 days, once.</p>"
                 + INVITE_WEB.format(action=html.escape(f"/i/{code}/web")))
         return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)
 

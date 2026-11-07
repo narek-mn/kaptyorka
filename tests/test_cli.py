@@ -455,3 +455,105 @@ def test_rules_push_same_or_subset_pushes(monkeypatch, home, tmp_path, hub_text)
     calls = _hub_with_rules(monkeypatch, hub_text)
     assert entry_with_exit(["rules", "push", str(root)]) == 0
     assert [c[0] for c in calls] == ["GET", "POST", "PUT"]
+
+
+@pytest.fixture
+def admin_hub(monkeypatch, home):
+    """A saved config and a fake hub: answers[(method, path)] -> (status, body); calls kept."""
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    hub = {"calls": [], "answers": {}}
+
+    def fake(method, url, token, body=None, **kw):
+        path = url[len("http://h:1"):]
+        hub["calls"].append((method, path, body))
+        return hub["answers"].get((method, path), (204, None))
+
+    monkeypatch.setattr(http, "request", fake)
+    return hub
+
+
+def test_cli_people_remove_asks_first(admin_hub, monkeypatch, capsys):
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda q: asked.append(q) or "n")
+    assert entry_with_exit(["people", "remove", "bob"]) == 1
+    assert asked == ["Remove bob? Their devices stop working at once. [y/N] "]
+    assert admin_hub["calls"] == []
+    admin_hub["answers"][("DELETE", "/api/people/bob")] = (200, {
+        "devices": 2, "workers": 1, "doors": 0, "grants": 3, "requests": 0})
+    monkeypatch.setattr("builtins.input", lambda q: "y")
+    assert entry_with_exit(["people", "remove", "bob"]) == 0
+    assert "removed bob: 2 devices stopped, 1 workers closed" in capsys.readouterr().out
+
+
+def test_cli_people_remove_yes_and_error(admin_hub, monkeypatch, capsys):
+    monkeypatch.setattr("builtins.input", lambda q: pytest.fail("asked"))
+    admin_hub["answers"][("DELETE", "/api/people/alice")] = (400, "you cannot remove yourself")
+    assert entry_with_exit(["people", "remove", "alice", "--yes"]) == 1
+    assert capsys.readouterr().err.strip() == "you cannot remove yourself"
+
+
+def test_cli_people_role(admin_hub, capsys):
+    assert entry_with_exit(["people", "role", "bob", "manager"]) == 0
+    assert admin_hub["calls"] == [("POST", "/api/people/bob/role", {"role": "manager"})]
+    assert capsys.readouterr().out.strip() == "bob is now a manager"
+    admin_hub["answers"][("POST", "/api/people/bob/role")] = (404, "no person named bob")
+    assert entry_with_exit(["people", "role", "bob", "member"]) == 1
+    assert "no person named bob" in capsys.readouterr().err
+
+
+def test_cli_people_still_lists(admin_hub, capsys):
+    admin_hub["answers"][("GET", "/api/people")] = (200, [{"name": "alice", "role": "admin",
+                                                           "devices": []}])
+    assert entry_with_exit(["people"]) == 0
+    assert capsys.readouterr().out.splitlines()[1].split() == ["alice", "admin", "0", "never"]
+
+
+def test_cli_invites_table_and_cancel(admin_hub, monkeypatch, capsys):
+    monkeypatch.setattr("time.time", lambda: 0.0)
+    admin_hub["answers"][("GET", "/api/invites")] = (200, [
+        {"code": "C" * 22, "person": "bob", "created": 0.0, "expires": 7 * 86400.0}])
+    assert entry_with_exit(["invites"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].split() == ["PERSON", "EXPIRES", "IN", "CODE"]
+    assert out[1].split() == ["bob", "168h", "C" * 22]
+    assert entry_with_exit(["invites", "--cancel", "C" * 22]) == 0
+    assert admin_hub["calls"][-1] == ("DELETE", "/api/invites/" + "C" * 22, None)
+    admin_hub["answers"][("DELETE", "/api/invites/x")] = (404, "no open invite with that code")
+    assert entry_with_exit(["invites", "--cancel", "x"]) == 1
+    assert "no open invite with that code" in capsys.readouterr().err
+
+
+def test_cli_invites_empty(admin_hub, capsys):
+    admin_hub["answers"][("GET", "/api/invites")] = (200, [])
+    assert entry_with_exit(["invites"]) == 0
+    assert capsys.readouterr().out.strip() == "no open invites"
+
+
+def test_cli_project_edit_and_remove(admin_hub, monkeypatch, capsys):
+    assert entry_with_exit(["project", "edit", "proj-a", "--description", "the app"]) == 0
+    assert admin_hub["calls"][-1] == ("POST", "/api/projects/proj-a", {"description": "the app"})
+    monkeypatch.setattr("builtins.input", lambda q: "")
+    assert entry_with_exit(["project", "remove", "proj-a"]) == 1
+    assert admin_hub["calls"][-1][0] == "POST"  # nothing sent
+    admin_hub["answers"][("DELETE", "/api/projects/proj-a")] = (200, {"grants": 2, "requests": 0,
+                                                                       "folders": 1})
+    assert entry_with_exit(["project", "remove", "proj-a", "--yes"]) == 0
+    assert "removed the project proj-a: 2 grants dropped" in capsys.readouterr().out
+    admin_hub["answers"][("DELETE", "/api/projects/proj-a")] = (
+        400, "workers are running in proj-a; close its workers first")
+    assert entry_with_exit(["project", "remove", "proj-a", "--yes"]) == 1
+    assert "close its workers first" in capsys.readouterr().err
+
+
+def test_cli_admin_commands_hub_unreachable(monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+
+    def down(*a, **k):
+        raise http.HubUnreachable("http://h:1")
+
+    monkeypatch.setattr(http, "request", down)
+    for args in (["people", "remove", "bob", "--yes"], ["people", "role", "bob", "member"],
+                 ["invites"], ["project", "edit", "p", "--description", "d"],
+                 ["project", "remove", "p", "--yes"]):
+        assert entry_with_exit(args) == 1
+        assert capsys.readouterr().err.strip() == "kaptyorka hub unreachable at http://h:1"
