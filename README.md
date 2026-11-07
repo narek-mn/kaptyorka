@@ -143,8 +143,10 @@ A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join`
 | `workers` | List your workers |
 | `adopt` | Take over one of your unattended workers |
 | `close_worker` | End one of your workers |
+| `work_decide` | The manager only: decide a busy-machine work request (a machine, or `wait`), with a reason |
+| `log` | Admin and manager only: the team's activity log, newest first (`limit`, at most 1,000) |
 
-The hub offers 23 tools in all.
+The hub offers 25 tools in all.
 
 `work(project, task, machine="", tool="claude-code", resume="")` starts a worker. `tool` is `claude-code`, `codex` or `opencode`. `adopt(name)` and `close_worker(name)` take the worker's name.
 
@@ -197,6 +199,8 @@ Agents can suggest rules, and report clashes. The brief tells each agent when to
 - When its person corrects it the same way twice, the agent calls `propose_rule(text, evidence)`. The admin accepts it, which appends it to the team rules as a new version, or rejects it with a reason. The reason is sent to the proposer's session. The Rules tab lists open proposals.
 - When two rules clash and the agent must ask its person, it calls `conflict(rule_a, rule_b)`. This logs the clash for the admin to fix the text.
 
+If `~/.claude/skills` is a link into a git repo, add `team-*/` to that repo's `.gitignore`.
+
 Limits: a proposal text 2,000 characters, its evidence 4,000, each rule in a conflict 1,000, 20 open proposals per person, and 20 conflicts per session.
 
 ## The done check
@@ -246,6 +250,29 @@ The old shared token cannot start, adopt or close workers. Use your own token.
 "Shared" means an account that more than one person uses. The admin marks an account as shared with the **Shared** button on the page (Access tab). A worker started there runs as that OS account. It can read everything the account can read, including the account's kaptyorka token, git keys and ssh keys. So share only an account that was set up for this. The hub does not let a worker on a shared account start, adopt or close workers; it must ask its boss. This stops mistakes. It does not stop a hostile worker. A proper identity for each worker comes in a later version.
 
 The **Machines** tab on the page shows each machine, its workers and warnings (for example an old version). It also has the auto-update switch for each account.
+
+## The manager
+
+The manager is one Claude Code session that the hub starts and keeps alive on the hub machine. It is a worker named `manager`, under its own person and device, also called `manager`. The hub launches it through the admin's own bridge on that machine. It is not a coder. It settles who gets a machine, and it watches for what needs the admin. Attach from the hub machine with `claude attach manager`.
+
+What it decides: when you call `work` for a machine that holds another person's session in that folder, the hub does not guess. It saves a work request and tells the manager. The manager knocks or messages the person who holds the machine, reads the answer, then calls `work_decide(request_id, machine, reason)`. `machine` is a host, or `wait`. Each decision is checked by the hub, not by the manager's word:
+
+- Your use of the machine: you must still be allowed to use it.
+- Your write role in the project, checked again when it decides.
+- A free folder, or a worktree on branch `work/<worker-name>`.
+- Your session must still be online; if it is gone, you are told on the page.
+
+Every decision carries a reason, is written to the log, and is told to the asker. A request nobody decides expires after an hour, and the asker is told to ask again. If no manager is online, `work` answers as before and the asker picks another machine.
+
+What the hub tells it: a worker abandoned for a day, a shared machine whose bridge is offline, a person whose workers failed to start twice, a proposal or an access request waiting a day, and once a week a prompt to read `log(500)` and file `propose_rule` for repeated clashes. It passes these on to the admin. Each item is sent once.
+
+What it cannot do: it cannot answer other people's knocks, open doors, grant or revoke roles, edit rules or decide proposals. It can only knock and file proposals. It does have two things others do not: messages to and from the manager need no door (page replies too), and it can read the log with `log`.
+
+Keeping it alive: if it stops, the hub starts it again, at most twice an hour. If a launch fails twice, the admin hears of it on the page. The first launch on a new hub machine can fail until Claude Code trusts the folder. Run `claude` once in `~/.kaptyorka/manager` and accept the prompt; `kaptyorka start` prints this line.
+
+Switching it off: `kaptyorka start --no-manager` (kept in `hub.json`, so a restart keeps it) or `close_worker("manager")` by the admin. `kaptyorka start --manager` switches it on again. Its files are in `~/.kaptyorka/manager/` (`CLAUDE.md`: the team rules and the manager's own instructions, written again when the rules change) and `~/.kaptyorka/manager-config.json` (its token). The config lives outside the folder, and the hooks and the tool shim use it only for a session started in that folder.
+
+On the page, the Team tab marks its session with a `manager` badge, and the Machines tab shows `manager` where a worker's boss would be.
 
 ## People and access
 
@@ -338,6 +365,8 @@ Everything is in `~/.kaptyorka`:
 - `folders.json`: project folders the bridge learned from sessions
 - `skills.json`: the team skill names and version the bridge last wrote, on each joined machine
 - `backup-pass`: the passphrase for encrypted backups, on the hub only (mode 0600); keep a copy elsewhere
+- `manager/`: the manager session's folder, with its `CLAUDE.md`, on the hub machine
+- `manager-config.json`: the manager's token and hub address (mode 0600), on the hub machine
 - `launched.json`: the bridge's memory of the start and stop orders it already ran, so an order sent again is never run twice (it is not a list of workers)
 - `bridge.log`
 
@@ -345,7 +374,7 @@ Everything is in `~/.kaptyorka`:
 
 | Command | What it does |
 |---|---|
-| `kaptyorka start` | Run the hub on this machine |
+| `kaptyorka start` | Run the hub on this machine; `--no-manager` keeps no manager session, `--manager` switches it back on |
 | `kaptyorka join <invite-link>` | Join this machine as the invited person |
 | `kaptyorka invite <person>` | Admin: make an invite link (creates the person if new) |
 | `kaptyorka people` | Admin: list people, roles, device counts and last use |

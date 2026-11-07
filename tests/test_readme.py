@@ -41,3 +41,13 @@ def test_readme_done_check_and_brief_cache_wording():
     assert "keeps each session's brief for 10 seconds" in brief and "never keeps a brief that delivered messages" in brief
     assert "count of unread messages has changed" in brief
     assert "makes `backup-pass` right away" in r
+
+
+def test_readme_manager_section():
+    r = (ROOT / "README.md").read_text()
+    m = r.split("## The manager", 1)[1].split("\n## ", 1)[0]
+    for s in ["claude attach manager", "--no-manager", "work_decide", "~/.kaptyorka/manager/", "manager-config.json",
+              "cannot answer other people's knocks"]:
+        assert s in m or s in r
+    assert "The hub offers 25 tools" in r
+    assert "add `team-*/` to that repo's `.gitignore`." in r

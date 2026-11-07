@@ -56,3 +56,10 @@ def test_page_has_rules_tab(hub):
     code = html[html.index("function loadRules("):html.index("function busy(")]
     assert not re.search(r"\b(prompt|alert|confirm)\(", code)  # reject reason is an inline input
     assert "innerHTML" not in code and 'placeholder: "Reason"' in code
+
+
+def test_page_shows_manager_badge(hub):
+    html = page(hub)
+    assert 'a.role === "manager"' in html and "the team's manager session" in html
+    assert ".who .role" in html and "a.role]" in html  # the badge redraws when the role shows up
+    assert 'w.manager ? el("span", { text: "manager" }) : bossEl' in html

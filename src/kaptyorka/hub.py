@@ -601,7 +601,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             raise KaptyorkaError(ON_SHARED)
         w = ws.close(principal, name)
         off = ""
-        if principal.is_admin() and ws.by_name(name).get("manager"):  # what the admin closed must not be relaunched by the tick
+        if principal.is_admin() and w.get("manager"):  # what the admin closed must not be relaunched by the tick
             mm.set_enabled(False, principal.person_name)
             off = "; the manager is switched off until kaptyorka start --manager"
         wake_bridges()

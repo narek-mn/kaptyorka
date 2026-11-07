@@ -71,7 +71,8 @@ nav { display: flex; align-items: stretch; gap: 4px; }
 .sep { width: 1px; margin: 15px 6px; background: var(--line-strong); }
 .viewer { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--dim); font-size: 13px; white-space: nowrap; }
 .viewer b { font-weight: 500; color: var(--text); }
-.viewer .role { padding: 1px 6px; border-radius: 3px; font-size: 11px; color: var(--blue); border: 1px solid rgba(110, 159, 255, .35); }
+.viewer .role, .who .role { padding: 1px 6px; border-radius: 3px; font-size: 11px; color: var(--blue); border: 1px solid rgba(110, 159, 255, .35); }
+.who .role { margin-left: 6px; font-weight: 400; }
 .live { margin-left: 14px; display: flex; align-items: center; flex: none; }
 .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(115, 191, 105, .18); }
 .live.down i { background: var(--red); box-shadow: 0 0 0 3px rgba(242, 73, 92, .2); }
@@ -822,7 +823,7 @@ tr.decided .prop b { color: var(--dim); }
   function renderTeam() {
     var body = $("agents");
     var agents = feed.agents;
-    var shape = agents.map(function (a) { return [a.name, a.person, a.mine, a.doors, a.machine, a.tool, a.project, a.status, a.activity, a.label, a.harness]; });
+    var shape = agents.map(function (a) { return [a.name, a.person, a.mine, a.doors, a.machine, a.tool, a.project, a.status, a.activity, a.label, a.harness, a.role]; });
     if (!changed("team", shape)) {
       body.querySelectorAll("td.seen").forEach(function (td, i) { seenCell(td, agents[i]); });
       return;
@@ -831,6 +832,7 @@ tr.decided .prop b { color: var(--dim); }
     agents.forEach(function (a) {
       var act = ACT[a.activity] || "";
       var who = a.label ? [el("b", { text: a.label }), el("small", { text: a.name })] : [el("b", { text: a.name })];
+      if (a.role === "manager") who[0].appendChild(el("span", { "class": "role", title: "the team's manager session", text: "manager" }));
       if (a.doors && a.doors.length) {
         who.push(el("small", { "class": "doors", title: "Open doors: " + a.doors.join(", ") },
                     [icon("i-door", 12), a.doors.join(", ")]));
@@ -1433,7 +1435,7 @@ tr.decided .prop b { color: var(--dim); }
         el("td", { "class": "c-plain w-mach", "data-label": "Machine", title: w.folder + (w.worktree ? " (worktree)" : "") },
            [w.host, el("div", { "class": "hint", text: w.os_user + " · " + w.tool })]),
         el("td", { "class": "w-state" }, [el("span", { "class": "state " + w.state, text: w.state })]),
-        el("td", { "class": "c-plain w-boss", "data-label": "Boss" }, [bossEl(w.boss || ""), el("div", { "class": "hint", text: w.person })]),
+        el("td", { "class": "c-plain w-boss", "data-label": "Boss" }, [w.manager ? el("span", { text: "manager" }) : bossEl(w.boss || ""), el("div", { "class": "hint", text: w.person })]),
         el("td", { "class": "w-attach" }, [w.state === "closed" || w.state === "failed" ? null : el("div", { "class": "attach" }, [code, copy])]),
         el("td", { "class": "c-act" }, acts)
       ]));

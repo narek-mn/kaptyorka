@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0
+
+- The manager: one Claude Code session the hub starts on the hub machine through the admin's own bridge, and keeps alive (at most twice an hour). It is a worker named `manager`, under a `manager` person and device. Attach with `claude attach manager` on the hub machine.
+- Busy machines: when `work` finds another person's session in the folder, the hub saves a work request and asks the manager. It asks the holder, then calls the new tool `work_decide(request_id, machine|wait, reason)`. The hub checks the asker's use of the machine and write role, and a free folder or a worktree. Every decision is logged with its reason; a request expires after an hour.
+- New tool `log(limit)` for the admin and the manager. 25 agent tools in all.
+- Manager permissions: messages to and from the manager need no door (page replies too). It may knock. It cannot answer others' knocks, open doors, grant, edit rules or decide proposals.
+- The hub tells the manager about an abandoned worker, a shared machine whose bridge is offline, workers that failed to start twice, a proposal or access request waiting a day, and a weekly review.
+- Team tab: a `manager` badge on its session. Machines tab: `manager` where the boss would be.
+- New flags: `kaptyorka start --no-manager` and `--manager`, kept in `hub.json`. `close_worker("manager")` by the admin switches it off until `start --manager`.
+- New files in `~/.kaptyorka`: `manager/` (its folder and `CLAUDE.md`) and `manager-config.json`, on the hub machine.
+- Upgrade: nothing to join again. The manager starts by itself after the hub updates. The first launch on a hub machine can fail until Claude Code trusts the folder: run `claude` once in `~/.kaptyorka/manager` and accept the prompt.
+- Team rules and skills: if `~/.claude/skills` is a link into a git repo, add `team-*/` to that repo's `.gitignore`.
+
 ## 0.5.0
 
 - Team rules and skills: the admin uploads a folder with `kaptyorka rules push <dir>` (`RULES.md` and `skills/*.md`; admin device only). The rules text is in every start brief, first, and is cut first when the brief is over 6,000 characters. Skills are written to `~/.claude/skills/team-<name>/` by the bridge, and removed by `leave`. Claude Code reads that folder, OpenCode and Cursor read it as a compatibility path; Codex gets the rules text only.
