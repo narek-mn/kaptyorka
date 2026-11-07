@@ -203,6 +203,10 @@ class WorkerStore:
 
     def candidates(self, principal: Principal, project: str,
                    machine: Optional[str]) -> Tuple[List[dict], List[str]]:
+        return self.candidates_for(principal.person_id, project, machine)
+
+    def candidates_for(self, person_id: int, project: str,
+                       machine: Optional[str]) -> Tuple[List[dict], List[str]]:
         """Devices this person may start a worker on, and one sentence per device skipped.
         Devices they may not use at all are not mentioned."""
         usable, reasons = [], []
@@ -213,8 +217,8 @@ class WorkerStore:
                     " WHERE d.revoked_at IS NULL AND d.host != '' ORDER BY d.host, d.id").fetchall():
                 if machine is not None and d["host"] != machine:
                     continue
-                if not (d["person_id"] == principal.person_id
-                        or (d["shared"] and self.store._may_use(d["host"], principal.person_id))):
+                if not (d["person_id"] == person_id
+                        or (d["shared"] and self.store._may_use(d["host"], person_id))):
                     continue
                 who = f"{d['host']} ({d['person']})"
                 if d["last_used"] is None or d["last_used"] <= now - ONLINE_S:
@@ -495,6 +499,11 @@ class WorkerStore:
         with self.lock:
             row = self._row(name)
             return row["boss_key"] if row else None
+
+    def session_online(self, key: str, now: float) -> bool:
+        with self.lock:
+            return self.db.execute("SELECT 1 FROM agents WHERE key=? AND last_seen>?",
+                                   (key, now - ONLINE_S)).fetchone() is not None
 
     def session_person(self, key: str) -> Optional[int]:
         """The person an agents row belongs to (None: unknown key or no person yet)."""

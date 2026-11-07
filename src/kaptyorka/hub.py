@@ -200,6 +200,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     def manager_tick(now: float) -> None:
         """Keep the manager session alive through the admin's own bridge on this machine."""
+        for r in mm.expire_requests(now):
+            names = {p["id"]: p["name"] for p in store.people()}
+            to = r["boss_key"] if ws.session_online(r["boss_key"], now) \
+                else "web:" + names.get(r["person_id"], "")
+            tell(to, f"no decision on your {r['project']} request within an hour; ask again")
         if not mm.enabled():
             return
         host = identity.facts()["host"]
@@ -444,7 +449,17 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             others = [n for n in ws.folder_people(chosen["host"], chosen["os_user"],
                                                   chosen["folder"], store.clock())
                       if n and n != principal.person_name]
-            if others:  # the manager handles this later; for now the asker picks again
+            manager_key = mm.session_key(store.clock()) if others else None
+            if manager_key is not None:
+                rid = mm.request_add(principal.person_id, agent.key, project, task, tool,
+                                     resume or None, chosen["host"], others[0],
+                                     chosen["folder"])
+                tell(manager_key, manager.text_busy(principal.person_name, project,
+                                                    chosen["host"], others[0],
+                                                    chosen["folder"], rid))
+                return (f"busy: {chosen['host']} has {others[0]}'s session in that folder; the"
+                        f" manager is asking them (request {rid}); you will hear back here")
+            if others:  # no manager online: the asker picks again
                 return (f"busy: {chosen['host']} has {others[0]}'s session in that folder;"
                         " ask again later or name another machine")
         w = ws.create(principal, project, task, chosen, tool, agent.key, resume or None,
@@ -452,6 +467,54 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         wake_bridges()
         return (f"starting `{w['name']}` on {w['host']} ({w['os_user']})"
                 + (" in a worktree, the folder is busy" if w["worktree"] else ""))
+
+    @server.tool()
+    @_tool_errors
+    def work_decide(request_id: int, machine: str, reason: str, ctx: Context) -> str:
+        """Manager only: decide a work request. machine: a host to start the worker on, or
+        "wait". reason: why, 1 to 500 characters."""
+        _, principal = caller(ctx)
+        if principal.role != "manager":
+            raise KaptyorkaError("only the manager decides work requests")
+        reason = clean(reason, 500)
+        if not reason:
+            raise KaptyorkaError("a decision needs a reason")
+        r = mm.request(request_id)
+        if r is None:
+            raise KaptyorkaError(f"no request {request_id}")
+        if r["decided_at"] is not None:
+            raise KaptyorkaError(f"request {request_id} is already decided: {r['decision']}")
+        now = store.clock()
+        names = {p["id"]: p["name"] for p in store.people()}
+        page = "web:" + names.get(r["person_id"], "")
+        online = ws.session_online(r["boss_key"], now)
+        asker = r["boss_key"] if online else page
+        project = r["project"]
+        if machine == "wait":
+            mm.request_decide(request_id, "wait", reason)
+            tell(asker, f"the manager says wait on {project}: {reason}")
+            store.log_add("manager", "work_decide", f"request {request_id}: wait — {reason}")
+            return f"request {request_id}: told them to wait"
+        usable, reasons = ws.candidates_for(r["person_id"], project, machine)
+        chosen = ws.choose(usable, project, r["tool"], now, r["person_id"])
+        if chosen is None:
+            raise KaptyorkaError(no_machine(project, machine, r["tool"], usable, reasons))
+        if not online:
+            mm.request_decide(request_id, "asker gone", reason)
+            tell(page, f"the manager picked {machine} for {project} but your session is gone;"
+                        " ask again")
+            store.log_add("manager", "work_decide",
+                          f"request {request_id}: asker gone — {reason}")
+            return f"request {request_id}: the asker's session is gone; told them on the page"
+        w = ws.create(replace(principal, person_id=r["person_id"]), project, r["task"], chosen,
+                      r["tool"], r["boss_key"], r["resume"], chosen["occupied"])
+        mm.request_decide(request_id, f"start {w['host']}", reason, w["name"])
+        wake_bridges()
+        tell(asker, f"the manager started `{w['name']}` on {w['host']} for {project}:"
+                            f" {reason}")
+        store.log_add("manager", "work_decide",
+                      f"request {request_id}: start {w['host']} — {reason}")
+        return f"started `{w['name']}` on {w['host']} for request {request_id}"
 
     @server.tool()
     @_tool_errors
