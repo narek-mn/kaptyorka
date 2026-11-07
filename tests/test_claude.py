@@ -177,6 +177,7 @@ def test_configure_keeps_existing_hooks_and_is_idempotent(home, fake_claude_cli)
     assert ss[1] == {"hooks": [{"type": "command", "command": "/k hook claude-code start", "timeout": 5}]}
     assert [h["hooks"][0]["command"] for h in data["hooks"]["UserPromptSubmit"]] == \
         ["/k hook claude-code prompt"]
+    assert [h["hooks"][0]["command"] for h in data["hooks"]["Stop"]] == ["/k hook claude-code stop"]
     assert data["mcpServers"] == {"other": {}}
     assert ["claude", "mcp", "remove", "--scope", "user", "kaptyorka"] in fake_claude_cli.calls
     assert ["claude", "mcp", "add", "--scope", "user", "kaptyorka", "--", "/k", "mcp"] in fake_claude_cli.calls
@@ -258,3 +259,16 @@ def test_resumed_session_keeps_key_and_deliver_follows_new_pid(home, sock_dir):
 def test_sessions_carry_cwd(home, tmp_path):
     write_session_file(home, pid=os.getpid(), cwd="/w/proj-a", sock=live_sock(tmp_path))
     assert ClaudeAdapter(home).sessions()[0].cwd == "/w/proj-a"
+
+
+def test_configure_adds_the_stop_hook_to_an_already_joined_machine(home, fake_claude_cli):
+    settings = home / ".claude/settings.json"
+    settings.parent.mkdir()
+    entry = lambda n: {"hooks": [{"type": "command", "command": f"/k hook claude-code {n}", "timeout": 5}]}
+    settings.write_text(json.dumps({"hooks": {"SessionStart": [entry("start")],
+                                              "UserPromptSubmit": [entry("prompt")]}}))
+    a = ClaudeAdapter(home, run=fake_claude_cli.run)
+    a.configure("/k")
+    a.configure("/k")
+    hooks = json.loads(settings.read_text())["hooks"]
+    assert hooks["Stop"] == [entry("stop")] and len(hooks["SessionStart"]) == 1

@@ -205,7 +205,8 @@ def test_configure_merges_hooks_json(home, codex_home, monkeypatch):
     assert json.loads(hooks.read_text()) == {"hooks": {
         "SessionStart": [other, {"matcher": "startup|resume", "hooks": [
             {"type": "command", "command": "/k hook codex start"}]}],
-        "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/k hook codex prompt"}]}]}}
+        "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/k hook codex prompt"}]}],
+        "Stop": [{"hooks": [{"type": "command", "command": "/k hook codex stop"}]}]}}
 
 
 def test_configure_trusts_hooks_through_daemon(home, codex_home, fake_codex, monkeypatch):
@@ -215,7 +216,7 @@ def test_configure_trusts_hooks_through_daemon(home, codex_home, fake_codex, mon
     assert APPROVE not in first
     assert "Codex: kaptyorka hooks trusted in " + str(toml) in first
     entries = {h["key"]: h["currentHash"] for h in fake_codex._hooks()}
-    assert len(entries) == 2
+    assert len(entries) == 3
     text = toml.read_text()
     for key, digest in entries.items():
         assert f'[hooks.state.{json.dumps(key)}]\ntrusted_hash = "{digest}"\n' in text

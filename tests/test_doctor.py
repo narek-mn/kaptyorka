@@ -14,7 +14,8 @@ def write_claude(home, hooks=True, mcp=True):
     h = {}
     if hooks:
         h = {"SessionStart": [{"hooks": [{"type": "command", "command": f"{EXE} hook claude-code start"}]}],
-             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"{EXE} hook claude-code prompt"}]}]}
+             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"{EXE} hook claude-code prompt"}]}],
+             "Stop": [{"hooks": [{"type": "command", "command": f"{EXE} hook claude-code stop"}]}]}
     (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": h}))
     (home / ".claude.json").write_text(json.dumps({"mcpServers": {"kaptyorka": {}} if mcp else {}}))
 
@@ -162,7 +163,8 @@ def codex_files(conf, toml=True, hooks=True):
     if hooks:
         h = {"SessionStart": [{"matcher": "startup|resume",
                                "hooks": [{"type": "command", "command": f"{EXE} hook codex start"}]}],
-             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"{EXE} hook codex prompt"}]}]}
+             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"{EXE} hook codex prompt"}]}],
+             "Stop": [{"hooks": [{"type": "command", "command": f"{EXE} hook codex stop"}]}]}
     put(conf / "hooks.json", {"hooks": h})
 
 
@@ -216,3 +218,21 @@ def test_fix_does_not_restart_a_missing_bridge(home, answer, monkeypatch, capsys
     assert doctor.run(CFG, fix=True, adapters=[], home=home, run=Run(), platform="linux", exe=EXE) == 1
     assert calls == []
     assert "FAIL bridge service: not installed -> kaptyorka join" in capsys.readouterr().out
+
+
+def test_missing_stop_hook_is_flagged(home):
+    write_claude(home)
+    a = SimpleNamespace(tool="claude-code")
+    assert doctor.tool_configured(a, home)
+    path = home / ".claude" / "settings.json"
+    data = json.loads(path.read_text())
+    del data["hooks"]["Stop"]
+    path.write_text(json.dumps(data))
+    assert not doctor.tool_configured(a, home)
+    conf = home / ".codex"
+    codex_files(conf)
+    path = conf / "hooks.json"
+    data = json.loads(path.read_text())
+    del data["hooks"]["Stop"]
+    path.write_text(json.dumps(data))
+    assert not doctor.tool_configured(SimpleNamespace(tool="codex"), home)

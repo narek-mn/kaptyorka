@@ -66,6 +66,13 @@ INSTRUCTIONS = (
 )
 
 
+def opencode_reminder(ms, key: str, principal, now: float) -> str:
+    """OpenCode has no stop event: the done-check reason rides on the next prompt brief.
+    Looks only (blocked_at stays unset), so it repeats until the state note is written."""
+    out = ms.done_check(key, principal, now, commit=False)
+    return out["reason"] if out["decision"] == "block" else ""
+
+
 def _bad_request(fn):
     """Answer 400 instead of 500 when a client sends a malformed request."""
     @functools.wraps(fn)
@@ -528,9 +535,12 @@ def build_app(store: Store) -> Starlette:
             agent = identify(request.headers)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
-        if request.query_params.get("event") != "start":
-            return PlainTextResponse("\n\n".join(message_text(m) for m in store.inbox(agent.key)))
         principal = request.scope.get("state", {}).get("principal")
+        if request.query_params.get("event") != "start":
+            parts = [message_text(m) for m in store.inbox(agent.key)]
+            if request.query_params.get("event") == "prompt" and agent.tool == "opencode":
+                parts.insert(0, opencode_reminder(ms, agent.key, principal, store.clock()))
+            return PlainTextResponse("\n\n".join(p for p in parts if p))
         return PlainTextResponse(brief.cached(
             agent.key, lambda: brief.compose(store, ws, ms, agent, principal),
             unread=lambda: brief.unread_count(store, agent.key), now=store.clock(),

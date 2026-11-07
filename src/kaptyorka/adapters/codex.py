@@ -25,7 +25,7 @@ RESTART_EVERY_S = 60
 ALIAS = "alias codex='codex --remote unix://'"
 START, END = "# kaptyorka start", "# kaptyorka end"
 APPROVE = "codex: approve the kaptyorka hooks once with /hooks in Codex"
-EVENTS = (("SessionStart", "start"), ("UserPromptSubmit", "prompt"))
+EVENTS = (("SessionStart", "start"), ("UserPromptSubmit", "prompt"), ("Stop", "stop"))
 
 
 def codex_home(home: Optional[Path] = None) -> Path:
@@ -316,7 +316,8 @@ class CodexAdapter:
         if trust is None:
             trust = old_trust  # the daemon cannot tell now: keep what was there
             keys = [f"{hooks_json}:{snake}:{index[event]}:0" for event, snake in
-                    (("SessionStart", "session_start"), ("UserPromptSubmit", "user_prompt_submit"))
+                    (("SessionStart", "session_start"), ("UserPromptSubmit", "user_prompt_submit"),
+                     ("Stop", "stop"))
                     if event in index]
             if keys and any(f"[hooks.state.{json.dumps(k)}]" not in text for k in keys):
                 lines.append(APPROVE)
@@ -351,7 +352,7 @@ class CodexAdapter:
             if not isinstance(hooks, dict):
                 return False
             changed = drop_hooks(hooks, lambda h: is_our_hook(h.get("command", ""), "codex",
-                                                              ("start", "prompt")))
+                                                              ("start", "prompt", "stop")))
             if changed and not hooks:
                 del data["hooks"]
             return changed

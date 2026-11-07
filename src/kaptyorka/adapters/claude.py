@@ -111,7 +111,7 @@ class ClaudeAdapter:
         def add_hooks(data: dict) -> bool:
             hooks = data.setdefault("hooks", {})
             changed = False
-            for event, name in (("SessionStart", "start"), ("UserPromptSubmit", "prompt")):
+            for event, name in (("SessionStart", "start"), ("UserPromptSubmit", "prompt"), ("Stop", "stop")):
                 command = f"{shlex.quote(kaptyorka)} hook claude-code {name}"
                 entry = {"hooks": [{"type": "command", "command": command, "timeout": 5}]}
                 entries = hooks.setdefault(event, [])
@@ -154,7 +154,7 @@ class ClaudeAdapter:
             if not isinstance(hooks, dict):
                 return False
             changed = drop_hooks(hooks, lambda h: is_our_hook(
-                h.get("command", ""), "claude-code", ("start", "prompt")))
+                h.get("command", ""), "claude-code", ("start", "prompt", "stop")))
             if changed and not hooks:
                 del data["hooks"]
             return changed

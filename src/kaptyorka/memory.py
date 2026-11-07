@@ -162,9 +162,9 @@ class MemoryStore:
                     ", last_subject=?, last_dirty=?" if g else "") + " WHERE key=?",
                     ((g["subject"], g["dirty"]) if g else ()) + (key,))
 
-    def done_check(self, key: str, principal: Principal, now: float) -> dict:
+    def done_check(self, key: str, principal: Principal, now: float, commit: bool = True) -> dict:
         """Block a session's stop once when it did work in a project it may write and has not
-        updated that project's state note since."""
+        updated that project's state note since. commit=False only looks: blocked_at stays unset."""
         ok = {"decision": "ok"}
         with self.lock:
             a = self._session(key)
@@ -182,7 +182,8 @@ class MemoryStore:
             last = self._last_write(a["project"], key, a["person_id"])
             if last is not None and last >= row["signal_at"]:
                 return ok
-            self.db.execute("UPDATE done_checks SET blocked_at=? WHERE key=?", (now, key))
+            if commit:
+                self.db.execute("UPDATE done_checks SET blocked_at=? WHERE key=?", (now, key))
         project = a["project"]
         return {"decision": "block", "reason": (
             f"You did work in {project} ({row['signal']}) but its state note was not updated."

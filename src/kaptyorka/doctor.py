@@ -60,7 +60,8 @@ def tool_configured(adapter, home: Path) -> bool:
     if tool == "claude-code":
         hooks = _json(home / ".claude" / "settings.json").get("hooks")
         return (_mcp_entry(_json(home / ".claude.json").get("mcpServers"))
-                and _has_hooks(hooks, tool, (("SessionStart", "start"), ("UserPromptSubmit", "prompt")), True))
+                and _has_hooks(hooks, tool, (("SessionStart", "start"), ("UserPromptSubmit", "prompt"),
+                                         ("Stop", "stop")), True))
     if tool == "opencode":
         conf = home / ".config" / "opencode"
         return (_mcp_entry(_json(conf / "opencode.json").get("mcp"))

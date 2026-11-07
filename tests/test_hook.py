@@ -94,3 +94,94 @@ def test_hook_codex_session_from_stdin(home, monkeypatch):
     hook.main("codex", "start", json.dumps({"session_id": "th-1", "cwd": "/w/app/",
                                             "hook_event_name": "SessionStart"}))
     assert seen == [Identity("codex:th-1", "pc", "codex", "app").headers()]
+
+
+# ---- the stop hook ----
+
+def _reg(hub):
+    hub.store.project_register("proj-a", by="admin")
+
+
+def _signal(hub, key, tool="claude-code"):
+    from helpers import call, run
+
+    run(call(hub, {"key": key, "machine": "pc", "tool": tool, "project": "proj-a"}, "status", text="done"))
+
+
+def _stdin(sid, **kw):
+    return json.dumps({"session_id": sid, "cwd": "/w/proj-a", **kw})
+
+
+def _no_identify(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("identify must not be called")
+    monkeypatch.setattr(hook, "identify", boom)
+
+
+def test_stop_claude_blocks_with_reason_from_stdin_session(hub, home, monkeypatch, capsys):
+    join(hub.url)
+    _reg(hub)
+    _no_identify(monkeypatch)
+    _signal(hub, "claude:s1")
+    assert hook.main("claude-code", "stop", _stdin("s1", stop_hook_active=False)) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["decision"] == "block" and out["reason"].startswith("You did work in proj-a (done)")
+    hook.main("claude-code", "stop", _stdin("s1"))  # blocks once only
+    assert capsys.readouterr().out == ""
+
+
+def test_stop_claude_ok_is_silent_and_stop_hook_active_never_blocks(hub, home, monkeypatch, capsys):
+    join(hub.url)
+    _reg(hub)
+    _no_identify(monkeypatch)
+    hook.main("claude-code", "stop", _stdin("s2"))
+    assert capsys.readouterr().out == ""
+    _signal(hub, "claude:s3")
+    hook.main("claude-code", "stop", _stdin("s3", stop_hook_active=True))
+    assert capsys.readouterr().out == ""
+    hook.main("claude-code", "stop", _stdin("s3"))  # the active call did not use the one block
+    assert json.loads(capsys.readouterr().out)["decision"] == "block"
+
+
+def test_stop_codex_prints_json_always(hub, home, monkeypatch, capsys):
+    join(hub.url)
+    _reg(hub)
+    hook.main("codex", "stop", _stdin("t1"))
+    assert json.loads(capsys.readouterr().out) == {}
+    _signal(hub, "codex:t2", "codex")
+    hook.main("codex", "stop", _stdin("t2", stop_hook_active=True))
+    assert json.loads(capsys.readouterr().out) == {}
+    hook.main("codex", "stop", _stdin("t2"))
+    out = json.loads(capsys.readouterr().out)
+    assert out["decision"] == "block" and "state note" in out["reason"]
+
+
+def test_stop_cursor_followup_is_reason_then_brief(hub, home, monkeypatch, capsys):
+    join(hub.url)
+    _reg(hub)
+    key = "cursor:pc:/w/proj-a"
+    monkeypatch.setattr(hook, "identify", lambda machine, workspace=None:
+                        Identity(key, machine, "cursor", "proj-a"))
+    hook.main("cursor", "stop", json.dumps({}))
+    assert json.loads(capsys.readouterr().out) == {}
+    _signal(hub, key, "cursor")
+    hook.main("cursor", "stop", json.dumps({}))
+    followup = json.loads(capsys.readouterr().out)["followup_message"]
+    reason, _, brief = followup.partition("\n\n")
+    assert reason.startswith("You did work in proj-a (done)")
+
+
+def test_opencode_prompt_brief_carries_the_reminder_without_blocking(hub, home, monkeypatch, capsys):
+    join(hub.url)
+    _reg(hub)
+    ident = Identity("opencode:o1", "pc", "opencode", "proj-a")
+    monkeypatch.setattr(hook, "identify", lambda machine, workspace=None: ident)
+    hook.main("opencode", "prompt")
+    assert capsys.readouterr().out == ""
+    _signal(hub, "opencode:o1", "opencode")
+    for _ in range(2):  # a reminder repeats until the note is written
+        hook.main("opencode", "prompt")
+        assert capsys.readouterr().out.startswith("You did work in proj-a (done)")
+    with hub.store.lock:
+        assert hub.store.db.execute("SELECT blocked_at FROM done_checks WHERE key='opencode:o1'"
+                                    ).fetchone()[0] is None
