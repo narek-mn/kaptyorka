@@ -54,7 +54,7 @@ def main(adapters: Optional[list] = None, run: Callable = subprocess.run,
         if answer.strip().lower() != "y":
             print("nothing removed")
             return 1
-    lines, rc = _undo_join(adapters, run, platform, ("kaptyorka-bridge", "kaptyorka-hub"))
+    lines, rc = _undo_join(adapters, run, platform, ("kaptyorka-bridge", "kaptyorka-hub", "kaptyorka-backup"))
     if home.is_symlink():
         home.unlink()
     else:

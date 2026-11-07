@@ -69,6 +69,75 @@ WantedBy=default.target
 """
 
 
+def timer_text(name: str, argv: List[str], platform: str) -> str:
+    """The unit for a job that runs every day at 03:00 local time (launchd: one plist;
+    systemd: the .timer unit, which starts `name`.service)."""
+    if platform == "darwin":
+        args = "".join(f"\n    <string>{escape(a)}</string>" for a in argv)
+        log = escape(str(paths.home() / f"{name}.log"))
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.kaptyorka.{name}</string>
+  <key>ProgramArguments</key>
+  <array>{args}
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key><string>{log}</string>
+  <key>StandardErrorPath</key><string>{log}</string>
+</dict>
+</plist>
+"""
+    return f"""[Unit]
+Description={name} (daily)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+def oneshot_text(name: str, argv: List[str]) -> str:
+    return f"""[Unit]
+Description={name}
+
+[Service]
+Type=oneshot
+ExecStart={shlex.join(argv).replace("%", "%%")}
+"""
+
+
+def install_timer(name: str, argv: List[str], run: Callable = subprocess.run,
+                  platform: str = sys.platform) -> List[str]:
+    """Run `argv` every day at 03:00. Returns the lines to print."""
+    sh = _runner(run)
+    if platform == "darwin":
+        plist = Path.home() / "Library/LaunchAgents" / f"io.kaptyorka.{name}.plist"
+        plist.parent.mkdir(parents=True, exist_ok=True)
+        _write_private(plist, timer_text(name, argv, "darwin"))
+        domain = f"gui/{os.getuid()}"
+        sh("launchctl", "enable", f"{domain}/io.kaptyorka.{name}")
+        sh("launchctl", "bootout", domain, str(plist))
+        sh("launchctl", "bootstrap", domain, str(plist), must=True)
+        return [f"installed {plist}", f"{name}: runs every day at 03:00"]
+    d = Path.home() / ".config/systemd/user"
+    d.mkdir(parents=True, exist_ok=True)
+    svc, tim = d / f"{name}.service", d / f"{name}.timer"
+    _write_private(svc, oneshot_text(name, argv))
+    _write_private(tim, timer_text(name, argv, "linux"))
+    sh("systemctl", "--user", "daemon-reload", must=True)
+    sh("systemctl", "--user", "enable", "--now", f"{name}.timer", must=True)
+    return [f"installed {svc}", f"installed {tim}", f"{name}: runs every day at 03:00"]
+
+
 def _runner(run: Callable) -> Callable:
     def sh(*cmd: str, must: bool = False) -> bool:
         try:
@@ -153,9 +222,14 @@ def remove(name: str, run: Callable = subprocess.run, platform: str = sys.platfo
         plist.unlink()
     else:
         unit = Path.home() / ".config/systemd/user" / f"{name}.service"
+        timer = unit.with_suffix(".timer")
         if not unit.exists():
             return []
-        quiet("systemctl", "--user", "disable", "--now", name)
+        if timer.exists():
+            quiet("systemctl", "--user", "disable", "--now", f"{name}.timer")
+            timer.unlink()
+        else:
+            quiet("systemctl", "--user", "disable", "--now", name)
         unit.unlink()
         quiet("systemctl", "--user", "daemon-reload")
     return [f"{name}: service removed"]

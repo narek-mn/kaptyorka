@@ -416,6 +416,29 @@ def _fleet_list(args) -> int:
     return 0
 
 
+def _backup(args) -> int:
+    from kaptyorka import backup
+
+    home = paths.home()
+    if args.nightly:
+        try:
+            backup._check_dest(args.dest)
+            for line in service.install_timer("kaptyorka-backup",
+                                              [str(Path(sys.argv[0]).resolve()), "backup", args.dest]):
+                print(line)
+        except (ValueError, service.ServiceError) as e:
+            print(e, file=sys.stderr)
+            return 1
+        return 0
+    return backup.run_backup(home, args.dest, subprocess.run)
+
+
+def _restore(args) -> int:
+    from kaptyorka import backup
+
+    return backup.restore(paths.home(), Path(args.file), subprocess.run)
+
+
 def _doctor(args) -> int:
     from kaptyorka import doctor
 
@@ -426,7 +449,7 @@ def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove,invite,people,"
-                            "project,grant,revoke,machine,who,doctor,fleet}")
+                            "project,grant,revoke,machine,who,doctor,fleet,backup,restore}")
     hide = argparse.SUPPRESS  # subparsers are hidden by giving them no help text
     s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
     s.add_argument("--port", type=int, help="hub port (default 8765)")
@@ -477,6 +500,13 @@ def entry() -> None:
     d = sub.add_parser("doctor", help="check this machine's setup; --fix repairs what it can")
     d.add_argument("--fix", action="store_true", help="re-wire failing tools and restart a stopped bridge")
     d.set_defaults(run=_doctor)
+    bk = sub.add_parser("backup", help="send a copy of the hub's data to user@host:path (scp)")
+    bk.add_argument("dest", metavar="user@host:path")
+    bk.add_argument("--nightly", action="store_true", help="do it every day at 03:00")
+    bk.set_defaults(run=_backup)
+    rs = sub.add_parser("restore", help="put a backup file back (stop the hub first)")
+    rs.add_argument("file")
+    rs.set_defaults(run=_restore)
     fl = sub.add_parser("fleet")
     fs = fl.add_subparsers(dest="fleet_cmd", required=True)
     fa = fs.add_parser("add")

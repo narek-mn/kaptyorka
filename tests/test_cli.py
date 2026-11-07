@@ -45,7 +45,7 @@ def test_subcommands_listed(capsys):
     out = capsys.readouterr().out
     listed = out.split("positional arguments:")[1].split("options:")[0]
     names = [l.split()[0] for l in listed.splitlines()[2:] if l.startswith("    ") and l[4] != " "]
-    assert names == ["start", "join", "leave", "stop", "update", "remove", "doctor"]
+    assert names == ["start", "join", "leave", "stop", "update", "remove", "doctor", "backup", "restore"]
 
 
 def test_config_roundtrip_is_private(home):
@@ -204,7 +204,7 @@ def test_cli_machine_owner(monkeypatch, home, capsys):
 def test_metavar_lists_user_commands(capsys):
     with pytest.raises(SystemExit):
         entry_with(["--help"])
-    assert ("{start,join,leave,stop,update,remove,invite,people,project,grant,revoke,machine,who,doctor,fleet}"
+    assert ("{start,join,leave,stop,update,remove,invite,people,project,grant,revoke,machine,who,doctor,fleet,backup,restore}"
             in capsys.readouterr().out)
 
 
@@ -246,3 +246,37 @@ def test_fleet_list_prints_devices(monkeypatch, home, capsys):
         {"os_user": "alice", "person": "alice", "online": True, "version": "1.0"}]}]))
     assert entry_with_exit(["fleet", "list"]) == 0
     assert capsys.readouterr().out == "box-1 alice        alice      online 1.0\n"
+
+
+def test_backup_and_restore_are_wired(monkeypatch):
+    from kaptyorka import backup
+
+    seen = []
+    monkeypatch.setattr(backup, "run_backup", lambda home, dest, run: seen.append(("b", dest)) or 0)
+    monkeypatch.setattr(backup, "restore", lambda home, f, run: seen.append(("r", str(f))) or 0)
+    with pytest.raises(SystemExit) as e:
+        entry_with(["backup", "alice@box-1:/srv/b"])
+    assert e.value.code == 0
+    with pytest.raises(SystemExit) as e:
+        entry_with(["restore", "x.tar"])
+    assert e.value.code == 0
+    assert seen == [("b", "alice@box-1:/srv/b"), ("r", "x.tar")]
+
+
+def test_backup_nightly_installs_timer(home, monkeypatch, capsys):
+    from kaptyorka import service
+
+    got = []
+    monkeypatch.setattr(service, "install_timer",
+                        lambda name, argv, **kw: got.append((name, argv)) or ["installed t"])
+    with pytest.raises(SystemExit) as e:
+        entry_with(["backup", "alice@box-1:/srv/b", "--nightly"])
+    assert e.value.code == 0
+    assert got[0][0] == "kaptyorka-backup" and got[0][1][1:] == ["backup", "alice@box-1:/srv/b"]
+    assert "installed t" in capsys.readouterr().out
+
+
+def test_backup_nightly_rejects_bad_dest(home, capsys):
+    with pytest.raises(SystemExit) as e:
+        entry_with(["backup", "-oProxy=x", "--nightly"])
+    assert e.value.code != 0
