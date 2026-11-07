@@ -749,3 +749,29 @@ def test_auto_update_timeout_counts_as_failure(hub, home, monkeypatch):
     now[0] += 3601
     b._step()
     assert len(seen) == 2
+
+
+def test_bridge_fetches_skills_once_per_version(hub, home, monkeypatch):
+    from kaptyorka import http, rules
+
+    rs = rules.RulesStore(hub.store)
+    rs.set_skills({"a": "Body A"}, "admin")
+    gets = []
+    real = http.request
+
+    def spy(method, url, *a, **kw):
+        if method == "GET" and url.endswith("/bridge/skills"):
+            gets.append(url)
+        return real(method, url, *a, **kw)
+
+    monkeypatch.setattr(bridge_mod.http, "request", spy)
+    b = Bridge(cfg(hub), [fake_codex()], bridge_mod.log)
+    b.heartbeat()  # answer carries the version only from the next heartbeat on
+    b.heartbeat()
+    b.heartbeat()
+    assert len(gets) == 1
+    assert (home / ".claude/skills/team-a/SKILL.md").exists()
+    rs.set_skills({"a": "Body A2"}, "admin")
+    b.heartbeat()
+    b.heartbeat()
+    assert len(gets) == 2 and "Body A2" in (home / ".claude/skills/team-a/SKILL.md").read_text()

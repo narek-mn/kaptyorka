@@ -157,6 +157,18 @@ def test_leave_undoes_join_and_keeps_hub_and_install(home, tmp_path, monkeypatch
     assert "spy: undone" in out and "kaptyorka join brings this machine back" in out
 
 
+def test_leave_removes_team_skills(home, capsys):
+    from kaptyorka import skills_sync
+
+    skills_sync.sync(home, "v1", [{"name": "a", "text": "A"}], print)
+    mine = home / ".claude/skills/team-mine/SKILL.md"
+    mine.parent.mkdir(parents=True)
+    mine.write_text("mine")
+    assert remove.leave([], run=fake_run([]), platform="linux") == 0
+    assert not (home / ".claude/skills/team-a").exists() and mine.exists()
+    assert "removed team skill" in capsys.readouterr().out
+
+
 def test_remove_without_pipx_does_not_call_it(home, tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "prefix", str(tmp_path))
     calls = []

@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from kaptyorka import paths, service
+from kaptyorka import paths, service, skills_sync
 
 HUB_ONLY = "this machine runs the hub; run kaptyorka remove in a terminal to confirm"
 ASK = "This machine runs the hub. Delete all team messages and notes? [y/N] "
@@ -32,6 +32,7 @@ def leave(adapters: Optional[list] = None, run: Callable = subprocess.run,
           platform: str = sys.platform) -> int:
     """Leave the hub: undo `join` here, keep kaptyorka, the saved hub address and any hub."""
     lines, rc = _undo_join(adapters, run, platform, ("kaptyorka-bridge",))
+    lines += skills_sync.remove_all(Path.home(), lambda m: print(m, file=sys.stderr))
     for line in lines:
         print(line)
     print("left the hub; kaptyorka join brings this machine back")

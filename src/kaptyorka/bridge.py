@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import __version__, facts, http, identity, orders, paths
+from kaptyorka import __version__, facts, http, identity, orders, paths, skills_sync
 from kaptyorka.adapters.base import Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
@@ -100,7 +100,25 @@ class Bridge:
         self._sessions = objs
         self._report("heartbeat", None if status in (200, 204)
                      else f"hub answered {status} to heartbeat")
+        self._sync_skills()
         self._check_pending(objs)
+
+    def _sync_skills(self) -> None:
+        """Fetch the team skills when the hub's version differs from the one written here."""
+        v = self.hub.get("skills_version")
+        if not isinstance(v, str) or v == skills_sync.applied_version(paths.home()):
+            return
+        try:
+            status, answer = http.request("GET", self.cfg["hub"] + "/bridge/skills", self.cfg["token"])
+            if status != 200 or not isinstance(answer, dict) or not isinstance(answer.get("skills"), list):
+                raise ValueError(f"hub answered {status} to skills")
+            for line in skills_sync.sync(Path.home(), str(answer.get("version", v)),
+                                         answer["skills"], self.log):
+                self.log(line)
+            problem = None
+        except Exception as e:  # skills must never stop the heartbeat
+            problem = f"skills sync failed: {e}"
+        self._report("skills", problem)
 
     # launch and close orders
 
