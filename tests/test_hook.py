@@ -297,6 +297,13 @@ def test_hook_in_the_manager_folder_uses_the_manager_config(hub, home, monkeypat
     monkeypatch.chdir(folder)  # no cwd in the input: the hook's own folder
     hook.main("claude-code", "start", "")
     assert set(used) == {token}
+    used.clear()
+    (folder / "sub").mkdir()  # the session moved into a subfolder; the hook runs where it started
+    hook.main("claude-code", "start", json.dumps({"cwd": str(folder / "sub")}))
+    assert set(used) == {token}
+    used.clear()
+    hook.main("claude-code", "start", json.dumps({"cwd": str(home / "proj-a")}))
+    assert set(used) == {token}  # the hook runs in the manager's folder: never the admin's
 
 
 def test_hook_manager_folder_without_its_config_stays_off_the_hub(hub, home, monkeypatch,

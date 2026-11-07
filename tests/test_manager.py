@@ -184,22 +184,9 @@ def test_session_key(store, ms, clock):
     assert ms.session_key(clock[0] + ONLINE_S + 1) is None
 
 
-def test_config_path_override(tmp_path, monkeypatch):
+def test_config_path_has_no_override(tmp_path, monkeypatch):
     monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "h"))
-    assert paths.config_path() == tmp_path / "h" / "config.json"
-    alt = tmp_path / "other" / "c.json"
-    alt.parent.mkdir()
-    monkeypatch.setenv("KAPTYORKA_CONFIG", str(alt))
-    assert paths.load_config() == {}
-    paths.save_config({"a": 1})
-    assert json.loads(alt.read_text()) == {"a": 1}
-    assert paths.load_config() == {"a": 1}
-
-
-@pytest.mark.parametrize("value", ["", "rel/c.json", "c.json"])
-def test_config_path_ignores_relative_or_empty_override(tmp_path, monkeypatch, value):
-    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "h"))
-    monkeypatch.setenv("KAPTYORKA_CONFIG", value)
+    monkeypatch.setenv("KAPTYORKA_CONFIG", str(tmp_path / "other.json"))
     assert paths.config_path() == tmp_path / "h" / "config.json"
 
 
@@ -226,7 +213,6 @@ def test_config_written_0600_and_survives_failure(tmp_path, ms, monkeypatch):
 
 def test_load_config_by_folder(tmp_path, monkeypatch):
     monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "h"))
-    monkeypatch.delenv("KAPTYORKA_CONFIG", raising=False)
     paths.save_config({"token": "normal"})
     folder = paths.home() / manager.DIR
     folder.mkdir()

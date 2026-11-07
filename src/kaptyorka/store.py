@@ -139,6 +139,16 @@ MAX_ACTIVITY = 200
 MAX_CWD = 200
 
 
+def _same_folder(a: Optional[str], b: str) -> bool:
+    """One folder, links resolved on both sides."""
+    if not a:
+        return False
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
 def manager_folder() -> str:
     """The manager's folder on the hub machine, under the hub's home."""
     return str(paths.home() / paths.MANAGER_DIR)
@@ -1049,7 +1059,7 @@ class Store:
         return (dev is not None and bool(host) and dev["host"] == host and not dev["legacy"]
                 and not dev["shared"] and dev["revoked_at"] is None
                 and now - held["last_seen"] < ONLINE_S and held["project"] == "manager"
-                and (held["cwd"] or "").rstrip("/") == manager_folder())
+                and _same_folder(held["cwd"], manager_folder()))
 
     def _role_of(self, person_id) -> Optional[str]:
         """A person's role; no lock, for use inside locked blocks."""
@@ -1113,17 +1123,18 @@ class Store:
             for s in sessions:
                 held = self.db.execute("SELECT person_id, device_id FROM agents WHERE key=?",
                                        (s["key"],)).fetchone()
-                if principal is not None and held is not None and not (
-                        principal.shared and held["device_id"] == principal.device_id) \
-                        and held["person_id"] not in (None, principal.person_id) \
-                        and not self._reports_manager(principal, held["person_id"]):
+                others = principal is not None and held is not None and not (
+                    principal.shared and held["device_id"] == principal.device_id) \
+                    and held["person_id"] not in (None, principal.person_id)
+                manager_held = others and self._reports_manager(principal, held["person_id"])
+                if others and not manager_held:
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],
                             s["label"], s["cwd"])
                 if host:
                     self.db.execute("UPDATE agents SET host=?, os_user=? WHERE key=?",
                                     (host, os_user, s["key"]))
-                if principal is not None:
+                if principal is not None and not manager_held:  # the manager keeps its own
                     self.db.execute("UPDATE agents SET device_id=? WHERE key=?",
                                     (principal.device_id, s["key"]))
                 if assigned is not None:

@@ -58,7 +58,9 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
         if not isinstance(data, dict):
             data = {}
         here = data.get("cwd") if isinstance(data.get("cwd"), str) else None
-        cfg = paths.load_config(here or os.getcwd())  # the manager's folder: its own config
+        # the manager's folder (the input's or the hook's own): its own config, never the admin's
+        cfg = paths.load_config(next((c for c in (here, os.getcwd())
+                                      if paths.in_manager_folder(c)), None))
         fmt = FORMATTERS.get(tool)
         if not fmt or not cfg.get("hub") or not cfg.get("token"):
             return ""

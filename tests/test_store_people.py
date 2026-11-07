@@ -409,6 +409,39 @@ def test_heartbeat_keeps_manager_session(tmp_path, mhome):
     s.close()
 
 
+def test_heartbeat_keeps_the_manager_device(tmp_path, mhome):
+    t = [1000.0]
+    s = Store(tmp_path / "hub.db", clock=lambda: t[0])
+    _, tm = _member(s, "manager", "manager")
+    _, ta = _member(s, "root", "admin")
+    _set_host(s, tm, "box-1")
+    _set_host(s, ta, "box-1")
+    pm = s.authenticate(tm)
+    s.seen("k:m", "manager@box-1", "claude", "manager", principal=pm)
+    t[0] += 10
+    s.heartbeat("root@box-1", [MS], principal=s.authenticate(ta), facts=_facts("box-1"))
+    assert _row(s, "k:m")["device_id"] == pm.device_id
+    s.close()
+
+
+def test_manager_takes_key_through_a_linked_home(tmp_path, monkeypatch):
+    real = tmp_path / "real"
+    (real / "manager").mkdir(parents=True)
+    (tmp_path / "kh").symlink_to(real)
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "kh"))
+    t = [1000.0]
+    s = Store(tmp_path / "hub.db", clock=lambda: t[0])
+    mid, tm = _member(s, "manager", "manager")
+    _, ta = _member(s, "root", "admin")
+    _set_host(s, tm, "box-1")
+    # the bridge reports the session's real folder; the hub's home is a link to it
+    s.heartbeat("root@box-1", [{**MS, "cwd": str(real / "manager")}],
+                principal=s.authenticate(ta), facts=_facts("box-1"))
+    s.seen("k:m", "manager@box-1", "claude", "manager", principal=s.authenticate(tm))
+    assert s.agent("k:m").person_id == mid
+    s.close()
+
+
 def test_heartbeat_skips_manager_session_from_other_bridges(tmp_path, mhome):
     t = [1000.0]
     s = Store(tmp_path / "hub.db", clock=lambda: t[0])
