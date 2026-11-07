@@ -202,6 +202,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             folder.mkdir(mode=0o700, parents=True, exist_ok=True)
             mm.write_files(folder, manager_url, token, rules_now["text"])
             mm.mark_rules_written(rules_now["version"])
+        manager.write_settings(folder)  # put back at once when changed or removed
 
     def manager_pushes(now: float) -> None:
         """Tell the online manager session what needs the admin; each item once."""

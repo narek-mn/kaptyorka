@@ -98,7 +98,14 @@ def test_manager_tick_writes_files_and_rewrites_on_rules_change(hub):
     assert cfg["machine"] == f"manager@{HOST}"
     assert hub.store.authenticate(cfg["token"]).role == "manager"
     assert "No team rules yet." in (hub.folder / "CLAUDE.md").read_text()
+    settings = hub.folder / ".claude" / "settings.json"
+    assert json.loads(settings.read_text()) == {"permissions": {
+        "allow": ["mcp__kaptyorka__*"],
+        "deny": ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
+                 "Read(~/.kaptyorka/**)"]}}
+    settings.unlink()
     hub.tick()
+    assert settings.exists()  # put back on the next tick
     assert json.loads(hub.config.read_text()) == cfg
     RulesStore(hub.store).set_rules("always run the tests", "root")
     hub.tick()
