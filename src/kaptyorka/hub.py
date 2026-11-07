@@ -198,7 +198,47 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             mm.write_files(folder, manager_url, token, rules_now["text"])
             mm.mark_rules_written(rules_now["version"])
 
+    def manager_pushes(now: float) -> None:
+        """Tell the online manager session what needs the admin; each item once."""
+        key = mm.session_key(now)
+        if key is None:
+            return
+
+        def push(push_key: str, ttl: Optional[float], text: str) -> None:
+            if mm.push_once(push_key, now, ttl):
+                ws.notify(key, text)
+        for w in ws.abandoned():
+            push(f"abandoned:{w['name']}", None,
+                 f"worker `{w['name']}` of {w['person']} is abandoned (unattended a day)"
+                 f" on {w['host']}; tell the admin in one line")
+        for d in ws.shared_offline(now):
+            push(f"offline:{d['id']}", 86400,
+                 f"bridge on {d['host']} ({d['os_user']}), a shared machine, has been offline"
+                 f" {d['minutes']} minutes; tell the admin")
+        for f in ws.failed_twice(now):
+            push(f"failed:{f['person_id']}", 3600,
+                 f"{f['person']}'s workers failed to start twice ({f['error']}); tell the admin")
+        old = now - manager.REMIND_AFTER_S
+        for p in rs.proposals("open"):
+            if p["time"] < old:
+                push(f"remind:proposal:{p['id']}", 86400,
+                     f"proposal from {p['person']} has waited a day: {p['text'][:80]};"
+                     " remind the admin")
+        for r in store.requests(pending_only=True):
+            if r["created"] < old:
+                what = f"{r['kind']} {r['target']}: {r['why']}"
+                push(f"remind:request:{r['id']}", 86400,
+                     f"access request from {r['person']} has waited a day: {what[:80]};"
+                     " remind the admin")
+        push("weekly", manager.WEEKLY_S,
+             "weekly review: read log(500) for repeated conflicts and corrections; file"
+             " propose_rule for what repeats; never edit rules")
+
     def manager_tick(now: float) -> None:
+        keep_manager(now)
+        manager_pushes(now)
+
+    def keep_manager(now: float) -> None:
         """Keep the manager session alive through the admin's own bridge on this machine."""
         for r in mm.expire_requests(now):
             names = {p["id"]: p["name"] for p in store.people()}
@@ -244,7 +284,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 raise KaptyorkaError("attach a file by passing its local path; "
                                      "the kaptyorka tool uploads it")
             file_id = int(m.group(1))
-        n = store.send(me(ctx).key, to, text, file_id)
+        key = me(ctx).key
+        n = None if file_id is not None else ws.send_via_manager(key, to, text, mm.person_id())
+        if n is None:
+            n = store.send(key, to, text, file_id)
         wake_bridges()
         return f"sent to {n} session" + ("" if n == 1 else "s")
 
@@ -569,6 +612,15 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if not cur["text"]:
             return "No team rules yet."
         return f"Team rules v{cur['version']}:\n" + rules_mod.rules_text(cur["text"])
+
+    @server.tool()
+    @_tool_errors
+    def log(ctx: Context, limit: int = 200) -> List[dict]:
+        """The team's activity log, newest first (admin and manager only)."""
+        _, principal = caller(ctx)
+        if principal.role not in ("admin", "manager"):
+            raise KaptyorkaError("the log is for the admin and the manager")
+        return store.log(max(1, min(limit, 1000)))
 
     @server.tool()
     @_tool_errors

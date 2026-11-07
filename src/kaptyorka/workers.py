@@ -8,7 +8,8 @@ import time
 from typing import List, Optional, Tuple
 
 from kaptyorka.orders import sign
-from kaptyorka.store import ONLINE_S, PROJECT_NAME, KaptyorkaError, Principal, Store
+from kaptyorka.secrets_check import check_secrets
+from kaptyorka.store import ONLINE_S, PROJECT_NAME, KaptyorkaError, Principal, Store, _check_length
 
 MAX_FACT = 200
 UNATTENDED_S = 120  # boss offline this long: the worker is unattended
@@ -728,6 +729,67 @@ class WorkerStore:
                         " AND done_at IS NULL", (now, order_error, name))
         self.db.execute("UPDATE workers SET state='closed', error=?, closed_at=? WHERE name=?",
                         (error, now, name))
+
+    def abandoned(self) -> List[dict]:
+        """Workers left unattended for a day (the manager's own never counts)."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT w.name, w.host, p.name AS person FROM workers w"
+                " LEFT JOIN people p ON p.id=w.boss_person"
+                " WHERE w.state='abandoned' AND w.manager=0 ORDER BY w.created, w.name").fetchall()
+        return [dict(r) for r in rows]
+
+    def shared_offline(self, now: float) -> List[dict]:
+        """Shared-machine bridges silent for more than OFFLINE_S."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT id, host, os_user, last_used FROM devices WHERE shared=1 AND legacy=0"
+                " AND revoked_at IS NULL AND last_used IS NOT NULL AND last_used < ?",
+                (now - OFFLINE_S,)).fetchall()
+        return [{"id": r["id"], "host": r["host"], "os_user": r["os_user"],
+                 "minutes": int((now - r["last_used"]) // 60)} for r in rows]
+
+    def failed_twice(self, now: float) -> List[dict]:
+        """People with two or more failed launches in the last hour, with the latest error."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT w.boss_person, p.name AS person, w.error FROM workers w"
+                " JOIN people p ON p.id=w.boss_person WHERE w.state='failed' AND w.manager=0"
+                " AND w.created > ? ORDER BY w.created, w.name", (now - 3600,)).fetchall()
+        by: dict = {}
+        for r in rows:
+            n = by.get(r["boss_person"], (0,))[0]
+            by[r["boss_person"]] = (n + 1, r["error"], r["person"])
+        return [{"person_id": k, "person": v[2], "error": v[1]} for k, v in by.items() if v[0] >= 2]
+
+    def send_via_manager(self, sender_key: str, to: str, text: str,
+                         manager_pid: Optional[int]) -> Optional[int]:
+        """The manager needs no door: a send from its sessions, or to one of them, goes in
+        without the door check. None when neither side is the manager (use store.send)."""
+        if manager_pid is None:
+            return None
+        st = self.store
+        check_secrets(text)
+        with st.lock:
+            now = st.clock()
+            sender = st.db.execute("SELECT * FROM agents WHERE key=?", (sender_key,)).fetchone()
+            if sender is None:
+                raise KaptyorkaError("unknown sender session")
+            _check_length(text)
+            if to == "all":
+                if sender["person_id"] != manager_pid:
+                    return None
+                st._rate_check(sender_key, now)
+                targets = st._targets(sender_key, to, now, sender["person_id"])
+            else:
+                targets = st._targets(sender_key, to, now, sender["person_id"])
+                pids = {t["person_id"] if "person_id" in t.keys() else None for t in targets}
+                if sender["person_id"] != manager_pid and manager_pid not in pids:
+                    return None
+                st._rate_check(sender_key, now)
+            n = st._insert(sender_key, sender["name"], targets, text, now)
+            st._rate_hit(sender_key, now)
+            return n
 
     def warnings(self, now: float, hub_version: str) -> List[dict]:
         """Things a person should look at: failed launches, offline bridges, old versions,

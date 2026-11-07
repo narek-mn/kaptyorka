@@ -356,3 +356,119 @@ def test_request_expires_after_an_hour(hub, clock):
     hub.tick()
     assert hub.mm.request(1)["decision"] == "expired"
     assert "no decision on your proj-a request within an hour; ask again" in inbox(bob, BOSS)
+
+
+# what the manager may do, and what the hub tells it
+
+def plain(hub, name):
+    pid, token = person(hub.store, name)
+    return pid, token, SimpleNamespace(url=hub.url, token=token)
+
+
+def test_manager_messages_anyone_and_is_answered_without_door(hub):
+    mgr, me = manager_online(hub)
+    _, _, bob = plain(hub, "bob")
+    B = ident("k:bob", project="proj-b", machine="pc-2")
+    run(call(bob, B, "inbox"))
+    # bob has no door to the manager and the manager has none to bob
+    assert run(call(mgr, me, "send", to="pc-2/codex/proj-b", text="how is it going")) \
+        == "sent to 1 session"
+    assert [m["text"] for m in run(call(bob, B, "inbox"))] == ["how is it going"]
+    assert run(call(bob, B, "send", to="laptop/codex/manager", text="fine")) \
+        == "sent to 1 session"
+    assert [m["text"] for m in run(call(mgr, me, "inbox"))] == ["fine"]
+    # a third person still needs a door to bob
+    _, _, cat = plain(hub, "cat")
+    C = ident("k:cat", project="proj-b", machine="pc-3")
+    run(call(cat, C, "inbox"))
+    assert "no door" in call_error(cat, C, "send", to="pc-2/codex/proj-b", text="hi")
+
+
+def test_manager_cannot_answer_others_knock(hub):
+    mgr, me = manager_online(hub)
+    _, _, ann = plain(hub, "ann")
+    _, _, ben = plain(hub, "ben")
+    A, B = ident("k:ann", machine="pc-1"), ident("k:ben", machine="pc-2")
+    run(call(ben, B, "inbox"))
+    out = run(call(ann, A, "knock", to="ben", about="review?"))
+    kid = int(out.split("#")[1].split(")")[0])
+    assert call_error(mgr, me, "answer", knock_id=kid, answer="yes")
+    run(call(ben, B, "answer", knock_id=kid, answer="yes"))
+
+
+def test_manager_refused_by_admin_only_routes(hub):
+    _, token = person(hub.store, "manager", "manager")
+    assert http.request("POST", hub.url + "/api/rules", token, {"text": "x"})[0] == 403
+    assert http.request("POST", hub.url + "/api/proposals/1", token,
+                        {"accept": True, "reason": "x"})[0] == 403
+
+
+def test_log_tool_roles(hub):
+    mgr, me = manager_online(hub)
+    hub.store.log_add("alice", "x", "one")
+    rows = run(call(mgr, me, "log", limit=5))
+    assert rows[0]["detail"] == "one"
+    _, _, bob = plain(hub, "bob")
+    B = ident("k:bob")
+    assert "the log is for the admin and the manager" in call_error(bob, B, "log")
+    _, tok = person(hub.store, "root", "admin")
+    assert run(call(SimpleNamespace(url=hub.url, token=tok), ident("k:root"), "log"))
+
+
+def drain(hub, mgr, me):
+    return [m["text"] for m in run(call(mgr, me, "inbox"))]
+
+
+def insert_worker(hub, name, state, boss, now, error=""):
+    with hub.store.lock:
+        hub.store.db.execute(
+            "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+            " tool, state, error, created) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (name, "proj-a", "t", "k:boss", boss, 0, "box-1", "claude-code", state, error, now))
+
+
+def test_pushes_once_each(hub, clock):
+    now = clock[0]
+    alice, atok, _ = plain(hub, "alice")
+    insert_worker(hub, "w-old", "abandoned", alice, now)
+    insert_worker(hub, "w-f1", "failed", alice, now, "no tmux")
+    insert_worker(hub, "w-f2", "failed", alice, now, "no tmux")
+    b = bridge(hub, alice, sessions=[])
+    hub.store.device_set_shared(b.device_id, True)
+    hub.store.project_register("proj-x", by="test")
+    hub.store.request_access(alice, "project", "proj-x", "need it")
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE devices SET last_used=? WHERE id=?",
+                             (now - 700, b.device_id))
+        hub.store.db.execute(
+            "INSERT INTO proposals (person_id, session_key, text, evidence, status, time)"
+            " VALUES (?,?,?,?,?,?)", (alice, "k", "always lint", "ev", "open", now - 90000))
+        hub.store.db.execute("UPDATE requests SET created=?", (now - 90000,))
+    hub.tick()  # no manager online: nothing sent, nothing consumed
+    with hub.store.lock:
+        assert hub.store.db.execute("SELECT COUNT(*) FROM manager_pushes").fetchone()[0] == 0
+    mgr, me = manager_online(hub)
+    hub.tick()
+    texts = drain(hub, mgr, me)
+    assert "worker `w-old` of alice is abandoned (unattended a day) on box-1;" \
+           " tell the admin in one line" in texts
+    assert f"bridge on box-1 (u), a shared machine, has been offline 11 minutes;" \
+           " tell the admin" in texts
+    assert "alice's workers failed to start twice (no tmux); tell the admin" in texts
+    assert "proposal from alice has waited a day: always lint; remind the admin" in texts
+    assert "access request from alice has waited a day: project proj-x: need it;" \
+           " remind the admin" in texts
+    assert any(t.startswith("weekly review: read log(500)") for t in texts)
+    assert len(texts) == 6
+    hub.tick()
+    assert drain(hub, mgr, me) == []
+
+
+def test_weekly_push_repeats_after_a_week(hub, clock):
+    mgr, me = manager_online(hub)
+    hub.tick()
+    assert sum(t.startswith("weekly review") for t in drain(hub, mgr, me)) == 1
+    clock[0] += manager.WEEKLY_S + 1
+    run(call(mgr, me, "inbox"))
+    hub.tick()
+    assert sum(t.startswith("weekly review") for t in drain(hub, mgr, me)) == 1
