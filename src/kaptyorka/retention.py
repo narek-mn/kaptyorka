@@ -10,7 +10,7 @@ def _stderr(line: str) -> None:
 
 
 def prune_loop(store, stop: threading.Event, interval_s: float = 86400, report=_stderr) -> None:
-    """Prune old messages once now, then every `interval_s`, until `stop` is set."""
+    """Prune old messages and memory once now, then every `interval_s`, until `stop` is set."""
     while not stop.is_set():
         try:
             out = store.prune(time.time())
@@ -19,9 +19,10 @@ def prune_loop(store, stop: threading.Event, interval_s: float = 86400, report=_
         except Exception as e:  # a failed prune must not stop the next one
             report(f"retention: prune failed: {e}")
         try:
-            git = memory.prune(store, time.time())
-            if git:
-                report(f"retention: deleted {git} git facts")
+            out = memory.prune(store, time.time())
+            if any(out.values()):
+                report(f"retention: deleted {out['git_facts']} git facts,"
+                       f" {out['done_checks']} done checks, {out['state_writes']} state writes")
         except Exception as e:
-            report(f"retention: git facts prune failed: {e}")
+            report(f"retention: memory prune failed: {e}")
         stop.wait(interval_s)

@@ -57,7 +57,26 @@ def test_git_seen_stores_a_row_only_on_change(ms, p, dev):
     assert ms.git_seen(p, dev, g(), F) == []
     assert len(ms.git_recent("proj-a")) == 1
     ms.git_seen(p, dev, g(dirty=True), F)
-    assert [r["dirty"] for r in ms.git_recent("proj-a")] == [True, False]
+    with ms.lock:  # the dirty flip is kept, for the done check
+        assert ms.db.execute("SELECT COUNT(*) FROM git_facts").fetchone()[0] == 2
+    assert [r["dirty"] for r in ms.git_recent("proj-a")] == [False]  # but it is not activity
+
+
+def test_git_recent_shows_branch_or_subject_changes_only_newest_20(ms, store, clock, p, dev):
+    ms.git_seen(p, dev, g(), F)
+    clock[0] += 1
+    ms.git_seen(p, dev, g(dirty=True), F)
+    clock[0] += 1
+    ms.git_seen(p, dev, g(branch="feat", dirty=True), F)
+    clock[0] += 1
+    ms.git_seen(p, dev, g(branch="feat", subject="fix"), F)
+    assert [(r["branch"], r["subject"]) for r in ms.git_recent("proj-a")] == [
+        ("feat", "fix"), ("feat", "init"), ("main", "init")]
+    for i in range(30):
+        clock[0] += 1
+        ms.git_seen(p, dev, g(subject=f"c{i}"), F)
+    rows = ms.git_recent("proj-a")
+    assert len(rows) == 20 and rows[0]["subject"] == "c29"
 
 
 def test_worktree_counts_as_the_project(ms):
@@ -65,6 +84,9 @@ def test_worktree_counts_as_the_project(ms):
     assert ms.project_of("/home/alice/proj-a", F) == "proj-a"
     assert ms.project_of("/x/y/webshop--3", {}) == "webshop"
     assert ms.project_of("/x/y/webshop", {}) == "webshop"
+    # a learned worktree entry never wins over its base project, whatever the order
+    learned = {"proj-a--2": "/home/alice/proj-a--2", "proj-a": A}
+    assert ms.project_of("/home/alice/proj-a--2", learned) == "proj-a"
 
 
 def test_git_recent_window_and_person_name(ms, store, clock, p, dev):
@@ -84,8 +106,24 @@ def test_prune_deletes_older_than_30_days(ms, store, clock, p, dev):
     ms.git_seen(p, dev, g(subject="old"), F)
     clock[0] += 31 * 86400
     ms.git_seen(p, dev, g(subject="new"), F)
-    assert memory.prune(store, clock[0]) == 1
+    assert memory.prune(store, clock[0])["git_facts"] == 1
     assert [r["subject"] for r in ms.git_recent("proj-a", days=60)] == ["new"]
+
+
+def test_prune_done_checks_of_long_offline_sessions_and_old_state_writes(ms, store, clock, p):
+    for key in ("claude:1", "claude:2"):
+        store.heartbeat("box-1", [{"key": key, "tool": "claude-code", "project": "proj-a",
+                                   "cwd": A}], principal=p, facts={"host": "box-1", "os_user": "u"})
+        ms.status_signal(key, "done")
+    ms.state_written("claude:1", "proj-a", None, clock[0])
+    clock[0] += 31 * 86400
+    store.heartbeat("box-1", [{"key": "claude:2", "tool": "claude-code", "project": "proj-a",
+                               "cwd": A}], principal=p, facts={"host": "box-1", "os_user": "u"})
+    ms.state_written("claude:2", "proj-a", None, clock[0])
+    assert memory.prune(store, clock[0]) == {"git_facts": 0, "done_checks": 1, "state_writes": 1}
+    with store.lock:
+        assert [r[0] for r in store.db.execute("SELECT key FROM done_checks")] == ["claude:2"]
+        assert [r[0] for r in store.db.execute("SELECT key FROM state_writes")] == ["claude:2"]
 
 
 def test_signals_for_online_sessions_only(ms, store, clock, p, dev):
@@ -144,6 +182,13 @@ def test_heartbeat_feeds_git_facts(tmp_path, clock):
         assert status == 200
         rows = MemoryStore(store).git_recent("proj-a")
         assert [(r["branch"], r["person"]) for r in rows] == [("main", "alice")]
+        long = {"branch": "b" * 500, "dirty": False, "subject": "s" * 500}
+        body["facts"]["git"] = {A + "/" + "x" * 500: long}
+        assert http.request("POST", f"http://127.0.0.1:{stop.port}/bridge/heartbeat", token,
+                            body)[0] == 200
+        with store.lock:  # cleaned like the device facts: every string capped
+            row = store.db.execute("SELECT * FROM git_facts ORDER BY id DESC LIMIT 1").fetchone()
+        assert len(row["cwd"]) == len(row["branch"]) == len(row["subject"]) == 200
     finally:
         stop()
         store.close()

@@ -29,6 +29,7 @@ def test_notes_show_project_state_and_git_activity(hub):
     assert html.index('id="project-info"') < html.index('id="notes-grid"')  # above the topics
     assert 'id="project-info"' in html and "hidden" in re.search(r'<div[^>]*id="project-info"[^>]*>', html).group(0)
     assert '"State"' in html and '"Recent git activity"' in html
+    assert '"No recent activity"' in html and "No commits in the last" not in html
     # the state note is text nodes only: headings in bold, no Markdown library, no innerHTML
     assert "innerHTML" not in html and "marked" not in html
     assert re.search(r'charAt\(0\) === "#"', html)

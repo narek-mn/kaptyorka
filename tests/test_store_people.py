@@ -319,7 +319,8 @@ def test_prune_loop_runs(tmp_path, monkeypatch):
 
     from kaptyorka import memory
 
-    monkeypatch.setattr(memory, "prune", lambda store, now: 0)  # Fake has no database
+    monkeypatch.setattr(memory, "prune", lambda store, now: {"git_facts": 0, "done_checks": 0,
+                                                             "state_writes": 0})  # Fake has no database
 
     from kaptyorka.retention import prune_loop
 
@@ -358,12 +359,13 @@ def test_prune_loop_one_failure_does_not_skip_the_other(monkeypatch):
             stop.set()
             if not store_fails:
                 raise RuntimeError("memory boom")
-            return 2
+            return {"git_facts": 2, "done_checks": 3, "state_writes": 4}
 
         monkeypatch.setattr(memory, "prune", mem)
         prune_loop(Fake(), stop, interval_s=0.01, report=lines.append)
         assert ran == ["store", "memory"]
         if store_fails:
-            assert len(lines) == 2 and "store boom" in lines[0] and "2 git facts" in lines[1]
+            assert len(lines) == 2 and "store boom" in lines[0] and lines[1] == (
+                "retention: deleted 2 git facts, 3 done checks, 4 state writes")
         else:
             assert len(lines) == 1 and "memory boom" in lines[0]

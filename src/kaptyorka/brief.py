@@ -110,7 +110,7 @@ def _here(store, ws, ms, agent: Agent, principal) -> Tuple[str, str, str]:
     if principal is None:
         return "", "", ""
     folders = ws.folders(principal.device_id)
-    project = ms.project_of(agent.cwd, folders) if folders and agent.cwd else agent.project
+    project = ms.session_project(agent.cwd, agent.project, folders)
     if not project:  # "" would read the team board's notes
         return "", "", ""
     try:

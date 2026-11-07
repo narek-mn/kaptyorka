@@ -28,7 +28,7 @@ from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.memory import MemoryStore, check_state
 from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, clean
-from kaptyorka.workers import WorkerStore, safe_name
+from kaptyorka.workers import WorkerStore, _git as clean_git, clean_facts, safe_name
 
 MAX_WAIT_S = 25
 TICK_S = 15
@@ -66,10 +66,10 @@ INSTRUCTIONS = (
 )
 
 
-def opencode_reminder(ms, key: str, principal, now: float) -> str:
+def opencode_reminder(ms, key: str, principal, now: float, project: Optional[str] = None) -> str:
     """OpenCode has no stop event: the done-check reason rides on the next prompt brief.
     Looks only (blocked_at stays unset), so it repeats until the state note is written."""
-    out = ms.done_check(key, principal, now, commit=False)
+    out = ms.done_check(key, principal, now, commit=False, project=project)
     return out["reason"] if out["decision"] == "block" else ""
 
 
@@ -126,6 +126,11 @@ def build_app(store: Store) -> Starlette:
         if not all(ident):
             raise KaptyorkaError("no kaptyorka identity; run kaptyorka join")
         return store.seen(*ident, principal=principal or principal_of(h))
+
+    def session_project(agent: Agent, principal: Optional[Principal]) -> str:
+        """The session's project from its folder, the same lookup the brief uses."""
+        folders = ws.folders(principal.device_id) if principal is not None else {}
+        return ms.session_project(agent.cwd, agent.project, folders)
 
     def me(ctx: Context) -> Agent:
         return identify(ctx.headers or {})
@@ -229,9 +234,9 @@ def build_app(store: Store) -> Starlette:
     @_tool_errors
     def status(text: str, ctx: Context) -> str:
         """Say what you are working on; others see it in who()."""
-        key = me(ctx).key
-        store.set_status(key, text)
-        ms.status_signal(key, text)
+        agent, principal = caller(ctx)
+        store.set_status(agent.key, text)
+        ms.status_signal(agent.key, text, session_project(agent, principal))
         return "status set"
 
     @server.tool()
@@ -447,7 +452,7 @@ def build_app(store: Store) -> Starlette:
             ws.facts_seen(principal.device_id, facts, body.get("folders"))
             try:  # history is a bonus: a bad git payload must not fail the heartbeat
                 ms.git_seen(principal, principal.device_id,
-                            (facts.get("git") if isinstance(facts, dict) else None) or {},
+                            clean_facts(facts).get("git") or {},
                             body.get("folders") if isinstance(body.get("folders"), dict) else {})
             except Exception as e:
                 print(f"memory: git facts skipped: {e}", file=sys.stderr, flush=True)
@@ -539,7 +544,8 @@ def build_app(store: Store) -> Starlette:
         if request.query_params.get("event") != "start":
             parts = [message_text(m) for m in store.inbox(agent.key)]
             if request.query_params.get("event") == "prompt" and agent.tool == "opencode":
-                parts.insert(0, opencode_reminder(ms, agent.key, principal, store.clock()))
+                parts.insert(0, opencode_reminder(ms, agent.key, principal, store.clock(),
+                                                  session_project(agent, principal)))
             return PlainTextResponse("\n\n".join(p for p in parts if p))
         return PlainTextResponse(brief.cached(
             agent.key, lambda: brief.compose(store, ws, ms, agent, principal),
@@ -553,7 +559,20 @@ def build_app(store: Store) -> Starlette:
             agent = identify(request.headers, principal)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
-        out = ms.done_check(agent.key, principal, store.clock())
+        q = request.query_params
+        if principal is not None and not principal.legacy and agent.cwd and (
+                "branch" in q or "subject" in q):
+            # the stop hook read the folder's git just now: a commit made seconds ago counts
+            dirty = {"1": True, "0": False}.get(q.get("dirty", ""))
+            g = clean_git({"branch": q.get("branch", ""), "subject": q.get("subject", ""),
+                           **({} if dirty is None else {"dirty": dirty})})
+            try:
+                ms.git_seen(principal, principal.device_id, {agent.cwd: g},
+                            ws.folders(principal.device_id))
+            except Exception as e:  # history is a bonus: never fail the check over it
+                print(f"memory: stop git fact skipped: {e}", file=sys.stderr, flush=True)
+        out = ms.done_check(agent.key, principal, store.clock(),
+                            project=session_project(agent, principal))
         out["mode"] = "block" if agent.tool in ("claude-code", "codex") else "remind"
         return JSONResponse(out)
 

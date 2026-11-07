@@ -1,6 +1,11 @@
 """The done check: a session that did work in a project must update its state note."""
+import os
+from types import SimpleNamespace
+from urllib.parse import urlencode
+
 import pytest
 
+from conftest import start_hub
 from helpers import call, person, run
 from kaptyorka import http
 from kaptyorka.memory import MemoryStore
@@ -50,9 +55,17 @@ def p(store, alice):
 
 
 def beat(store, p, *cwds):
-    store.heartbeat("box-1", [{"key": f"claude:{i}", "tool": "claude-code", "project": "proj-a",
-                               "cwd": c} for i, c in enumerate(cwds, 1)],
+    """Sessions as the bridge reports them: each named after its folder (a worktree too)."""
+    store.heartbeat("box-1", [{"key": f"claude:{i}", "tool": "claude-code",
+                               "project": os.path.basename(c), "cwd": c}
+                              for i, c in enumerate(cwds, 1)],
                     principal=p, facts={"host": "box-1", "os_user": "u"})
+
+
+def check(ms, store, key, p, now):
+    """done_check with the project resolved from the session's folder, as the hub does."""
+    a = store.agent(key)
+    return ms.done_check(key, p, now, project=ms.session_project(a.cwd, a.project, F))
 
 
 def git(ms, p, cwd=A, subject="init", dirty=False):
@@ -129,8 +142,27 @@ def test_signal_is_per_session(ms, store, clock, p):
     beat(store, p, A, B)
     git(ms, p, B)
     commit(ms, store, clock, p, A)
-    assert ms.done_check("claude:2", p, clock[0]) == {"decision": "ok"}
-    assert ms.done_check("claude:1", p, clock[0])["decision"] == "block"
+    assert check(ms, store, "claude:2", p, clock[0]) == {"decision": "ok"}
+    assert check(ms, store, "claude:1", p, clock[0])["decision"] == "block"
+
+
+def test_worktree_session_is_checked_in_its_base_project(ms, store, clock, p):
+    beat(store, p, B)  # named "proj-a--2", which is no registered project
+    commit(ms, store, clock, p, B)
+    assert ms.done_check("claude:1", p, clock[0], commit=False) == {"decision": "ok"}
+    assert check(ms, store, "claude:1", p, clock[0]) == {"decision": "block", "reason": REASON}
+
+
+def test_commit_state_write_then_dirty_edit_is_not_blocked(ms, store, clock, p):
+    beat(store, p, A)
+    git(ms, p)  # the baseline
+    clock[0] += 10
+    git(ms, p, subject="fix")  # a live commit
+    clock[0] += 10
+    ms.state_written("claude:1", "proj-a", p.person_id, clock[0])
+    clock[0] += 10
+    git(ms, p, subject="fix", dirty=True)  # one more edit after the note: no new commit
+    assert ms.done_check("claude:1", p, clock[0]) == {"decision": "ok"}
 
 
 def test_no_write_role_never_blocks(ms, store, clock, alice):
@@ -165,11 +197,13 @@ def test_status_done_is_a_signal_and_no_state_change_clears_it(ms, store, clock,
     assert out["decision"] == "block" and "(done)" in out["reason"]
     beat(store, p, A, B)
     clock[0] += 10
-    ms.status_signal("claude:2", "all DONE")
-    ms.status_signal("claude:2", "done: no state change")
-    assert ms.done_check("claude:2", p, clock[0]) == {"decision": "ok"}
-    ms.status_signal("claude:2", "working on the api")
-    assert ms.done_check("claude:2", p, clock[0]) == {"decision": "ok"}
+    ms.status_signal("claude:2", "all DONE", "proj-a")
+    ms.status_signal("claude:2", "done: no state change", "proj-a")
+    assert check(ms, store, "claude:2", p, clock[0]) == {"decision": "ok"}
+    ms.status_signal("claude:2", "working on the api", "proj-a")
+    assert check(ms, store, "claude:2", p, clock[0]) == {"decision": "ok"}
+    ms.status_signal("claude:2", "done again", "proj-a")
+    assert check(ms, store, "claude:2", p, clock[0])["decision"] == "block"
 
 
 def test_status_tool_feeds_the_signal(hub):
@@ -241,3 +275,70 @@ def test_shared_cwd_both_signalled_one_write_satisfies_both(ms, store, clock, p)
     ms.state_written("claude:1", "proj-a", p.person_id, clock[0])
     assert ms.done_check("claude:1", p, clock[0]) == {"decision": "ok"}
     assert ms.done_check("claude:2", p, clock[0]) == {"decision": "ok"}
+
+
+@pytest.fixture
+def dhub(tmp_path, clock):
+    """A hub with alice's own device (not the legacy token), proj-a registered, write role."""
+    store = Store(tmp_path / "hub2.db", clock=lambda: clock[0], legacy_token="T")
+    stop = start_hub(store)
+    pid = person(store, "alice")[0]
+    store.project_register("proj-a", by="admin")
+    store.grant_project("proj-a", pid, "write", "admin")
+    token, _ = store.invite_redeem(store.invite_create(pid), "box-1", host="box-1", os_user="u")
+    yield SimpleNamespace(url=f"http://127.0.0.1:{stop.port}", token=token, store=store,
+                          ms=MemoryStore(store))
+    stop()
+    store.close()
+
+
+def _beat(h, cwd, git):
+    body = {"machine": "box-1", "tools": [], "folders": F,
+            "sessions": [{"key": "claude:1", "tool": "claude-code",
+                          "project": os.path.basename(cwd), "cwd": cwd}],
+            "facts": {"host": "box-1", "os_user": "u", "git": git}}
+    assert http.request("POST", h.url + "/bridge/heartbeat", h.token, body)[0] == 200
+
+
+def _stop_check(h, cwd, **params):
+    headers = {"X-Kaptyorka-Key": "claude:1", "X-Kaptyorka-Machine": "box-1",
+               "X-Kaptyorka-Tool": "claude-code", "X-Kaptyorka-Project": os.path.basename(cwd)}
+    q = "?" + urlencode(params) if params else ""
+    status, body = http.request("GET", h.url + "/api/done-check" + q, h.token, headers=headers)
+    assert status == 200
+    return body
+
+
+def _main(subject="init", dirty=False):
+    return {"branch": "main", "dirty": dirty, "subject": subject}
+
+
+def test_route_checks_a_worktree_session_in_its_base_project(dhub, clock):
+    _beat(dhub, B, {B: _main()})
+    clock[0] += 10
+    _beat(dhub, B, {B: _main("fix")})
+    body = _stop_check(dhub, B)
+    assert body["decision"] == "block" and body["reason"] == REASON
+
+
+def test_route_stop_git_params_catch_a_commit_the_bridge_never_reported(dhub, clock):
+    _beat(dhub, A, {A: _main()})
+    clock[0] += 10
+    assert _stop_check(dhub, A) == {"decision": "ok", "mode": "block"}
+    body = _stop_check(dhub, A, branch="main", subject="fix", dirty="0")
+    assert body["decision"] == "block" and body["reason"] == REASON
+    _stop_check(dhub, A, branch="main", subject="fix", dirty="0")  # the same values again
+    with dhub.store.lock:
+        rows = dhub.store.db.execute("SELECT cwd, host, os_user, subject, dirty, project"
+                                     " FROM git_facts ORDER BY id").fetchall()
+    assert [tuple(r) for r in rows] == [(A, "box-1", "u", "init", 0, "proj-a"),
+                                        (A, "box-1", "u", "fix", 0, "proj-a")]
+
+
+def test_route_stop_git_params_are_capped(dhub, clock):
+    _beat(dhub, A, {A: _main()})
+    clock[0] += 10
+    _stop_check(dhub, A, branch="b" * 500, subject="s" * 500, dirty="1")
+    with dhub.store.lock:
+        r = dhub.store.db.execute("SELECT * FROM git_facts ORDER BY id DESC LIMIT 1").fetchone()
+    assert len(r["branch"]) == len(r["subject"]) == 200 and r["dirty"] == 1

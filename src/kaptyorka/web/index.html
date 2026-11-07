@@ -1087,7 +1087,7 @@ td.c-act .btn + .btn { margin-left: 6px; }
     });
     box.appendChild(el("div", { "class": "panel" }, [
       el("div", { "class": "phead" }, ["Recent git activity"]),
-      el("div", { "class": "pi-body" }, rows.length ? [el("ul", { "class": "git" }, rows)] : [el("div", { "class": "empty", text: "No commits in the last 7 days" })])]));
+      el("div", { "class": "pi-body" }, rows.length ? [el("ul", { "class": "git" }, rows)] : [el("div", { "class": "empty", text: "No recent activity" })])]));
   }
   function newTopic() { note = { key: null, project: null, topic: null, mode: "new", version: 0, history: false }; renderNotes(true); }
   function editor(doc, back) {

@@ -7,6 +7,8 @@ from typing import Dict, List, Optional
 from kaptyorka.store import ONLINE_S, Principal, Store
 
 GIT_KEEP_S = 30 * 86400  # git history older than this is pruned
+DONE_KEEP_S = 30 * 86400  # done checks of sessions offline this long, and old state writes
+RECENT_LIMIT = 20
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS git_facts (
@@ -63,12 +65,25 @@ class MemoryStore:
 
     @staticmethod
     def project_of(cwd: str, folders: dict) -> str:
+        """The project of a folder. A `<folder>--N` worktree belongs to its base folder's
+        project, checked first, so a learned "proj-a--2" entry never wins over "proj-a"."""
         cwd = cwd.rstrip("/") or cwd
-        for project, folder in (folders or {}).items():
-            folder = folder.rstrip("/")
-            if cwd == folder or (cwd.startswith(folder + "--") and _WORKTREE.sub("", cwd) == folder):
+        folders = {p: f.rstrip("/") for p, f in (folders or {}).items()}
+        base = _WORKTREE.sub("", cwd)
+        if base != cwd:
+            for project, folder in folders.items():
+                if folder == base:
+                    return project
+        for project, folder in folders.items():
+            if cwd == folder:
                 return project
         return _WORKTREE.sub("", os.path.basename(cwd))
+
+    @classmethod
+    def session_project(cls, cwd: str, project: str, folders: dict) -> str:
+        """A session's project: from its folder when the device's folders are known, else the
+        name its identity gave. The brief and the done check both use this."""
+        return cls.project_of(cwd, folders) if folders and cwd else project
 
     def _session(self, key: str):
         return self.db.execute("SELECT project, started, last_seen, person_id, host, os_user, cwd"
@@ -91,20 +106,26 @@ class MemoryStore:
             "SELECT MAX(time) FROM state_writes WHERE project=? AND (key=? OR"
             " (? IS NOT NULL AND person_id=?))", (project, key, person_id, person_id)).fetchone()[0]
 
-    def _row(self, key: str, a):
-        """The session's done_checks row, created with the folder's git state at its start."""
+    def _row(self, key: str, a, project: Optional[str] = None):
+        """The session's done_checks row, created with the folder's git state at its start.
+        A resolved `project` (from the session's folder) is kept on the row; without one the
+        row keeps what it has, or takes the session's own project name."""
         row = self.db.execute("SELECT * FROM done_checks WHERE key=?", (key,)).fetchone()
         if row is not None:
+            if project and row["project"] != project:
+                self.db.execute("UPDATE done_checks SET project=? WHERE key=?", (project, key))
+                row = self.db.execute("SELECT * FROM done_checks WHERE key=?", (key,)).fetchone()
             return row
         started = a["started"] or a["last_seen"]
         base = self._latest_git(a, started)
         self.db.execute(
             "INSERT INTO done_checks (key, project, started, last_subject, last_dirty)"
-            " VALUES (?,?,?,?,?)", (key, a["project"], started,
+            " VALUES (?,?,?,?,?)", (key, project or a["project"], started,
                                     base["subject"] if base else "", base["dirty"] if base else None))
         return self.db.execute("SELECT * FROM done_checks WHERE key=?", (key,)).fetchone()
 
-    def _signal(self, key: str, kind: str, at: Optional[float] = None) -> None:
+    def _signal(self, key: str, kind: str, at: Optional[float] = None,
+                project: Optional[str] = None) -> None:
         """Note a work signal for a session. Caller holds the lock. A pending signal (no state
         write since it) keeps its time and takes the newer kind, except that "done" does not
         replace a pending commit or clean."""
@@ -112,15 +133,15 @@ class MemoryStore:
         a = self._session(key)
         if a is None:
             return
-        row = self._row(key, a)
-        last = self._last_write(a["project"], key, a["person_id"])
+        row = self._row(key, a, project)
+        last = self._last_write(row["project"], key, a["person_id"])
         if row["signal_at"] is None or (last is not None and row["signal_at"] < last):
             self.db.execute("UPDATE done_checks SET signal_at=?, signal=? WHERE key=?",
                             (at, kind, key))
         elif not (kind == "done" and row["signal"] in ("commit", "clean")):
             self.db.execute("UPDATE done_checks SET signal=? WHERE key=?", (kind, key))
 
-    def _git_since_start(self, key: str, a, row) -> None:
+    def _git_since_start(self, key: str, a, row, project: Optional[str] = None) -> None:
         """A commit or clean the heartbeats did not signal (the session was offline, or its
         folder's first sighting): compare the folder's newest git fact with the one kept on
         the row, then keep the newest. Lock held."""
@@ -134,11 +155,11 @@ class MemoryStore:
             if row["last_dirty"] == 1 and g["dirty"] == 0:
                 kinds.append("clean")
             for kind in kinds:
-                self._signal(key, kind, g["time"])
+                self._signal(key, kind, g["time"], project)
         self.db.execute("UPDATE done_checks SET last_subject=?, last_dirty=? WHERE key=?",
                         (g["subject"], g["dirty"], key))
 
-    def status_signal(self, key: str, text: str) -> None:
+    def status_signal(self, key: str, text: str, project: Optional[str] = None) -> None:
         """From the status tool: "done" (a word) is a work signal, unless the state was written
         at or after the last commit or clean (or the start, when there was none); "no state
         change" clears the signal."""
@@ -148,43 +169,46 @@ class MemoryStore:
             if a is None:
                 return
             if _DONE.search(text):
-                row = self._row(key, a)
+                row = self._row(key, a, project)
                 since = (row["signal_at"] if row["signal_at"] is not None
                          and row["signal"] in ("commit", "clean") else row["started"])
-                last = self._last_write(a["project"], key, a["person_id"])
+                last = self._last_write(row["project"], key, a["person_id"])
                 if last is None or last < since:
-                    self._signal(key, "done")
+                    self._signal(key, "done", project=project)
             text = text.lower()
             if "no state change" in text:
-                self._row(key, a)
+                self._row(key, a, project)
                 g = self._latest_git(a)
                 self.db.execute("UPDATE done_checks SET signal_at=NULL" + (
                     ", last_subject=?, last_dirty=?" if g else "") + " WHERE key=?",
                     ((g["subject"], g["dirty"]) if g else ()) + (key,))
 
-    def done_check(self, key: str, principal: Principal, now: float, commit: bool = True) -> dict:
+    def done_check(self, key: str, principal: Principal, now: float, commit: bool = True,
+                   project: Optional[str] = None) -> dict:
         """Block a session's stop once when it did work in a project it may write and has not
-        updated that project's state note since. commit=False only looks: blocked_at stays unset."""
+        updated that project's state note since. commit=False only looks: blocked_at stays unset.
+        `project` is the session's project resolved from its folder (session_project); without
+        it the session's own project name is used."""
         ok = {"decision": "ok"}
         with self.lock:
             a = self._session(key)
         if a is None or a["person_id"] is None or principal is None:
             return ok
-        may = self.store.may_write_project(a["project"], principal)
+        project = project or a["project"]
+        may = self.store.may_write_project(project, principal)
         with self.lock:
-            if not (may and self.store._registered(a["project"])):
+            if not (may and self.store._registered(project)):
                 return ok
-            self._git_since_start(key, a, self._row(key, a))
-            row = self._row(key, a)
+            self._git_since_start(key, a, self._row(key, a, project), project)
+            row = self._row(key, a, project)
             if row["blocked_at"] is not None or row["signal_at"] is None \
                     or row["signal_at"] <= row["started"]:
                 return ok
-            last = self._last_write(a["project"], key, a["person_id"])
+            last = self._last_write(project, key, a["person_id"])
             if last is not None and last >= row["signal_at"]:
                 return ok
             if commit:
                 self.db.execute("UPDATE done_checks SET blocked_at=? WHERE key=?", (now, key))
-        project = a["project"]
         return {"decision": "block", "reason": (
             f"You did work in {project} ({row['signal']}) but its state note was not updated."
             f" Call state_write(\"{project}\", text) with the five headings (What it is, Where"
@@ -223,30 +247,38 @@ class MemoryStore:
                     (project, host, os_user, person_id, cwd, branch, dirty, subject, now))
                 if project not in changed:
                     changed.append(project)
-                if last is None:
-                    continue
                 kinds = []
-                if last["subject"] != subject:
+                if last is not None and last["subject"] != subject:
                     kinds.append("commit")
-                if last["dirty"] == 1 and dirty == 0:
+                if last is not None and last["dirty"] == 1 and dirty == 0:
                     kinds.append("clean")
-                if kinds:
-                    keys = [r["key"] for r in self.db.execute(
-                        "SELECT key FROM agents WHERE device_id=? AND cwd=? AND last_seen>?",
-                        (device_id, cwd, now - ONLINE_S))]
-                    for key in keys:
-                        for kind in kinds:
-                            self._signal(key, kind)
+                keys = [r["key"] for r in self.db.execute(
+                    "SELECT key FROM agents WHERE device_id=? AND cwd=? AND last_seen>?",
+                    (device_id, cwd, now - ONLINE_S))]
+                for key in keys:
+                    for kind in kinds:
+                        self._signal(key, kind, project=project)
+                    # seen live: the row moves on, so a later look never takes this fact
+                    # (or a newer one with the same subject) for a fresh commit
+                    self.db.execute("UPDATE done_checks SET last_subject=?, last_dirty=?"
+                                    " WHERE key=?", (subject, dirty, key))
         return changed
 
     def git_recent(self, project: str, days: int = 7, now: Optional[float] = None) -> List[dict]:
+        """The newest 20 changes of branch or subject (a dirty flip is not activity); a
+        folder's first sighting counts."""
         now = self.clock() if now is None else now
         with self.lock:
             rows = self.db.execute(
                 "SELECT g.host, g.branch, g.subject, g.dirty, g.time, g.os_user, p.name AS person"
-                " FROM git_facts g LEFT JOIN people p ON p.id=g.person_id"
-                " WHERE g.project=? AND g.time>? ORDER BY g.time DESC, g.id DESC",
-                (project, now - days * 86400)).fetchall()
+                " FROM (SELECT *, LAG(branch) OVER w AS prev_branch, LAG(subject) OVER w AS"
+                " prev_subject, LAG(id) OVER w AS prev_id FROM git_facts"
+                " WINDOW w AS (PARTITION BY host, os_user, cwd ORDER BY id)) g"
+                " LEFT JOIN people p ON p.id=g.person_id"
+                " WHERE g.project=? AND g.time>? AND (g.prev_id IS NULL OR"
+                " g.branch IS NOT g.prev_branch OR g.subject IS NOT g.prev_subject)"
+                " ORDER BY g.time DESC, g.id DESC LIMIT ?",
+                (project, now - days * 86400, RECENT_LIMIT)).fetchall()
         return [{"person": r["person"] or r["os_user"], "host": r["host"], "branch": r["branch"],
                  "subject": r["subject"], "dirty": None if r["dirty"] is None else bool(r["dirty"]),
                  "time": r["time"]} for r in rows]
@@ -273,11 +305,20 @@ class MemoryStore:
                             " VALUES (?,?,?,?)", (project, key, person_id, now))
             self.db.commit()
 
-    def prune(self, now: float) -> int:
+    def prune(self, now: float) -> Dict[str, int]:
+        """Delete git facts older than 30 days, done checks of sessions offline (or gone) more
+        than 30 days, and state writes older than 30 days. Counts per table."""
         with self.lock:
-            return self.db.execute("DELETE FROM git_facts WHERE time<?",
-                                   (now - GIT_KEEP_S,)).rowcount
+            git = self.db.execute("DELETE FROM git_facts WHERE time<?",
+                                  (now - GIT_KEEP_S,)).rowcount
+            done = self.db.execute(
+                "DELETE FROM done_checks WHERE NOT EXISTS (SELECT 1 FROM agents a WHERE"
+                " a.key=done_checks.key AND a.last_seen>=?)", (now - DONE_KEEP_S,)).rowcount
+            writes = self.db.execute("DELETE FROM state_writes WHERE time<?",
+                                     (now - DONE_KEEP_S,)).rowcount
+            self.db.commit()
+        return {"git_facts": git, "done_checks": done, "state_writes": writes}
 
 
-def prune(store: Store, now: float) -> int:
+def prune(store: Store, now: float) -> Dict[str, int]:
     return MemoryStore(store).prune(now)
