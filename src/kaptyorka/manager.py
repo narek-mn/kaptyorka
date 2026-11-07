@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from kaptyorka import paths, rules
+from kaptyorka.adapters import claude as claude_adapter
 from kaptyorka.adapters.base import write_atomic
 from kaptyorka.store import ONLINE_S, Store
 
@@ -62,28 +63,42 @@ The team rules above bind you too.
 """
 
 
-# the manager folder's own Claude Code settings: its kaptyorka tools only
-SETTINGS = {"permissions": {
-    "allow": ["mcp__kaptyorka__*"],
-    "deny": ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
-             "Read(~/.kaptyorka/**)"]}}
+# The manager session's settings and MCP config, passed with `--settings` and
+# `--strict-mcp-config --mcp-config` (with `--restricted`, user and project settings are not
+# read): the kaptyorka tools only. The hooks are the ones `join` installs for Claude Code.
+DENY = ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Read", "Glob", "Grep",
+        "Agent", "Task"]
+SETTINGS_FILE = paths.MANAGER_SETTINGS
+MCP_FILE = paths.MANAGER_MCP
 
 
-def write_settings(dir: Path) -> bool:
-    """`dir`/.claude/settings.json, written (atomically) only when its content differs."""
-    path = Path(dir) / ".claude" / "settings.json"
-    text = json.dumps(SETTINGS, indent=2) + "\n"
-    try:
-        if path.read_text() == text:
-            return False
-    except (OSError, UnicodeDecodeError):
-        pass
-    for link in (path.parent, path):  # never write through a link (to a user's own settings)
-        if link.is_symlink():
-            link.unlink()
-    path.parent.mkdir(mode=0o700, exist_ok=True)
-    write_atomic(path, text)
-    return True
+def settings(kaptyorka: str) -> dict:
+    return {"permissions": {"allow": ["mcp__kaptyorka__*"], "deny": list(DENY)},
+            "hooks": claude_adapter.hooks(kaptyorka)}
+
+
+def mcp_config(kaptyorka: str) -> dict:
+    return {"mcpServers": {"kaptyorka": {"command": kaptyorka, "args": ["mcp"]}}}
+
+
+def write_launch_files(dir: Path, kaptyorka: str) -> bool:
+    """`dir`/settings.json and `dir`/mcp.json, each written (atomically) only when its content
+    differs; never through a link. True when one was written."""
+    changed = False
+    for name, data in ((SETTINGS_FILE, settings(kaptyorka)), (MCP_FILE, mcp_config(kaptyorka))):
+        path = Path(dir) / name
+        text = json.dumps(data, indent=2) + "\n"
+        if not path.is_symlink():
+            try:
+                if path.read_text() == text:
+                    continue
+            except (OSError, UnicodeDecodeError):
+                pass
+        else:
+            path.unlink()
+        write_atomic(path, text)
+        changed = True
+    return changed
 
 
 def claude_md(rules_text: str) -> str:
@@ -208,12 +223,11 @@ class ManagerStore:
 
     def write_files(self, dir: Path, hub_url: str, token: Optional[str], rules_text: str,
                     config: Optional[Path] = None) -> None:
-        """CLAUDE.md and .claude/settings.json in `dir`; with a token, the config (default
-        paths.home()/CONFIG)."""
+        """CLAUDE.md in `dir`; with a token, the config (default paths.home()/CONFIG). The
+        launch files are `write_launch_files`, checked on every tick."""
         dir = Path(dir)
         dir.mkdir(parents=True, exist_ok=True)
         write_atomic(dir / "CLAUDE.md", claude_md(rules_text))
-        write_settings(dir)
         if token:
             cfg = {"hub": hub_url, "token": token,
                    "machine": f"{PERSON}@{self._host_of_account() or _host()}", "person": PERSON}

@@ -20,6 +20,19 @@ def _newer(version: str) -> bool:
         return False
 
 
+HOOKS = (("SessionStart", "start"), ("UserPromptSubmit", "prompt"), ("Stop", "stop"))
+
+
+def hook_entry(kaptyorka: str, name: str) -> dict:
+    command = f"{shlex.quote(kaptyorka)} hook claude-code {name}"
+    return {"hooks": [{"type": "command", "command": command, "timeout": 5}]}
+
+
+def hooks(kaptyorka: str) -> dict:
+    """The settings `hooks` block that `configure` installs, on its own."""
+    return {event: [hook_entry(kaptyorka, name)] for event, name in HOOKS}
+
+
 class ClaudeAdapter:
     tool = "claude-code"
     prefix = "claude"
@@ -111,9 +124,8 @@ class ClaudeAdapter:
         def add_hooks(data: dict) -> bool:
             hooks = data.setdefault("hooks", {})
             changed = False
-            for event, name in (("SessionStart", "start"), ("UserPromptSubmit", "prompt"), ("Stop", "stop")):
-                command = f"{shlex.quote(kaptyorka)} hook claude-code {name}"
-                entry = {"hooks": [{"type": "command", "command": command, "timeout": 5}]}
+            for event, name in HOOKS:
+                entry = hook_entry(kaptyorka, name)
                 entries = hooks.setdefault(event, [])
                 ours = [i for i, e in enumerate(entries) if any(
                     str(h.get("command", "")).endswith(f" hook claude-code {name}")

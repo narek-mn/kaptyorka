@@ -229,35 +229,61 @@ def test_load_config_by_folder(tmp_path, monkeypatch):
     assert paths.load_config(str(folder)) == {}
 
 
-SETTINGS_WANTED = {"permissions": {
-    "allow": ["mcp__kaptyorka__*"],
-    "deny": ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
-             "Read(~/.kaptyorka/**)"]}}
+EXE = "/opt/k y/bin/kaptyorka"
+HOOKS_WANTED = {
+    "SessionStart": [{"hooks": [{"type": "command", "timeout": 5,
+                                 "command": "'/opt/k y/bin/kaptyorka' hook claude-code start"}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "timeout": 5,
+                                     "command": "'/opt/k y/bin/kaptyorka' hook claude-code prompt"}]}],
+    "Stop": [{"hooks": [{"type": "command", "timeout": 5,
+                         "command": "'/opt/k y/bin/kaptyorka' hook claude-code stop"}]}]}
+SETTINGS_WANTED = {
+    "permissions": {"allow": ["mcp__kaptyorka__*"],
+                    "deny": ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
+                             "Read", "Glob", "Grep", "Agent", "Task"]},
+    "hooks": HOOKS_WANTED}
+MCP_WANTED = {"mcpServers": {"kaptyorka": {"command": EXE, "args": ["mcp"]}}}
 
 
-def test_settings_written_rewritten_and_left_alone(tmp_path, ms):
+def test_launch_files_written_rewritten_and_left_alone(tmp_path):
     d = tmp_path / "m"
-    ms.write_files(d, "http://hub", None, "r")
-    path = d / ".claude" / "settings.json"
-    assert json.loads(path.read_text()) == SETTINGS_WANTED
-    os.utime(path, ns=(1, 1))
-    assert manager.write_settings(d) is False and path.stat().st_mtime_ns == 1  # equal: untouched
-    path.write_text('{"permissions": {"allow": ["Bash"]}}')
-    assert manager.write_settings(d) is True
-    assert json.loads(path.read_text()) == SETTINGS_WANTED
-
-
-def test_settings_never_written_through_a_link(tmp_path):
-    d = tmp_path / "m"
-    own = tmp_path / "user-claude"
-    own.mkdir()
-    (own / "settings.json").write_text("{}")
     d.mkdir()
-    (d / ".claude").symlink_to(own)
-    manager.write_settings(d)
-    assert (own / "settings.json").read_text() == "{}"
-    assert not (d / ".claude").is_symlink()
-    assert json.loads((d / ".claude" / "settings.json").read_text()) == SETTINGS_WANTED
+    assert manager.write_launch_files(d, EXE) is True
+    assert json.loads((d / "settings.json").read_text()) == SETTINGS_WANTED
+    assert json.loads((d / "mcp.json").read_text()) == MCP_WANTED
+    assert not (d / ".claude").exists()
+    for name in ("settings.json", "mcp.json"):
+        os.utime(d / name, ns=(1, 1))
+    assert manager.write_launch_files(d, EXE) is False  # equal: untouched
+    assert all((d / n).stat().st_mtime_ns == 1 for n in ("settings.json", "mcp.json"))
+    (d / "settings.json").write_text('{"permissions": {"allow": ["Bash"]}}')
+    (d / "mcp.json").unlink()
+    assert manager.write_launch_files(d, EXE) is True
+    assert json.loads((d / "settings.json").read_text()) == SETTINGS_WANTED
+    assert json.loads((d / "mcp.json").read_text()) == MCP_WANTED
+
+
+def test_launch_files_hooks_are_the_ones_join_installs(tmp_path):
+    from kaptyorka.adapters.claude import ClaudeAdapter
+
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    ClaudeAdapter(home=home, log=lambda line: None,
+                  run=lambda *a, **k: type("R", (), {"returncode": 0})()).configure(EXE)
+    installed = json.loads((home / ".claude" / "settings.json").read_text())["hooks"]
+    assert manager.settings(EXE)["hooks"] == installed == HOOKS_WANTED
+
+
+def test_launch_files_never_written_through_a_link(tmp_path):
+    d = tmp_path / "m"
+    d.mkdir()
+    own = tmp_path / "user-settings.json"
+    own.write_text("{}")
+    (d / "settings.json").symlink_to(own)
+    manager.write_launch_files(d, EXE)
+    assert own.read_text() == "{}"
+    assert not (d / "settings.json").is_symlink()
+    assert json.loads((d / "settings.json").read_text()) == SETTINGS_WANTED
 
 
 def test_manager_section_says_messages_are_not_orders():

@@ -49,7 +49,11 @@ def test_readme_manager_section():
     for s in ["claude attach manager", "--no-manager", "work_decide", "~/.kaptyorka/manager/", "manager-config.json",
               "cannot answer other people's knocks", "It messages, knocks and files proposals",
               "signs in as the manager, so exit it", "`kaptyorka start --manager`",
-              "`.claude/settings.json`", "closes a manager session still running",
+              "`--settings ~/.kaptyorka/manager/settings.json`",
+              "`--strict-mcp-config --mcp-config ~/.kaptyorka/manager/mcp.json`", "`--restricted`",
+              "`--tools=ToolSearch`", "`--append-system-prompt-file ~/.kaptyorka/manager/CLAUDE.md`",
+              "do not skip this one-time trust step",
+              "closes a manager session still running",
               "an offline bridge and a day-old proposal or request are sent once a day",
               "the failed-twice note at most once an hour", "the review once a week"]:
         assert s in m, s

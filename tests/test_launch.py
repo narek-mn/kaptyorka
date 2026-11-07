@@ -265,3 +265,15 @@ def test_folder_override(home):
     for bad in ("", "rel/manager", str(home / "gone"), None, str(home / "manager")):
         with pytest.raises(LaunchError, match="no manager folder"):
             launcher.folder_for(order(manager=True, project="manager", folder=bad))
+
+
+def test_manager_command_runs_on_its_own_settings_and_mcp_config(launcher):
+    m = "/h/.kaptyorka/manager"
+    argv = launcher.command(order(manager=True, worker="manager", folder=m), m)
+    assert argv == ["claude", "--bg", "-n", "manager", "--settings", f"{m}/settings.json",
+                    "--strict-mcp-config", "--mcp-config", f"{m}/mcp.json", "--restricted",
+                    "--tools=ToolSearch", "--append-system-prompt-file", f"{m}/CLAUDE.md",
+                    FIRST + "fix the tests"]
+    assert "--dangerously-skip-permissions" not in argv and "--resume" not in argv
+    with pytest.raises(LaunchError, match="no manager support"):
+        launcher.command(order(manager=True, worker="manager", tool="codex", folder=m), m)

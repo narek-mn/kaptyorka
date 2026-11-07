@@ -11,6 +11,7 @@ import re
 import sys
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from dataclasses import asdict, replace
 from typing import Dict, List, Mapping, Optional, Union
 from urllib.parse import unquote
@@ -107,8 +108,8 @@ def _tool_errors(fn):
     return wrapper
 
 
-MANAGER_FIRST = ("You are the team's manager session; read CLAUDE.md in this folder and wait for"
-                 " the hub's messages.")
+MANAGER_FIRST = ("You are the team's manager session; follow the team rules and manager"
+                 " instructions in your system prompt and wait for the hub's messages.")
 MANAGER_FAILED = ("the manager session failed to start twice; see"
                   " ~/.kaptyorka/workers/manager.log on the hub machine")
 MANAGER_UNTRUSTED = ("the manager cannot start: Claude Code does not trust ~/.kaptyorka/manager"
@@ -202,7 +203,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             folder.mkdir(mode=0o700, parents=True, exist_ok=True)
             mm.write_files(folder, manager_url, token, rules_now["text"])
             mm.mark_rules_written(rules_now["version"])
-        manager.write_settings(folder)  # put back at once when changed or removed
+        # put back at once when changed or removed; the shim is this hub's own executable
+        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+        manager.write_launch_files(folder, str(Path(sys.argv[0]).resolve()))
 
     def manager_pushes(now: float) -> None:
         """Tell the online manager session what needs the admin; each item once."""

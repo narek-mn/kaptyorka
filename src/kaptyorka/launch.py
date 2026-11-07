@@ -88,9 +88,20 @@ class Launcher:
 
     def command(self, order: dict, folder: str) -> List[str]:
         """The tool's argv; the first message is one element, never a shell string.
-        Never any permission flag: the worker asks like any session."""
+        Never any permission flag: the worker asks like any session. The manager runs on its
+        folder's own settings and MCP config only, with the kaptyorka tools and ToolSearch;
+        `--restricted` loads no CLAUDE.md, so its folder's one is passed as system prompt."""
         name, tool = self._name(order), order.get("tool")
         first = _plain(order.get("first_message"), "first message")
+        if order.get("manager") is True:
+            if tool != "claude-code":
+                raise LaunchError(f"no manager support for {tool}")
+            base = Path(folder)
+            # `--tools=` as one element: the variadic `--tools x` would take the first message
+            return ["claude", "--bg", "-n", name, "--settings", str(base / paths.MANAGER_SETTINGS),
+                    "--strict-mcp-config", "--mcp-config", str(base / paths.MANAGER_MCP),
+                    "--restricted", "--tools=ToolSearch",
+                    "--append-system-prompt-file", str(base / "CLAUDE.md"), first]
         resume = order.get("resume")
         if resume is not None:
             resume = _plain(resume, "resume id")

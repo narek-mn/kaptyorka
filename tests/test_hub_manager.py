@@ -1,6 +1,8 @@
 """The hub keeps the manager session alive through the admin's own bridge on its machine."""
 import json
 import os
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -98,14 +100,16 @@ def test_manager_tick_writes_files_and_rewrites_on_rules_change(hub):
     assert cfg["machine"] == f"manager@{HOST}"
     assert hub.store.authenticate(cfg["token"]).role == "manager"
     assert "No team rules yet." in (hub.folder / "CLAUDE.md").read_text()
-    settings = hub.folder / ".claude" / "settings.json"
-    assert json.loads(settings.read_text()) == {"permissions": {
-        "allow": ["mcp__kaptyorka__*"],
-        "deny": ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
-                 "Read(~/.kaptyorka/**)"]}}
+    exe = str(Path(sys.argv[0]).resolve())  # the hub's own executable runs the shim
+    settings, mcp = hub.folder / "settings.json", hub.folder / "mcp.json"
+    assert json.loads(settings.read_text()) == manager.settings(exe)
+    assert json.loads(mcp.read_text()) == manager.mcp_config(exe)
+    assert not (hub.folder / ".claude").exists()
     settings.unlink()
+    mcp.write_text("{}")
     hub.tick()
-    assert settings.exists()  # put back on the next tick
+    assert json.loads(settings.read_text()) == manager.settings(exe)  # put back on the next tick
+    assert json.loads(mcp.read_text()) == manager.mcp_config(exe)
     assert json.loads(hub.config.read_text()) == cfg
     RulesStore(hub.store).set_rules("always run the tests", "root")
     hub.tick()

@@ -5,6 +5,8 @@ from typing import Optional
 
 MANAGER_DIR = "manager"  # the manager session's folder under home()
 MANAGER_CONFIG = "manager-config.json"  # its config, under home(): outside its working folder
+MANAGER_SETTINGS = "settings.json"  # in its folder, passed with --settings
+MANAGER_MCP = "mcp.json"  # in its folder, passed with --mcp-config
 
 
 def home() -> Path:
