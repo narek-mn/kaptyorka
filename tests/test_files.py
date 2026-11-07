@@ -149,7 +149,10 @@ def test_oversize_chunked_stops_at_limit(hub, home):
                                  headers={"Authorization": f"Bearer {tok}", "X-File-Name": "a.png",
                                           "Transfer-Encoding": "chunked"})
     import urllib.error
-    with pytest.raises(urllib.error.HTTPError) as e:
+    # the hub answers 400 and closes as soon as the limit is passed, while the client is still
+    # sending: Linux lets the client read the answer, macOS may report a reset or broken pipe
+    with pytest.raises((urllib.error.HTTPError, urllib.error.URLError, OSError)) as e:
         urllib.request.urlopen(req)
-    assert e.value.code == 400 and b"file too large" in e.value.read()
+    if isinstance(e.value, urllib.error.HTTPError):
+        assert e.value.code == 400 and b"file too large" in e.value.read()
     assert hub.store.db.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
