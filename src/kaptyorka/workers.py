@@ -702,26 +702,40 @@ class WorkerStore:
                 raise KaptyorkaError(f"no worker {name} of yours")
             if w["state"] in ("closed", "failed"):
                 raise KaptyorkaError(f"worker {name} is already {w['state']}")
-            now = self.clock()
-            dev = self.db.execute("SELECT last_used, revoked_at FROM devices WHERE id=?",
-                                  (w["device_id"],)).fetchone()
-            offline = dev is None or dev["revoked_at"] is not None or \
-                dev["last_used"] is None or dev["last_used"] <= now - ONLINE_S
-            notes = []
-            if w["state"] == "starting":  # nothing to kill yet: the launch is never sent
-                self._end(name, "", "closed before start", now)
-            elif offline:  # nobody would take a close order: closed here and now
-                self._end(name, "", "bridge offline", now)
-                notes.append(f"the bridge is offline; the session may still run on {w['host']}")
-            else:
-                self._queue(w["device_id"], name, "close", {
-                    "issued": now, "worker": name, "tool": w["tool"], "key": w["key"]})
-            out = self._dict(self._row(name))
-            if w["worktree"]:
-                notes.append(f"its worktree {w['folder']} stays in place")
-            if notes:
-                out["note"] = "; ".join(notes)
-            return out
+            return self._close(w, name)
+
+    def close_manager(self) -> Optional[dict]:
+        """The hub closes a live manager worker (switched off): the same order a person's
+        close sends. None when no manager worker is live."""
+        from kaptyorka.manager import WORKER  # here: manager imports the store
+        with self.lock:
+            w = self._row(WORKER)
+            if w is None or not w["manager"] or w["state"] not in LIVE:
+                return None
+            return self._close(w, WORKER)
+
+    def _close(self, w, name: str) -> dict:
+        """Close a live worker row; under the lock."""
+        now = self.clock()
+        dev = self.db.execute("SELECT last_used, revoked_at FROM devices WHERE id=?",
+                              (w["device_id"],)).fetchone()
+        offline = dev is None or dev["revoked_at"] is not None or \
+            dev["last_used"] is None or dev["last_used"] <= now - ONLINE_S
+        notes = []
+        if w["state"] == "starting":  # nothing to kill yet: the launch is never sent
+            self._end(name, "", "closed before start", now)
+        elif offline:  # nobody would take a close order: closed here and now
+            self._end(name, "", "bridge offline", now)
+            notes.append(f"the bridge is offline; the session may still run on {w['host']}")
+        else:
+            self._queue(w["device_id"], name, "close", {
+                "issued": now, "worker": name, "tool": w["tool"], "key": w["key"]})
+        out = self._dict(self._row(name))
+        if w["worktree"]:
+            notes.append(f"its worktree {w['folder']} stays in place")
+        if notes:
+            out["note"] = "; ".join(notes)
+        return out
 
     def _end(self, name: str, error: str, order_error: str, now: float) -> None:
         """Closed by the hub alone: the worker and its orders still waiting. Under the lock."""

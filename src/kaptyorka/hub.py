@@ -122,6 +122,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     mm = ManagerStore(store)
     brief_cache: dict = {}  # per session key; see brief.cached
     decide_lock = threading.Lock()
+    work_decide_lock = threading.Lock()  # one decision per request, even when two race
+    started = {"first": True}  # the first tick closes a manager left running while off
 
     def principal_of(headers: Mapping) -> Principal:
         """The caller's principal from its bearer token (the Auth middleware already let it in)."""
@@ -200,7 +202,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     def manager_pushes(now: float) -> None:
         """Tell the online manager session what needs the admin; each item once."""
-        key = mm.session_key(now)
+        key = mm.session_key(now) if mm.enabled() else None
         if key is None:
             return
 
@@ -235,8 +237,18 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
              " propose_rule for what repeats; never edit rules")
 
     def manager_tick(now: float) -> None:
+        if started["first"]:
+            started["first"] = False
+            close_if_off()
         keep_manager(now)
         manager_pushes(now)
+
+    def close_if_off() -> None:
+        """A hub started with the manager switched off closes a manager still running."""
+        if mm.enabled() or ws.close_manager() is None:
+            return
+        store.log_add("hub", "manager", "closed: switched off")
+        wake_bridges()
 
     def keep_manager(now: float) -> None:
         """Keep the manager session alive through the admin's own bridge on this machine."""
@@ -492,7 +504,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             others = [n for n in ws.folder_people(chosen["host"], chosen["os_user"],
                                                   chosen["folder"], store.clock())
                       if n and n != principal.person_name]
-            manager_key = mm.session_key(store.clock()) if others else None
+            manager_key = mm.session_key(store.clock()) if others and mm.enabled() else None
             if manager_key is not None:
                 rid = mm.request_add(principal.person_id, agent.key, project, task, tool,
                                      resume or None, chosen["host"], others[0],
@@ -519,9 +531,16 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         _, principal = caller(ctx)
         if principal.role != "manager":
             raise KaptyorkaError("only the manager decides work requests")
+        if not mm.enabled():
+            raise KaptyorkaError("the manager is switched off")
         reason = clean(reason, 500)
         if not reason:
             raise KaptyorkaError("a decision needs a reason")
+        with work_decide_lock:
+            return decide_request(request_id, machine, reason, principal)
+
+    def decide_request(request_id: int, machine: str, reason: str, principal: Principal) -> str:
+        """work_decide's body, under work_decide_lock."""
         r = mm.request(request_id)
         if r is None:
             raise KaptyorkaError(f"no request {request_id}")

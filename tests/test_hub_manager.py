@@ -33,7 +33,7 @@ def hub(tmp_path, clock, monkeypatch):
                                                     "version": kaptyorka.__version__})
     store = Store(tmp_path / "hub.db", clock=lambda: clock[0], legacy_token="T")
     mm = ManagerStore(store)
-    mm.set_enabled(False, "test")  # the start-up tick must not race the test
+    mm.set_enabled(False, "test")  # the start-up tick must not race the test; tests switch it on
     stop = start_hub(store, manager_url=URL)
     yield SimpleNamespace(url=f"http://127.0.0.1:{stop.port}", store=store, mm=mm,
                           ws=WorkerStore(store), tick=stop.app.state.tick,
@@ -223,6 +223,8 @@ def test_manager_failure_never_stops_the_worker_tick(hub, monkeypatch, capsys):
 # busy machines go to the manager
 
 def manager_online(hub):
+    """The manager's session online, with the switch on (as a running hub has it)."""
+    hub.mm.set_enabled(True, "test")
     pid, token = person(hub.store, "manager", "manager")
     client = SimpleNamespace(url=hub.url, token=token)
     me = ident("k:mgr", project="manager")
@@ -524,3 +526,95 @@ def test_non_admin_close_leaves_the_switch(hub):
     answer = run(call(bob, ident("k:bob"), "close_worker", name="proj-a-w1"))
     assert "switched off" not in answer and hub.mm.enabled() is True
     assert hub.ws.by_name("proj-a-w1")["manager"] is False
+
+
+# the switch binds a manager that is already running
+
+def test_switched_off_manager_gets_no_pushes(hub, clock):
+    mgr, me = manager_online(hub)
+    hub.mm.set_enabled(False, "test")
+    hub.tick()
+    assert drain(hub, mgr, me) == []
+    with hub.store.lock:
+        assert hub.store.db.execute("SELECT COUNT(*) FROM manager_pushes").fetchone()[0] == 0
+
+
+def test_switched_off_busy_work_answers_as_without_manager(hub):
+    mgr, me = manager_online(hub)
+    _, _, bob = busy_setup(hub)
+    hub.mm.set_enabled(False, "test")
+    assert ask(hub, bob) == ("busy: box-1 has alice's session in that folder; ask again later or"
+                             " name another machine")
+    assert hub.mm.request(1) is None and drain(hub, mgr, me) == []
+
+
+def test_switched_off_work_decide_refused(hub):
+    mgr, me = manager_online(hub)
+    _, _, bob = busy_setup(hub)
+    ask(hub, bob)
+    hub.mm.set_enabled(False, "test")
+    assert "the manager is switched off" in call_error(mgr, me, "work_decide", request_id=1,
+                                                       machine="wait", reason="x")
+    assert hub.mm.request(1)["decided_at"] is None
+
+
+def running_manager(hub):
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    ack(hub, b, o)
+    mtoken = json.loads(hub.config.read_text())["token"]
+    hub.store.seen("claude:m1", f"manager@{HOST}", "claude-code", "manager",
+                   principal=hub.store.authenticate(mtoken))
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "manager", "key": "claude:m1"})[0] == 204
+    assert state(hub) == "up"
+    return b
+
+
+def test_hub_started_off_closes_a_running_manager(hub):
+    from kaptyorka.hub import build_app
+    b = running_manager(hub)
+    hub.mm.set_enabled(False, "hub")  # kaptyorka start --no-manager, then the hub restarts
+    restarted = build_app(hub.store, manager_url=URL).state.tick
+    restarted()
+    [close] = [x for x in orders(hub, b) if x.get("kind") == "close"]
+    assert close["worker"] == "manager" and close["key"] == "claude:m1"
+    with hub.store.lock:
+        rows = [(r["person"], r["kind"], r["detail"]) for r in hub.store.db.execute(
+            "SELECT * FROM log WHERE kind='manager' ORDER BY id")]
+    assert rows[-1] == ("hub", "manager", "closed: switched off")
+    restarted()  # only the first tick closes; nothing new is queued
+    assert [x for x in orders(hub, b) if x.get("kind") == "close"] == []
+
+
+def test_hub_started_on_leaves_a_running_manager(hub):
+    from kaptyorka.hub import build_app
+    b = running_manager(hub)
+    build_app(hub.store, manager_url=URL).state.tick()
+    assert [x for x in orders(hub, b) if x.get("kind") == "close"] == [] and state(hub) == "up"
+
+
+def test_two_racing_decisions_start_one_worker(hub, monkeypatch):
+    import asyncio
+    import time
+    from helpers import call_result
+    mgr, me = manager_online(hub)
+    _, _, bob = busy_setup(hub)
+    ask(hub, bob)
+    real = WorkerStore.create
+
+    def slow(self, *a, **kw):
+        time.sleep(0.5)  # both calls are inside work_decide at once
+        return real(self, *a, **kw)
+    monkeypatch.setattr(WorkerStore, "create", slow)
+
+    async def both():
+        return await asyncio.gather(*(call_result(mgr, me, "work_decide", request_id=1,
+                                                  machine="box-1", reason=f"go {i}")
+                                      for i in range(2)))
+    results = run(both())
+    errors = [r.content[0].text for r in results if r.is_error]
+    assert len(errors) == 1 and "already decided" in errors[0]
+    assert hub.ws.by_name("proj-a-w1") is not None and hub.ws.by_name("proj-a-w2") is None
