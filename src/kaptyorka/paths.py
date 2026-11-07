@@ -10,8 +10,8 @@ def home() -> Path:
 
 
 def config_path() -> Path:
-    override = os.environ.get("KAPTYORKA_CONFIG")
-    return Path(override) if override else home() / "config.json"
+    override = os.environ.get("KAPTYORKA_CONFIG") or ""
+    return Path(override) if os.path.isabs(override) else home() / "config.json"
 
 
 def load_config() -> dict:

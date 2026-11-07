@@ -2,6 +2,7 @@
 from dataclasses import asdict
 from typing import Optional
 
+from kaptyorka.manager import ManagerStore
 from kaptyorka.store import PRIVATE, Agent, Principal, Store, private_name
 
 
@@ -20,9 +21,10 @@ def visible(store: Store, principal: Principal, person_id, project: str) -> bool
 
 
 def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: float,
-                workers: Optional[dict] = None, ws=None) -> dict:
+                workers: Optional[dict] = None, ws=None, manager_id: Optional[int] = None) -> dict:
     """One online session as the viewer may see it (the who() rule). `workers` maps the
-    sessions of live workers to their names; a worker's name shows only with its project."""
+    sessions of live workers to their names; a worker's name shows only with its project.
+    `manager_id`: the manager person's id; their session gets role "manager"."""
     mine = a.person_id == principal.person_id
     row = {**agent_row(a, now), "mine": mine, "person": names.get(a.person_id, "")}
     if not visible(store, principal, a.person_id, a.project):
@@ -30,6 +32,8 @@ def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: 
         row["name"] = private_name(a.name, a.machine, a.tool, a.project)
     elif workers and a.key in workers:
         row["worker"] = workers[a.key]
+    if manager_id is not None and a.person_id == manager_id:
+        row["role"] = "manager"
     row["harness"] = None
     if ws is not None and a.device_id is not None:
         row["harness"] = ws.facts(a.device_id).get("harness", {}).get(a.tool)
@@ -71,10 +75,12 @@ def feed(store: Store, principal: Principal, ws=None) -> dict:
     names = {p["id"]: p["name"] for p in people}
     admin = principal.is_admin()
     me = principal.person_name
+    mid = ManagerStore(store).person_id()
     doors = [masked(store, principal, d, (("_a", "a_session"), ("_b", "b_session")))
              for d in store.doors(sides=True) if admin or me in (d["a_person"], d["b_person"])]
     out = {
-        "agents": [session_row(store, a, principal, names, now, ws=ws) for a in store.online()],
+        "agents": [session_row(store, a, principal, names, now, ws=ws, manager_id=mid)
+                   for a in store.online()],
         "messages": [masked(store, principal, m, (("_from", "sender"), ("_to", "to")))
                      for m in store.messages_for(principal, 500)],
         "notes": _notes(store, principal),

@@ -139,6 +139,12 @@ MAX_ACTIVITY = 200
 MAX_CWD = 200
 
 
+def manager_folder() -> str:
+    """The manager's folder on the hub machine: manager.DIR under the hub's home."""
+    from kaptyorka import manager  # here: manager imports this module
+    return str(paths.home() / manager.DIR)
+
+
 def clean(value, cap: int) -> str:
     """A client-supplied name or text as the hub keeps it: one line, at most `cap` characters."""
     return _one_line(str(value if value is not None else ""))[:cap]
@@ -1035,7 +1041,7 @@ class Store:
 
     def _manager_takes(self, principal, held, now) -> bool:
         """True when the manager may take a session the admin's bridge saw first: a fresh row
-        of the admin's own bridge on the manager's host, in the `manager` folder. No lock."""
+        of the admin's own bridge on the manager's host, in the manager's own folder. No lock."""
         if principal.role != "manager" or self._role_of(held["person_id"]) != "admin":
             return False
         dev = self.db.execute("SELECT host, legacy, shared, revoked_at FROM devices WHERE id=?",
@@ -1044,7 +1050,7 @@ class Store:
         return (dev is not None and bool(host) and dev["host"] == host and not dev["legacy"]
                 and not dev["shared"] and dev["revoked_at"] is None
                 and now - held["last_seen"] < ONLINE_S and held["project"] == "manager"
-                and (held["cwd"] or "").rstrip("/").endswith("/manager"))
+                and (held["cwd"] or "").rstrip("/") == manager_folder())
 
     def _role_of(self, person_id) -> Optional[str]:
         """A person's role; no lock, for use inside locked blocks."""

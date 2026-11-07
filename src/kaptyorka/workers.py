@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS workers (
     key TEXT,
     state TEXT NOT NULL CHECK(state IN ('starting','up','unattended','abandoned','closed','failed')),
     error TEXT NOT NULL DEFAULT '', created REAL NOT NULL, up_at REAL, unattended_since REAL,
-    closed_at REAL, waiting_told REAL, told REAL, needs_brief INTEGER NOT NULL DEFAULT 0);
+    closed_at REAL, waiting_told REAL, told REAL, needs_brief INTEGER NOT NULL DEFAULT 0,
+    manager INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS launches (
     id INTEGER PRIMARY KEY AUTOINCREMENT, device_id INTEGER NOT NULL, worker TEXT NOT NULL,
     kind TEXT NOT NULL CHECK(kind IN ('launch','close')), body TEXT NOT NULL,
@@ -51,6 +52,8 @@ def ensure_schema(db) -> None:
         db.execute("ALTER TABLE workers ADD COLUMN told REAL")  # a Task 2 database
     if "needs_brief" not in cols:
         db.execute("ALTER TABLE workers ADD COLUMN needs_brief INTEGER NOT NULL DEFAULT 0")
+    if "manager" not in cols:
+        db.execute("ALTER TABLE workers ADD COLUMN manager INTEGER NOT NULL DEFAULT 0")
 
 
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -345,6 +348,37 @@ class WorkerStore:
                 "boss": boss_name, "resume": resume, "first_message": first})
             return self._dict(self._row(name))
 
+    def create_manager(self, admin_person_id: int, manager_person_id: int, device: dict,
+                       folder: str, config_path: str, first_message: str) -> dict:
+        """The manager worker on the admin's own bridge (`device`: a devices row, as
+        ManagerStore.admin_device gives it). Its boss is the admin's page; `link` gives its
+        session to the manager person. The order runs in `folder` exactly, with only
+        KAPTYORKA_CONFIG added to the environment. An ended manager row is replaced."""
+        from kaptyorka.manager import WORKER  # here: manager imports the store
+        with self.lock:
+            now = self.clock()
+            if self.db.execute("SELECT 1 FROM workers WHERE name=? AND state IN"
+                               f" ({','.join('?' * len(LIVE))})", (WORKER, *LIVE)).fetchone():
+                raise KaptyorkaError("the manager is already running")
+            self._signing(device["id"])  # before anything is written
+            admin = self._person_name(admin_person_id)
+            task = "the team's manager"
+            self.db.execute("UPDATE launches SET done_at=?, ok=0, error='replaced' WHERE"
+                            " worker=? AND done_at IS NULL", (now, WORKER))
+            self.db.execute("DELETE FROM workers WHERE name=?", (WORKER,))
+            self.db.execute(
+                "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+                " tool, folder, worktree, state, created, manager)"
+                " VALUES (?,?,?,?,?,?,?,?,?,0,'starting',?,1)",
+                (WORKER, "manager", task, f"web:{admin}", manager_person_id, device["id"],
+                 device["host"], "claude-code", folder, now))
+            self._queue(device["id"], WORKER, "launch", {
+                "issued": now, "worker": WORKER, "person": admin, "tool": "claude-code",
+                "project": "manager", "folder": folder, "worktree": False, "task": task,
+                "boss": admin, "resume": None, "first_message": first_message,
+                "manager": True, "env": {"KAPTYORKA_CONFIG": config_path}})
+            return self._dict(self._row(WORKER))
+
     def offer(self, device_id: int) -> List[dict]:
         with self.lock:
             now = self.clock()
@@ -566,7 +600,8 @@ class WorkerStore:
                 " LEFT JOIN agents b ON b.key=w.boss_key LEFT JOIN devices d ON d.id=w.device_id"
                 " WHERE w.state IN ('up','unattended')").fetchall()
             for w in rows:
-                boss_online = w["boss_key"].startswith("web:") or (  # the page: always there
+                # the page is always there; the manager is never unattended or abandoned
+                boss_online = bool(w["manager"]) or w["boss_key"].startswith("web:") or (
                     w["boss_seen"] is not None and w["boss_seen"] > now - ONLINE_S)
                 own = w["own_seen"] if w["own_seen"] is not None else w["up_at"]
                 bridge_online = w["bridge_seen"] is not None and \
@@ -692,7 +727,7 @@ class WorkerStore:
                 "SELECT w.*, p.name AS person, d.os_user FROM workers w"
                 " LEFT JOIN people p ON p.id=w.boss_person"
                 " LEFT JOIN devices d ON d.id=w.device_id"
-                " WHERE w.state IN ('unattended','abandoned')"
+                " WHERE (w.state IN ('unattended','abandoned') AND w.manager=0)"
                 " OR (w.state='failed' AND w.created > ?) ORDER BY w.created",
                 (now - 86400,)).fetchall()
         for d in devices:

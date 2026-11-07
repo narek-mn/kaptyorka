@@ -384,10 +384,17 @@ def _row(s, key):
         return dict(s.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone())
 
 
-MS = {"key": "k:m", "tool": "claude", "project": "manager", "cwd": "/home/u/manager"}
+MS = {"key": "k:m", "tool": "claude", "project": "manager", "cwd": ""}
 
 
-def test_heartbeat_keeps_manager_session(tmp_path):
+@pytest.fixture
+def mhome(tmp_path, monkeypatch):
+    """The hub's home in tmp_path; MS sits in its manager folder."""
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "kh"))
+    monkeypatch.setitem(MS, "cwd", str(tmp_path / "kh" / "manager"))
+
+
+def test_heartbeat_keeps_manager_session(tmp_path, mhome):
     t = [1000.0]
     s = Store(tmp_path / "hub.db", clock=lambda: t[0])
     mid, tm = _member(s, "manager", "manager")
@@ -402,7 +409,7 @@ def test_heartbeat_keeps_manager_session(tmp_path):
     s.close()
 
 
-def test_heartbeat_skips_manager_session_from_other_bridges(tmp_path):
+def test_heartbeat_skips_manager_session_from_other_bridges(tmp_path, mhome):
     t = [1000.0]
     s = Store(tmp_path / "hub.db", clock=lambda: t[0])
     mid, tm = _member(s, "manager", "manager")
@@ -427,7 +434,7 @@ def test_heartbeat_skips_manager_session_from_other_bridges(tmp_path):
     s.close()
 
 
-def test_manager_takes_key_first_seen_by_admin_bridge(tmp_path):
+def test_manager_takes_key_first_seen_by_admin_bridge(tmp_path, mhome):
     t = [1000.0]
     s = Store(tmp_path / "hub.db", clock=lambda: t[0])
     mid, tm = _member(s, "manager", "manager")
@@ -443,7 +450,7 @@ def test_manager_takes_key_first_seen_by_admin_bridge(tmp_path):
     s.close()
 
 
-def test_manager_cannot_take_a_real_admin_session(tmp_path):
+def test_manager_cannot_take_a_real_admin_session(tmp_path, mhome):
     t = [1000.0]
     s = Store(tmp_path / "hub.db", clock=lambda: t[0])
     mid, tm = _member(s, "manager", "manager")
@@ -454,6 +461,11 @@ def test_manager_cannot_take_a_real_admin_session(tmp_path):
     s.seen("k:real", "root@box-1", "claude", "lab", principal=pa)
     with pytest.raises(KaptyorkaError, match="in use by another person"):
         s.seen("k:real", "m", "claude", "lab", principal=pm)
+    # a folder named manager, but not the manager's own folder
+    s.heartbeat("root@box-1", [{**MS, "key": "k:n", "cwd": "/home/u/manager"}], principal=pa,
+                facts=_facts("box-1"))
+    with pytest.raises(KaptyorkaError, match="in use by another person"):
+        s.seen("k:n", "m", "claude", "manager", principal=pm)
     # a heartbeat-only row, but not the manager folder
     s.heartbeat("root@box-1", [{"key": "k:o", "tool": "claude", "project": "lab",
                                 "cwd": "/home/u/lab"}], principal=pa, facts=_facts("box-1"))

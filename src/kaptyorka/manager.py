@@ -67,11 +67,17 @@ def ensure_schema(db) -> None:
     db.executescript(SCHEMA)
 
 
-def text_busy(person: str, project: str, machine: str, other: str, folder: str) -> str:
-    """The knock text for a busy machine; the caller fills in the request id with .format."""
+def request_line(rid: int, machine: str) -> str:
+    return (f"Request {rid}: work_decide({rid}, \"{machine}\" or another machine or"
+            " \"wait\", reason).")
+
+
+def text_busy(person: str, project: str, machine: str, other: str, folder: str,
+              rid: int) -> str:
+    """The knock text for a busy machine. Plain f-strings: braces in any value stay as they
+    are."""
     return (f"{person} wants {project} on {machine}, occupied by {other} in {folder}. "
-            "Ask them, or pick another machine. Request {id}: "
-            "work_decide({id}, \"" + machine + "\" or another machine or \"wait\", reason).")
+            "Ask them, or pick another machine. " + request_line(rid, machine))
 
 
 class ManagerStore:
@@ -214,6 +220,18 @@ class ManagerStore:
         if self.launches_last_hour(now) >= MAX_LAUNCHES_PER_HOUR:
             return False, "the manager was launched twice in the last hour"
         return True, ""
+
+    def failures_last_hour(self, now: float) -> int:
+        """Count the manager worker's failed start once (by its row's start time); return the
+        failed starts in the last hour."""
+        with self.lock:
+            row = self.db.execute("SELECT created FROM workers WHERE name=? AND state='failed'",
+                                  (WORKER,)).fetchone()
+        if row is not None:
+            self.push_once(f"manager-failure:{row['created']!r}", now)
+        with self.lock:
+            return self.db.execute("SELECT COUNT(*) FROM manager_pushes WHERE key LIKE"
+                                   " 'manager-failure:%' AND time>?", (now - 3600,)).fetchone()[0]
 
     def _host_of_account(self) -> str:
         pid = self.person_id()

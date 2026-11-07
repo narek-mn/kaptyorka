@@ -159,10 +159,18 @@ def test_claude_md_has_rules_and_section():
 
 
 def test_text_busy():
-    t = manager.text_busy("alice", "proj-a", "box-1", "bob", "/p").format(id=7)
+    t = manager.text_busy("alice", "proj-a", "box-1", "bob", "/p", 7)
     assert t == ("alice wants proj-a on box-1, occupied by bob in /p. Ask them, or pick another"
                  " machine. Request 7: work_decide(7, \"box-1\" or another machine or"
                  " \"wait\", reason).")
+    assert manager.request_line(7, "box-1") in t
+
+
+def test_text_busy_keeps_braces():
+    t = manager.text_busy("a{id}", "proj-a", "b{0}x", "{bob}", "/p/{x}", 3)
+    assert t.startswith("a{id} wants proj-a on b{0}x, occupied by {bob} in /p/{x}.")
+    assert t.endswith("Request 3: work_decide(3, \"b{0}x\" or another machine or \"wait\","
+                      " reason).")
 
 
 def test_session_key(store, ms, clock):
@@ -184,6 +192,13 @@ def test_config_path_override(tmp_path, monkeypatch):
     paths.save_config({"a": 1})
     assert json.loads(alt.read_text()) == {"a": 1}
     assert paths.load_config() == {"a": 1}
+
+
+@pytest.mark.parametrize("value", ["", "rel/c.json", "c.json"])
+def test_config_path_ignores_relative_or_empty_override(tmp_path, monkeypatch, value):
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "h"))
+    monkeypatch.setenv("KAPTYORKA_CONFIG", value)
+    assert paths.config_path() == tmp_path / "h" / "config.json"
 
 
 def test_config_written_0600_and_survives_failure(tmp_path, ms, monkeypatch):

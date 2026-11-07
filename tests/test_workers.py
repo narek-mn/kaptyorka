@@ -802,3 +802,78 @@ def test_clean_facts_keeps_harness_known_tools_only():
                                    "opencode": {"rules": True, "hooks": True, "skills": True}}})
     assert got["harness"] == {"codex": ok, "opencode": {"rules": True, "hooks": True, "skills": True}}
     assert "harness" not in clean_facts({"harness": "x", "load": 1})
+
+
+# the manager worker
+
+
+def manager_setup(store):
+    """An admin with a bridge on box-1 and the manager person; (admin id, manager id, row)."""
+    admin = person(store, "root", "admin")[0]
+    dev_id = device(store, admin, "box-1")[0]
+    mid = store.person_create("manager", "manager", "test")
+    with store.lock:
+        row = dict(store.db.execute("SELECT id, host, os_user FROM devices WHERE id=?",
+                                    (dev_id,)).fetchone())
+    return admin, mid, row
+
+
+def test_create_manager_order_has_env_and_folder(store, ws, clock):
+    admin, mid, row = manager_setup(store)
+    w = ws.create_manager(admin, mid, row, "/h/.kaptyorka/manager", "/h/.kaptyorka/manager/"
+                          "config.json", "hello manager")
+    assert w["name"] == "manager" and w["project"] == "manager" and w["tool"] == "claude-code"
+    assert w["state"] == "starting" and w["folder"] == "/h/.kaptyorka/manager"
+    assert w["worktree"] is False and w["person"] == "manager"
+    with store.lock:
+        r = store.db.execute("SELECT boss_key, boss_person, manager FROM workers"
+                             " WHERE name='manager'").fetchone()
+    assert (r["boss_key"], r["boss_person"], r["manager"]) == ("web:root", mid, 1)
+    [item] = ws.offer(row["id"])
+    order = {k: v for k, v in item.items() if k != "launch"}
+    assert order["folder"] == "/h/.kaptyorka/manager" and order["manager"] is True
+    assert order["env"] == {"KAPTYORKA_CONFIG": "/h/.kaptyorka/manager/config.json"}
+    assert order["person"] == "root" and order["first_message"] == "hello manager"
+    assert verify(order, secret_hash(store, row["id"]), clock[0], ()) is None
+    with pytest.raises(KaptyorkaError, match="already running"):
+        ws.create_manager(admin, mid, row, "/x", "/x/config.json", "again")
+    # an ended manager is replaced, its old order no longer offered
+    with store.lock:
+        store.db.execute("UPDATE workers SET state='closed' WHERE name='manager'")
+    clock[0] += 61
+    assert ws.create_manager(admin, mid, row, "/x", "/x/c.json", "again")["folder"] == "/x"
+    assert [i["first_message"] for i in ws.offer(row["id"])] == ["again"]
+
+
+def test_manager_never_unattended(store, ws, clock):
+    admin, mid, row = manager_setup(store)
+    ws.create_manager(admin, mid, row, "/m", "/m/config.json", "hi")
+    assert ws.link("manager", "claude:m", row["id"])
+    assert store.agent("claude:m").person_id == mid
+    with store.lock:  # the page boss is an admin who left long ago: still not unattended
+        store.db.execute("UPDATE workers SET boss_key='k:gone' WHERE name='manager'")
+    for _ in range(4):
+        clock[0] += ABANDONED_S // 2
+        store.seen("claude:m", "manager@box-1", "claude-code", "manager")
+        with store.lock:
+            store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (clock[0], row["id"]))
+        ws.tick(clock[0])
+        assert ws.by_name("manager")["state"] == "up"
+    with store.lock:  # even a row left unattended by an older hub goes back to up
+        store.db.execute("UPDATE workers SET state='unattended', unattended_since=0")
+    ws.tick(clock[0])
+    assert ws.by_name("manager")["state"] == "up"
+    with store.lock:
+        store.db.execute("UPDATE workers SET state='unattended', unattended_since=0")
+    assert not [x for x in ws.warnings(clock[0], "0.0.1") if "manager" in x["text"]]
+
+
+def test_manager_column_added_to_an_old_workers_table(tmp_path):
+    import sqlite3
+    from kaptyorka.workers import ensure_schema
+    db = sqlite3.connect(tmp_path / "old.db")
+    db.execute("CREATE TABLE workers (name TEXT PRIMARY KEY, state TEXT)")
+    ensure_schema(db)
+    ensure_schema(db)
+    assert "manager" in [r[1] for r in db.execute("PRAGMA table_info(workers)")]
+    db.close()

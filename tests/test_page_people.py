@@ -105,8 +105,9 @@ def test_feed_admin_extras(app):
     s.request_access(app.ids["ben"], "project", "proj", "to help")
     s.open_door_group(app.ids["ann"], app.ids["ben"], "boss")
     f = get(app, "boss", "/api/feed")
-    assert [p["name"] for p in f["people"]] == ["ann", "ben", "boss"]
-    assert f["people"][0]["devices"][0]["name"] == "ann-laptop"
+    people = [p for p in f["people"] if p["role"] != "manager"]  # the hub's tick adds it
+    assert [p["name"] for p in people] == ["ann", "ben", "boss"]
+    assert people[0]["devices"][0]["name"] == "ann-laptop"
     assert [r["person"] for r in f["requests"]] == ["ben"]
     assert set(f["legacy"]) == {"unassigned", "enabled", "ready_to_disable"}
     assert isinstance(f["machines"], list)

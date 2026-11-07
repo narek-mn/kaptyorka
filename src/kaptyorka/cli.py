@@ -46,7 +46,8 @@ def _serve(args) -> int:
         store = Store(paths.home() / "hub.db", legacy_token=token)
         stop = threading.Event()
         threading.Thread(target=prune_loop, args=(store, stop), daemon=True).start()
-        uvicorn.run(build_app(store), host="0.0.0.0", port=args.port, log_level="warning",
+        uvicorn.run(build_app(store, manager_url=f"http://127.0.0.1:{args.port}"),
+                    host="0.0.0.0", port=args.port, log_level="warning",
                     timeout_graceful_shutdown=3)  # open agent streams must not hold up a stop
         return 0
     exe = str(Path(sys.argv[0]).resolve())

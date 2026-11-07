@@ -43,6 +43,12 @@ def fence_real_commands(request, monkeypatch):
     monkeypatch.setattr(subprocess.Popen, "__init__", guarded)
 
 
+@pytest.fixture(autouse=True)
+def hub_home(tmp_path, monkeypatch):
+    """A hub's tick writes the manager's files under KAPTYORKA_HOME: never the real one."""
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "kaptyorka-home"))
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     h = tmp_path / "home"
@@ -52,13 +58,13 @@ def home(tmp_path, monkeypatch):
     return h
 
 
-def start_hub(store, port: int = 0):
+def start_hub(store, port: int = 0, **app_kw):
     """Run a hub on 127.0.0.1 in a thread; return a stop() that is safe to call twice."""
     import uvicorn
 
     from kaptyorka.hub import build_app
 
-    app = build_app(store)
+    app = build_app(store, **app_kw)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port,
                                            log_level="warning", timeout_graceful_shutdown=1))
     thread = threading.Thread(target=server.run, daemon=True)

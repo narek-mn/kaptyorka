@@ -21,12 +21,13 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from kaptyorka import __version__, brief
+from kaptyorka import __version__, brief, identity, manager, paths
 from kaptyorka import rules as rules_mod
 from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.brief import message_text
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
+from kaptyorka.manager import ManagerStore
 from kaptyorka.memory import MemoryStore, check_state
 from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, clean
 from kaptyorka.workers import MAX_FACT, WorkerStore, _git as clean_git, clean_facts, safe_name
@@ -106,12 +107,19 @@ def _tool_errors(fn):
     return wrapper
 
 
-def build_app(store: Store) -> Starlette:
+MANAGER_FIRST = ("You are the team's manager session; read CLAUDE.md in this folder and wait for"
+                 " the hub's messages.")
+MANAGER_FAILED = ("the manager session failed to start twice; see"
+                  " ~/.kaptyorka/workers/manager.log on the hub machine")
+
+
+def build_app(store: Store, manager_url: str = "") -> Starlette:
     server = MCPServer("kaptyorka", instructions=INSTRUCTIONS)
     sent = {"event": asyncio.Event()}  # set and replaced after each send; wakes bridge polls
     ws = WorkerStore(store)
     ms = MemoryStore(store)
     rs = rules_mod.RulesStore(store)
+    mm = ManagerStore(store)
     brief_cache: dict = {}  # per session key; see brief.cached
     decide_lock = threading.Lock()
 
@@ -154,9 +162,10 @@ def build_app(store: Store) -> Starlette:
         live = ws.live_keys()
         mine = ws.by_key(agent.key) if agent.key in live else None
         boss = ws.boss_key(mine["name"]) if mine else None  # a worker sees its boss marked
-        rows = []
+        rows, mid = [], mm.person_id()
         for a in store.online():
-            row = {**session_row(store, a, principal, names, now, live, ws), "you": a.key == agent.key}
+            row = {**session_row(store, a, principal, names, now, live, ws, mid),
+                   "you": a.key == agent.key}
             if a.key == boss:
                 row["boss"] = True
             rows.append(row)
@@ -170,10 +179,52 @@ def build_app(store: Store) -> Starlette:
         if ws.notify(to_key, text):
             wake_bridges()
 
+    def manager_files(host: str) -> None:
+        """The manager's account, CLAUDE.md and config.json; written again when the rules
+        changed or a file is missing. A lost config.json means a lost token: a new one."""
+        folder = paths.home() / manager.DIR
+        token = mm.ensure_account(host, "hub")
+        if token is None and not (folder / "config.json").exists():
+            for d in store.devices(mm.person_id()):
+                if d["name"] == manager.DEVICE and d["revoked_at"] is None:
+                    store.device_revoke(d["id"], "hub")
+            token = mm.ensure_account(host, "hub")
+        rules_now = rs.current()
+        if token or mm.rules_written_version() != rules_now["version"] \
+                or not (folder / "CLAUDE.md").exists():
+            folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+            mm.write_files(folder, manager_url, token, rules_now["text"])
+            mm.mark_rules_written(rules_now["version"])
+
+    def manager_tick(now: float) -> None:
+        """Keep the manager session alive through the admin's own bridge on this machine."""
+        if not mm.enabled():
+            return
+        host = identity.facts()["host"]
+        manager_files(host)
+        admin = mm.admin_device(host)
+        if admin is not None and mm.failures_last_hour(now) >= 2 \
+                and mm.push_once("manager-failed", now, 3600):
+            names = {p["id"]: p["name"] for p in store.people()}
+            tell(f"web:{names.get(admin['person_id'], '')}", MANAGER_FAILED)
+        ok, _ = mm.may_launch(now)
+        if not ok or admin is None:
+            return
+        folder = paths.home() / manager.DIR
+        ws.create_manager(admin["person_id"], mm.person_id(), admin, str(folder),
+                          str(folder / "config.json"), MANAGER_FIRST)
+        mm.record_launch(now)
+        wake_bridges()
+
     def tick() -> None:
-        """Move workers on; deliver what the bosses hear."""
-        for to_key, text in ws.tick(store.clock()):
+        """Move workers on; deliver what the bosses hear; keep the manager alive."""
+        now = store.clock()
+        for to_key, text in ws.tick(now):
             tell(to_key, text)
+        try:
+            manager_tick(now)
+        except Exception as e:  # the manager must never stop the workers' clock
+            print(f"kaptyorka: manager tick failed: {e}", flush=True)
 
     @server.tool()
     @_tool_errors

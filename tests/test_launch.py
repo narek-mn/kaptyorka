@@ -240,3 +240,41 @@ def test_find_key(launcher):
     j = {**order(), "key": None, "job": "ab12cd34"}  # just launched: only the short id is known
     assert launcher.find_key(j, sessions + [Session(KEY, "claude-code", "proj-a")]) == KEY
     assert launcher.find_key(j, sessions) is None
+
+
+def test_launcher_env_allowlist(home, no_systemd, monkeypatch):
+    monkeypatch.setenv("PATH_KEEP", "1")
+    monkeypatch.delenv("KAPTYORKA_CONFIG", raising=False)
+    popen = FakePopen()
+    make(home, popen=popen).detach(["claude", "--bg"], "/w", "manager", {
+        "KAPTYORKA_CONFIG": "/m/config.json", "PATH": "/evil", "LD_PRELOAD": "/x.so"})
+    env = popen.calls[0][1]["env"]
+    assert env["KAPTYORKA_CONFIG"] == "/m/config.json" and env["PATH_KEEP"] == "1"
+    assert env["PATH"] != "/evil" and "LD_PRELOAD" not in env
+    for bad in ({"KAPTYORKA_CONFIG": "rel.json"}, {"KAPTYORKA_CONFIG": 5}, "junk", None):
+        popen = FakePopen()
+        make(home, popen=popen).detach(["claude", "--bg"], "/w", "manager", bad)
+        assert "KAPTYORKA_CONFIG" not in popen.calls[0][1]["env"]
+    # launch passes the order's env through
+    (home / "m").mkdir()
+    popen = FakePopen()
+    make(home, popen=popen).launch(order(manager=True, folder=str(home / "m"),
+                                         env={"KAPTYORKA_CONFIG": "/m/config.json"}))
+    assert popen.calls[0][1]["env"]["KAPTYORKA_CONFIG"] == "/m/config.json"
+
+
+def test_folder_override(home):
+    run = FakeRun()
+    launcher = make(home, run=run)
+    m = home / ".kaptyorka" / "manager"
+    m.mkdir(parents=True)
+    (home / "manager").mkdir()  # the default lookup would pick this one
+    busy = [Session("claude:1", "claude-code", "manager", cwd=str(m))]
+    assert launcher.folder_for(order(manager=True, project="manager", folder=str(m) + "/"),
+                               busy) == (str(m), False)
+    assert launcher.folder_for(order(manager=True, folder=str(m), worktree=True)) \
+        == (str(m), False)
+    assert run.calls == []  # never a worktree
+    for bad in ("", "rel/manager", str(home / "gone"), None):
+        with pytest.raises(LaunchError, match="no manager folder"):
+            launcher.folder_for(order(manager=True, project="manager", folder=bad))
