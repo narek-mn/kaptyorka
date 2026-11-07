@@ -395,7 +395,7 @@ def test_page_access_admin_flows():
     assert re.search(r'Give <select id="grant-person"[^>]*></select>\s*<select id="grant-role"', html)
     assert "access to <select id=\"grant-project\"" in html
     for hint in ("read: see notes and sessions", "write: also edit notes and start workers",
-                 "manage: also give access"):
+                 "manage: the same as write for now; only the admin gives access"):
         assert hint in html
     assert 'el("small", { text: "admin" })' in html
     assert 'role: role ? role.value : "read"' in html and 'reason: why || ""' in html

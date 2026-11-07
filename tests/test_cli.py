@@ -45,7 +45,10 @@ def test_subcommands_listed(capsys):
     out = capsys.readouterr().out
     listed = out.split("positional arguments:")[1].split("options:")[0]
     names = [l.split()[0] for l in listed.splitlines()[2:] if l.startswith("    ") and l[4] != " "]
-    assert names == ["start", "join", "leave", "stop", "update", "remove", "doctor", "backup", "restore"]
+    assert names == ["start", "join", "leave", "stop", "update", "remove", "invite", "people", "invites", "grant",
+                     "revoke", "project", "machine", "who", "doctor", "backup", "restore", "fleet", "rules"]
+    for hidden in ("serve", "mcp", "bridge", "hook"):
+        assert hidden not in names
 
 
 def test_config_roundtrip_is_private(home):
@@ -94,7 +97,7 @@ def test_cli_join_invite_url(monkeypatch, home):
 def test_cli_join_invite_failure_exits_1(monkeypatch, home, capsys):
     monkeypatch.setattr(http, "request", lambda *a, **k: (400, "invite already used"))
     assert entry_with_exit(["join", "http://h:1/i/CODE123"]) == 1
-    assert "invite already used" in capsys.readouterr().err
+    assert "was already used" in capsys.readouterr().err
 
 
 def entry_with_exit(args):
@@ -124,7 +127,7 @@ def test_cli_invite_not_admin(monkeypatch, home, capsys):
     paths.save_config({"hub": "http://h:1", "token": "t", "machine": "pc"})
     monkeypatch.setattr(http, "request", lambda *a, **k: (403, "admin only"))
     assert entry_with_exit(["invite", "ann"]) == 1
-    assert "admin only" in capsys.readouterr().err
+    assert "only the admin can do that" in capsys.readouterr().err
 
 
 def test_cli_people_table(monkeypatch, home, capsys):
@@ -204,7 +207,7 @@ def test_cli_machine_owner(monkeypatch, home, capsys):
 def test_metavar_lists_user_commands(capsys):
     with pytest.raises(SystemExit):
         entry_with(["--help"])
-    assert ("{start,join,leave,stop,update,remove,invite,people,project,grant,revoke,machine,who,doctor,fleet,backup,restore}"
+    assert ("{start,join,leave,stop,update,remove,invite,people,invites,project,grant,revoke,machine,who,doctor,fleet,rules,backup,restore}"
             in capsys.readouterr().out)
 
 
@@ -330,7 +333,7 @@ def test_rules_push_missing_rules_md(monkeypatch, home, tmp_path, capsys):
     paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
     monkeypatch.setattr(http, "request", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call")))
     assert entry_with_exit(["rules", "push", str(tmp_path)]) == 1
-    assert f"no RULES.md in {tmp_path}" in capsys.readouterr().out
+    assert f"no RULES.md in {tmp_path}" in capsys.readouterr().err
 
 
 def test_rules_push_bad_skill_name_fails_before_upload(monkeypatch, home, tmp_path, capsys):
@@ -556,4 +559,72 @@ def test_cli_admin_commands_hub_unreachable(monkeypatch, home, capsys):
                  ["invites"], ["project", "edit", "p", "--description", "d"],
                  ["project", "remove", "p", "--yes"]):
         assert entry_with_exit(args) == 1
-        assert capsys.readouterr().err.strip() == "kaptyorka hub unreachable at http://h:1"
+        assert capsys.readouterr().err.strip() == http.unreachable("http://h:1")
+
+
+COMMON_COMMANDS = [["who"], ["invite", "bob"], ["people"], ["people", "remove", "bob", "--yes"],
+                   ["people", "role", "bob", "member"], ["invites"], ["invites", "--cancel", "c1"],
+                   ["grant", "bob", "proj-a:read"], ["revoke", "bob", "proj-a"],
+                   ["project", "add", "proj-a"], ["project", "edit", "proj-a", "--description", "d"],
+                   ["project", "remove", "proj-a", "--yes"], ["machine", "owner", "box-1", "bob"],
+                   ["fleet", "list"]]
+
+
+def _one_sentence(err):
+    lines = err.strip().splitlines()
+    assert len(lines) == 1 and "Traceback" not in err and not lines[0].startswith("<")
+    return lines[0]
+
+
+@pytest.mark.parametrize("args", COMMON_COMMANDS, ids=lambda a: " ".join(a))
+def test_cli_not_joined_says_how_to_join(args, home, capsys):
+    assert entry_with_exit(args) == 1
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert _one_sentence(out.err) == cli.NOT_JOINED
+
+
+@pytest.mark.parametrize("args", COMMON_COMMANDS, ids=lambda a: " ".join(a))
+def test_cli_unreachable_hub_is_one_sentence(args, monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+
+    def down(*a, **k):
+        raise http.HubUnreachable("http://h:1")
+
+    monkeypatch.setattr(http, "request", down)
+    assert entry_with_exit(args) == 1
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert _one_sentence(out.err) == "cannot reach the hub at http://h:1; is it running, and is the address right?"
+
+
+@pytest.mark.parametrize("args", COMMON_COMMANDS, ids=lambda a: " ".join(a))
+@pytest.mark.parametrize("status,body,said", [
+    (401, "", "the hub does not accept this machine's token; run kaptyorka join again"),
+    (403, "admin only", "only the admin can do that; this machine is not signed in as the admin"),
+    (403, None, "only the admin can do that; this machine is not signed in as the admin"),
+    (404, "no person named bob", "no person named bob"),
+    (404, None, "the hub has no such thing"),
+    (409, "bob already exists", "bob already exists"),
+    (409, None, "that conflicts with what the hub already has"),
+    (500, "<html>boom</html>", "the hub answered 500 and gave no reason; look at the hub's log"),
+])
+def test_cli_hub_refusals_are_one_plain_sentence(args, status, body, said, monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    monkeypatch.setattr(http, "request", lambda *a, **k: (status, body))
+    if args[0] == "invite" and status == 409:
+        pytest.skip("a 409 from adding the person is expected: invite goes on")
+    assert entry_with_exit(args) == 1
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert _one_sentence(out.err) == said
+
+
+def test_cli_missing_argument_prints_usage_and_one_sentence(capsys):
+    for args in (["invite"], ["people", "remove"], ["project"], ["grant", "bob"], ["fleet"]):
+        with pytest.raises(SystemExit) as e:
+            entry_with(args)
+        assert e.value.code == 2
+        err = capsys.readouterr().err.strip().splitlines()
+        assert err[0].startswith("usage: kaptyorka") and "error: the following arguments are required" in err[-1]
+        assert "_cmd" not in err[-1]

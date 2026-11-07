@@ -282,29 +282,85 @@ The hub has people, and each person has devices (one per machine). The admin is 
 |---|---|---|
 | Hub | admin | Everything: sees all sessions, projects and notes, messages anyone, uses all machines, and has the People, Access and Log tabs |
 | Hub | member | Own sessions, team notes, and what the admin grants |
-| Project | read | Read the project's notes |
-| Project | write | Read and write the project's notes |
-| Project | manage | Same as write today; only the admin changes roles |
+| Hub | manager | A member whose session may also decide work requests and message anyone |
+| Project | read | See the project's notes and sessions |
+| Project | write | Read and write the project's notes, and start workers in it |
+| Project | manage | Same as write today; only the admin gives or changes access |
 | Machine | use | Use that machine (its owner and the admin may always). Needed to start a worker on it |
 
-The admin registers projects and grants roles, with commands or on the page:
+The steps below follow the page, left to right: the **People** tab, then **Access**. Each has a command. Every command prints one plain sentence when it fails (not joined, hub not running, not the admin, no such person) and exits with 1. `kaptyorka <command> --help` explains each one. Screenshots of each tab are in `docs/screens/`.
+
+### 1. Add a person and send the link
+
+Page: **People**, type a name, **Add person**. The invite link shows at once, with **Copy**: "Send this link to bob. It works for 7 days." The **Invite** button on a row makes a new link for someone already there. Below the table, **Open invites** lists the links nobody has used, each with **Cancel** (the link stops working).
 
 ```bash
-kaptyorka project add proj-a --repo <url> --desc "what it is"
-kaptyorka grant bob proj-a:write
-kaptyorka grant bob machine:box-1
+kaptyorka invite bob          # adds bob if new, prints the link
+kaptyorka invites             # open links: person, hours left, code
+kaptyorka invites --cancel <code>
+```
+
+A link works once and for 7 days. If it ran out or was used, `join` says so; make a new one.
+
+### 2. They join
+
+Bob runs `kaptyorka join <link>` on each of his machines (or hands the link to his agent). The machine appears under his name in **People** and in `kaptyorka people`. Until then his row shows "No devices yet".
+
+### 3. Give access
+
+A new member can see team notes and their own sessions, and nothing in a project. Page: **Access**, the sentence "Give bob write access to proj-a", with a hint under it for each role: read (see notes and sessions), write (also edit notes and start workers), manage (the same as write for now; only the admin gives access). Giving access again changes the role. A tag in the Projects table has an x to take it away, with a question first. The admin's own tag has no x.
+
+```bash
+kaptyorka grant bob proj-a:write       # read, write or manage
+kaptyorka grant bob machine:box-1      # let bob use a machine
 kaptyorka revoke bob proj-a
 kaptyorka revoke bob machine:box-1
 kaptyorka machine owner box-1 bob
 ```
 
-A machine has no owner until the admin names one (`kaptyorka machine owner`, or the owner list on the **Access** tab), since the host name a machine reports is not proof of whose it is.
+A machine has no owner until the admin names one (`kaptyorka machine owner`, or the owner list on the **Access** tab), since the host name a machine reports is not proof of whose it is. The **Shared with others who use this machine** switch on a device means that device's sessions may belong to anyone who can use the machine.
 
-A folder that is not registered as a project shows to other people as `(private)`, and notes on it are refused until the admin registers it. A person who lacks access calls `request_access`; the admin approves or denies on the **Access** tab. Pending and recently denied requests show in the brief an agent gets at the start of a session.
+### 4. They ask for more
 
-Notes with no project are team notes, open to everyone. A project's notes need read to read and write to write; the MCP tools take `project=""` for team notes. Messages, notes and text attachments are checked for secrets (private keys, and OpenAI, Anthropic, GitHub, GitLab, AWS and Slack tokens) and refused when one is found. The `kaptyorka` tool also refuses to attach any file from `~/.kaptyorka` or `~/.ssh`. The **Log** tab shows who did what.
+A member sees **My access** at the top of **Team**: every project and machine they can use, with their role. Under it, **Ask for** read or write access to a project, or use of a machine, with an optional reason, then **Send**. An agent asks the same way with the tool `request_access`; it also tells the person which project to ask for when a note is refused. You cannot ask for what you already have or for a project that is not registered.
 
-Messages and files are deleted after 180 days; the admin can change that on the page. Notes and the log are kept for ever.
+The admin sees the request under **Requests** on **Access**, picks read or write (the person's wish is preselected), and presses **Approve**, or **Deny** with an optional reason. A reason is sent to the person's page and to their sessions. The last ten decisions stay in **Recent decisions**. Pending and recently denied requests also show in the brief an agent gets at the start of a session. There is no command for requests; they are decided on the page.
+
+### 5. Change a role
+
+Page: **People**, the role list on a row (member or manager). Going up to manager asks first: "Make bob a manager? A manager session can decide work requests and message anyone." The admin row and the `manager` account (the hub's own manager session) have no list.
+
+```bash
+kaptyorka people role bob manager      # or member
+```
+
+### 6. Remove a person
+
+Page: **People**, **Remove** on the row, then confirm ("Remove bob? Their devices stop working at once; their messages and notes stay."). The command asks the same question; `--yes` skips it.
+
+```bash
+kaptyorka people remove bob
+```
+
+Removal stops all of bob's devices, closes the workers he started, deletes his open invites, closes his doors, and drops his project and machine access and any request he made. It keeps his messages, his notes and the log, which show him as "bob (removed)". His name can be used again. It cannot be undone: to bring him back, add him again with a new link. It refuses to remove the admin, the `manager` account, or a person whose machine still uses the old shared token (switch the shared token off first).
+
+### 7. Projects: register, edit, remove
+
+Page: **Access**, **New project** (name and a few words about it), **Edit** for the description, **Remove** with a confirm.
+
+```bash
+kaptyorka project add proj-a --repo <url> --desc "what it is"
+kaptyorka project edit proj-a --description "new words"
+kaptyorka project remove proj-a        # asks first; --yes skips it
+```
+
+Removing a project archives it. Everyone loses their role in it and open requests for it are dropped, but its notes are kept: only the admin can read them, under **Archived** (read-only). Nobody can write to an archived project. **Register again** (or `kaptyorka project add proj-a`) brings it back with its notes and its old description; nobody has a role in it until the admin grants one.
+
+### What is open without a project
+
+A folder that is not registered as a project shows to other people as `(private)`, and notes on it are refused until the admin registers it. Notes with no project are team notes, open to everyone. A project's notes need read to read and write to write; the MCP tools take `project=""` for team notes. Messages, notes and text attachments are checked for secrets (private keys, and OpenAI, Anthropic, GitHub, GitLab, AWS and Slack tokens) and refused when one is found. The `kaptyorka` tool also refuses to attach any file from `~/.kaptyorka` or `~/.ssh`.
+
+The **Log** tab shows who did what, in plain sentences ("alice made an invite link for bob"). Messages and files are deleted after 180 days; the admin can change that on the page. Notes and the log are kept for ever.
 
 ## Groups and doors
 
@@ -376,9 +432,14 @@ Everything is in `~/.kaptyorka`:
 |---|---|
 | `kaptyorka start` | Run the hub on this machine; `--no-manager` keeps no manager session, `--manager` switches it back on |
 | `kaptyorka join <invite-link>` | Join this machine as the invited person |
-| `kaptyorka invite <person>` | Admin: make an invite link (creates the person if new) |
+| `kaptyorka invite <person>` | Admin: make an invite link, 7 days, one use (creates the person if new) |
+| `kaptyorka invites` | Admin: list open invite links; `--cancel <code>` stops one |
 | `kaptyorka people` | Admin: list people, roles, device counts and last use |
-| `kaptyorka project add <name>` | Admin: register a project (`--repo`, `--desc`) |
+| `kaptyorka people role <person> member\|manager` | Admin: change a person's role |
+| `kaptyorka people remove <person>` | Admin: take a person off the team (asks first; `--yes` skips it) |
+| `kaptyorka project add <name>` | Admin: register a project (`--repo`, `--desc`); also brings back a removed one |
+| `kaptyorka project edit <name> --description <text>` | Admin: change a project's description |
+| `kaptyorka project remove <name>` | Admin: archive a project, notes kept (asks first; `--yes` skips it) |
 | `kaptyorka grant <person> <project>:<role>` | Admin: give a project role; or `machine:<host>` to allow a machine |
 | `kaptyorka revoke <person> <project>` | Admin: take it away; or `machine:<host>` |
 | `kaptyorka machine owner <host> <person>` | Admin: name a machine's owner |
@@ -401,7 +462,7 @@ Everything is in `~/.kaptyorka`:
 
 ```
 src/kaptyorka/
-  cli.py        the commands: start, join, invite, people, project, grant, revoke, rules, doctor, fleet, backup, restore, leave, stop, update, remove
+  cli.py        the commands: start, join, invite, invites, people, project, grant, revoke, rules, doctor, fleet, backup, restore, leave, stop, update, remove
   hub.py        hub app: MCP tools and plain routes behind a device token
   http.py       small HTTP client used by the other parts
   store.py      SQLite storage: people, devices, agents, messages, notes

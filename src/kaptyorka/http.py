@@ -11,6 +11,11 @@ class HubUnreachable(Exception):
         self.url = url
 
 
+def unreachable(url: str) -> str:
+    """The one sentence every command prints when the hub does not answer."""
+    return f"cannot reach the hub at {url}; is it running, and is the address right?"
+
+
 def request(method: str, url: str, token: str, body: "dict | None" = None,
             headers: "dict | None" = None, timeout: float = 10) -> "tuple[int, Any]":
     h = {"Authorization": f"Bearer {token}", "Accept": "application/json"}

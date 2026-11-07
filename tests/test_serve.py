@@ -137,7 +137,7 @@ def test_who_not_joined(home, capsys):
     with pytest.raises(SystemExit) as e:
         run_cli(["who"])
     assert e.value.code == 1
-    assert "not joined: run kaptyorka join" in capsys.readouterr().out
+    assert "has not joined a hub yet; run: kaptyorka join" in capsys.readouterr().err
 
 
 def test_who_unreachable(home, capsys):
@@ -145,7 +145,7 @@ def test_who_unreachable(home, capsys):
     with pytest.raises(SystemExit) as e:
         run_cli(["who"])
     assert e.value.code == 1
-    assert "kaptyorka hub unreachable at http://127.0.0.1:1" in capsys.readouterr().out
+    assert "cannot reach the hub at http://127.0.0.1:1" in capsys.readouterr().err
 
 
 def test_who_non_200(hub, home, capsys):
@@ -153,7 +153,7 @@ def test_who_non_200(hub, home, capsys):
     with pytest.raises(SystemExit) as e:
         run_cli(["who"])
     assert e.value.code == 1
-    assert f"kaptyorka hub at {hub.url} answered 401" in capsys.readouterr().out
+    assert "does not accept this machine's token" in capsys.readouterr().err
 
 
 def test_install_linux_enable_failure_raises(home):
@@ -483,7 +483,7 @@ def test_join_without_flags_when_never_joined(home, capsys):
     with pytest.raises(SystemExit) as e:
         run_cli(["join"])
     assert e.value.code == 1
-    assert "not joined yet: run kaptyorka join --hub <address> --token <token>" in capsys.readouterr().err
+    assert "has not joined a hub yet; run: kaptyorka join <invite link>" in capsys.readouterr().err
 
 
 def test_join_without_flags_reruns_join_with_saved_arguments(home, monkeypatch):

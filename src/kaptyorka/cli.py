@@ -164,18 +164,13 @@ def _start(args) -> int:
 
 
 def _who(args) -> int:
-    cfg = paths.load_config()
-    if not cfg.get("hub") or not cfg.get("token"):
-        print("not joined: run kaptyorka join")
+    got = _admin_call("GET", "/api/feed")
+    if got is None:
         return 1
-    try:
-        status, feed = http.request("GET", cfg["hub"] + "/api/feed", cfg["token"])
-    except http.HubUnreachable:
-        print(f"kaptyorka hub unreachable at {cfg['hub']}")
+    if got[0] != 200:
+        print(_problem(got), file=sys.stderr)
         return 1
-    if status != 200:
-        print(f"kaptyorka hub at {cfg['hub']} answered {status}")
-        return 1
+    feed = got[1]
     rows = [("NAME", "LABEL", "STATUS", "ACTIVITY", "LAST SEEN")] + [
         (a["name"], a.get("label") or "", a["status"], a.get("activity") or "",
          f"{a['last_seen_s']}s ago")
@@ -186,16 +181,40 @@ def _who(args) -> int:
     return 0
 
 
+NOT_JOINED = "this machine has not joined a hub yet; run: kaptyorka join <invite link>"
+
+
+def _problem(got) -> str:
+    """One plain sentence for a hub answer that is not a success."""
+    status, body = got
+    text = ""
+    if isinstance(body, str):
+        text = next((l.strip() for l in body.splitlines() if l.strip()), "")
+        if text.startswith("<") or len(text) > 200:  # a web page or a stack trace, not a sentence
+            text = ""
+    if status == 401:
+        return "the hub does not accept this machine's token; run kaptyorka join again"
+    if status == 403 and text in ("", "admin only", "use your own admin token"):
+        return "only the admin can do that; this machine is not signed in as the admin"
+    if text:
+        return text
+    if status == 404:
+        return "the hub has no such thing"
+    if status == 409:
+        return "that conflicts with what the hub already has"
+    return f"the hub answered {status} and gave no reason; look at the hub's log"
+
+
 def _admin_call(method: str, path: str, body=None):
     """Call the hub with the saved config; (status, body), or None after printing why not."""
     cfg = paths.load_config()
     if not cfg.get("hub") or not cfg.get("token"):
-        print("not joined: run kaptyorka join", file=sys.stderr)
+        print(NOT_JOINED, file=sys.stderr)
         return None
     try:
         return http.request(method, cfg["hub"] + path, cfg["token"], body)
     except http.HubUnreachable:
-        print(f"kaptyorka hub unreachable at {cfg['hub']}", file=sys.stderr)
+        print(http.unreachable(cfg["hub"]), file=sys.stderr)
         return None
 
 
@@ -204,13 +223,13 @@ def _invite(args) -> int:
     if got is None:
         return 1
     if got[0] not in (200, 409):  # 409: the person already exists
-        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        print(_problem(got), file=sys.stderr)
         return 1
     got = _admin_call("POST", "/api/invites", {"person": args.person})
     if got is None:
         return 1
     if got[0] != 200:
-        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        print(_problem(got), file=sys.stderr)
         return 1
     print(got[1]["url"])
     return 0
@@ -221,7 +240,7 @@ def _people(args) -> int:
     if got is None:
         return 1
     if got[0] != 200:
-        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        print(_problem(got), file=sys.stderr)
         return 1
     now = time.time()
     rows = [("NAME", "ROLE", "DEVICES", "LAST SEEN")]
@@ -244,7 +263,7 @@ def _rules_call(method: str, path: str, body):
         print("only the admin's device may push rules", file=sys.stderr)
         return None
     if got[0] != 200:
-        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        print(_problem(got), file=sys.stderr)
         return None
     return got[1]
 
@@ -267,7 +286,7 @@ def _rules_push(args) -> int:
     root = Path(args.dir)
     rules_file = root / "RULES.md"
     if not rules_file.is_file():
-        print(f"no RULES.md in {root}")
+        print(f"no RULES.md in {root}; make that file first", file=sys.stderr)
         return 1
     text = _read_team_file(rules_file)
     if text is None:
@@ -312,7 +331,7 @@ def _rules_push(args) -> int:
     if got is None:
         return 1
     if got[0] != 200:
-        answer = got[1] if isinstance(got[1], str) else f"hub answered {got[0]}"
+        answer = _problem(got)
         print(f"skills upload failed ({got[0]}): {answer}; the rules were already pushed as v{sent['version']}",
               file=sys.stderr)
         return 1
@@ -330,7 +349,7 @@ def _admin_do(method: str, path: str, body: dict, done: str) -> int:
     if got is None:
         return 1
     if got[0] not in (200, 204):
-        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        print(_problem(got), file=sys.stderr)
         return 1
     print(done)
     return 0
@@ -382,7 +401,7 @@ def _admin_json(method: str, path: str, body=None):
     if got is None:
         return None
     if got[0] not in (200, 204):
-        print(got[1] if isinstance(got[1], str) and got[1] else f"hub answered {got[0]}",
+        print(_problem(got),
               file=sys.stderr)
         return None
     return got[1] if got[1] is not None else {}
@@ -519,7 +538,7 @@ def _mcp(args) -> int:
 
     cfg = paths.load_config()
     if not cfg.get("hub") or not cfg.get("token"):
-        print("not joined: run kaptyorka join", file=sys.stderr)
+        print(NOT_JOINED, file=sys.stderr)
         return 1
     shim.run(cfg, args.workspace)
     return 0
@@ -531,7 +550,7 @@ def _bridge(args) -> int:
 
     cfg = paths.load_config()
     if not cfg.get("hub") or not cfg.get("token") or not cfg.get("machine"):
-        print("not joined: run kaptyorka join", file=sys.stderr)
+        print(NOT_JOINED, file=sys.stderr)
         return 1
     adapters = [a for a in all_adapters(log) if a.installed()]
     Bridge(cfg, joined_adapters(cfg, adapters), log).run()
@@ -573,11 +592,11 @@ def _join(args) -> int:
     if not args.hub and not args.token:  # no flags: the previous arguments, saved by the last join
         cfg = paths.load_config()
         if not cfg.get("hub") or not cfg.get("token"):
-            print("not joined yet: run kaptyorka join --hub <address> --token <token>", file=sys.stderr)
+            print(NOT_JOINED, file=sys.stderr)
             return 1
         return join.main(cfg["hub"], cfg["token"], cfg.get("machine") or args.name, only=cfg.get("tools"), **extra)
     if not (args.hub and args.token):
-        print("join needs both --hub and --token", file=sys.stderr)
+        print("join needs both --hub and --token, or an invite link: kaptyorka join <invite link>", file=sys.stderr)
         return 2
     return join.main(args.hub, args.token, args.name, only=args.only, **extra)
 
@@ -590,7 +609,7 @@ def _fleet_add(args) -> int:
     def invite(person: str) -> str:
         got = _admin_call("POST", "/api/invites", {"person": person})
         if got is None or got[0] != 200:
-            raise RuntimeError(got[1] if got and isinstance(got[1], str) else "could not make an invite")
+            raise RuntimeError(_problem(got) if got else "could not make an invite")
         return got[1]["url"]
 
     try:
@@ -613,7 +632,7 @@ def _fleet_list(args) -> int:
     if got is None:
         return 1
     if got[0] != 200:
-        print(got[1] if isinstance(got[1], str) else f"hub answered {got[0]}", file=sys.stderr)
+        print(_problem(got), file=sys.stderr)
         return 1
     for line in fleet.list(got[1]):
         print(line)
@@ -654,10 +673,10 @@ def _doctor(args) -> int:
 
 
 def entry() -> None:
-    p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents")
+    p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents: run the hub, invite people, give them access to projects.")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove,invite,people,"
-                            "project,grant,revoke,machine,who,doctor,fleet,backup,restore}")
+                            "invites,project,grant,revoke,machine,who,doctor,fleet,rules,backup,restore}")
     hide = argparse.SUPPRESS  # subparsers are hidden by giving them no help text
     s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
     s.add_argument("--port", type=int, help="hub port (default 8765)")
@@ -666,7 +685,7 @@ def entry() -> None:
     m.add_argument("--no-manager", action="store_true", help="do not keep a manager session")
     m.add_argument("--manager", action="store_true", help="keep a manager session (the default)")
     s.set_defaults(run=_start)
-    j = sub.add_parser("join", help="connect this machine's agents to the hub (again, with no flags)")
+    j = sub.add_parser("join", help="connect this machine to a hub with the invite link your admin sent (with no flags: retry the last join)")
     j.add_argument("invite", nargs="?", help="invite link from your admin")
     j.add_argument("--hub", help="hub address")
     j.add_argument("--token", help="hub token")
@@ -676,8 +695,8 @@ def entry() -> None:
     j.set_defaults(run=_join)
     sub.add_parser("leave", help="leave the hub: undo join on this machine, keep kaptyorka "
                    "installed; join brings it back").set_defaults(run=_leave)
-    sub.add_parser("stop", help="stop the bridge (and hub) and keep them off after a reboot; "
-                   "start / join bring them back").set_defaults(run=_stop)
+    sub.add_parser("stop", help="stop the hub and the bridge (the link between this machine's agents and the hub) "
+                   "and keep them off after a reboot; start / join bring them back").set_defaults(run=_stop)
     sub.add_parser("update", help="update kaptyorka (pipx) to the latest version and restart "
                    "the services").set_defaults(run=_update)
     sub.add_parser("remove", help="remove kaptyorka from this machine completely").set_defaults(run=_remove)
@@ -689,48 +708,54 @@ def entry() -> None:
     v.add_argument("--no-manager", action="store_true")
     v.add_argument("--manager-url")
     v.set_defaults(run=_serve)
-    i = sub.add_parser("invite")
-    i.add_argument("person")
+    i = sub.add_parser("invite", help="make an invite link for a person (works once, for 7 days); adds them if new")
+    i.add_argument("person", help="the person's name")
     i.set_defaults(run=_invite)
-    pp = sub.add_parser("people")
+    pp = sub.add_parser("people", help="list the team, or remove a person or change a role")
     pp.set_defaults(run=_people)
     ps = pp.add_subparsers(dest="people_cmd")
-    pr = ps.add_parser("remove", help="take a person off the team")
-    pr.add_argument("name")
+    pr = ps.add_parser("remove", help="take a person off the team: their devices stop working, their access goes")
+    pr.add_argument("name", help="the person's name")
     pr.add_argument("--yes", action="store_true", help="do not ask first")
     pr.set_defaults(run=_people_remove)
     pl = ps.add_parser("role", help="make a person a member or a manager")
-    pl.add_argument("name")
-    pl.add_argument("role", choices=("member", "manager"))
+    pl.add_argument("name", help="the person's name")
+    pl.add_argument("role", choices=("member", "manager"), help="the new role")
     pl.set_defaults(run=_people_role)
-    iv = sub.add_parser("invites")
-    iv.add_argument("--cancel", metavar="code")
+    iv = sub.add_parser("invites", help="list the invite links nobody has used yet; --cancel stops one")
+    iv.add_argument("--cancel", metavar="code", help="cancel the invite with this code (see the CODE column)")
     iv.set_defaults(run=_invites)
-    for name, run in (("grant", _grant), ("revoke", _revoke)):
-        g = sub.add_parser(name)
-        g.add_argument("person")
-        g.add_argument("target", help="<project>:<role> or machine:<host> (revoke: <project>)")
+    for name, run, what, shape in (
+            ("grant", _grant, "give a person a role in a project (read, write or manage), or use of a machine",
+             "<project>:<role> (read, write or manage) or machine:<host>"),
+            ("revoke", _revoke, "take a person's access to a project or a machine away",
+             "<project> or machine:<host>")):
+        g = sub.add_parser(name, help=what)
+        g.add_argument("person", help="the person's name")
+        g.add_argument("target", help=shape)
         g.set_defaults(run=run)
-    pj = sub.add_parser("project").add_subparsers(dest="project_cmd", required=True)
-    pa = pj.add_parser("add")
-    pa.add_argument("name")
-    pa.add_argument("--repo", default="")
-    pa.add_argument("--desc", default="")
+    pj = sub.add_parser("project", help="register, edit or remove a project").add_subparsers(
+        dest="project_cmd", required=True, metavar="{add,edit,remove}")
+    pa = pj.add_parser("add", help="register a project so people can be given access to it")
+    pa.add_argument("name", help="the project's name")
+    pa.add_argument("--repo", default="", help="where the code lives (a git address), optional")
+    pa.add_argument("--desc", default="", help="one line about the project, optional")
     pa.set_defaults(run=_project_add)
-    pe = pj.add_parser("edit")
-    pe.add_argument("name")
-    pe.add_argument("--description", required=True)
+    pe = pj.add_parser("edit", help="change a project's description")
+    pe.add_argument("name", help="the project's name")
+    pe.add_argument("--description", required=True, help="the new one-line description")
     pe.set_defaults(run=_project_edit)
-    px = pj.add_parser("remove")
-    px.add_argument("name")
+    px = pj.add_parser("remove", help="remove a project: its notes are kept under Archived; project add brings it back")
+    px.add_argument("name", help="the project's name")
     px.add_argument("--yes", action="store_true", help="do not ask first")
     px.set_defaults(run=_project_remove)
-    mc = sub.add_parser("machine").add_subparsers(dest="machine_cmd", required=True)
-    mo = mc.add_parser("owner")
-    mo.add_argument("host")
-    mo.add_argument("person")
+    mc = sub.add_parser("machine", help="say who owns a machine").add_subparsers(
+        dest="machine_cmd", required=True, metavar="{owner}")
+    mo = mc.add_parser("owner", help="make a person the owner of a machine")
+    mo.add_argument("host", help="the machine's name (kaptyorka fleet list shows them)")
+    mo.add_argument("person", help="the person's name")
     mo.set_defaults(run=_machine_owner)
-    sub.add_parser("who").set_defaults(run=_who)
+    sub.add_parser("who", help="list the agents on the team and what each is doing").set_defaults(run=_who)
     d = sub.add_parser("doctor", help="check this machine's setup; --fix repairs what it can")
     d.add_argument("--fix", action="store_true", help="re-wire failing tools and restart a stopped bridge")
     d.set_defaults(run=_doctor)
@@ -739,19 +764,20 @@ def entry() -> None:
     bk.add_argument("--nightly", action="store_true", help="do it every day at 03:00")
     bk.set_defaults(run=_backup)
     rs = sub.add_parser("restore", help="put a backup file back (stop the hub first)")
-    rs.add_argument("file")
+    rs.add_argument("file", help="the backup file")
     rs.set_defaults(run=_restore)
-    fl = sub.add_parser("fleet")
-    fs = fl.add_subparsers(dest="fleet_cmd", required=True)
-    fa = fs.add_parser("add")
+    fl = sub.add_parser("fleet", help="set up other machines over ssh, or list the team's machines")
+    fs = fl.add_subparsers(dest="fleet_cmd", required=True, metavar="{add,list}")
+    fa = fs.add_parser("add", help="install kaptyorka on other machines over ssh and join them as a person's")
     fa.add_argument("targets", nargs="+", metavar="user@host")
-    fa.add_argument("--person", required=True)
+    fa.add_argument("--person", required=True, help="the person these machines belong to")
     fa.add_argument("--key-from", help="file with one NAME=value line, sent to the bridge's environment")
     fa.set_defaults(run=_fleet_add)
-    fs.add_parser("list").set_defaults(run=_fleet_list)
-    rl = sub.add_parser("rules").add_subparsers(dest="rules_cmd", required=True)
+    fs.add_parser("list", help="list the team's machines and who owns them").set_defaults(run=_fleet_list)
+    rl = sub.add_parser("rules", help="upload the team rules and skills to the hub").add_subparsers(
+        dest="rules_cmd", required=True, metavar="{push}")
     rp = rl.add_parser("push", help="upload a team rules folder: RULES.md and skills/*.md")
-    rp.add_argument("dir", metavar="dir")
+    rp.add_argument("dir", metavar="dir", help="the folder with RULES.md (and skills/)")
     rp.add_argument("--force", action="store_true", help="replace the hub's rules even if it has lines not in RULES.md")
     rp.set_defaults(run=_rules_push)
     m = sub.add_parser("mcp")

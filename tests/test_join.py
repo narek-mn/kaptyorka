@@ -35,13 +35,13 @@ def test_join_bad_token_writes_nothing(hub, home, capsys):
     a = FakeAdapter("a")
     assert main(hub.url, "bad", "pc", adapters=[a], install=no_service([])) == 1
     assert not paths.config_path().exists() and a.configured == []
-    assert "wrong token" in capsys.readouterr().err
+    assert "does not accept that token" in capsys.readouterr().err
 
 
 def test_join_unreachable_writes_nothing(home, capsys):
     assert main("http://127.0.0.1:1", "T", "pc", adapters=[], install=no_service([])) == 1
     assert not paths.config_path().exists()
-    assert "kaptyorka hub unreachable at http://127.0.0.1:1" in capsys.readouterr().err
+    assert "cannot reach the hub at http://127.0.0.1:1" in capsys.readouterr().err
 
 
 def test_join_configures_installed_only(hub, home, capsys):

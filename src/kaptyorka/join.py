@@ -60,10 +60,14 @@ def redeem(url: str, name: str) -> Optional[Tuple[str, str, str, str]]:
         status, body = http.request("POST", f"{base}/i/{code}", "", {
             "device_name": name, "host": host, "os_user": os_user})
     except http.HubUnreachable:
-        print(f"kaptyorka hub unreachable at {base}", file=sys.stderr)
+        print(http.unreachable(base), file=sys.stderr)
         return None
     if status != 200 or not isinstance(body, dict):
-        print(f"invite failed: {body if isinstance(body, str) else status}", file=sys.stderr)
+        why = {"no such invite": "it was cancelled, or it ran out (links last 7 days)",
+               "invite already used": "it was already used (a link works once)"}
+        said = body if isinstance(body, str) else f"the hub answered {status}"
+        print(f"this invite link did not work: {why.get(said, said)}; ask your admin for a new one",
+              file=sys.stderr)
         return None
     return body.get("hub") or base, body["token"], body["secret"], str(body.get("person") or "")
 
@@ -85,13 +89,13 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     try:
         status, _ = http.request("GET", hub + "/api/feed", token)
     except http.HubUnreachable:
-        print(f"kaptyorka hub unreachable at {hub}", file=sys.stderr)
+        print(http.unreachable(hub), file=sys.stderr)
         return 1
     if status == 401:
-        print("wrong token", file=sys.stderr)
+        print("the hub does not accept that token; check it with your admin", file=sys.stderr)
         return 1
     if status != 200:
-        print(f"kaptyorka hub at {hub} answered {status}", file=sys.stderr)
+        print(f"the hub at {hub} answered {status}, which is not what a kaptyorka hub says; check the address", file=sys.stderr)
         return 1
     exe = str(Path(sys.argv[0]).resolve())
     done = [a for a in adapters if a.installed() and (not only or a.tool in only)]

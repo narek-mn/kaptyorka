@@ -1608,7 +1608,7 @@ tr.archived b { color: var(--dim); }
     return r.kind === "project" ? (r.role === "write" ? "write" : "read") + " access to project " + r.target : "use of machine " + r.target;
   }
   var GRANT_HINT = { read: "read: see notes and sessions", write: "write: also edit notes and start workers",
-                     manage: "manage: also give access" };
+                     manage: "manage: the same as write for now; only the admin gives access" };
   function grantHint() { $("grant-hint").textContent = GRANT_HINT[$("grant-role").value] + ". Giving access again changes the role."; }
   function admins() { return feed.people.filter(function (p) { return p.role === "admin"; }).map(function (p) { return p.name; }); }
   function newProject() {

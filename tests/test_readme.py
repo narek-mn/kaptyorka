@@ -60,3 +60,19 @@ def test_readme_manager_section():
     assert "Each item is sent once" not in m and "It can only knock" not in m
     assert "The hub offers 25 tools" in r
     assert "add `team-*/` to that repo's `.gitignore`." in r
+
+
+def test_readme_people_and_access_in_page_order_and_commands_listed():
+    r = (ROOT / "README.md").read_text()
+    people = r.split("## People and access", 1)[1].split("\n## ", 1)[0]
+    steps = ["### 1. Add a person", "### 2. They join", "### 3. Give access", "### 4. They ask for more",
+             "### 5. Change a role", "### 6. Remove a person", "### 7. Projects"]
+    at = [people.index(s) for s in steps]
+    assert at == sorted(at)
+    for word in ["My access", "Ask for", "request_access", "Register again", "Archived", "7 days", "(removed)"]:
+        assert word in people
+    commands = r.split("## Commands", 1)[1].split("\n## ", 1)[0]
+    for c in ["kaptyorka invites", "kaptyorka people role", "kaptyorka people remove",
+              "kaptyorka project edit", "kaptyorka project remove"]:
+        assert c in commands and c in people
+    assert "![" not in people
