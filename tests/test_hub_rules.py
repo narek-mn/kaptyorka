@@ -103,3 +103,19 @@ def test_conflict_tool_logs_with_project(hub):
 
 def test_legacy_token_cannot_propose(hub):
     assert "device token" in call_error(hub, S1, "propose_rule", text="x", evidence="y")
+
+
+def test_reject_reason_is_capped_at_1000(hub):
+    _, tok = person(hub.store, "alice")
+    run(call(as_token(hub, tok), S1, "propose_rule", text="x", evidence="e"))
+    http.request("POST", hub.url + "/api/proposals/1", ADMIN, {"accept": False, "reason": "r" * 1500})
+    text = run(call(as_token(hub, tok), S1, "inbox"))[0]["text"]
+    assert "r" * 1000 in text and "r" * 1001 not in text
+
+
+def test_decide_accept_must_be_bool(hub):
+    _, tok = person(hub.store, "alice")
+    run(call(as_token(hub, tok), S1, "propose_rule", text="x", evidence="e"))
+    status, body = http.request("POST", hub.url + "/api/proposals/1", ADMIN, {"accept": "yes"})
+    assert status == 400 and "accept must be true or false" in body
+    assert http.request("GET", hub.url + "/api/proposals?status=open", ADMIN)[1][0]["id"] == 1

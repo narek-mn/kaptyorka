@@ -852,7 +852,9 @@ def build_app(store: Store) -> Starlette:
         body = await request.json()
         by = request.scope["state"]["principal"].person_name
         pid = request.path_params["pid"]
-        accept, reason = bool(body["accept"]), str(body.get("reason", ""))
+        if not isinstance(body.get("accept"), bool):
+            return PlainTextResponse("accept must be true or false", status_code=400)
+        accept, reason = body["accept"], str(body.get("reason", ""))[:1000]
         try:
             row = rs.decide(pid, accept, reason, by)
         except KaptyorkaError as e:
