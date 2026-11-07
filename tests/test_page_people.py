@@ -413,6 +413,11 @@ def test_page_login_and_sign_out():
     unlock = html[html.index('$("unlock").addEventListener'):html.index('$("signout")')]
     assert "location.reload" not in unlock and 'get("/api/me")' in unlock
     assert 'id="signout"' in html and 'title="Sign out"' in html and "lock(false)" in html
+    # the label shows at desktop widths; only the phone layout hides it
+    assert '<span class="label">Sign out</span>' in html
+    assert html.count(".signout .label { display: none; }") == 1
+    phone = html[html.index("@media (max-width: 720px)"):]
+    assert ".signout .label { display: none; }" in phone
     assert 'id="viewer-initial"' in html and ".viewer .initial { display: grid; }" in html
 
 
@@ -422,7 +427,7 @@ def test_page_empty_states():
             "No sessions online. Open your coding tool in a project folder on a joined machine and it appears here.",
             "No messages yet. Click a session on the Team tab to write to it.",
             "No notes yet. Notes are shared documents your team and its agents keep. Start one with the Write button.",
-            "No machines yet. Join one with the link from kaptyorka start.",
+            "No machines yet. Invite a person on the People tab; their machines appear here when they join.",
             "No workers. Ask your agent to work(project, task) and the session appears here.",
             "No team rules yet. Write the rules every agent on the team follows. ",
             "No team skills. Upload them with kaptyorka rules push <folder>.",
@@ -435,7 +440,15 @@ def test_page_review_fixes():
     # Register again keeps the archived project's description
     assert '"/api/projects", { name: p.name, description: p.description || "" }' in html
     # the shared-token device is not shown by its internal name
-    assert 'd.legacy ? el("span", { title: LEGACY_TITLE, text: "Shared token (old machines)" })' in html
+    assert html.count('d.legacy ? el("span", { title: LEGACY_TITLE, text: "Shared token (old machines)" })') == 2
+    access = html[html.index("function renderAccess"):html.index("function renderLog")]
+    assert 'd.legacy ? el("span", { title: LEGACY_TITLE' in access  # Who may use each machine
+
+
+def test_page_remove_says_which_workers_may_still_run():
+    html = page_html()
+    assert 'id="people-ok"' in html and "removedLine(p.name, r)" in html
+    assert '" may still run on " + w.host + "; close it on that machine."' in html
     assert "The device the old shared token logs in as. Revoke it when every machine has its own token." in html
 
 

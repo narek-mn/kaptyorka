@@ -57,12 +57,22 @@ def test_confirm_survives_refresh(admin_page):
     page.wait('!document.querySelector("#people .confirm")')
     page.wait('[...document.querySelectorAll("#people-rows b")].some(b => b.textContent === "carol")')
     assert store.person_by_name("bob") is not None
-    # and Remove in the confirm removes
+    # and Remove in the confirm removes; bob's worker on his own machine may still run there
+    bob = store.person_by_name("bob")["id"]
+    with store.lock:
+        dev = store.db.execute("SELECT id FROM devices WHERE person_id=?", (bob,)).fetchone()[0]
+        store.db.execute(
+            "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+            " tool, key, state, created) VALUES ('w4','proj-a','t','claude:b',?,?,'box-2',"
+            " 'claude-code','claude:w4','up',1)", (bob, dev))
     click_in_row(page, "bob", "Remove")
     page.wait('!!document.querySelector("#people .confirm")')
     page.js('[...document.querySelectorAll("#people .confirm button")].find(b => b.textContent === "Remove").click()')
     page.wait('![...document.querySelectorAll("#people-rows b")].some(b => b.textContent === "bob")')
     assert store.person_by_name("bob") is None
+    assert page.wait('!document.getElementById("people-ok").hidden && '
+                     'document.getElementById("people-ok").textContent') == \
+        "Removed bob. w4 may still run on box-2; close it on that machine."
 
 
 def test_add_person_shows_link(admin_page):

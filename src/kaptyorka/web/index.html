@@ -79,7 +79,6 @@ nav { display: flex; align-items: stretch; gap: 4px; }
   font-size: 12px; font-weight: 600; color: #fff; background: rgba(61, 113, 217, .3); border: 1px solid var(--blue-deep); }
 .signout { margin-left: 14px; display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; white-space: nowrap; }
 .signout:hover { color: var(--text); }
-@media (max-width: 1599px) { .signout .label { display: none; } }
 .live { margin-left: 14px; display: flex; align-items: center; flex: none; }
 .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(115, 191, 105, .18); }
 .live.down i { background: var(--red); box-shadow: 0 0 0 3px rgba(242, 73, 92, .2); }
@@ -277,7 +276,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 .admin tbody tr:hover td { background: none; }
 .admin td { vertical-align: top; }
 .admin td.c-act { text-align: right; white-space: nowrap; }
-.admin .err { padding: 8px 14px; }
+.admin .err, .admin #people-ok { padding: 8px 14px; }
 .cell-list { display: flex; flex-direction: column; gap: 5px; }
 .cell-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .cell-tags select, select.own { height: 24px; padding: 0 6px; font-size: 12px; }
@@ -709,6 +708,7 @@ tr.archived b { color: var(--dim); }
         </div>
         <div class="invite" id="invite" hidden></div>
         <div class="err" id="people-err" hidden></div>
+        <div class="ok" id="people-ok" hidden></div>
         <table>
           <thead><tr><th>Name</th><th>Role</th><th>Devices</th><th></th></tr></thead>
           <tbody id="people-rows"></tbody>
@@ -903,6 +903,12 @@ tr.archived b { color: var(--dim); }
     var e = $(errId);
     return api(path, body, method).then(function (r) { e.hidden = true; return r; })
       .catch(function (x) { e.hidden = false; e.textContent = x.message; throw x; });
+  }
+  /* after a removal: what happened, and which of their workers may still run on their own */
+  function removedLine(name, r) {
+    return ["Removed " + name + "."].concat(((r && r.still_running) || []).map(function (w) {
+      return w.worker + " may still run on " + w.host + "; close it on that machine.";
+    })).join(" ");
   }
   function apiPath(base, name, tail) { return base + encodeURIComponent(name) + (tail || ""); }
   /* the anchor gives way to the question with yesLabel and Cancel; Esc cancels. onYes returns
@@ -1512,7 +1518,12 @@ tr.archived b { color: var(--dim); }
       if (p.role !== "admin" && !isManagerAccount(p)) {
         var rm = button("Remove", "danger", function () {
           confirmInline(rm, "Remove " + p.name + "? Their devices stop working at once; their messages and notes stay.", "Remove",
-            function () { return act("people-err", apiPath("/api/people/", p.name), null, "DELETE"); });
+            function () {
+              return act("people-err", apiPath("/api/people/", p.name), null, "DELETE")
+                .then(function (r) { return r.json(); }).then(function (r) {
+                  $("people-ok").hidden = false; $("people-ok").textContent = removedLine(p.name, r);
+                });
+            });
         });
         acts.push(rm);
       }
@@ -1719,7 +1730,8 @@ tr.archived b { color: var(--dim); }
         sw.addEventListener("click", function () {
           quiet(act("machine-err", "/api/devices/" + d.id + "/shared", { shared: !d.shared }));
         });
-        return el("div", { "class": "dev" }, [el("span", { text: d.name }), el("small", { text: d.person }), sw]);
+        return el("div", { "class": "dev" }, [d.legacy ? el("span", { title: LEGACY_TITLE, text: "Shared token (old machines)" }) : el("span", { text: d.name }),
+                                              el("small", { text: d.person }), sw]);
       }));
       var tags = el("div", { "class": "cell-tags" }, m.grants.map(function (g) {
         var tag = el("span", { "class": "tag" }, [g]);
@@ -1760,7 +1772,7 @@ tr.archived b { color: var(--dim); }
         el("td", null, [tags])
       ]));
     });
-    if (!feed.machines.length) mb.appendChild(el("tr", null, [el("td", { colspan: "4", "class": "empty-row", text: "No machines yet. Join one with the link from kaptyorka start." })]));
+    if (!feed.machines.length) mb.appendChild(el("tr", null, [el("td", { colspan: "4", "class": "empty-row", text: "No machines yet. Invite a person on the People tab; their machines appear here when they join." })]));
   }
 
   /* admin: Log */
@@ -1923,7 +1935,7 @@ tr.archived b { color: var(--dim); }
         el("table", { "class": "stack" }, [el("thead", null, [el("tr", null, head.map(function (h) { return el("th", { text: h }); }))]), tb])
       ]));
     });
-    if (!fleet.machines.length) box.appendChild(el("div", { "class": "panel" }, [el("div", { "class": "empty-row", text: "No machines yet. Join one with the link from kaptyorka start." })]));
+    if (!fleet.machines.length) box.appendChild(el("div", { "class": "panel" }, [el("div", { "class": "empty-row", text: "No machines yet. Invite a person on the People tab; their machines appear here when they join." })]));
   }
   function renderFleet() {
     $("n-machines").textContent = fleet.machines.length;

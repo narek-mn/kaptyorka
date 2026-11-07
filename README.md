@@ -342,7 +342,7 @@ Page: **People**, **Remove** on the row, then confirm ("Remove bob? Their device
 kaptyorka people remove bob
 ```
 
-Removal stops all of bob's devices, closes the workers he started, deletes his open invites, closes his doors, and drops his project and machine access and any request he made. It keeps his messages, his notes and the log, which show him as "bob (removed)". His name can be used again. It cannot be undone: to bring him back, add him again with a new link. It refuses to remove the admin, the `manager` account, or a person whose machine still uses the old shared token (switch the shared token off first).
+Removal stops all of bob's devices, closes the workers he started, deletes his open invites, closes his doors, and drops his project and machine access, any request he made and his open work requests. Machines he owned have no owner afterwards. A worker whose machine cannot take the close order (bob's own machine, once its device stops) may still run there: the command and the page name it, so you can close it on that machine. It keeps his messages, his notes and the log, which show him as "bob (removed)". His name can be used again. It cannot be undone: to bring him back, add him again with a new link. It refuses to remove the admin, the `manager` account, or a person whose machine still uses the old shared token (switch the shared token off first).
 
 ### 7. Projects: register, edit, remove
 
