@@ -903,6 +903,20 @@ def build_app(store: Store) -> Starlette:
             return PlainTextResponse("unauthorized", status_code=401)
         return JSONResponse(store.projects_for(principal))
 
+    @server.custom_route("/api/projects/{name}/activity", methods=["GET"])
+    async def api_project_activity(request: Request) -> Response:
+        """The page's project view: the state note, a week of git facts, live branches."""
+        principal = request.scope["state"]["principal"]
+        project = request.path_params["name"]
+        if not ws.registered(project):
+            return PlainTextResponse("no such project", status_code=404)
+        if not store.may_read_project(project, principal):
+            return PlainTextResponse("no read role in this project", status_code=403)
+        state = store.notes_read("state", principal, project)
+        return JSONResponse({"state": state.text if state else None,
+                             "git": ms.git_recent(project, 7),
+                             "branches": ms.branches_with_sessions(project, store.clock())})
+
     @server.custom_route("/api/requests", methods=["GET"])
     async def api_requests(request: Request) -> Response:
         principal = request.scope.get("state", {}).get("principal")

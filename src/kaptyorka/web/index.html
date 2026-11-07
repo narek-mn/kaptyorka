@@ -236,6 +236,23 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 .back { display: none; }
 .topic-group { display: flex; align-items: center; gap: 6px; padding: 10px 14px 5px; font-size: 12px; color: var(--faint); border-bottom: 1px solid var(--line); }
 .doc-head select { height: 28px; padding: 0 8px; font-size: 12px; }
+.project-info { flex: none; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; margin-bottom: 14px; max-height: 40vh; }
+.project-info[hidden] { display: none; }
+.project-info .panel { display: flex; flex-direction: column; min-height: 0; }
+.project-info .phead { min-height: 38px; }
+.project-info .tag { font-weight: 400; }
+.pi-body { overflow-y: auto; min-height: 0; padding: 4px 14px 12px; }
+.pi-body .empty { color: var(--faint); font-size: 12px; padding-top: 8px; }
+.state-note b { display: block; margin: 10px 0 2px; font-size: 12px; font-weight: 600; color: #f0f0f6; }
+.state-note p { margin: 0; color: var(--text); max-width: 90ch; overflow-wrap: anywhere; }
+.git { list-style: none; margin: 0; padding: 0; }
+.git li { display: flex; gap: 6px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); white-space: nowrap; }
+.git li:last-child { border-bottom: 0; }
+.git li b { font-weight: 500; color: var(--text); }
+.git .branch { font-family: var(--mono); font-size: 11px; color: var(--blue); }
+.git .branch.live::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: var(--green); vertical-align: 1px; }
+.git .subj { color: var(--text); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.git time { margin-left: auto; padding-left: 8px; color: var(--faint); }
 
 /* admin */
 .admin { overflow-y: auto; gap: 14px; }
@@ -359,6 +376,7 @@ td.c-act .btn + .btn { margin-left: 6px; }
   .knock .acts { flex-basis: 100%; align-items: stretch; }
   .admin table { min-width: 560px; }
   .notes { grid-template-columns: minmax(0, 1fr); }
+  .project-info { grid-template-columns: minmax(0, 1fr); max-height: 50vh; overflow-y: auto; }
   .notes.reading .topics, .notes:not(.reading) .doc { display: none; }
   .back { display: inline-flex; }
   #warn-banner { padding: 7px 16px; }
@@ -476,6 +494,7 @@ td.c-act .btn + .btn { margin-left: 6px; }
       </div>
     </section>
     <section id="notes" role="tabpanel" hidden>
+      <div class="project-info" id="project-info" hidden></div>
       <div class="notes" id="notes-grid">
         <div class="panel topics">
           <div class="head">Topics<button class="btn small" id="new-topic"><svg width="13" height="13"><use href="#i-plus"/></svg>New topic</button></div>
@@ -992,6 +1011,7 @@ td.c-act .btn + .btn { margin-left: 6px; }
       note = { key: nkey(f.project, f.topic), project: f.project, topic: f.topic, mode: "read", version: 0, history: false };
     }
     renderTopics();
+    loadActivity(note.mode === "new" ? null : note.project);
     $("notes-grid").classList.toggle("reading", !!note.key || note.mode === "new");
     $("notes-grid").querySelector(".topics").hidden = !feed.notes.length && note.mode !== "new";
     var doc = $("doc");
@@ -1031,6 +1051,43 @@ td.c-act .btn + .btn { margin-left: 6px; }
     if (note.version > 0) by.push(el("span", { "class": "old", text: "old version v" + (n.history.length - note.version) }));
     doc.appendChild(el("div", { "class": "byline" }, by));
     doc.appendChild(el("div", { "class": "doc-body" }, [el("div", { "class": "text", text: h.text })]));
+  }
+  /* the selected project (the open note's): its state note and a week of git activity */
+  var activity = { project: null, data: null, at: 0 };
+  function loadActivity(project) {
+    if (!project) { activity = { project: null, data: null, at: 0 }; renderActivity(); return; }
+    if (activity.project === project && Date.now() - activity.at < 30000) return renderActivity();
+    activity = { project: project, data: activity.project === project ? activity.data : null, at: Date.now() };
+    get("/api/projects/" + encodeURIComponent(project) + "/activity").then(function (d) {
+      if (activity.project === project) { activity.data = d; renderActivity(); }
+    }, function () { if (activity.project === project) { activity.data = null; renderActivity(); } });
+    renderActivity();
+  }
+  function stateBlocks(text) {
+    return text.split("\n").filter(function (l) { return l.trim(); }).map(function (l) {
+      return l.charAt(0) === "#" ? el("b", { text: l.replace(/^#+\s*/, "") }) : el("p", { text: l });
+    });
+  }
+  function renderActivity() {
+    var box = $("project-info"), d = activity.data;
+    box.textContent = "";
+    box.hidden = !d;
+    if (!d) return;
+    var tag = el("span", { "class": "tag" }, [icon("i-project", 12), activity.project]);
+    box.appendChild(el("div", { "class": "panel" }, [
+      el("div", { "class": "phead" }, ["State", tag]),
+      el("div", { "class": "pi-body state-note" }, d.state ? stateBlocks(d.state) : [el("div", { "class": "empty", text: "No state note yet" })])]));
+    var rows = d.git.map(function (g) {
+      var live = d.branches[g.branch];
+      return el("li", null, [el("b", { text: g.person || "?" }), "\u00b7",
+        el("span", { "class": "branch" + (live ? " live" : ""), text: g.branch || "detached",
+                     title: live ? "working now: " + live.join(", ") : null }), "\u00b7",
+        el("span", { "class": "subj", title: g.subject || "", text: "\u201c" + (g.subject || "") + "\u201d" }),
+        timeEl(g.time)]);
+    });
+    box.appendChild(el("div", { "class": "panel" }, [
+      el("div", { "class": "phead" }, ["Recent git activity"]),
+      el("div", { "class": "pi-body" }, rows.length ? [el("ul", { "class": "git" }, rows)] : [el("div", { "class": "empty", text: "No commits in the last 7 days" })])]));
   }
   function newTopic() { note = { key: null, project: null, topic: null, mode: "new", version: 0, history: false }; renderNotes(true); }
   function editor(doc, back) {
@@ -1443,6 +1500,7 @@ td.c-act .btn + .btn { margin-left: 6px; }
         live(true);
         feed = JSON.parse(text);
         render();
+        if (view === "notes" && activity.project) loadActivity(activity.project);
         loadFleet();
         clearTimeout(timer);
         timer = setTimeout(poll, 2000);

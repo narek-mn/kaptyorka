@@ -301,3 +301,31 @@ def test_agent_reply_to_web_sender_goes_to_page_not_inbox(hub):
     texts = [m["text"] for i in (PC, BOX2) for m in run(call(hub, i, "inbox"))]
     assert "on it" not in texts
     assert f"people: {ADMIN_NAME}" in call_error(hub, BOX2, "send", to="Bob", text="x")
+
+
+def test_project_activity_route(hub):
+    from helpers import person
+    from kaptyorka.memory import MemoryStore
+
+    s = hub.store
+    s.project_register("proj-a", description="the shop")
+    alice_id, alice_t = person(s, "alice")
+    _, bob_t = person(s, "bob")
+    s.grant_project("proj-a", alice_id, "read", by="t")
+    url = hub.url + "/api/projects/proj-a/activity"
+    status, body = http.request("GET", url, alice_t)
+    assert status == 200 and body == {"state": None, "git": [], "branches": {}}
+    s.notes_write_from_web("alice", "state", "# What it is\nA shop.", "proj-a")
+    alice = s.authenticate(alice_t)
+    MemoryStore(s).git_seen(alice, alice.device_id,
+                            {"/home/alice/proj-a": {"branch": "main", "dirty": False,
+                                                    "subject": "add cart"}},
+                            {"proj-a": "/home/alice/proj-a"})
+    status, body = http.request("GET", url, alice_t)
+    assert status == 200 and body["state"] == "# What it is\nA shop."
+    [row] = body["git"]
+    assert (row["person"], row["branch"], row["subject"]) == ("alice", "main", "add cart")
+    assert body["branches"] == {}
+    assert http.request("GET", url, bob_t)[0] == 403
+    assert http.request("GET", hub.url + "/api/projects/nope/activity", "T")[0] == 404
+    assert http.request("GET", url, "bad")[0] == 401
