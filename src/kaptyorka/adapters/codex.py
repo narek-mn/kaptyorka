@@ -192,7 +192,8 @@ class CodexAdapter:
         return shutil.which("codex") is not None
 
     def logged_in(self, run: Callable) -> Optional[bool]:
-        out = login_output("codex", ["login", "status"], run) or ""
+        # not logged in: exit 1 and "Not logged in" on stderr
+        out = login_output("codex", ["login", "status"], run, any_exit=True) or ""
         if "Not logged in" in out:
             return False
         return True if "Logged in" in out else None

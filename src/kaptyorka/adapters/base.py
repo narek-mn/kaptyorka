@@ -66,8 +66,9 @@ LOGIN_COMMANDS = {"claude-code": "claude auth login", "codex": "codex login",
                   "opencode": "opencode auth login"}
 
 
-def login_output(command: str, args: List[str], run: Callable) -> Optional[str]:
+def login_output(command: str, args: List[str], run: Callable, any_exit: bool = False) -> Optional[str]:
     """Stdout of the tool's login status command; None if it is missing, fails or hangs.
+    any_exit: stdout and stderr together, whatever the exit code.
     The output may name the account: callers keep only a yes or no from it."""
     exe = shutil.which(command)
     if not exe:
@@ -76,6 +77,8 @@ def login_output(command: str, args: List[str], run: Callable) -> Optional[str]:
         r = run([exe, *args], capture_output=True, text=True, timeout=5)
     except (subprocess.TimeoutExpired, OSError):
         return None
+    if any_exit:
+        return (r.stdout or "") + (r.stderr or "")
     return (r.stdout or "") if r.returncode == 0 else None
 
 

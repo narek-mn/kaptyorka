@@ -17,8 +17,9 @@ class Run:
             if key in " ".join(cmd):
                 if isinstance(out, Exception):
                     raise out
-                return SimpleNamespace(returncode=out[0], stdout=out[1])
-        return SimpleNamespace(returncode=1, stdout="")
+                return SimpleNamespace(returncode=out[0], stdout=out[1],
+                                       stderr=out[2] if len(out) > 2 else "")
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
 
 
 GIT = {"rev-parse": (0, "main\n"), "status": (0, " M a.py\n"), "log": (0, "fix thing\n")}
@@ -228,6 +229,8 @@ def test_login_states_per_output(monkeypatch, tmp_path):
     assert claude.logged_in(Run({"auth": (0, '{"loggedIn": "yes"}')})) is None
     assert claude.logged_in(Run({"auth": (1, '{"loggedIn": true}')})) is None
     assert codex.logged_in(Run({"login": (0, "Not logged in\n")})) is False
+    assert codex.logged_in(Run({"login": (1, "", "Not logged in\n")})) is False  # its real shape
+    assert codex.logged_in(Run({"login": OSError()})) is None
     assert codex.logged_in(Run({"login": (0, "something else\n")})) is None
     assert opencode.logged_in(Run({"auth": (0, "└  2 credentials\n")})) is True
     assert opencode.logged_in(Run({"auth": (0, "no list here\n")})) is None
