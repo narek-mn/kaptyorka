@@ -94,6 +94,7 @@ def test_heartbeat_records_host_without_owner(tmp_path):
     assert m["online"] == 1
     d = m["devices"][0]
     assert d["name"] == "u1-laptop" and d["os_user"] == "osu" and d["version"] == "0.2.0"
+    assert d["legacy"] is False
     s.close()
 
 

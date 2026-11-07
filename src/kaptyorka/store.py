@@ -498,7 +498,7 @@ class Store:
                                      " LEFT JOIN people p ON p.id=m.owner_person_id ORDER BY m.host"):
                 devs = [{"id": d["id"], "name": d["name"], "person": d["person"],
                          "person_id": d["person_id"], "os_user": d["os_user"],
-                         "shared": bool(d["shared"]), "version": d["version"],
+                         "shared": bool(d["shared"]), "legacy": bool(d["legacy"]), "version": d["version"],
                          "last_used": d["last_used"]}
                         for d in self.db.execute(
                             "SELECT d.*, p.name AS person FROM devices d JOIN people p"

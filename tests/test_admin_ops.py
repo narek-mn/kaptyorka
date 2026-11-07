@@ -9,6 +9,7 @@ import pytest
 from helpers import person
 from kaptyorka import admin_ops
 from kaptyorka.hub_feed import feed
+from kaptyorka.manager import ManagerStore
 from kaptyorka.store import KaptyorkaError, Principal, Store
 from kaptyorka.workers import WorkerStore
 
@@ -77,8 +78,28 @@ def test_remove_person_closes_workers_and_doors(store, ws, ids):
     worker(s, "w1", bob, dev)
     worker(s, "w2", bob, dev, state="closed")
     worker(s, "w3", ids["carol"], dev)
+    own = shared_device(s, bob, host="box-2")  # their own machine: its bridge goes with them
+    worker(s, "w4", bob, own)
+    s.db.execute("UPDATE workers SET host='box-2' WHERE name='w4'")
+    s.db.execute("INSERT INTO machines (host, first_seen, owner_person_id) VALUES ('box-2', 1, ?)",
+                 (bob,))
+    mgr = ManagerStore(s)
+    open_req = mgr.request_add(bob, "claude:b", "proj-a", "t", "claude-code", None, "box-2", "",
+                               "/p")
+    done_req = mgr.request_add(bob, "claude:b", "proj-a", "t", "claude-code", None, "box-2", "", "/p")
+    mgr.request_decide(done_req, "box-1", "ok")
+    carol_req = mgr.request_add(ids["carol"], "claude:c", "proj-a", "t", "claude-code", None,
+                                "box-1", "", "/p")
     done = admin_ops.remove_person(s, ws, "bob", who(s, "alice"))
-    assert done == {"devices": 1, "workers": 1, "doors": 1, "grants": 2, "requests": 1}
+    assert done == {"devices": 2, "workers": 2, "doors": 1, "grants": 2, "requests": 1,
+                    "work_requests": 1, "machines_unowned": ["box-2"],
+                    "still_running": [{"worker": "w4", "host": "box-2"}]}
+    assert s.db.execute("SELECT owner_person_id FROM machines WHERE host='box-2'"
+                        ).fetchone()[0] is None
+    assert mgr.request(open_req)["decision"] == "person removed"
+    assert mgr.request(open_req)["decided_at"] == s.clock()
+    assert mgr.request(done_req)["decision"] == "box-1"
+    assert mgr.request(carol_req)["decided_at"] is None
     row = s.db.execute("SELECT * FROM people WHERE id=?", (bob,)).fetchone()
     assert row["name"] == "bob (removed)" and row["removed_at"] == s.clock()
     assert all(d["revoked_at"] for d in s.devices(bob))
@@ -89,7 +110,7 @@ def test_remove_person_closes_workers_and_doors(store, ws, ids):
     assert tuple(w1) == ("closed", "boss removed")
     assert s.db.execute("SELECT state FROM workers WHERE name='w3'").fetchone()[0] == "up"
     orders = s.db.execute("SELECT worker, kind FROM launches").fetchall()
-    assert [tuple(o) for o in orders] == [("w1", "close")]
+    assert [tuple(o) for o in orders] == [("w1", "close")]  # w4's bridge is gone: no order
     assert s.log(1)[0]["kind"] == "person_removed" and s.log(1)[0]["detail"] == "bob"
 
 
@@ -300,6 +321,13 @@ def test_log_sentences():
     ]
     for kind, detail, want in cases:
         assert admin_ops.log_sentence({"person": "alice", "kind": kind, "detail": detail}) == want
+    for kind, detail, want in [  # the shared token's device is never called "legacy"
+            ("revoke", "device legacy of alice", "alice turned off the shared token (old machines)"),
+            ("device_shared", "device legacy of alice on",
+             "alice turned sharing on for the shared token (old machines)"),
+            ("device", "device legacy of alice", "alice added the shared token (old machines) for alice")]:
+        got = admin_ops.log_sentence({"person": "alice", "kind": kind, "detail": detail})
+        assert got == want and "legacy" not in got
     for kind, detail, want in [
             ("work_decide", "request 1: wait — busy", "manager decided work request 1: wait — busy"),
             ("manager", "closed: switched off", "The manager session: closed: switched off")]:

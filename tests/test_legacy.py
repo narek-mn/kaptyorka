@@ -8,7 +8,7 @@ import pytest
 from conftest import start_hub
 from helpers import person
 from kaptyorka import http
-from kaptyorka.store import Store
+from kaptyorka.store import Principal, Store
 
 LEGACY = "old-shared-token"
 MACHINE = "mo@lab"
@@ -104,6 +104,17 @@ def test_legacy_machine_unassigned_then_assigned(store):
         store.assign_legacy(MACHINE, kim, "root")
     with pytest.raises(Exception, match="no such person"):
         store.assign_legacy("x", 9999, "root")
+
+
+def test_machines_mark_the_shared_token_device(store):
+    """The page shows the shared token's device by its label, never by its name `legacy`."""
+    admin = next(p for p in store.people() if p["role"] == "admin")
+    with store.lock:
+        store.db.execute("UPDATE devices SET host='box-1' WHERE legacy=1")
+        store.db.execute("INSERT INTO machines (host, first_seen) VALUES ('box-1', 1)")
+    p = Principal(admin["id"], admin["name"], "admin", 0, "x", False, False)
+    [m] = store.machines(p)
+    assert [(d["name"], d["legacy"]) for d in m["devices"]] == [("legacy", True)]
 
 
 def test_legacy_used_logged_once_per_machine_per_day(store, clock):

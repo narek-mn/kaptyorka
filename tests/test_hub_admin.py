@@ -49,7 +49,8 @@ def test_member_routes_forbidden(app):
 def test_remove_person_route(app):
     status, body = call(app, "alice", "DELETE", "/api/people/bob")
     assert status == 200 and body == {"devices": 1, "workers": 0, "doors": 0, "grants": 0,
-                                      "requests": 0}
+                                      "requests": 0, "work_requests": 0,
+                                      "machines_unowned": [], "still_running": []}
     assert http.request("GET", app.url + "/api/me", app.tokens["bob"])[0] == 401
     status, text = call(app, "alice", "DELETE", "/api/people/bob")
     assert (status, text) == (404, "no person named bob")

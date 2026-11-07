@@ -479,13 +479,17 @@ def test_cli_people_remove_asks_first(admin_hub, monkeypatch, capsys):
     asked = []
     monkeypatch.setattr("builtins.input", lambda q: asked.append(q) or "n")
     assert entry_with_exit(["people", "remove", "bob"]) == 1
-    assert asked == ["Remove bob? Their devices stop working at once. [y/N] "]
+    assert asked == ["Remove bob? Their devices stop working at once; their messages and notes"
+                     " stay. [y/N] "]
     assert admin_hub["calls"] == []
     admin_hub["answers"][("DELETE", "/api/people/bob")] = (200, {
-        "devices": 2, "workers": 1, "doors": 0, "grants": 3, "requests": 0})
+        "devices": 2, "workers": 1, "doors": 0, "grants": 3, "requests": 0, "work_requests": 0,
+        "machines_unowned": ["box-2"], "still_running": [{"worker": "w4", "host": "box-2"}]})
     monkeypatch.setattr("builtins.input", lambda q: "y")
     assert entry_with_exit(["people", "remove", "bob"]) == 0
-    assert "removed bob: 2 devices stopped, 1 workers closed" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "removed bob: 2 devices stopped, 1 workers closed" in out
+    assert "w4 may still run on box-2; close it on that machine" in out
 
 
 def test_cli_people_remove_yes_and_error(admin_hub, monkeypatch, capsys):

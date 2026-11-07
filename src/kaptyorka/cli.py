@@ -421,13 +421,16 @@ def _confirm(question: str, yes: bool) -> bool:
 
 
 def _people_remove(args) -> int:
-    if not _confirm(f"Remove {args.name}? Their devices stop working at once.", args.yes):
+    if not _confirm(f"Remove {args.name}? Their devices stop working at once; their messages"
+                    " and notes stay.", args.yes):
         return 1
     done = _admin_json("DELETE", f"/api/people/{quote(args.name, safe='')}")
     if done is None:
         return 1
     print(f"removed {args.name}: {done['devices']} devices stopped, {done['workers']} workers"
           f" closed, {done['grants']} grants and {done['requests']} requests dropped")
+    for w in done.get("still_running", []):
+        print(f"{w['worker']} may still run on {w['host']}; close it on that machine")
     return 0
 
 

@@ -76,21 +76,24 @@ def remove_person(store, ws, name: str, by: Principal) -> dict:
         except BaseException:
             db.execute("ROLLBACK")
             raise
-    workers = 0
+    workers, still_running = 0, []
     with ws.lock:  # the close order a person's close sends; then the row says why
         for w in ws.db.execute(f"SELECT * FROM workers WHERE boss_person=? AND state IN"
                                f" ({','.join('?' * len(LIVE))})", (pid, *LIVE)).fetchall():
-            ws._close(w, w["name"])
+            if "may still run" in ws._close(w, w["name"]).get("note", ""):
+                still_running.append({"worker": w["name"], "host": w["host"]})
             ws.db.execute("UPDATE workers SET state='closed', error='boss removed',"
                           " closed_at=COALESCE(closed_at, ?) WHERE name=?", (now, w["name"]))
             workers += 1
     store.log_add(by.person_name, "person_removed", name)
     return {"devices": counts[0], "workers": workers, "doors": counts[1], "grants": counts[2],
-            "requests": counts[3]}
+            "requests": counts[3], "work_requests": counts[4], "machines_unowned": counts[5],
+            "still_running": still_running}
 
 
 def _remove(store, pid: int, name: str, new: str, now: float) -> tuple:
-    """remove_person's writes, under the lock: (devices, doors, grants, requests)."""
+    """remove_person's writes, under the lock: (devices, doors, grants, requests, work requests,
+    hosts they owned)."""
     db = store.db
     for dev in db.execute("SELECT * FROM devices WHERE person_id=? AND revoked_at IS NULL",
                           (pid,)).fetchall():
@@ -107,10 +110,15 @@ def _remove(store, pid: int, name: str, new: str, now: float) -> tuple:
     grants += db.execute("DELETE FROM machine_access WHERE person_id=?", (pid,)).rowcount
     requests = db.execute("DELETE FROM requests WHERE person_id=? AND decided_at IS NULL",
                           (pid,)).rowcount
+    work = db.execute("UPDATE work_requests SET decided_at=?, decision='person removed'"
+                      " WHERE person_id=? AND decided_at IS NULL", (now, pid)).rowcount
+    owned = [r["host"] for r in db.execute("SELECT host FROM machines WHERE owner_person_id=?"
+                                           " ORDER BY host", (pid,))]
+    db.execute("UPDATE machines SET owner_person_id=NULL WHERE owner_person_id=?", (pid,))
     db.execute("UPDATE people SET removed_at=?, name=? WHERE id=?", (now, new, pid))
     for table, col in WEB_KEYS:  # a new person of the old name must not get their page rows
         db.execute(f"UPDATE {table} SET {col}=? WHERE {col}=?", (f"web:{new}", f"web:{name}"))
-    return devices, doors, grants, requests
+    return devices, doors, grants, requests, work, owned
 
 
 def set_role(store, name: str, role: str, by: Principal) -> None:
@@ -237,8 +245,29 @@ def _revoke(who, d):
         return f"{who} took {m[2]}'s use of the machine {m[1]}"
     m = re.fullmatch(r"device (.+) of (.+)", d)
     if m:
-        return f"{who} turned off {m[2]}'s device {m[1]}"
+        return f"{who} turned off {_device(m[1], m[2])}"
     return None
+
+
+LEGACY_DEVICE = "the shared token (old machines)"  # the `legacy` device, as the admin reads it
+
+
+def _device(name: str, owner: str) -> str:
+    return LEGACY_DEVICE if name == "legacy" else f"{owner}'s device {name}"
+
+
+def _device_added(who, d):
+    m = re.fullmatch(r"device (.+) of (.+)", d)
+    if m is None:
+        return None
+    if m[1] == "legacy":
+        return f"{who} added {LEGACY_DEVICE} for {m[2]}"
+    return f"{who} added a device {m[1]} for {m[2]}"
+
+
+def _device_shared(who, d):
+    m = re.fullmatch(r"device (.+) of (.+) (on|off)", d)
+    return f"{who} turned sharing {m[3]} for {_device(m[1], m[2])}" if m else None
 
 
 def _match(pattern: str, template: str):
@@ -253,10 +282,10 @@ SENTENCES = {
     "grant": _grant,
     "revoke": _revoke,
     "person": _match(r"(.+) created as (\w+)", "{0} added {1} with the role {2}"),
-    "device": _match(r"device (.+) of (.+)", "{0} added a device {1} for {2}"),
+    "device": _device_added,
     "invite": _match(r"invite for (.+)", "{0} made an invite link for {1}"),
     "invite_cancel": _match(r"invite for (.+)", "{0} cancelled the invite link for {1}"),
-    "device_shared": _match(r"device (.+) of (.+) (on|off)", "{0} turned sharing {3} for {2}'s device {1}"),
+    "device_shared": _device_shared,
     "join": _match(r"device (.+)", "{0} joined with the device {1}"),
     "project_register": _match(r"(.+)", "{0} registered the project {1}"),
     "project_updated": _match(r"(.+)", "{0} changed the description of {1}"),
