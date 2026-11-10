@@ -236,3 +236,14 @@ def test_missing_stop_hook_is_flagged(home):
     del data["hooks"]["Stop"]
     path.write_text(json.dumps(data))
     assert not doctor.tool_configured(SimpleNamespace(tool="codex"), home)
+
+
+def test_doctor_sees_portable_hooks(home):
+    a = ClaudeAdapter(home=home, run=Run())
+    write_claude(home)
+    s = json.loads((home / ".claude/settings.json").read_text())
+    for ev, n in (("SessionStart", "start"), ("UserPromptSubmit", "prompt"), ("Stop", "stop")):
+        s["hooks"][ev][0]["hooks"][0]["command"] = (
+            f"[ -x ~/.local/bin/kaptyorka ] && ~/.local/bin/kaptyorka hook claude-code {n} || true")
+    (home / ".claude/settings.json").write_text(json.dumps(s))
+    assert doctor.tool_configured(a, home)

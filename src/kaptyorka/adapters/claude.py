@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from kaptyorka.adapters.base import (DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, login_output,
-                                     merge_json)
+                                     mentions_hook, merge_json)
 
 CLAUDE_CODE_TESTED = "2.1.319"
 
@@ -156,9 +156,17 @@ class ClaudeAdapter:
             for event, name in HOOKS:
                 entry = hook_entry(kaptyorka, name)
                 entries = hooks.setdefault(event, [])
+                cmds = lambda e: [str(h.get("command", "")) for h in e.get("hooks", [])]
                 ours = [i for i, e in enumerate(entries) if any(
-                    str(h.get("command", "")).endswith(f" hook claude-code {name}")
-                    for h in e.get("hooks", []))]
+                    c.endswith(f" hook claude-code {name}") for c in cmds(e))]  # `<path> hook ...` as written by us
+                # a line someone wrote by hand (portable shell form) counts as present: leave it alone
+                by_hand = any(i not in ours and any(mentions_hook(c, "claude-code", (name,)) for c in cmds(e))
+                              for i, e in enumerate(entries))
+                if by_hand:
+                    for i in reversed(ours):  # our own copy would run the hook twice
+                        del entries[i]
+                        changed = True
+                    continue
                 if [entries[i] for i in ours] == [entry]:
                     continue
                 for i in reversed(ours):  # an older install path: replace, never add a second

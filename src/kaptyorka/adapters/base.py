@@ -9,6 +9,7 @@ Session keys, one per tool, identical in shim, hook and bridge:
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -173,7 +174,7 @@ def remove_alias(home: Path, alias: str, label: str) -> List[str]:
     return lines
 
 
-def is_our_hook(command: object, tool: str, events: tuple) -> bool:
+def is_exact_hook(command: object, tool: str, events: tuple) -> bool:
     """True only for `<path>/kaptyorka hook <tool> <event>`, quoted or not (older installs)."""
     command = str(command)
     for event in events:
@@ -187,6 +188,18 @@ def is_our_hook(command: object, tool: str, events: tuple) -> bool:
             exe = parts[0] if len(parts) == 1 else exe  # unquoted path with spaces
             return os.path.basename(exe) == "kaptyorka"
     return False
+
+
+def mentions_hook(command: object, tool: str, events: tuple) -> bool:
+    """The command contains `kaptyorka hook <tool> <event>` on word boundaries: also a hand-written
+    line such as `[ -x ~/.local/bin/kaptyorka ] && ~/.local/bin/kaptyorka hook claude-code start || true`."""
+    return any(re.search(rf"\bkaptyorka hook {re.escape(tool)} {re.escape(e)}\b", str(command))
+               for e in events)
+
+
+def is_our_hook(command: object, tool: str, events: tuple) -> bool:
+    """A kaptyorka hook command: the exact path form, or a line that contains the hook text."""
+    return is_exact_hook(command, tool, events) or mentions_hook(command, tool, events)
 
 
 def drop_hooks(hooks: dict, is_ours: Callable[[dict], bool], nested: bool = True) -> bool:

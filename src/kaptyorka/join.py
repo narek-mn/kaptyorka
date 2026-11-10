@@ -97,7 +97,9 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     if status != 200:
         print(f"the hub at {hub} answered {status}, which is not what a kaptyorka hub says; check the address", file=sys.stderr)
         return 1
-    exe = str(Path(sys.argv[0]).resolve())
+    exe = Path(sys.argv[0])
+    # pipx's stable link survives a venv rebuild; any other path is resolved to the real file
+    exe = str(exe if exe == Path.home() / ".local/bin/kaptyorka" else exe.resolve())
     done = [a for a in adapters if a.installed() and (not only or a.tool in only)]
     cfg = {"hub": hub, "token": token, "machine": name}
     saved = paths.load_config()

@@ -312,3 +312,33 @@ def test_configure_adds_the_stop_hook_to_an_already_joined_machine(home, fake_cl
     a.configure("/k")
     hooks = json.loads(settings.read_text())["hooks"]
     assert hooks["Stop"] == [entry("stop")] and len(hooks["SessionStart"]) == 1
+
+
+PORTABLE = "[ -x ~/.local/bin/kaptyorka ] && ~/.local/bin/kaptyorka hook claude-code {} || true"
+
+
+def _portable(n):
+    return {"hooks": [{"type": "command", "command": PORTABLE.format(n), "timeout": 5}]}
+
+
+def test_hooks_portable_line_counts_as_present(home, fake_claude_cli):
+    settings = home / ".claude/settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({"hooks": {"SessionStart": [_portable("start")],
+                                              "UserPromptSubmit": [_portable("prompt")]}}))
+    a = ClaudeAdapter(home, run=fake_claude_cli.run)
+    a.configure("/k")
+    a.configure("/k")
+    hooks = json.loads(settings.read_text())["hooks"]
+    assert hooks["SessionStart"] == [_portable("start")]
+    assert hooks["UserPromptSubmit"] == [_portable("prompt")]
+    assert [h["hooks"][0]["command"] for h in hooks["Stop"]] == ["/k hook claude-code stop"]
+
+
+def test_hooks_own_duplicate_of_portable_removed(home, fake_claude_cli):
+    settings = home / ".claude/settings.json"
+    settings.parent.mkdir()
+    own = {"hooks": [{"type": "command", "command": "/venv/bin/kaptyorka hook claude-code start"}]}
+    settings.write_text(json.dumps({"hooks": {"SessionStart": [_portable("start"), own]}}))
+    ClaudeAdapter(home, run=fake_claude_cli.run).configure("/k")
+    assert json.loads(settings.read_text())["hooks"]["SessionStart"] == [_portable("start")]

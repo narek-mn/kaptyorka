@@ -241,7 +241,8 @@ def test_hook_match_is_precise():
     assert is_our_hook("'/my dir/kaptyorka' hook claude-code prompt", "claude-code", ev)
     assert is_our_hook("/my dir/kaptyorka hook claude-code prompt", "claude-code", ev)  # older, unquoted
     assert not is_our_hook("/usr/bin/other hook claude-code start", "claude-code", ev)
-    assert not is_our_hook("echo kaptyorka hook claude-code start", "claude-code", ev)
+    assert is_our_hook("[ -x ~/.local/bin/kaptyorka ] && ~/.local/bin/kaptyorka hook claude-code start || true", "claude-code", ev)
+    assert not is_our_hook("mykaptyorka hook claude-code start", "claude-code", ev)
     assert not is_our_hook("/a/kaptyorka hook claude-code stop", "claude-code", ev)
     assert not is_our_hook(None, "claude-code", ev)
 

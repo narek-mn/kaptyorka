@@ -233,3 +233,15 @@ def test_join_env_stdin_bad_line_exits_1(monkeypatch, home, capsys):
     with pytest.raises(SystemExit) as e:
         cli.entry()
     assert e.value.code == 1 and "bad --env-stdin line 1" in capsys.readouterr().err
+
+
+def test_join_keeps_the_pipx_link_path(hub, home, monkeypatch):
+    link = home / ".local/bin/kaptyorka"
+    link.parent.mkdir(parents=True)
+    target = home / "venv-kaptyorka"
+    target.write_text("")
+    link.symlink_to(target)
+    monkeypatch.setattr(sys, "argv", [str(link), "join"])
+    a = FakeAdapter("a")
+    assert main(hub.url, "T", "pc", adapters=[a], install=no_service([])) == 0
+    assert a.configured == [str(link)]
