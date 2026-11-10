@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+- The manager wakes up when a message arrives. It is started with `--setting-sources project,local` instead of `--restricted`, which in current Claude Code also removed the session's inbox socket, so a pushed message never reached it. Its instructions now load from its folder's `CLAUDE.md`, and so does the admin's user-level `CLAUDE.md` (user settings, hooks and plugins still do not). Upgrade: after `kaptyorka update` on the hub machine, close the running manager once (Close on its Machines row, or `close_worker("manager")`) so the hub starts it again with the new flags.
+
 ## 0.6.1
 
 - The manager no longer starts twice in a row. After a failed start the hub waits two minutes before it tries again, and it does not start the manager while Claude Code is not logged in on the hub machine. The Settings tab says whether the manager session is starting, running, off, or on but unable to start, with the reason and what its last start failed on.
