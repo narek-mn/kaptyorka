@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0
+
+- New `kaptyorka login-copy user@host` copies this machine's Claude Code login to the same user on another machine of yours over ssh, and checks that it is logged in there. The login never goes through the hub. It refuses when Claude Code is not logged in here, is not installed there, or is already logged in there (`--force` replaces that login). Claude Code only, and Linux to Linux only.
+
 ## 0.6.2
 
 - The manager wakes up when a message arrives. It is started with `--setting-sources project,local` instead of `--restricted`, which in current Claude Code also removed the session's inbox socket, so a pushed message never reached it. Its instructions now load from its folder's `CLAUDE.md`, and so does the admin's user-level `CLAUDE.md` (user settings, hooks and plugins still do not). Upgrade: after `kaptyorka update` on the hub machine, close the running manager once (Close on its Machines row, or `close_worker("manager")`) so the hub starts it again with the new flags.

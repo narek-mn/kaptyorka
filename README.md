@@ -393,6 +393,8 @@ kaptyorka fleet list
 
 `fleet add` installs kaptyorka on each target and joins it as that person, with an invite made for the job. `--key-from` is a file with one `NAME=value` line, for example an API key. It goes only to the bridge service's environment on the target (the unit file is mode 0600). `fleet list` shows the machines, who owns them and their version. A re-join keeps that key. To replace it, run `fleet add` again with a new `--key-from`; to clear it, run `kaptyorka remove` on that machine, then `join` again.
 
+`kaptyorka login-copy alice@box-1` copies your Claude Code login from this machine to the same user on that machine, over ssh, so Claude Code there is logged in as you without a browser. The login goes straight from this machine to that one, never through the hub, and is saved there readable only by that user. It refuses when Claude Code is not logged in here, is not installed there, or is already logged in there (`--force` replaces that login). Use it only for machines and accounts that are yours. Claude Code only for now, and both machines must be Linux: a Mac keeps the Claude login in its keychain, so it cannot be copied from one, and a file copied to one would not be used.
+
 Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by default for members' machines and off for the admin's. Switch it per account on the **Machines** tab.
 
 ## Backup
@@ -450,6 +452,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
 | `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |
 | `kaptyorka fleet list` | Admin: list machines |
+| `kaptyorka login-copy <user@host>` | Copy your Claude Code login to another machine of yours over ssh (`--force` replaces one already there) |
 | `kaptyorka backup <user@host:path>` | Copy the hub's data to another machine; `--nightly` every day at 03:00 |
 | `kaptyorka restore <file>` | Put a backup back (stop the hub first) |
 
@@ -464,7 +467,7 @@ Everything is in `~/.kaptyorka`:
 
 ```
 src/kaptyorka/
-  cli.py        the commands: start, join, invite, invites, people, project, grant, revoke, rules, doctor, fleet, backup, restore, leave, stop, update, remove
+  cli.py        the commands: start, join, invite, invites, people, project, grant, revoke, rules, doctor, fleet, login-copy, backup, restore, leave, stop, update, remove
   hub.py        hub app: MCP tools and plain routes behind a device token
   http.py       small HTTP client used by the other parts
   store.py      SQLite storage: people, devices, agents, messages, notes
@@ -476,7 +479,7 @@ src/kaptyorka/
   brief.py      the start brief: sections, budget, cache
   backup.py     `kaptyorka backup` and `kaptyorka restore`
   launch.py     starts and stops a worker on a machine
-  doctor.py     `kaptyorka doctor`; fleet.py: `kaptyorka fleet`
+  doctor.py     `kaptyorka doctor`; fleet.py: `kaptyorka fleet`; login_copy.py: `kaptyorka login-copy`
   join.py       sets up each agent tool; remove.py undoes it
   service.py    background services (hub, bridge)
   shim.py       `kaptyorka mcp`: per-session MCP server that relays to the hub

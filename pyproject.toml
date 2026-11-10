@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kaptyorka"
-version = "0.6.2"
+version = "0.7.0"
 description = "A team hub for coding agents"
 readme = "README.md"
 requires-python = ">=3.10"

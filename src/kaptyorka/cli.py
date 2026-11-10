@@ -628,6 +628,14 @@ def _fleet_add(args) -> int:
     return 1 if any(": failed at " in l or l.endswith(": not a user@host") for l in lines) else 0
 
 
+def _login_copy(args) -> int:
+    from kaptyorka import login_copy
+
+    ok, line = login_copy.copy(args.target, force=args.force)
+    print(line)
+    return 0 if ok else 1
+
+
 def _fleet_list(args) -> int:
     from kaptyorka import fleet
 
@@ -679,7 +687,7 @@ def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents: run the hub, invite people, give them access to projects.")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove,invite,people,"
-                            "invites,project,grant,revoke,machine,who,doctor,fleet,rules,backup,restore}")
+                            "invites,project,grant,revoke,machine,who,doctor,fleet,login-copy,rules,backup,restore}")
     hide = argparse.SUPPRESS  # subparsers are hidden by giving them no help text
     s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
     s.add_argument("--port", type=int, help="hub port (default 8765)")
@@ -777,6 +785,10 @@ def entry() -> None:
     fa.add_argument("--key-from", help="file with one NAME=value line, sent to the bridge's environment")
     fa.set_defaults(run=_fleet_add)
     fs.add_parser("list", help="list the team's machines and who owns them").set_defaults(run=_fleet_list)
+    lc = sub.add_parser("login-copy", help="copy this machine's Claude Code login to another machine of yours over ssh")
+    lc.add_argument("target", help="user@host")
+    lc.add_argument("--force", action="store_true", help="replace a login that is already there")
+    lc.set_defaults(run=_login_copy)
     rl = sub.add_parser("rules", help="upload the team rules and skills to the hub").add_subparsers(
         dest="rules_cmd", required=True, metavar="{push}")
     rp = rl.add_parser("push", help="upload a team rules folder: RULES.md and skills/*.md")

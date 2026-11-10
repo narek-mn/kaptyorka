@@ -36,7 +36,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.6.2" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.7.0" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
@@ -46,7 +46,7 @@ def test_subcommands_listed(capsys):
     listed = out.split("positional arguments:")[1].split("options:")[0]
     names = [l.split()[0] for l in listed.splitlines()[2:] if l.startswith("    ") and l[4] != " "]
     assert names == ["start", "join", "leave", "stop", "update", "remove", "invite", "people", "invites", "grant",
-                     "revoke", "project", "machine", "who", "doctor", "backup", "restore", "fleet", "rules"]
+                     "revoke", "project", "machine", "who", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
     for hidden in ("serve", "mcp", "bridge", "hook"):
         assert hidden not in names
 
@@ -207,7 +207,7 @@ def test_cli_machine_owner(monkeypatch, home, capsys):
 def test_metavar_lists_user_commands(capsys):
     with pytest.raises(SystemExit):
         entry_with(["--help"])
-    assert ("{start,join,leave,stop,update,remove,invite,people,invites,project,grant,revoke,machine,who,doctor,fleet,rules,backup,restore}"
+    assert ("{start,join,leave,stop,update,remove,invite,people,invites,project,grant,revoke,machine,who,doctor,fleet,login-copy,rules,backup,restore}"
             in capsys.readouterr().out)
 
 
@@ -241,6 +241,24 @@ def test_fleet_add_smoke_with_fake_run(monkeypatch, home, tmp_path, capsys):
     # every target rejected: a failure, not a success
     assert entry_with_exit(["fleet", "add", "a b@box-2", "--person", "alice"]) == 1
     assert capsys.readouterr().out == "a b@box-2: not a user@host\n" and len(seen) == 4
+
+
+def test_login_copy_prints_and_exits_by_result(monkeypatch, capsys):
+    from kaptyorka import login_copy
+
+    seen = []
+
+    def fake(target, force=False, **kw):
+        seen.append((target, force))
+        return fake.result
+
+    monkeypatch.setattr(login_copy, "copy", fake)
+    fake.result = (True, "alice@box-1: Claude Code is logged in there")
+    assert entry_with_exit(["login-copy", "alice@box-1"]) == 0
+    assert capsys.readouterr().out == "alice@box-1: Claude Code is logged in there\n"
+    fake.result = (False, "x")
+    assert entry_with_exit(["login-copy", "alice@box-1", "--force"]) == 1
+    assert seen == [("alice@box-1", False), ("alice@box-1", True)]
 
 
 def test_fleet_list_prints_devices(monkeypatch, home, capsys):
