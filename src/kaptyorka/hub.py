@@ -527,7 +527,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             others = [n for n in ws.folder_people(chosen["host"], chosen["os_user"],
                                                   chosen["folder"], store.clock())
                       if n and n != principal.person_name]
-            manager_key = mm.session_key(store.clock()) if others and mm.enabled() else None
+            manager_key = None
+            if others and mm.enabled():  # asleep: its last session; the notice wakes it
+                manager_key = mm.session_key(store.clock()) or (
+                    mm.last_key() if mm.retired() else None)
             if manager_key is not None:
                 rid = mm.request_add(principal.person_id, agent.key, project, task, tool,
                                      resume or None, chosen["host"], others[0],
@@ -1017,6 +1020,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             state = "starting" if row["state"] == "starting" else "up"
         elif not mm.enabled():
             state = "off"
+        elif mm.asleep(now):
+            state, reason = "asleep", ""
         else:  # nothing in the way: the next tick starts it
             state = "blocked" if reason else "starting"
         return JSONResponse({
@@ -1339,7 +1344,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         principal = request.scope.get("state", {}).get("principal")
         if principal is None:
             return PlainTextResponse("unauthorized", status_code=401)
-        return JSONResponse(own_workers(principal, page_foreign(request, principal)))
+        rows = own_workers(principal, page_foreign(request, principal))
+        if mm.retired():  # not closed: a message starts it again
+            rows = [{**w, "state": "asleep", "error": ""} if w["manager"] else w for w in rows]
+        return JSONResponse(rows)
 
     async def worker_action(request: Request, close: bool) -> Response:
         principal = request.scope.get("state", {}).get("principal")

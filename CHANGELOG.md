@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0
+
+- The manager sleeps when idle and wakes on a message instead of restarting every 71 minutes. Claude Code stops a manager that has been idle for about an hour; the hub now leaves it stopped until a message or a work request comes for it, then starts it and hands it what was waiting. Settings and Machines show it as asleep. The hub's own notices to it (the weekly review, abandoned workers, reminders) wait while it sleeps and go out when it wakes.
+
 ## 0.7.1
 
 - Messages to the manager now reach it at once: the bridge that started a session may deliver to it, even when the session is registered under its own name (the manager is). Before, the manager only saw messages on its next turn, which an idle manager never had.

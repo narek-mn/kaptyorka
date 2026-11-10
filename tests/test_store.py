@@ -304,3 +304,20 @@ def test_unknown_name_lists_people(store):
     store.send_from_web("alice", "pc/codex/nav", "hi")
     with pytest.raises(KaptyorkaError, match="online: pc/codex/nav; people: alice"):
         store.send("a", "Bob", "hi")
+
+
+def test_offline_label_match(store, clock):
+    mgr, _ = person(store, "manager", "manager")
+    beat(store, "m", "manager", "Manager")
+    beat(store, "o", "x", "box")
+    with store.lock:
+        store.db.execute("UPDATE agents SET person_id=? WHERE key='m'", (mgr,))
+    clock.t += 31  # both offline
+    assert store.send_from_web("alice", "manager", "hi") == 1
+    assert store.messages()[0].to == "pc/claude-code/manager"
+    with pytest.raises(KaptyorkaError, match="no session named box"):
+        store.send_from_web("alice", "box", "hi")
+    beat(store, "a", "x", "box")
+    beat(store, "b", "y", "box")
+    with pytest.raises(KaptyorkaError, match="several sessions are named box"):
+        store.send_from_web("alice", "box", "hi")

@@ -302,3 +302,39 @@ def test_admin_restores_old_versions(admin_page):
     assert page.wait('document.querySelectorAll("#rules-doc .version").length === 3')
     assert page.js('document.querySelector("#rules-doc .doc-body").textContent') == "old rule"
     assert RulesStore(store).current()["text"] == "old rule"
+
+
+def test_manager_asleep_on_settings_and_machines(tmp_path, monkeypatch):
+    """A manager Claude retired reads Asleep on Settings and `asleep` on Machines, with no
+    close button. Screenshots: settings-asleep.png and machines-asleep.png in tmp_path."""
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "kh"))
+    store = Store(tmp_path / "hub.db")
+    alice, token = person(store, "alice", "admin")
+    ms = ManagerStore(store)
+    ms.ensure_account("box-1", "alice")
+    with store.lock:
+        store.db.execute(
+            "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+            " tool, folder, state, created, closed_at, error, manager) VALUES ('manager',"
+            " 'manager', 'the team''s manager', 'web:alice', ?, 0, 'box-1', 'claude-code',"
+            " '/home/u/.kaptyorka/manager', 'closed', ?, ?, 'session gone', 1)",
+            (alice, time.time() - 4000, time.time() - 60))
+    stop = start_hub(store)
+    base = f"http://127.0.0.1:{stop.port}/#t={token}"
+    try:
+        with chrome() as page:
+            page.go(base + "&view=settings")
+            page.wait('document.getElementById("manager-state").textContent.includes("Asleep")')
+            assert page.js('document.querySelector("#manager-state b").textContent') \
+                == "Asleep: it wakes when someone sends it a message."
+            page.screenshot(tmp_path / "settings-asleep.png")
+            page.js('document.querySelector(\'.tab[data-view="machines"]\').click()')
+            page.wait('document.querySelector("#worker-rows .state") !== null')
+            time.sleep(0.3)  # let the tab paint
+            assert page.js('document.querySelector("#worker-rows .state").textContent') == "asleep"
+            assert page.js('document.querySelector("#worker-rows .c-act button")') is None
+            assert page.js('document.querySelector("#worker-rows .werr")') is None
+            page.screenshot(tmp_path / "machines-asleep.png")
+    finally:
+        stop()
+        store.close()

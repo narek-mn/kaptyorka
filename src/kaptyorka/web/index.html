@@ -2015,11 +2015,12 @@ tr.archived b { color: var(--dim); }
       ms.appendChild(el("b", { text: st === "starting" ? "The manager session is starting."
         : st === "up" ? "The manager session is running."
         : st === "blocked" ? "The manager session is on but cannot start: " + why + "."
+        : st === "asleep" ? "Asleep: it wakes when someone sends it a message."
         : "The manager session is off." }));
       ms.appendChild(el("span", null, st === "off"
         ? ["Turn it on with ", el("code", { text: "kaptyorka start --manager" }), " on the hub machine."]
         : ["Switch it off with ", el("code", { text: "kaptyorka start --no-manager" }), " on the hub machine",
-           st === "blocked" ? "." : ", or close the manager worker on Machines."]));
+           st === "blocked" || st === "asleep" ? "." : ", or close the manager worker on Machines."]));
       if (st === "blocked" && settings.manager_error)
         ms.appendChild(el("span", { "class": "hint werr", text: "Last start failed: " + settings.manager_error }));
     }
@@ -2145,7 +2146,7 @@ tr.archived b { color: var(--dim); }
           quiet(act("worker-err", "/api/workers/" + encodeURIComponent(w.name) + "/adopt"));
         }, { title: "Become its boss on this page" }));
       }
-      if ((own || isAdmin()) && !/^(closed|failed)$/.test(w.state)) {
+      if ((own || isAdmin()) && !/^(closed|failed|asleep)$/.test(w.state)) {
         var closeBtn = button("Close", "danger", function () {
           confirmInline(closeBtn, "Close worker " + w.name + "? Its session stops."
             + (w.manager ? " The manager stays off until kaptyorka start --manager." : ""), "Close", function () {
@@ -2165,7 +2166,7 @@ tr.archived b { color: var(--dim); }
            [w.host, el("div", { "class": "hint", text: w.os_user + " · " + w.tool })]),
         el("td", { "class": "w-state" }, [el("span", { "class": "state " + w.state, text: w.state })]),
         el("td", { "class": "c-plain w-boss", "data-label": "Boss" }, [w.manager ? el("span", { text: "manager" }) : bossEl(w.boss || ""), el("div", { "class": "hint", text: w.person })]),
-        el("td", { "class": "w-attach" }, [w.state === "closed" || w.state === "failed" ? null : el("div", { "class": "attach" }, [code, copy])]),
+        el("td", { "class": "w-attach" }, [/^(closed|failed|asleep)$/.test(w.state) ? null : el("div", { "class": "attach" }, [code, copy])]),
         el("td", { "class": "c-act" }, acts)
       ]));
     });

@@ -1318,6 +1318,13 @@ class Store:
         person = next((p for p in people if p.lower() == to.lower()), None)
         if person is not None:  # a person on the web page: they read replies there
             return [{"key": f"web:{person}", "name": person, "machine": "", "tool": "", "project": ""}]
+        # the manager asleep: its last session by label, so a message wakes it (manager.PERSON)
+        match = self.db.execute(
+            "SELECT a.* FROM agents a JOIN people p ON p.id=a.person_id WHERE p.name='manager'"
+            " AND p.role='manager' AND a.label!='' AND lower(a.label)=lower(?)"
+            " ORDER BY a.last_seen DESC LIMIT 1", (to,)).fetchall()
+        if match:
+            return match
         names = self._titles(online, viewer) or "none"
         extra = f"; people: {', '.join(people)}" if people else ""
         raise KaptyorkaError(f"no session named {to}; online: {names}{extra}")
@@ -1360,7 +1367,16 @@ class Store:
                     (r for r in online if r["person_id"] == m["to_person"]), None)
             else:
                 target = by_key.get(m["to_key"])
-                if target is None:  # held: the name may now belong to another person's session
+                old = None if target is not None else self.db.execute(
+                    "SELECT a.person_id, a.label FROM agents a JOIN people p ON p.id=a.person_id"
+                    " WHERE a.key=? AND p.name='manager' AND p.role='manager'",
+                    (m["to_key"],)).fetchone()  # manager.PERSON
+                if old is not None:  # held for the manager: its new session, no door check
+                    mine = [r for r in online if r["person_id"] == old["person_id"]]
+                    same = [r for r in mine if r["label"] == old["label"]]
+                    target = next((r for r in mine if r["name"] == m["to_name"]), None) or (
+                        same[0] if len(same) == 1 else None)
+                elif target is None:  # held: the name may now belong to another person's session
                     target = next((r for r in online if r["name"] == m["to_name"]), None)
                     if target is not None:
                         sender = (self._as_target({"key": m["sender_key"], "person_id": None})

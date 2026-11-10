@@ -17,6 +17,7 @@ DEVICE = "manager"
 WORKER = "manager"
 DIR = paths.MANAGER_DIR  # under paths.home()
 CONFIG = paths.MANAGER_CONFIG  # under paths.home(), outside the session's working folder
+ASLEEP = "the manager is asleep; a message or request wakes it"
 RELAUNCH_S = 120
 MAX_LAUNCHES_PER_HOUR = 2
 REQUEST_TTL_S = 3600
@@ -264,6 +265,35 @@ class ManagerStore:
                 " ORDER BY a.last_seen DESC LIMIT 1", (PERSON, now - ONLINE_S)).fetchone()
         return None if row is None else row["key"]
 
+    def last_key(self) -> Optional[str]:
+        """The manager's most recent session key, online or not."""
+        with self.lock:
+            row = self.db.execute(
+                "SELECT a.key FROM agents a JOIN people p ON p.id=a.person_id"
+                " WHERE p.name=? AND p.role='manager' ORDER BY a.last_seen DESC LIMIT 1",
+                (PERSON,)).fetchone()
+        return None if row is None else row["key"]
+
+    def retired(self) -> bool:
+        """Claude Code stopped the manager's session (idle about an hour): the hub closed its
+        worker as gone."""
+        with self.lock:
+            row = self.db.execute("SELECT state, error FROM workers WHERE name=?",
+                                  (WORKER,)).fetchone()
+        return row is not None and row["state"] == "closed" and row["error"] == "session gone"
+
+    def has_work(self) -> bool:
+        """An unread message to one of the manager's sessions that a push can still deliver."""
+        with self.lock:
+            return self.db.execute(
+                "SELECT 1 FROM messages m JOIN agents a ON a.key=m.to_key JOIN people p"
+                " ON p.id=a.person_id WHERE p.name=? AND p.role='manager' AND m.read_at IS NULL"
+                " AND m.push_state!='failed' LIMIT 1", (PERSON,)).fetchone() is not None
+
+    def asleep(self, now: float) -> bool:
+        """Retired with nothing to do: the hub leaves it stopped until a message comes."""
+        return self.retired() and not self.has_work()
+
     def _launches(self) -> List[float]:
         try:
             return [float(t) for t in json.loads(self._get("manager_launches") or "[]")]
@@ -304,6 +334,8 @@ class ManagerStore:
                                    " ('starting','up')", (WORKER,)).fetchone()
         if live is not None:
             return False, "the manager is already running"
+        if self.asleep(now):
+            return False, ASLEEP
         # the bridge's no-show timeout ends with the launch wait: count it from the failure
         failed = self.last_failure()
         if failed is not None and failed["failed_at"] is not None \

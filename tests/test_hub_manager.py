@@ -167,9 +167,12 @@ def test_manager_relaunch_limits(hub, clock):
     admin = hub.store.authenticate(b.token)
     rows = {a["person"]: a for a in feed(hub.store, admin)["agents"]}
     assert rows["manager"]["role"] == "manager"
-    # its session goes quiet: closed as "session gone", started again in the same tick
+    # its session goes quiet: closed as "session gone"; a message starts it again
     clock[0] = t0 + ONLINE_S + GONE_S + 130
     beat(hub, b)
+    hub.tick()
+    assert orders(hub, b) == [] and state(hub) == "closed"
+    hub.ws.notify("claude:m1", "wake up")
     hub.tick()
     [o2] = orders(hub, b)
     assert o2["id"] != o1["id"] and state(hub) == "starting"
@@ -182,6 +185,7 @@ def test_manager_relaunch_limits(hub, clock):
     # gone again: two launches within the hour, so no third
     clock[0] += ONLINE_S + GONE_S + 130
     beat(hub, b)
+    hub.ws.notify("claude:m2", "wake up")
     hub.tick()
     assert orders(hub, b) == [] and state(hub) == "closed"
     assert hub.mm.may_launch(clock[0]) == (False, "the manager was launched twice in the"
@@ -804,3 +808,83 @@ def test_person_named_manager_reported_once_a_day(hub, clock, capsys):
     clock[0] += 86400
     hub.tick()
     assert capsys.readouterr().out.count(line) == 1
+
+
+MGR_NAME = f"manager@{HOST}/claude-code/manager"
+
+
+def asleep_manager(hub, clock):
+    """A running manager whose session Claude retired: closed as gone, not started again."""
+    b = running_manager(hub)
+    clock[0] += 3600  # a fresh launch budget
+    beat(hub, b)
+    hub.tick()
+    assert state(hub) == "closed" and orders(hub, b) == []
+    assert hub.mm.asleep(clock[0])
+    return b
+
+
+def woken(hub, b):
+    """The next tick launches the manager; its new session links under a new key. Returns
+    the texts the admin's bridge is handed for that new session."""
+    hub.tick()
+    [o] = orders(hub, b)
+    ack(hub, b, o)
+    mtoken = json.loads(hub.config.read_text())["token"]
+    hub.store.seen("claude:m2", f"manager@{HOST}", "claude-code", "manager",
+                   principal=hub.store.authenticate(mtoken))
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "manager", "key": "claude:m2"})[0] == 204
+    status, items = http.request("GET", f"{hub.url}/bridge/poll?machine={HOST}", b.token)
+    assert status == 200
+    return [i["text"] for i in items if i.get("kind") == "message" and i["key"] == "claude:m2"]
+
+
+def test_sleeping_manager_wakes_for_the_admin_page(hub, clock):
+    b = asleep_manager(hub, clock)
+    assert http.request("POST", hub.url + "/api/send", b.token,
+                        {"to": MGR_NAME, "text": "from root"})[0] == 200
+    assert any(t.endswith("from root") for t in woken(hub, b))
+
+
+def test_sleeping_manager_wakes_for_a_member_page(hub, clock):
+    b = asleep_manager(hub, clock)
+    _, btok, _ = plain(hub, "bob")
+    assert http.request("POST", hub.url + "/api/send", btok,
+                        {"to": MGR_NAME, "text": "from bob"})[0] == 200
+    assert any(t.endswith("from bob") for t in woken(hub, b))
+
+
+def test_sleeping_manager_wakes_for_a_member_session(hub, clock):
+    b = asleep_manager(hub, clock)
+    _, _, bob = plain(hub, "bob")
+    B = ident("k:bob", project="proj-b", machine="pc-2")
+    run(call(bob, B, "inbox"))
+    assert run(call(bob, B, "send", to=MGR_NAME, text="from bob's session")) \
+        == "sent to 1 session"
+    assert any(t.endswith("from bob's session") for t in woken(hub, b))
+
+
+def test_sleeping_manager_wakes_for_a_hub_notice(hub, clock):
+    b = asleep_manager(hub, clock)
+    assert hub.ws.notify("claude:m1", "a hub notice")
+    assert any(t.endswith("a hub notice") for t in woken(hub, b))
+
+
+def test_busy_work_while_the_manager_sleeps_wakes_it(hub, clock):
+    b = asleep_manager(hub, clock)
+    _, bob_id, bob = busy_setup(hub)
+    assert ask(hub, bob).startswith("busy: box-1 has alice's session in that folder; the"
+                                    " manager is asking them (request 1)")
+    texts = woken(hub, b)
+    busy = manager.text_busy("bob", "proj-a", "box-1", "alice", "/w/proj-a", 1)
+    assert any(t.endswith(busy) for t in texts)
+
+
+def test_sleeping_manager_shown_asleep(hub, clock):
+    b = asleep_manager(hub, clock)
+    status, s = http.request("GET", hub.url + "/api/settings", b.token)
+    assert status == 200 and s["manager_state"] == "asleep"
+    status, rows = http.request("GET", hub.url + "/api/workers", b.token)
+    [w] = [w for w in rows if w["manager"]]
+    assert w["state"] == "asleep" and w["error"] == ""
