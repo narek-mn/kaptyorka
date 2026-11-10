@@ -56,6 +56,9 @@ def add(targets: List[str], person: str, key_file: Optional[Path], hub_url: str,
         for step, command, stdin in steps:
             kw = {"input": stdin} if stdin else {}
             r = run(_ssh(target, command), capture_output=True, text=True, **kw)
+            if r.returncode != 0 and step == "join" and "is already joined to" in f"{r.stderr}{r.stdout}":
+                failed = f"{target}: already joined to this hub"  # join refused before it used the invite
+                break
             if r.returncode != 0:
                 failed = f"{target}: failed at {step}: {_first_line(r.stderr)}; run by hand: {by_hand if step == 'join' and by_hand else command}"
                 break

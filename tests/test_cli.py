@@ -1,3 +1,5 @@
+import json
+import subprocess
 import socket
 import sys
 import threading
@@ -691,3 +693,149 @@ def test_start_reports_a_bridge_that_will_not_start(monkeypatch, home, capsys):
     assert _start_with(monkeypatch, home, False, restart) == 1
     assert "bridge broke" in capsys.readouterr().err
     assert (paths.home() / "hub.json").exists()
+
+
+# --- start, stop, update: once, and say so ---
+
+def _units(monkeypatch, **active):
+    """service.is_active from a dict {unit: True/False/None}; everything else is recorded."""
+    calls = []
+    monkeypatch.setattr(cli.service, "is_active",
+                        lambda name, **kw: active.get(name.replace("kaptyorka-", ""), None))
+    monkeypatch.setattr(cli.service, "restart", lambda name, **kw: calls.append(("restart", name)) or [f"{name} up"])
+    monkeypatch.setattr(cli.service, "stop", lambda name, **kw: calls.append(("stop", name)) or [f"{name}: stopped"])
+    monkeypatch.setattr(cli.service, "install", lambda name, argv, **kw: calls.append(("install", name)) or
+                        [f"installed /x/{name}.service"])
+    monkeypatch.setattr(cli, "_outbound_ip", lambda: "10.0.0.1")
+    return calls
+
+
+def _hub_json(port=8765, host=None, manager=True):
+    paths.home().mkdir(parents=True, exist_ok=True)
+    (paths.home() / "hub.json").write_text(json.dumps({"port": port, "host": host, "manager": manager}))
+
+
+def test_start_twice_does_not_restart(monkeypatch, home, capsys):
+    calls = _units(monkeypatch, hub=True, bridge=True)
+    _hub_json()
+    assert entry_with_exit(["start"]) in (0, None)
+    assert calls == []
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "the hub is already running: http://10.0.0.1:8765"
+    assert out[1].startswith("open the page: http://10.0.0.1:8765/#t=") and "keep this link private" in out[1]
+    assert len(out) == 2
+
+
+def test_start_already_running_still_turns_the_bridge_on(monkeypatch, home):
+    calls = _units(monkeypatch, hub=True, bridge=False)
+    _hub_json()
+    assert entry_with_exit(["start"]) in (0, None)
+    assert calls == [("restart", "kaptyorka-bridge")]
+
+
+def test_start_manager_flag_on_running_hub_unblocks(monkeypatch, home, capsys):
+    from kaptyorka.manager import ManagerStore
+    from kaptyorka.store import Store
+
+    calls = _units(monkeypatch, hub=True, bridge=True)
+    _hub_json()
+    s = Store(paths.home() / "hub.db", legacy_token=cli._token())
+    mm = ManagerStore(s)
+    mm.set_blocked("trust")
+    assert mm.blocked()
+    s.close()
+    assert entry_with_exit(["start", "--manager"]) in (0, None)
+    assert calls == [] and "already running" in capsys.readouterr().out
+    s = Store(paths.home() / "hub.db", legacy_token=cli._token())
+    assert not ManagerStore(s).blocked()
+    s.close()
+
+
+def test_start_on_a_member_machine_refused(monkeypatch, home, capsys):
+    calls = _units(monkeypatch, bridge=False)
+    paths.save_config({"hub": "http://other:1", "token": "t", "machine": "pc"})
+    assert entry_with_exit(["start"]) == 1
+    assert calls == []
+    assert capsys.readouterr().err.strip() == (
+        "this machine is joined to http://other:1; it does not run a hub. "
+        "To turn its bridge back on: kaptyorka join")
+
+
+def test_start_new_port_moves_this_machine(monkeypatch, home, capsys):
+    calls = _units(monkeypatch, hub=True, bridge=True)
+    _hub_json(port=8765)
+    paths.save_config({"hub": "http://10.0.0.1:8765", "token": "t", "machine": "pc"})
+    assert entry_with_exit(["start", "--port", "9000"]) in (0, None)
+    assert paths.load_config() == {"hub": "http://10.0.0.1:9000", "token": "t", "machine": "pc"}
+    assert ("install", "kaptyorka-hub") in calls and ("restart", "kaptyorka-bridge") in calls
+    assert capsys.readouterr().out.splitlines()[0] == "hub restarted: http://10.0.0.1:9000"
+
+
+def test_first_start_output(monkeypatch, home, capsys):
+    calls = _units(monkeypatch)
+    assert entry_with_exit(["start"]) in (0, None)
+    out, err = capsys.readouterr()
+    lines = out.splitlines()
+    assert lines[0] == "hub running: http://10.0.0.1:8765"
+    assert lines[1].startswith("open the page: http://10.0.0.1:8765/#t=") and "keep this link private" in lines[1]
+    assert lines[2] == "invite a teammate: kaptyorka invite <name>"
+    assert lines[3] == cli.MANAGER_NOTE
+    assert "installed" not in out + err and "join --hub" not in out
+    assert calls == [("install", "kaptyorka-hub")]
+
+
+def test_restart_output_is_one_line(monkeypatch, home, capsys):
+    _units(monkeypatch, hub=True, bridge=True)
+    _hub_json(port=8765)
+    assert entry_with_exit(["start", "--port", "9001"]) in (0, None)
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "hub restarted: http://10.0.0.1:9001" and len(out) == 2
+    assert "MANAGER" not in "".join(out) and "manager:" not in "".join(out)
+
+
+def test_stop_already_stopped(monkeypatch, capsys):
+    calls = _units(monkeypatch, hub=False, bridge=False)
+    assert entry_with_exit(["stop"]) in (0, None)
+    assert capsys.readouterr().out.splitlines() == ["bridge already stopped", "hub already stopped"]
+    assert calls == []
+
+
+def test_stop_hub_machine_warns_the_team(monkeypatch, capsys):
+    calls = _units(monkeypatch, hub=True, bridge=True)
+    assert entry_with_exit(["stop"]) in (0, None)
+    assert capsys.readouterr().out.splitlines() == [
+        "bridge stopped", "hub stopped", "teammates cannot reach the hub until: kaptyorka start"]
+    assert calls == [("stop", "kaptyorka-bridge"), ("stop", "kaptyorka-hub")]
+
+
+def test_stop_member_machine(monkeypatch, capsys):
+    _units(monkeypatch, bridge=True)  # no hub unit here
+    assert entry_with_exit(["stop"]) in (0, None)
+    assert capsys.readouterr().out.splitlines() == ["bridge stopped"]
+
+
+def _pipx(monkeypatch, tmp_path, new_version):
+    venv = tmp_path / "venv"
+    venv.mkdir()
+    (venv / "pipx_metadata.json").write_text("{}")
+    monkeypatch.setattr(sys, "prefix", str(venv))
+
+    def run(cmd, **kw):
+        out = f"kaptyorka {new_version}\n" if cmd[-1] == "--version" else ""
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+    return run
+
+
+def test_update_already_latest(monkeypatch, tmp_path, capsys):
+    calls = _units(monkeypatch, hub=True, bridge=True)
+    assert cli._update(None, run=_pipx(monkeypatch, tmp_path, cli.__version__)) == 0
+    assert capsys.readouterr().out.strip() == f"kaptyorka {cli.__version__} is already the latest"
+    assert calls == []
+
+
+def test_update_on_a_member_machine_is_silent_about_the_hub(monkeypatch, tmp_path, capsys):
+    calls = _units(monkeypatch, bridge=True)
+    assert cli._update(None, run=_pipx(monkeypatch, tmp_path, "99.0.0")) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == f"kaptyorka {cli.__version__} -> 99.0.0"
+    assert "hub" not in out and "not installed" not in out

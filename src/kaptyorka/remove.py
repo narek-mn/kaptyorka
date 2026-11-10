@@ -43,9 +43,13 @@ def leave(adapters: Optional[list] = None, run: Callable = subprocess.run,
     lines, rc = _undo_join(adapters, run, platform, ("kaptyorka-bridge",))
     more, failed = _remove_skills()
     lines, rc = lines + more, rc or failed
+    if not lines and not rc:
+        print("this machine is not joined; nothing to undo")
+        return 0
     for line in lines:
         print(line)
-    print("left the hub; kaptyorka join brings this machine back")
+    print("left: bridge and tool settings removed from this machine")
+    print("it stays on the team until the admin removes it (People); kaptyorka join brings it back")
     return rc
 
 

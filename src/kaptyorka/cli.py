@@ -34,6 +34,7 @@ def _outbound_ip() -> str:
         return "127.0.0.1"
 
 
+PAGE_LINK = "open the page: {url}/#t={token}  (keep this link private: it signs you in)"
 MANAGER_NOTE = ("manager: starts by itself through this machine's bridge; if its first launch "
                 "fails with \"does not trust\", run claude once in ~/.kaptyorka/manager and accept the prompt")
 
@@ -81,7 +82,8 @@ def _serve(args) -> int:
         print(e, file=sys.stderr)
         return 1
     for line in lines:
-        print(line, file=sys.stderr)
+        if not line.startswith("installed "):  # a unit file path means nothing to a newcomer
+            print(line, file=sys.stderr)
     url = f"http://{args.host or _outbound_ip()}:{args.port}"
     admin = _admin_device(token)
     from kaptyorka.store import Store
@@ -94,11 +96,18 @@ def _serve(args) -> int:
     cfg = paths.load_config()
     if not cfg.get("hub") or not cfg.get("token"):  # this machine joins as the admin
         paths.save_config({"hub": url, "token": admin, "machine": _default_name()})
-    print(f"hub:   {url}\npage:  {url}/#t={admin}")
-    print(f"\njoin this machine: kaptyorka join --hub {url} --token {admin}"
-          "\ninvite teammates: kaptyorka invite <name>")
-    if not getattr(args, "no_manager", False):
-        print(MANAGER_NOTE)
+    elif cfg["hub"].rstrip("/") == getattr(args, "old_url", None) and cfg["hub"].rstrip("/") != url:
+        paths.save_config({**cfg, "hub": url})  # this machine's own hub moved: follow it
+        args.moved = True
+    if getattr(args, "first_start", True):
+        print(f"hub running: {url}")
+        print(PAGE_LINK.format(url=url, token=admin))
+        print("invite a teammate: kaptyorka invite <name>")
+        if not getattr(args, "no_manager", False):
+            print(MANAGER_NOTE)
+    else:
+        print(f"hub restarted: {url}")
+        print(PAGE_LINK.format(url=url, token=admin))
     return 0
 
 
@@ -152,15 +161,31 @@ def _start(args) -> int:
         saved = json.loads(saved_file.read_text())
     except (OSError, ValueError):
         saved = _installed_hub_port()
+    first = not saved_file.exists()
+    hub_unit = service.is_active("kaptyorka-hub")
+    cfg = paths.load_config()
+    if first and hub_unit is None and cfg.get("hub") and cfg.get("token"):
+        print(f"this machine is joined to {cfg['hub']}; it does not run a hub. "
+              "To turn its bridge back on: kaptyorka join", file=sys.stderr)
+        return 1
     args.port = args.port or saved.get("port", 8765)
     args.host = args.host or saved.get("host")
     args.foreground = False
     args.no_manager = args.no_manager or (not args.manager and saved.get("manager") is False)
-    rc = _serve(args)
+    args.first_start = first
+    args.old_url = f"http://{saved.get('host') or _outbound_ip()}:{saved.get('port', 8765)}" if saved else None
+    args.moved = False
+    if (hub_unit is True and not first and args.port == saved.get("port", 8765)
+            and args.host == saved.get("host") and (not args.no_manager) == saved.get("manager", True)):
+        rc = _already_running(args)  # nothing changed: a restart would drop every agent's stream
+    else:
+        rc = _serve(args)
     if rc == 0:
         saved_file.write_text(json.dumps({"port": args.port, "host": args.host,
                                           "manager": not args.no_manager}))
-        if service.is_active("kaptyorka-bridge") is False:  # `stop` turned it off
+        # a moved hub needs the bridge to read the new address; `stop` may have turned it off
+        bridge = service.is_active("kaptyorka-bridge")
+        if bridge is False or (args.moved and bridge):
             try:
                 for line in service.restart("kaptyorka-bridge"):
                     print(line)
@@ -168,6 +193,22 @@ def _start(args) -> int:
                 print(e, file=sys.stderr)
                 return 1
     return rc
+
+
+def _already_running(args) -> int:
+    from kaptyorka.store import Store
+
+    token = _token()
+    admin = _admin_device(token)
+    store = Store(paths.home() / "hub.db", legacy_token=token)
+    try:
+        _apply_manager(store, args)  # --manager clears the trust block; no restart needed
+    finally:
+        store.close()
+    url = f"http://{args.host or _outbound_ip()}:{args.port}"
+    print(f"the hub is already running: {url}")
+    print(PAGE_LINK.format(url=url, token=admin))
+    return 0
 
 
 def _who(args) -> int:
@@ -484,13 +525,26 @@ def _project_remove(args) -> int:
 
 
 def _stop(args) -> int:
-    try:
-        for unit in ("kaptyorka-bridge", "kaptyorka-hub"):
-            for line in service.stop(unit):
-                print(line)
-    except service.ServiceError as e:
-        print(e, file=sys.stderr)
-        return 1
+    hub_stopped = False
+    for unit, name in (("kaptyorka-bridge", "bridge"), ("kaptyorka-hub", "hub")):
+        active = service.is_active(unit)
+        if active is None:  # never installed here (a member machine has no hub)
+            continue
+        if not active:
+            print(f"{name} already stopped")
+            continue
+        try:
+            done = service.stop(unit)
+        except service.ServiceError as e:
+            print(e, file=sys.stderr)
+            return 1
+        if done[0].endswith("not running"):
+            print(f"could not stop the {name}", file=sys.stderr)
+            return 1
+        print(f"{name} stopped")
+        hub_stopped = hub_stopped or name == "hub"
+    if hub_stopped:
+        print("teammates cannot reach the hub until: kaptyorka start")
     return 0
 
 
@@ -498,7 +552,6 @@ def _restart(was_active: dict, run) -> int:
     """Restart the units that ran before the update; leave stopped ones off."""
     for unit, active in was_active.items():
         if active is None:
-            print(f"{unit}: not installed")
             continue
         if not active:
             print(f"{unit}: stopped, left off")
@@ -539,7 +592,11 @@ def _update(args, run=subprocess.run) -> int:
     if r.returncode != 0:
         print((r.stderr or r.stdout).strip() or "pipx upgrade failed", file=sys.stderr)
         return 1
-    print(f"kaptyorka {__version__} -> {new.stdout.strip().removeprefix('kaptyorka ')}")
+    latest = new.stdout.strip().removeprefix("kaptyorka ")
+    if latest == __version__:
+        print(f"kaptyorka {__version__} is already the latest")  # a restart would drop the team's streams
+        return 0
+    print(f"kaptyorka {__version__} -> {latest}")
     return _restart(was_active, run)
 
 
@@ -713,8 +770,8 @@ def entry() -> None:
     j.set_defaults(run=_join)
     sub.add_parser("leave", help="leave the hub: undo join on this machine, keep kaptyorka "
                    "installed; join brings it back").set_defaults(run=_leave)
-    sub.add_parser("stop", help="stop the hub and the bridge (the link between this machine's agents and the hub) "
-                   "and keep them off after a reboot; start / join bring them back").set_defaults(run=_stop)
+    sub.add_parser("stop", help="stop the hub and the bridge on this machine "
+                   "(start brings back the hub; join brings back the bridge)").set_defaults(run=_stop)
     sub.add_parser("update", help="update kaptyorka (pipx) to the latest version and restart "
                    "the services").set_defaults(run=_update)
     sub.add_parser("remove", help="remove kaptyorka from this machine completely").set_defaults(run=_remove)

@@ -78,13 +78,13 @@ def test_start_makes_admin_device_once_and_joins_this_machine(home, capsys, monk
             run_cli(["start", "--port", "9999", "--host", "10.0.0.5"])
         assert e.value.code == 0
         outs.append(capsys.readouterr().out.splitlines())
-    assert outs[0] == outs[1]
     shared = (paths.home() / "hub-token").read_text().strip()
     admin = (paths.home() / "admin-token").read_text().strip()
     assert admin != shared
-    assert outs[0] == ["hub:   http://10.0.0.5:9999", f"page:  http://10.0.0.5:9999/#t={admin}",
-                       "", f"join this machine: kaptyorka join --hub http://10.0.0.5:9999 --token {admin}",
-                       "invite teammates: kaptyorka invite <name>", cli.MANAGER_NOTE]
+    page = f"open the page: http://10.0.0.5:9999/#t={admin}  (keep this link private: it signs you in)"
+    assert outs[0] == ["hub running: http://10.0.0.5:9999", page,
+                       "invite a teammate: kaptyorka invite <name>", cli.MANAGER_NOTE]
+    assert outs[1] == ["hub restarted: http://10.0.0.5:9999", page]
     assert shared not in "\n".join(outs[0])
     for f in ("hub-token", "admin-token"):
         assert (paths.home() / f).stat().st_mode & 0o777 == 0o600
@@ -118,7 +118,7 @@ def test_start_replaces_a_revoked_admin_device(home, capsys, monkeypatch):
     with pytest.raises(SystemExit):
         run_cli(["start"])
     second = (paths.home() / "admin-token").read_text().strip()
-    assert second != first and f"--token {second}" in capsys.readouterr().out
+    assert second != first and f"/#t={second}" in capsys.readouterr().out
 
 
 def test_who_prints_table(hub, home, capsys):
@@ -287,11 +287,12 @@ def test_stop_not_installed_is_fine():
 
 def test_stop_command_prints_both_and_exits_0(capsys, monkeypatch):
     seen = []
+    monkeypatch.setattr(service, "is_active", lambda name, **k: True)
     monkeypatch.setattr(service, "stop", lambda name, **k: seen.append(name) or [f"{name}: stopped"])
     with pytest.raises(SystemExit) as e:
         run_cli(["stop"])
     assert e.value.code == 0 and seen == ["kaptyorka-bridge", "kaptyorka-hub"]
-    assert "kaptyorka-hub: stopped" in capsys.readouterr().out
+    assert "hub stopped" in capsys.readouterr().out
 
 
 def test_systemd_unit_has_short_stop_timeout():
@@ -475,7 +476,7 @@ def test_start_again_uses_saved_port_and_host(home, capsys, monkeypatch):
         with pytest.raises(SystemExit):
             run_cli(["start", *args])
     out = capsys.readouterr().out.splitlines()
-    assert out[0] == out[6] == "hub:   http://10.0.0.5:9999"
+    assert out[0] == "hub running: http://10.0.0.5:9999" and out[4] == "hub restarted: http://10.0.0.5:9999"
     assert seen[0] == seen[1] and seen[1][-2:] == ["--port", "9999"]
 
 
@@ -520,6 +521,7 @@ def test_start_without_saved_settings_keeps_port_of_older_hub_unit(home, capsys,
     unit.write_text(unit_text("kaptyorka-hub", exe_argv, platform))
     seen = []
     monkeypatch.setattr(service, "install", lambda name, argv, **k: seen.append(argv) or [])
+    monkeypatch.setattr(service, "is_active", lambda name, **k: None)  # no real systemctl or launchctl
     with pytest.raises(SystemExit):
         run_cli(["start"])
     assert seen[0][-2:] == ["--port", "9001"]
@@ -578,7 +580,7 @@ def test_start_manager_flag_turns_it_back_on(home, capsys, monkeypatch):
     capsys.readouterr()
     with pytest.raises(SystemExit):
         run_cli(["start", "--manager"])
-    assert cli.MANAGER_NOTE in capsys.readouterr().out
+    assert capsys.readouterr().out.startswith("hub restarted: ")
     assert json.loads((paths.home() / "hub.json").read_text())["manager"] is True
     assert "--no-manager" not in cmds[-1] and _manager_flag() is True
     with pytest.raises(SystemExit):

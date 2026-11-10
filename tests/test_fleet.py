@@ -133,3 +133,12 @@ def test_invite_error_keeps_lines_so_far():
     with pytest.raises(RuntimeError) as e:
         fleet.add(["a@x", "b@y"], "alice", None, "h", invite, run=run)
     assert len(e.value.lines) == 1 and e.value.lines[0].startswith("a@x: joined")
+
+
+def test_already_joined_is_not_a_failure():
+    def run(argv, **kw):
+        if "kaptyorka join" in argv[-1]:
+            return SimpleNamespace(returncode=1, stdout="", stderr=(
+                "this machine is already joined to http://h:1 as box-1. To repair it: kaptyorka join"))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    assert add(["alice@box-1"], run) == ["alice@box-1: already joined to this hub"]

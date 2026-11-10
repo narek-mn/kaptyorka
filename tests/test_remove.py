@@ -154,7 +154,15 @@ def test_leave_undoes_join_and_keeps_hub_and_install(home, tmp_path, monkeypatch
     assert "unconfigure" in calls and not any(c[0] == "pipx" for c in calls if isinstance(c, list))
     assert not any("kaptyorka-hub" in " ".join(c) for c in calls if isinstance(c, list))
     out = capsys.readouterr().out
-    assert "spy: undone" in out and "kaptyorka join brings this machine back" in out
+    assert "spy: undone" in out
+    assert out.splitlines()[-2:] == [
+        "left: bridge and tool settings removed from this machine",
+        "it stays on the team until the admin removes it (People); kaptyorka join brings it back"]
+
+
+def test_leave_not_joined(home, capsys):
+    assert remove.leave([], run=fake_run([]), platform="linux") == 0
+    assert capsys.readouterr().out.strip() == "this machine is not joined; nothing to undo"
 
 
 def test_leave_removes_team_skills(home, capsys):
@@ -190,7 +198,7 @@ def test_skill_removal_failure_does_not_crash(home, tmp_path, monkeypatch, capsy
     assert getattr(remove, which)([], run=fake_run([]), platform="linux") == 1
     out = capsys.readouterr()
     assert "team skills: failed: busy" in out.err
-    assert "kaptyorka join brings this machine back" in out.out or "removed " in out.out
+    assert "left: bridge and tool settings removed" in out.out or "removed " in out.out
 
 
 def test_remove_without_pipx_does_not_call_it(home, tmp_path, monkeypatch):
