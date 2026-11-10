@@ -65,8 +65,8 @@ The team rules above bind you too.
 
 
 # The manager session's settings and MCP config, passed with `--settings` and
-# `--strict-mcp-config --mcp-config` (with `--restricted`, user and project settings are not
-# read): the kaptyorka tools only. The hooks are the ones `join` installs for Claude Code.
+# `--strict-mcp-config --mcp-config` (with `--setting-sources project,local`, the admin's user
+# settings are not read): the kaptyorka tools only. The hooks are the ones `join` installs for Claude Code.
 DENY = ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Read", "Glob", "Grep",
         "Agent", "Task"]
 SETTINGS_FILE = paths.MANAGER_SETTINGS
@@ -74,7 +74,8 @@ MCP_FILE = paths.MANAGER_MCP
 
 
 def settings(kaptyorka: str) -> dict:
-    return {"permissions": {"allow": ["mcp__kaptyorka__*"], "deny": list(DENY)},
+    return {"permissions": {"allow": ["mcp__kaptyorka__*"], "deny": list(DENY),
+                            "defaultMode": "default"},
             "hooks": claude_adapter.hooks(kaptyorka)}
 
 

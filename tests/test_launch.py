@@ -294,9 +294,10 @@ def test_manager_command_runs_on_its_own_settings_and_mcp_config(launcher):
     m = "/h/.kaptyorka/manager"
     argv = launcher.command(order(manager=True, worker="manager", folder=m), m)
     assert argv == ["claude", "--bg", "-n", "manager", "--settings", f"{m}/settings.json",
-                    "--strict-mcp-config", "--mcp-config", f"{m}/mcp.json", "--restricted",
-                    "--tools=ToolSearch", "--append-system-prompt-file", f"{m}/CLAUDE.md",
+                    "--strict-mcp-config", "--mcp-config", f"{m}/mcp.json",
+                    "--setting-sources", "project,local", "--tools=ToolSearch",
                     FIRST + "fix the tests"]
+    assert argv[-1] == FIRST + "fix the tests" and argv[-2] == "--tools=ToolSearch"
     assert "--dangerously-skip-permissions" not in argv and "--resume" not in argv
     with pytest.raises(LaunchError, match="no manager support"):
         launcher.command(order(manager=True, worker="manager", tool="codex", folder=m), m)

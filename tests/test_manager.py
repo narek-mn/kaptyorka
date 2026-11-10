@@ -292,7 +292,8 @@ HOOKS_WANTED = {
 SETTINGS_WANTED = {
     "permissions": {"allow": ["mcp__kaptyorka__*"],
                     "deny": ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
-                             "Read", "Glob", "Grep", "Agent", "Task"]},
+                             "Read", "Glob", "Grep", "Agent", "Task"],
+                    "defaultMode": "default"},
     "hooks": HOOKS_WANTED}
 MCP_WANTED = {"mcpServers": {"kaptyorka": {"command": EXE, "args": ["mcp"]}}}
 
