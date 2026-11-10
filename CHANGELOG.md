@@ -4,6 +4,10 @@
 
 - The manager sleeps when idle and wakes on a message instead of restarting every 71 minutes. Claude Code stops a manager that has been idle for about an hour; the hub now leaves it stopped until a message or a work request comes for it, then starts it and hands it what was waiting. Settings and Machines show it as asleep. The hub's own notices to it (the weekly review, abandoned workers, reminders) wait while it sleeps and go out when it wakes.
 
+- Commands say when there is nothing to do, and no longer restart a running hub. `kaptyorka start` on a hub that already runs with the same settings prints `the hub is already running` and the page link and restarts nothing; `stop` says `already stopped`; `update` says `already the latest`; `leave` on a machine that is not joined says so; `join <invite link>` on a machine already joined to that hub does nothing. `start` on a machine that only joined another hub says so instead of starting a second hub, and `start --port` moves this machine along. Shorter, plainer output for `start`, `stop`, `leave`, `invite`, `who`, `fleet list`.
+- `join` no longer adds Claude Code hooks twice: a hook line written by hand (for example `[ -x ~/.local/bin/kaptyorka ] && ... hook claude-code start || true`) counts as present and is left alone, and our own copy next to it is removed. A plain `join` that changes nothing prints `already joined to <hub>; all set` and does not restart the bridge or re-register the MCP server.
+- `doctor` says what to do that works: not joined, a hub that does not answer, a refused token, a stopped bridge. It checks only the tools this machine joined with.
+
 ## 0.7.1
 
 - Messages to the manager now reach it at once: the bridge that started a session may deliver to it, even when the session is registered under its own name (the manager is). Before, the manager only saw messages on its next turn, which an idle manager never had.

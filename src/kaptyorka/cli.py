@@ -211,6 +211,15 @@ def _already_running(args) -> int:
     return 0
 
 
+def _ago(seconds) -> str:
+    """12s, 5m, 3h or 2d, then ago."""
+    n = int(seconds)
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if n >= size:
+            return f"{n // size}{unit} ago"
+    return f"{n}s ago"
+
+
 def _who(args) -> int:
     got = _admin_call("GET", "/api/feed")
     if got is None:
@@ -219,9 +228,12 @@ def _who(args) -> int:
         print(_problem(got), file=sys.stderr)
         return 1
     feed = got[1]
+    if not feed["agents"]:
+        print("nobody is online")
+        return 0
     rows = [("NAME", "LABEL", "STATUS", "ACTIVITY", "LAST SEEN")] + [
         (a["name"], a.get("label") or "", a["status"], a.get("activity") or "",
-         f"{a['last_seen_s']}s ago")
+         _ago(a["last_seen_s"]))
         for a in feed["agents"]]
     w = [max(len(r[i]) for r in rows) for i in range(4)]
     for r in rows:
@@ -273,13 +285,15 @@ def _invite(args) -> int:
     if got[0] not in (200, 409):  # 409: the person already exists
         print(_problem(got), file=sys.stderr)
         return 1
+    if got[0] == 200:  # said out loud, so a typo in the name shows
+        print(f"added {args.person} to the team")
     got = _admin_call("POST", "/api/invites", {"person": args.person})
     if got is None:
         return 1
     if got[0] != 200:
         print(_problem(got), file=sys.stderr)
         return 1
-    print(got[1]["url"])
+    print(f"send this link to {args.person} (works once, for 7 days): {got[1]['url']}")
     return 0
 
 
@@ -718,7 +732,8 @@ def _fleet_list(args) -> int:
     if got[0] != 200:
         print(_problem(got), file=sys.stderr)
         return 1
-    for line in fleet.list(got[1]):
+    lines = fleet.list(got[1])
+    for line in lines or ["no machines yet"]:
         print(line)
     return 0
 

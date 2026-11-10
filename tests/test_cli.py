@@ -38,7 +38,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.7.1" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.8.0" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
@@ -121,7 +121,8 @@ def test_cli_invite_prints_url(monkeypatch, home, capsys):
 
     monkeypatch.setattr(http, "request", fake)
     assert entry_with_exit(["invite", "ann"]) == 0
-    assert capsys.readouterr().out.strip() == "http://h:1/i/" + "C" * 22
+    assert capsys.readouterr().out.strip() == (
+        "send this link to ann (works once, for 7 days): http://h:1/i/" + "C" * 22)
     assert calls[1] == ("POST", "http://h:1/api/invites", "adm", {"person": "ann"})
 
 
@@ -866,3 +867,40 @@ def test_join_invite_other_hub_moves(monkeypatch, home, capsys):
     monkeypatch.setattr(join, "main", lambda *a, **k: print("joined") or 0)
     assert entry_with_exit(["join", "http://h:2/i/CODE123", "--name", "pc"]) in (0, None)
     assert capsys.readouterr().out.splitlines() == ["moved from http://old:1 to http://h:2", "joined"]
+
+
+# --- small output fixes ---
+
+def test_invite_new_person_says_added(monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+
+    def fake(method, url, token, body=None, **kw):
+        if url.endswith("/api/people"):
+            return 200, {}
+        return 200, {"code": "C", "url": "http://h:1/i/C"}
+
+    monkeypatch.setattr(http, "request", fake)
+    assert entry_with_exit(["invite", "ann"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "added ann to the team", "send this link to ann (works once, for 7 days): http://h:1/i/C"]
+
+
+def test_who_empty_and_ages(monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    feed = {"agents": []}
+    monkeypatch.setattr(http, "request", lambda *a, **k: (200, feed))
+    assert entry_with_exit(["who"]) == 0
+    assert capsys.readouterr().out == "nobody is online\n"
+    feed["agents"] = [{"name": n, "status": "idle", "last_seen_s": s}
+                      for n, s in (("a", 12), ("b", 300), ("c", 3 * 3600 + 5), ("d", 2 * 86400))]
+    assert entry_with_exit(["who"]) == 0
+    out = capsys.readouterr().out
+    for age in ("12s ago", "5m ago", "3h ago", "2d ago"):
+        assert age in out
+
+
+def test_fleet_list_empty(monkeypatch, home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    monkeypatch.setattr(http, "request", lambda *a, **k: (200, []))
+    assert entry_with_exit(["fleet", "list"]) == 0
+    assert capsys.readouterr().out == "no machines yet\n"

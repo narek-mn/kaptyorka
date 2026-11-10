@@ -55,22 +55,20 @@ kaptyorka start
 It prints:
 
 ```
-hub:   http://<ip>:<port>
-page:  http://<ip>:<port>/#t=<token>
-
-join this machine: kaptyorka join --hub http://<ip>:<port> --token <token>
-invite teammates: kaptyorka invite <name>
+hub running: http://<ip>:<port>
+open the page: http://<ip>:<port>/#t=<token>  (keep this link private: it signs you in)
+invite a teammate: kaptyorka invite <name>
 ```
 
-The first start creates the admin, a person named like the user who runs the hub, and the admin's own device token (device `hub`, kept in `~/.kaptyorka/admin-token`). The `page` link and the `join` line both carry that token; this machine is saved as joined with it. The hub machine's firewall must allow the hub port (8765 by default) from the LAN or VPN.
+The first start creates the admin, a person named like the user who runs the hub, and the admin's own device token (device `hub`, kept in `~/.kaptyorka/admin-token`). The page link carries that token; this machine is saved as joined with it. `kaptyorka start` when the hub already runs with the same settings changes nothing: it answers `the hub is already running` and prints the page link again. A start with a new port or host restarts the hub and says `hub restarted`; this machine follows the new address. On a machine that only joined someone else's hub, `start` says so and does not start a second hub. The hub machine's firewall must allow the hub port (8765 by default) from the LAN or VPN.
 
-Run the `join this machine` line to set up the agent tools on the hub machine. Then invite each teammate, from the hub machine or any machine joined as the admin:
+Run `kaptyorka join` to set up the agent tools on the hub machine. Then invite each teammate, from the hub machine or any machine joined as the admin:
 
 ```bash
 kaptyorka invite alice
 ```
 
-It prints a link, `http://<hub>/i/<code>`. The link works once and for 7 days. Alice runs this on each of her machines, or gives the link to her agent (see "For agents"):
+It prints `added alice to the team` (only for a new person) and the link, `http://<hub>/i/<code>`. The link works once and for 7 days. Alice runs this on each of her machines, or gives the link to her agent (see "For agents"):
 
 ```bash
 pipx install kaptyorka
@@ -85,7 +83,7 @@ Open the `page` link to watch the team live and act from it. **Team** lists the 
 
 The hub address uses the machine's IP. Use `--host` to set another one, and `--port` for another port. `kaptyorka start` again later starts the hub with the same settings. It also turns this machine's bridge back on when `kaptyorka stop` switched it off. On Linux, if the hub must survive logout, `start` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
 
-`join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart. `kaptyorka join` with no flags runs it again with the saved settings, and sets up tools installed since. `kaptyorka join --hub <hub> --token <token>` still works, for a token you already have. At the end `join` prints this machine's `page` link.
+`join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart, and only for tools that changed: when nothing did, it says `already joined to <hub>; all set`. `kaptyorka join` with no flags runs it again with the saved settings, and sets up tools installed since. `kaptyorka join <invite link>` on a machine already joined to that hub does nothing and says so (the link is not used up); for another hub it prints `moved from <old hub> to <new hub>` and goes on. `kaptyorka join --hub <hub> --token <token>` still works, for a token you already have. On a first join it ends with this machine's `page` link.
 
 The page asks for a device token: open a link ending in `#t=<token>`, paste the token on the lock screen, or use an invite link. On the LAN, links to images on the page carry the token in the URL, since there is no reverse proxy; do not paste such links elsewhere.
 
@@ -381,7 +379,7 @@ The page follows the same rules. A message from the page to a session opens a do
 
 ## Doctor, fleet and auto-update
 
-`kaptyorka doctor` checks this machine: the config, the hub, the bridge, and each agent tool. `kaptyorka doctor --fix` re-wires the tools that fail and starts a stopped bridge.
+`kaptyorka doctor` checks this machine: the config, the hub, the bridge, and each agent tool. `kaptyorka doctor --fix` re-wires the tools that fail and starts a stopped bridge. On a machine that has not joined it prints one line, `not joined: kaptyorka join <invite link>`; a failing check says what to do (for example, a hub that does not answer: `is the hub running? On the hub machine: kaptyorka start`). It checks only the tools this machine joined with.
 
 The admin can set up many machines from the hub machine over ssh:
 
@@ -458,9 +456,9 @@ Everything is in `~/.kaptyorka`:
 
 ## Leave, stop, update, remove
 
-- `kaptyorka leave` takes this machine off the hub: the bridge and everything `join` set up in your agent tools and shell rc files (your own entries stay), and the team skill folders the bridge wrote (`~/.claude/skills/team-*`; only those with its marker). kaptyorka stays installed, and so does the hub if it runs here. `kaptyorka join` brings the machine back.
-- `kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot. `kaptyorka join` or `kaptyorka start` starts them again.
-- `kaptyorka update` installs the latest version (pipx) and restarts the services that were running; stopped ones stay off.
+- `kaptyorka leave` takes this machine off the hub: the bridge and everything `join` set up in your agent tools and shell rc files (your own entries stay), and the team skill folders the bridge wrote (`~/.claude/skills/team-*`; only those with its marker). kaptyorka stays installed, and so does the hub if it runs here. `kaptyorka join` brings the machine back. It prints `left: ...` and that the machine stays on the team until the admin removes it (People); on a machine that is not joined it says `this machine is not joined; nothing to undo`.
+- `kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot. It says `bridge stopped` / `hub stopped`, or `... already stopped`, and after the hub that teammates cannot reach it until `kaptyorka start`. `kaptyorka start` starts the hub again (and the bridge); `kaptyorka join` starts the bridge.
+- `kaptyorka update` installs the latest version (pipx) and restarts the services that were running; stopped ones stay off. When you already have the latest it says `kaptyorka <version> is already the latest` and restarts nothing.
 - `kaptyorka remove` takes kaptyorka off this machine: the services, everything `join` set up in your agent tools and shell rc files (your own entries stay), the team skill folders the bridge wrote (`~/.claude/skills/team-*` with its marker), `~/.kaptyorka`, and the pipx install. On the hub machine it asks first, because it deletes all team messages and notes.
 
 ## Repository layout
