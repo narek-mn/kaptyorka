@@ -36,7 +36,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.7.0" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.7.1" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
@@ -650,3 +650,44 @@ def test_cli_missing_argument_prints_usage_and_one_sentence(capsys):
         err = capsys.readouterr().err.strip().splitlines()
         assert err[0].startswith("usage: kaptyorka") and "error: the following arguments are required" in err[-1]
         assert "_cmd" not in err[-1]
+
+
+def _start_with(monkeypatch, home, active, restart):
+    paths.home().mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cli, "_serve", lambda args: 0)
+    monkeypatch.setattr(cli.service, "is_active", lambda name, **kw: active)
+    monkeypatch.setattr(cli.service, "restart", restart)
+    return entry_with_exit(["start"])
+
+
+def test_start_turns_the_bridge_back_on(monkeypatch, home, capsys):
+    calls = []
+
+    def restart(name, **kw):
+        calls.append(name)
+        return ["bridge started"]
+
+    assert _start_with(monkeypatch, home, False, restart) in (0, None)
+    assert calls == ["kaptyorka-bridge"]
+    assert "bridge started" in capsys.readouterr().out
+
+
+def test_start_leaves_a_running_bridge(monkeypatch, home):
+    calls = []
+    assert _start_with(monkeypatch, home, True, lambda name, **kw: calls.append(name) or []) in (0, None)
+    assert calls == []
+
+
+def test_start_without_bridge(monkeypatch, home):
+    calls = []
+    assert _start_with(monkeypatch, home, None, lambda name, **kw: calls.append(name) or []) in (0, None)
+    assert calls == []
+
+
+def test_start_reports_a_bridge_that_will_not_start(monkeypatch, home, capsys):
+    def restart(name, **kw):
+        raise cli.service.ServiceError("bridge broke")
+
+    assert _start_with(monkeypatch, home, False, restart) == 1
+    assert "bridge broke" in capsys.readouterr().err
+    assert (paths.home() / "hub.json").exists()

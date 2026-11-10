@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1
+
+- Messages to the manager now reach it at once: the bridge that started a session may deliver to it, even when the session is registered under its own name (the manager is). Before, the manager only saw messages on its next turn, which an idle manager never had.
+- `kaptyorka start` turns the bridge back on after `kaptyorka stop`; before, only the hub came back, so the manager could not start.
+
 ## 0.7.0
 
 - New `kaptyorka login-copy user@host` copies this machine's Claude Code login to the same user on another machine of yours over ssh, and checks that it is logged in there. The login never goes through the hub. It refuses when Claude Code is not logged in here, is not installed there, or is already logged in there (`--force` replaces that login). Claude Code only, and Linux to Linux only.

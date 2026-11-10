@@ -160,6 +160,13 @@ def _start(args) -> int:
     if rc == 0:
         saved_file.write_text(json.dumps({"port": args.port, "host": args.host,
                                           "manager": not args.no_manager}))
+        if service.is_active("kaptyorka-bridge") is False:  # `stop` turned it off
+            try:
+                for line in service.restart("kaptyorka-bridge"):
+                    print(line)
+            except service.ServiceError as e:
+                print(e, file=sys.stderr)
+                return 1
     return rc
 
 
