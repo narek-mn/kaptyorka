@@ -1318,10 +1318,12 @@ class Store:
         person = next((p for p in people if p.lower() == to.lower()), None)
         if person is not None:  # a person on the web page: they read replies there
             return [{"key": f"web:{person}", "name": person, "machine": "", "tool": "", "project": ""}]
-        # the manager asleep: its last session by label, so a message wakes it (manager.PERSON)
+        # the manager asleep: its last session by label, so a message wakes it (manager.PERSON);
+        # not while it is switched off (settings row manager_enabled = '0')
         match = self.db.execute(
             "SELECT a.* FROM agents a JOIN people p ON p.id=a.person_id WHERE p.name='manager'"
             " AND p.role='manager' AND a.label!='' AND lower(a.label)=lower(?)"
+            " AND NOT EXISTS (SELECT 1 FROM settings WHERE key='manager_enabled' AND value='0')"
             " ORDER BY a.last_seen DESC LIMIT 1", (to,)).fetchall()
         if match:
             return match

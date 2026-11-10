@@ -888,3 +888,11 @@ def test_sleeping_manager_shown_asleep(hub, clock):
     status, rows = http.request("GET", hub.url + "/api/workers", b.token)
     [w] = [w for w in rows if w["manager"]]
     assert w["state"] == "asleep" and w["error"] == ""
+
+
+def test_retired_but_switched_off_manager_not_shown_asleep(hub, clock):
+    b = asleep_manager(hub, clock)
+    hub.mm.set_enabled(False, "test")
+    status, rows = http.request("GET", hub.url + "/api/workers", b.token)
+    [w] = [w for w in rows if w["manager"]]
+    assert w["state"] != "asleep"

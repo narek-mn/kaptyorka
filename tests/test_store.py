@@ -321,3 +321,14 @@ def test_offline_label_match(store, clock):
     beat(store, "b", "y", "box")
     with pytest.raises(KaptyorkaError, match="several sessions are named box"):
         store.send_from_web("alice", "box", "hi")
+
+
+def test_offline_manager_label_not_matched_while_switched_off(store, clock):
+    mgr, _ = person(store, "manager", "manager")
+    beat(store, "m", "manager", "Manager")
+    with store.lock:
+        store.db.execute("UPDATE agents SET person_id=? WHERE key='m'", (mgr,))
+        store.db.execute("INSERT INTO settings (key, value) VALUES ('manager_enabled', '0')")
+    clock.t += 31
+    with pytest.raises(KaptyorkaError, match="no session named manager"):
+        store.send_from_web("alice", "manager", "hi")

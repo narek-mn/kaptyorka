@@ -650,6 +650,15 @@ def _hook(args) -> int:
     return hook.main(args.tool, args.event, stdin)
 
 
+def _token_works(cfg: dict) -> bool:
+    """The saved token is still accepted by its hub. A hub that does not answer counts as yes:
+    the refusal stays, so a down hub never costs the machine its token."""
+    try:
+        return http.request("GET", cfg["hub"] + "/api/feed", cfg["token"])[0] == 200
+    except http.HubUnreachable:
+        return True
+
+
 def _join(args) -> int:
     from kaptyorka import join
 
@@ -661,7 +670,8 @@ def _join(args) -> int:
     if args.invite:
         old = paths.load_config()
         link_hub = re.match(r"https?://[^/\s]+", args.invite.strip())
-        if old.get("hub") and old.get("token") and link_hub and link_hub.group().lower() == old["hub"].rstrip("/").lower():
+        if (old.get("hub") and old.get("token") and link_hub and link_hub.group().lower() == old["hub"].rstrip("/").lower()
+                and _token_works(old)):
             # redeeming would spend the invite and replace this machine's token (the admin's, on the hub machine)
             print(f"this machine is already joined to {old['hub']} as {old.get('machine') or args.name}. "
                   "To repair it: kaptyorka join", file=sys.stderr)

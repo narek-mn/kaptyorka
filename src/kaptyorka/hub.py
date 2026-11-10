@@ -1345,7 +1345,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if principal is None:
             return PlainTextResponse("unauthorized", status_code=401)
         rows = own_workers(principal, page_foreign(request, principal))
-        if mm.retired():  # not closed: a message starts it again
+        if mm.enabled() and mm.retired():  # not closed: a message starts it again
             rows = [{**w, "state": "asleep", "error": ""} if w["manager"] else w for w in rows]
         return JSONResponse(rows)
 

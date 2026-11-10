@@ -852,10 +852,45 @@ def test_join_invite_same_hub_refused(monkeypatch, home, capsys):
     monkeypatch.setattr(http, "request", lambda *a, **k: calls.append(a) or (200, {}))
     monkeypatch.setattr(join, "main", lambda *a, **k: calls.append("join") or 0)
     assert entry_with_exit(["join", "http://h:1/i/CODE123"]) == 1
-    assert calls == []  # the invite is not redeemed
+    assert [c[1] for c in calls if c != "join"] == ["http://h:1/api/feed"]  # only the token check
+    assert "join" not in calls  # the invite is not redeemed
     assert paths.load_config() == {"hub": "http://h:1", "token": "adm", "machine": "pc"}
     assert capsys.readouterr().err.strip() == (
         "this machine is already joined to http://h:1 as pc. To repair it: kaptyorka join")
+
+
+def test_join_invite_same_hub_refused_calls(monkeypatch, home):
+    from kaptyorka import join
+
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    calls = []
+
+    def fake(method, url, token, body=None, **kw):
+        calls.append((method, url))
+        return (200, {}) if url.endswith("/api/feed") else (400, "no")
+
+    monkeypatch.setattr(http, "request", fake)
+    assert entry_with_exit(["join", "http://h:1/i/CODE123"]) == 1
+    assert calls == [("GET", "http://h:1/api/feed")]  # no redeem
+
+
+def test_join_invite_same_hub_with_refused_token_redeems(monkeypatch, home):
+    from kaptyorka import join
+
+    paths.save_config({"hub": "http://h:1", "token": "dead", "machine": "pc"})
+    calls = []
+
+    def fake(method, url, token, body=None, **kw):
+        calls.append((method, url))
+        if url.endswith("/api/feed"):
+            return 401, "no"
+        return 200, {"token": "new", "secret": "sec", "hub": "http://h:1"}
+
+    monkeypatch.setattr(http, "request", fake)
+    monkeypatch.setattr(join, "main", lambda *a, **k: 0)
+    assert entry_with_exit(["join", "http://h:1/i/CODE123", "--name", "pc"]) in (0, None)
+    assert ("POST", "http://h:1/i/CODE123") in calls
+    assert paths.load_config()["token"] == "new"
 
 
 def test_join_invite_other_hub_moves(monkeypatch, home, capsys):
