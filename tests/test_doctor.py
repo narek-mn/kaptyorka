@@ -280,6 +280,6 @@ def test_doctor_sees_portable_hooks(home):
 def test_doctor_skips_hub_service_on_member(home, unit, answer):
     (paths.home()).mkdir(parents=True, exist_ok=True)
     (paths.home() / "hub.json").write_text('{"host": "box-1", "port": 8765}')
-    cfg = {"hub": "http://10.10.10.186:8765", "token": "t"}
+    cfg = {"hub": "http://10.0.0.9:8765", "token": "t"}
     res = by_name(doctor.checks(cfg, [], home, Run(active=False), "linux"))
     assert "hub service" not in res

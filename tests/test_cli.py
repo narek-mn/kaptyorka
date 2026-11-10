@@ -708,7 +708,7 @@ def _units(monkeypatch, **active):
     monkeypatch.setattr(cli.service, "install", lambda name, argv, **kw: calls.append(("install", name)) or
                         [f"installed /x/{name}.service"])
     monkeypatch.setattr(cli, "_outbound_ip", lambda: "10.0.0.1")
-    monkeypatch.setattr(paths, "outbound_ip", lambda: "10.0.0.1")
+    monkeypatch.setattr(paths, "is_local_address", lambda h: h == "10.0.0.1")
     return calls
 
 
@@ -946,20 +946,30 @@ def test_start_refused_on_member_with_old_hub_files(monkeypatch, home, capsys):
     _units(monkeypatch, hub=False, bridge=True)
     served = []
     monkeypatch.setattr(cli, "_serve", lambda args: served.append(args) or 0)
-    monkeypatch.setattr(paths, "outbound_ip", lambda: "10.10.10.196")
     (paths.home() / "hub.json").write_text('{"port": 8765}')
-    paths.save_config({"hub": "http://10.10.10.186:8765", "token": "t", "machine": "pc"})
+    paths.save_config({"hub": "http://10.0.0.9:8765", "token": "t", "machine": "pc"})
     assert entry_with_exit(["start"]) == 1
     assert served == []
-    assert "joined to http://10.10.10.186:8765" in capsys.readouterr().err
+    assert "joined to http://10.0.0.9:8765" in capsys.readouterr().err
 
 
 def test_start_on_own_hub_still_runs(monkeypatch, home):
     _units(monkeypatch, hub=False, bridge=True)
     served = []
     monkeypatch.setattr(cli, "_serve", lambda args: served.append(args) or 0)
-    monkeypatch.setattr(paths, "outbound_ip", lambda: "10.10.10.196")
     (paths.home() / "hub.json").write_text('{"port": 8765}')
-    paths.save_config({"hub": "http://10.10.10.196:8765", "token": "t", "machine": "pc"})
+    paths.save_config({"hub": "http://10.0.0.1:8765", "token": "t", "machine": "pc"})
+    assert entry_with_exit(["start"]) in (0, None)
+    assert len(served) == 1
+
+
+def test_start_on_own_hub_at_a_second_local_address(monkeypatch, home):
+    _units(monkeypatch, hub=False, bridge=True)
+    served = []
+    monkeypatch.setattr(cli, "_serve", lambda args: served.append(args) or 0)
+    monkeypatch.setattr(paths, "outbound_ip", lambda: "10.0.0.1")
+    monkeypatch.setattr(paths, "is_local_address", lambda h: h in ("10.0.0.1", "10.0.0.2"))
+    (paths.home() / "hub.json").write_text('{"port": 8765}')
+    paths.save_config({"hub": "http://10.0.0.2:8765", "token": "t", "machine": "pc"})
     assert entry_with_exit(["start"]) in (0, None)
     assert len(served) == 1

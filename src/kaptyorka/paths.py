@@ -76,8 +76,18 @@ def outbound_ip() -> str:
         return "127.0.0.1"
 
 
+def is_local_address(host: str) -> bool:
+    """True when this machine can bind to host (one of its own addresses or names)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.bind((host, 0))
+        return True
+    except OSError:
+        return False
+
+
 def is_own_hub(hub_url: str, saved: dict) -> bool:
-    """True when hub_url points at the hub this machine runs (or once ran): same port, one of our names."""
+    """True when hub_url points at the hub this machine runs (or once ran): same port, one of our addresses."""
     try:
         u = urlparse(hub_url)
         host, port = u.hostname, u.port or (443 if u.scheme == "https" else 80)
@@ -85,6 +95,4 @@ def is_own_hub(hub_url: str, saved: dict) -> bool:
         return False
     if not host or port != saved.get("port", 8765):
         return False
-    name = socket.gethostname()
-    names = {saved.get("host"), outbound_ip(), "127.0.0.1", "localhost", name, name.split(".")[0]}
-    return host in names
+    return host == saved.get("host") or is_local_address(host)
