@@ -1,6 +1,5 @@
 """`kaptyorka doctor`: check this machine's setup, one line per check; --fix repairs the mechanical ones."""
 import json
-import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -96,38 +95,39 @@ def _service(name: str, label: str, run: Callable, platform: str) -> Check:
     active = service.is_active(name, run=run, platform=platform)
     if active:
         return Check(label, True)
-    if platform == "darwin":
-        restart = f"launchctl kickstart -k gui/{os.getuid()}/io.kaptyorka.{name}"
-    else:
-        restart = f"systemctl --user restart {name}"
     if active is None:
         return Check(label, False, "not installed", "kaptyorka join" if name == BRIDGE else "kaptyorka start")
-    return Check(label, False, "stopped", restart)
+    return Check(label, False, "stopped", "kaptyorka doctor --fix" if name == BRIDGE else "kaptyorka start")
 
 
 def checks(cfg: dict, adapters: list, home: Path, run: Callable = subprocess.run,
            platform: str = sys.platform) -> List[Check]:
-    out: List[Check] = []
     joined = bool(cfg.get("hub") and cfg.get("token"))
-    out.append(Check("config", joined, "" if joined else "not joined", None if joined else "kaptyorka join"))
-    reach = Check("hub reachable", False, "not joined", "kaptyorka join")
-    token = Check("token valid", False, "not joined", "kaptyorka join")
-    if joined:
-        try:
-            status, _ = http.request("GET", cfg["hub"] + "/api/me", cfg["token"], timeout=5)
-        except http.HubUnreachable:
-            reach = Check("hub reachable", False, f"no answer from {cfg['hub']}", "kaptyorka join")
-            token = Check("token valid", False, "hub unreachable", "kaptyorka join")
+    if not joined:  # one line: every other check would only repeat it
+        return [Check("config", False, "not joined", "kaptyorka join <invite link>")]
+    out: List[Check] = [Check("config", True)]
+    try:
+        status, _ = http.request("GET", cfg["hub"] + "/api/me", cfg["token"], timeout=5)
+    except http.HubUnreachable:
+        reach = Check("hub reachable", False, f"no answer from {cfg['hub']}",
+                      "is the hub running? On the hub machine: kaptyorka start")
+        token = Check("token valid", False, "hub unreachable")  # the fix is on the line above
+    else:
+        reach = Check("hub reachable", True)
+        if status == 200:
+            token = Check("token valid", True)
+        elif status == 401:
+            token = Check("token valid", False, "hub answered 401",
+                          "ask your admin for a new invite link, then: kaptyorka join <link>")
         else:
-            reach = Check("hub reachable", True)
-            token = Check("token valid", True) if status == 200 else \
-                Check("token valid", False, f"hub answered {status}", "kaptyorka join")
+            token = Check("token valid", False, f"hub answered {status}", "kaptyorka join")
     out += [reach, token, _service(BRIDGE, "bridge service", run, platform)]
     if (paths.home() / "hub.json").exists():
         out.append(_service(HUB, "hub service", run, platform))
     out.append(_tmux(run, platform))
+    chosen = cfg.get("tools")  # the tools this machine joined with; others are left out on purpose
     for a in adapters:
-        if a.installed():
+        if a.installed() and (not chosen or a.tool in chosen):
             ok = tool_configured(a, home)
             out.append(Check(f"tool: {a.tool}", ok, "" if ok else "not wired to kaptyorka",
                              None if ok else "kaptyorka join"))
@@ -138,6 +138,8 @@ def _show(results: List[Check]) -> None:
     for c in results:
         if c.ok:
             print(f"ok   {c.name}")
+        elif c.name == "config":
+            print(f"{c.detail}: {c.fix}")
         else:
             print(f"FAIL {c.name}: {c.detail}" + (f" -> {c.fix}" if c.fix else ""))
 

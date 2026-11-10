@@ -7,20 +7,26 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from kaptyorka import http, paths, service
+from kaptyorka.adapters.base import TOOL_NAMES
 
 
-def install_bridge(exe: str, install=None, extra_env: Optional[dict] = None) -> bool:
-    """Install and start the bridge service; False (after printing why) if that failed."""
+def install_bridge(exe: str, install=None, extra_env: Optional[dict] = None) -> Optional[bool]:
+    """Install and start the bridge service. None after printing why if that failed; else whether
+    anything changed (a new or rewritten unit, or one that was not running)."""
     if os.environ.get("KAPTYORKA_SKIP_SERVICE") == "1":
-        return True
+        return False
+    changed = False
     try:
-        for line in (install or service.install)("kaptyorka-bridge", [exe, "bridge"],
+        for line in (install or service.install)("kaptyorka-bridge", [exe, "bridge"], keep_running=True,
                                                  env={"PATH": os.environ.get("PATH", ""), **(extra_env or {})}):
-            print(f"bridge: {line}")
+            if line.startswith("installed "):  # a unit file path means nothing to a newcomer
+                changed = True
+            else:
+                print(f"bridge: {line}")
     except service.ServiceError as e:
         print(f"bridge service failed: {e}", file=sys.stderr)
-        return False
-    return True
+        return None
+    return changed
 
 
 ENV_LINE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.S)
@@ -74,7 +80,8 @@ def redeem(url: str, name: str) -> Optional[Tuple[str, str, str, str]]:
 
 def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
          install=service.install, only: Optional[List[str]] = None,
-         secret: Optional[str] = None, person: Optional[str] = None, env: Optional[dict] = None) -> int:
+         secret: Optional[str] = None, person: Optional[str] = None, env: Optional[dict] = None,
+         first: Optional[bool] = None) -> int:
     hub = hub.strip()
     hub = (hub if "://" in hub else "http://" + hub).rstrip("/")
     token = token.strip().strip("'\"")
@@ -103,6 +110,8 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     done = [a for a in adapters if a.installed() and (not only or a.tool in only)]
     cfg = {"hub": hub, "token": token, "machine": name}
     saved = paths.load_config()
+    if first is None:  # the invite flow saves the config before it gets here, so it says so itself
+        first = not saved.get("token")
     # keep the signing secret saved for this same token (a retry after a failed join)
     secret = secret or (saved.get("secret") if saved.get("token") == token else None)
     if secret:
@@ -117,6 +126,7 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     paths.save_config(cfg)
     rc = 0
     ok = []
+    changed = []  # the tools whose files changed, and the bridge
     for a in done:
         try:
             lines = a.configure(exe)
@@ -125,18 +135,25 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
             rc = 1
             continue
         ok.append(a)
-        for line in lines:
-            print(f"{a.tool}: {line}")
-    if not install_bridge(exe, install, env):
+        if lines:
+            changed.append(a)
+        for line in lines:  # the lines already name the tool ("Claude Code: ...")
+            print(line if line.startswith(TOOL_NAMES.get(a.tool, "\0")) else f"{a.tool}: {line}")
+    bridge = install_bridge(exe, install, env)
+    if bridge is None:
         rc = 1
     if not done:
         print(", ".join(f"{t} is not installed" for t in only) if only
               else "no supported agent tool found", file=sys.stderr)
         rc = 1
-    notes = [a.restart_note for a in ok if a.restart_note]
+    notes = [a.restart_note for a in changed if a.restart_note]
     for n in notes:
         print(f"restart: {n}")
-    if not notes and ok:
-        print("done, nothing to restart")
-    print(f"page: {hub}/#t={token}")
+    if changed or bridge:
+        if not notes and ok:
+            print("done, nothing to restart")
+    elif not rc:
+        print(f"already joined to {hub}; all set")
+    if first:
+        print(f"page: {hub}/#t={token}")
     return rc

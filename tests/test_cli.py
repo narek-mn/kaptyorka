@@ -839,3 +839,30 @@ def test_update_on_a_member_machine_is_silent_about_the_hub(monkeypatch, tmp_pat
     out = capsys.readouterr().out
     assert out.splitlines()[0] == f"kaptyorka {cli.__version__} -> 99.0.0"
     assert "hub" not in out and "not installed" not in out
+
+
+# --- join: no surprises ---
+
+def test_join_invite_same_hub_refused(monkeypatch, home, capsys):
+    from kaptyorka import join
+
+    paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
+    calls = []
+    monkeypatch.setattr(http, "request", lambda *a, **k: calls.append(a) or (200, {}))
+    monkeypatch.setattr(join, "main", lambda *a, **k: calls.append("join") or 0)
+    assert entry_with_exit(["join", "http://h:1/i/CODE123"]) == 1
+    assert calls == []  # the invite is not redeemed
+    assert paths.load_config() == {"hub": "http://h:1", "token": "adm", "machine": "pc"}
+    assert capsys.readouterr().err.strip() == (
+        "this machine is already joined to http://h:1 as pc. To repair it: kaptyorka join")
+
+
+def test_join_invite_other_hub_moves(monkeypatch, home, capsys):
+    from kaptyorka import join
+
+    paths.save_config({"hub": "http://old:1", "token": "adm", "machine": "pc"})
+    monkeypatch.setattr(http, "request", lambda *a, **k: (
+        200, {"token": "tok", "secret": "sec", "hub": "http://h:2"}))
+    monkeypatch.setattr(join, "main", lambda *a, **k: print("joined") or 0)
+    assert entry_with_exit(["join", "http://h:2/i/CODE123", "--name", "pc"]) in (0, None)
+    assert capsys.readouterr().out.splitlines() == ["moved from http://old:1 to http://h:2", "joined"]

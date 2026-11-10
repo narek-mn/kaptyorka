@@ -245,3 +245,77 @@ def test_join_keeps_the_pipx_link_path(hub, home, monkeypatch):
     a = FakeAdapter("a")
     assert main(hub.url, "T", "pc", adapters=[a], install=no_service([])) == 0
     assert a.configured == [str(link)]
+
+
+def _already_joined(hub, token="T"):
+    paths.save_config({"hub": hub.url, "token": token, "machine": "pc"})
+
+
+def test_join_nothing_changed_says_all_set(hub, home, capsys):
+    _already_joined(hub)
+    a = FakeAdapter("a", note="restart a")
+    a.configure = lambda exe: []  # nothing to change
+    assert main(hub.url, "T", "pc", adapters=[a], install=lambda *x, **k: []) == 0
+    assert capsys.readouterr().out == f"already joined to {hub.url}; all set\n"
+
+
+def test_join_prints_tool_lines_only_when_changed(hub, home, capsys):
+    _already_joined(hub)
+    same, changed = FakeAdapter("same", note="restart same"), FakeAdapter("changed", note="restart changed")
+    same.configure = lambda exe: []
+    assert main(hub.url, "T", "pc", adapters=[same, changed], install=lambda *x, **k: []) == 0
+    out = capsys.readouterr().out
+    assert "changed: wired changed" in out and "restart: restart changed" in out
+    assert "same" not in out and "all set" not in out and "page:" not in out  # not a first join
+
+
+def test_join_first_time_prints_the_page_link(hub, home, capsys):
+    assert main(hub.url, "T", "pc", adapters=[FakeAdapter("a")], install=lambda *x, **k: []) == 0
+    assert f"page: {hub.url}/#t=T" in capsys.readouterr().out
+
+
+def test_join_drops_the_doubled_tool_prefix(hub, home, capsys):
+    a = FakeAdapter("claude-code")
+    a.configure = lambda exe: ["Claude Code: kaptyorka hooks added"]
+    main(hub.url, "T", "pc", adapters=[a], install=lambda *x, **k: [])
+    out = capsys.readouterr().out
+    assert "Claude Code: kaptyorka hooks added" in out and "claude-code: Claude Code" not in out
+
+
+def test_join_bridge_unit_path_is_not_printed(hub, home, capsys):
+    main(hub.url, "T", "pc", adapters=[FakeAdapter("a")],
+         install=lambda *x, **k: ["installed /x/kaptyorka-bridge.service", "run once: sudo loginctl enable-linger u"])
+    out = capsys.readouterr().out
+    assert "/x/" not in out and "bridge: run once: sudo loginctl enable-linger u" in out
+
+
+def test_join_skips_claude_mcp_when_already_registered(home, fake_claude_cli):  # noqa: F811
+    from kaptyorka.adapters.claude import ClaudeAdapter
+    (home / ".claude.json").write_text(json.dumps(
+        {"mcpServers": {"kaptyorka": {"type": "stdio", "command": "/k", "args": ["mcp"]}}}))
+    a = ClaudeAdapter(home, run=fake_claude_cli.run)
+    assert a.configure("/k") == ["Claude Code: kaptyorka hooks added to " + str(home / ".claude/settings.json")]
+    assert a.configure("/k") == []
+    assert fake_claude_cli.calls == []  # no `claude mcp remove` / `add`
+    (home / ".claude.json").write_text(json.dumps(
+        {"mcpServers": {"kaptyorka": {"command": "/old", "args": ["mcp"]}}}))
+    a.configure("/k")
+    assert [c[2] for c in fake_claude_cli.calls] == ["remove", "add"]
+
+
+def test_service_install_keep_running_leaves_a_same_unit_alone(home):
+    from kaptyorka import service
+    from types import SimpleNamespace
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(list(cmd))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    args = dict(run=run, platform="linux", env={"PATH": "/bin"}, keep_running=True)
+    assert service.install("svc", ["/k", "bridge"], **args)[0].startswith("installed ")
+    calls.clear()
+    assert service.install("svc", ["/k", "bridge"], **args) == []
+    assert ["systemctl", "--user", "restart", "svc"] not in calls
+    calls.clear()
+    assert service.install("svc", ["/k2", "bridge"], **args)[0].startswith("installed ")
+    assert ["systemctl", "--user", "restart", "svc"] in calls

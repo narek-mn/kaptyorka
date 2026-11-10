@@ -645,17 +645,26 @@ def _join(args) -> int:
         print(e, file=sys.stderr)
         return 1
     if args.invite:
+        old = paths.load_config()
+        link_hub = re.match(r"https?://[^/\s]+", args.invite.strip())
+        if old.get("hub") and old.get("token") and link_hub and link_hub.group().lower() == old["hub"].rstrip("/").lower():
+            # redeeming would spend the invite and replace this machine's token (the admin's, on the hub machine)
+            print(f"this machine is already joined to {old['hub']} as {old.get('machine') or args.name}. "
+                  "To repair it: kaptyorka join", file=sys.stderr)
+            return 1
         got = join.redeem(args.invite, args.name)
         if got is None:
             return 1
         hub, token, secret, person = got
+        if old.get("hub") and old.get("token"):
+            print(f"moved from {old['hub']} to {hub}")
         # the invite is spent: keep the token so a plain `kaptyorka join` can retry
         cfg = {"hub": hub, "token": token, "machine": args.name, "secret": secret}
         if person:
             cfg["person"] = person
         paths.save_config(cfg)
         return join.main(hub, token, args.name, only=args.only, secret=secret, person=person,
-                         **extra)
+                         first=True, **extra)
     if not args.hub and not args.token:  # no flags: the previous arguments, saved by the last join
         cfg = paths.load_config()
         if not cfg.get("hub") or not cfg.get("token"):

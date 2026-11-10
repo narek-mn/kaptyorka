@@ -96,20 +96,48 @@ def test_checks_failures_carry_fix_commands(home, unit, answer):
     a.installed = lambda: True
     res = by_name(doctor.checks(CFG, [a], home, Run(active=False, tmux=False), "linux"))
     assert res["token valid"].ok is False and res["hub reachable"].ok is True
-    assert res["bridge service"].fix == "systemctl --user restart kaptyorka-bridge"
+    assert res["bridge service"].fix == "kaptyorka doctor --fix"
     assert res["tmux"].fix == "sudo apt install -y tmux"
     assert res["tool: claude-code"].ok is False
     answer["down"] = True
     assert not by_name(doctor.checks(CFG, [], home, Run(), "linux"))["hub reachable"].ok
 
 
-def test_not_joined_and_hub_service_only_on_hub_machine(home, unit):
-    res = by_name(doctor.checks({}, [], home, Run(), "linux"))
-    assert not res["config"].ok and res["config"].fix == "kaptyorka join"
-    assert "hub service" not in res
+def test_hub_service_only_on_hub_machine(home, unit, answer):
+    assert "hub service" not in by_name(doctor.checks(CFG, [], home, Run(), "linux"))
     (paths.home()).mkdir(parents=True, exist_ok=True)
     (paths.home() / "hub.json").write_text("{}")
-    assert "hub service" in by_name(doctor.checks({}, [], home, Run(), "linux"))
+    assert "hub service" in by_name(doctor.checks(CFG, [], home, Run(), "linux"))
+
+
+def test_doctor_not_joined_one_line(home, unit, capsys):
+    res = doctor.checks({}, [], home, Run(), "linux")
+    assert [c.name for c in res] == ["config"]
+    assert doctor.run({}, adapters=[], home=home, run=Run(), platform="linux") == 1
+    assert capsys.readouterr().out == "not joined: kaptyorka join <invite link>\n"
+
+
+def test_doctor_fix_texts(home, unit, answer):
+    answer["down"] = True
+    res = by_name(doctor.checks(CFG, [], home, Run(active=False), "linux"))
+    assert res["hub reachable"].fix == "is the hub running? On the hub machine: kaptyorka start"
+    assert res["bridge service"].fix == "kaptyorka doctor --fix"
+    answer["down"] = False
+    answer["status"] = 401
+    res = by_name(doctor.checks(CFG, [], home, Run(), "linux"))
+    assert res["token valid"].fix == "ask your admin for a new invite link, then: kaptyorka join <link>"
+    (paths.home()).mkdir(parents=True, exist_ok=True)
+    (paths.home() / "hub.json").write_text("{}")
+    res = by_name(doctor.checks(CFG, [], home, Run(active=False), "linux"))
+    assert res["hub service"].fix == "kaptyorka start"
+
+
+def test_doctor_checks_only_the_joined_tools(home, unit, answer):
+    on, off = fake_adapter("claude-code", home), fake_adapter("cursor", home)
+    names = [c.name for c in doctor.checks({**CFG, "tools": ["claude-code"]}, [on, off], home, Run(), "linux")]
+    assert "tool: claude-code" in names and "tool: cursor" not in names
+    names = [c.name for c in doctor.checks(CFG, [on, off], home, Run(), "linux")]
+    assert "tool: claude-code" in names and "tool: cursor" in names
 
 
 def test_run_prints_lines_and_fix_rewires_and_restarts(monkeypatch, home, unit, answer, capsys):
@@ -127,7 +155,7 @@ def test_run_prints_lines_and_fix_rewires_and_restarts(monkeypatch, home, unit, 
     monkeypatch.setattr(service, "restart", restart)
     assert doctor.run(CFG, fix=False, adapters=[a], home=home, run=r, platform="linux") == 1
     out = capsys.readouterr().out
-    assert "FAIL bridge service: stopped -> systemctl --user restart kaptyorka-bridge" in out
+    assert "FAIL bridge service: stopped -> kaptyorka doctor --fix" in out
     assert "ok   config" in out and configured == []
     assert doctor.run(CFG, fix=True, adapters=[a], home=home, run=r, platform="linux", exe=EXE) == 0
     assert configured == [EXE]

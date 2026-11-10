@@ -139,16 +139,26 @@ class ClaudeAdapter:
             answer = reply.decode(errors="replace").strip()
             raise DeliveryError(f"claude session {key} refused: {answer}")
 
+    def _mcp_registered(self, kaptyorka: str) -> bool:
+        """Already registered with this command and args. Detected from ~/.claude.json, the file
+        `claude mcp add --scope user` writes (and `claude mcp get` reads): no claude process needed."""
+        try:
+            entry = json.loads((self.home / ".claude.json").read_text())["mcpServers"]["kaptyorka"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+        return isinstance(entry, dict) and entry.get("command") == kaptyorka and entry.get("args") == ["mcp"]
+
     def configure(self, kaptyorka: str) -> List[str]:
         lines = []
-        self.run(["claude", "mcp", "remove", "--scope", "user", "kaptyorka"],
-                 capture_output=True)
-        r = self.run(["claude", "mcp", "add", "--scope", "user", "kaptyorka", "--",
-                            kaptyorka, "mcp"], capture_output=True, text=True)
-        if r.returncode:
-            self.log(f"claude mcp add failed: {(r.stderr or r.stdout).strip()}")
-        else:
-            lines.append("Claude Code: kaptyorka MCP server registered (user scope)")
+        if not self._mcp_registered(kaptyorka):
+            self.run(["claude", "mcp", "remove", "--scope", "user", "kaptyorka"],
+                     capture_output=True)
+            r = self.run(["claude", "mcp", "add", "--scope", "user", "kaptyorka", "--",
+                          kaptyorka, "mcp"], capture_output=True, text=True)
+            if r.returncode:
+                self.log(f"claude mcp add failed: {(r.stderr or r.stdout).strip()}")
+            else:
+                lines.append("Claude Code: kaptyorka MCP server registered (user scope)")
 
         def add_hooks(data: dict) -> bool:
             hooks = data.setdefault("hooks", {})

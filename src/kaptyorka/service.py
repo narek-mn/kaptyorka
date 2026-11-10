@@ -294,15 +294,21 @@ def _keep_env(path: Path, platform: str, env: Optional[Dict[str, str]]) -> Optio
 
 def install(name: str, argv: List[str], run: Callable = subprocess.run,
             platform: str = sys.platform, sleep: Callable = time.sleep,
-            env: Optional[Dict[str, str]] = None) -> List[str]:
+            env: Optional[Dict[str, str]] = None, keep_running: bool = False) -> List[str]:
+    """Write the unit and start it. keep_running: a unit that is already running with the
+    same text is left alone (no restart) and no "installed" line is returned."""
     sh = _runner(run)
 
     if platform == "darwin":
         plist = Path.home() / "Library/LaunchAgents" / f"io.kaptyorka.{name}.plist"
         plist.parent.mkdir(parents=True, exist_ok=True)
         env = _keep_env(plist, platform, env)
-        _write_private(plist, unit_text(name, argv, "darwin", env))
+        text = unit_text(name, argv, "darwin", env)
+        same = keep_running and plist.exists() and plist.read_text() == text
+        _write_private(plist, text)
         domain = f"gui/{os.getuid()}"
+        if same and sh("launchctl", "print", f"{domain}/io.kaptyorka.{name}"):
+            return []
         sh("launchctl", "enable", f"{domain}/io.kaptyorka.{name}")  # bootstrap fails if disabled
         sh("launchctl", "bootout", domain, str(plist))
         for attempt in range(5):
@@ -317,12 +323,14 @@ def install(name: str, argv: List[str], run: Callable = subprocess.run,
     unit = Path.home() / ".config/systemd/user" / f"{name}.service"
     unit.parent.mkdir(parents=True, exist_ok=True)
     env = _keep_env(unit, platform, env)
-    _write_private(unit, unit_text(name, argv, "linux", env))
-    lines = [f"installed {unit}"]
+    text = unit_text(name, argv, "linux", env)
+    same = keep_running and unit.exists() and unit.read_text() == text
+    _write_private(unit, text)
     sh("systemctl", "--user", "daemon-reload", must=True)
     active = sh("systemctl", "--user", "is-active", "--quiet", name)
+    lines = [] if same and active else [f"installed {unit}"]
     sh("systemctl", "--user", "enable", "--now", name, must=True)
-    if active:
+    if active and not same:
         sh("systemctl", "--user", "restart", name)
     user = getpass.getuser()
     if not sh("loginctl", "enable-linger", user):
