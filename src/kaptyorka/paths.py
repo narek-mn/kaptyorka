@@ -1,7 +1,9 @@
 import json
 import os
+import socket
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 MANAGER_DIR = "manager"  # the manager session's folder under home()
 MANAGER_CONFIG = "manager-config.json"  # its config, under home(): outside its working folder
@@ -63,3 +65,26 @@ def files_dir() -> Path:
 
 def inbox_dir() -> Path:
     return _subdir("inbox")
+
+
+def outbound_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def is_own_hub(hub_url: str, saved: dict) -> bool:
+    """True when hub_url points at the hub this machine runs (or once ran): same port, one of our names."""
+    try:
+        u = urlparse(hub_url)
+        host, port = u.hostname, u.port or (443 if u.scheme == "https" else 80)
+    except ValueError:
+        return False
+    if not host or port != saved.get("port", 8765):
+        return False
+    name = socket.gethostname()
+    names = {saved.get("host"), outbound_ip(), "127.0.0.1", "localhost", name, name.split(".")[0]}
+    return host in names

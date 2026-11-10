@@ -26,12 +26,7 @@ def _token() -> str:
 
 
 def _outbound_ip() -> str:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("10.255.255.255", 1))
-            return s.getsockname()[0]
-    except OSError:
-        return "127.0.0.1"
+    return paths.outbound_ip()
 
 
 PAGE_LINK = "open the page: {url}/#t={token}  (keep this link private: it signs you in)"
@@ -164,7 +159,7 @@ def _start(args) -> int:
     first = not saved_file.exists()
     hub_unit = service.is_active("kaptyorka-hub")
     cfg = paths.load_config()
-    if first and hub_unit is None and cfg.get("hub") and cfg.get("token"):
+    if cfg.get("hub") and cfg.get("token") and not paths.is_own_hub(cfg["hub"], saved):
         print(f"this machine is joined to {cfg['hub']}; it does not run a hub. "
               "To turn its bridge back on: kaptyorka join", file=sys.stderr)
         return 1

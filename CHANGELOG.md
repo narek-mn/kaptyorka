@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1
+
+- `kaptyorka start` on a machine joined to another team's hub now refuses even when that machine once ran a hub of its own, and `doctor` no longer tells it to start one.
+
 ## 0.8.0
 
 - The manager sleeps when idle and wakes on a message instead of restarting every 71 minutes. Claude Code stops a manager that has been idle for about an hour; the hub now leaves it stopped until a message or a work request comes for it, then starts it and hands it what was waiting. Settings and Machines show it as asleep. The hub's own notices to it (the weekly review, abandoned workers, reminders) wait while it sleeps and go out when it wakes.

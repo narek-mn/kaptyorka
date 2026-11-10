@@ -106,7 +106,7 @@ def test_checks_failures_carry_fix_commands(home, unit, answer):
 def test_hub_service_only_on_hub_machine(home, unit, answer):
     assert "hub service" not in by_name(doctor.checks(CFG, [], home, Run(), "linux"))
     (paths.home()).mkdir(parents=True, exist_ok=True)
-    (paths.home() / "hub.json").write_text("{}")
+    (paths.home() / "hub.json").write_text('{"host": "h", "port": 1}')
     assert "hub service" in by_name(doctor.checks(CFG, [], home, Run(), "linux"))
 
 
@@ -127,7 +127,7 @@ def test_doctor_fix_texts(home, unit, answer):
     res = by_name(doctor.checks(CFG, [], home, Run(), "linux"))
     assert res["token valid"].fix == "ask your admin for a new invite link, then: kaptyorka join <link>"
     (paths.home()).mkdir(parents=True, exist_ok=True)
-    (paths.home() / "hub.json").write_text("{}")
+    (paths.home() / "hub.json").write_text('{"host": "h", "port": 1}')
     res = by_name(doctor.checks(CFG, [], home, Run(active=False), "linux"))
     assert res["hub service"].fix == "kaptyorka start"
 
@@ -275,3 +275,11 @@ def test_doctor_sees_portable_hooks(home):
             f"[ -x ~/.local/bin/kaptyorka ] && ~/.local/bin/kaptyorka hook claude-code {n} || true")
     (home / ".claude/settings.json").write_text(json.dumps(s))
     assert doctor.tool_configured(a, home)
+
+
+def test_doctor_skips_hub_service_on_member(home, unit, answer):
+    (paths.home()).mkdir(parents=True, exist_ok=True)
+    (paths.home() / "hub.json").write_text('{"host": "box-1", "port": 8765}')
+    cfg = {"hub": "http://10.10.10.186:8765", "token": "t"}
+    res = by_name(doctor.checks(cfg, [], home, Run(active=False), "linux"))
+    assert "hub service" not in res

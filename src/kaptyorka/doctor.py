@@ -122,7 +122,8 @@ def checks(cfg: dict, adapters: list, home: Path, run: Callable = subprocess.run
         else:
             token = Check("token valid", False, f"hub answered {status}", "kaptyorka join")
     out += [reach, token, _service(BRIDGE, "bridge service", run, platform)]
-    if (paths.home() / "hub.json").exists():
+    hub_json = paths.home() / "hub.json"
+    if hub_json.exists() and paths.is_own_hub(cfg["hub"], _json(hub_json)):
         out.append(_service(HUB, "hub service", run, platform))
     out.append(_tmux(run, platform))
     chosen = cfg.get("tools")  # the tools this machine joined with; others are left out on purpose
