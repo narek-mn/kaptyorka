@@ -1389,6 +1389,14 @@ class Store:
                             m["sender_key"].startswith("web:"), kind=m["kind"],
                             file=self._file_info(m["file_id"])) for m in rows]
 
+    def _launched_keys(self, principal: Optional[Principal]) -> set:
+        """Keys of live workers the principal's device launched. Call with the lock held."""
+        if principal is None or principal.device_id is None:
+            return set()
+        return {r["key"] for r in self.db.execute(
+            "SELECT key FROM workers WHERE device_id=? AND closed_at IS NULL AND key IS NOT NULL",
+            (principal.device_id,))}
+
     def offer(self, machine: str, version: str = "",
               principal: Optional[Principal] = None) -> List[dict]:
         """Items for a machine's bridge: a pending rekey first, when the bridge's `version` is
@@ -1407,8 +1415,9 @@ class Store:
                     rekey = None
             if rekey is not None and _version_at_least(version, (0, 2)):
                 out.append({"kind": "rekey", "token": rekey["token"], "secret": rekey["secret"]})
+            launched = self._launched_keys(principal)
             for m, t in self._deliverable(now):
-                if t["machine"] != machine or not _owns(t, principal):
+                if t["key"] not in launched and (t["machine"] != machine or not _owns(t, principal)):
                     continue
                 state = m["push_state"]
                 if state == "new" or (state == "offered" and now - m["offered_at"] >= LEASE_S):
@@ -1425,9 +1434,10 @@ class Store:
         caller's own sessions; False (nothing changed) otherwise."""
         with self.lock:
             if principal is not None:
-                row = self.db.execute("SELECT a.person_id, a.device_id FROM messages m JOIN agents a"
+                row = self.db.execute("SELECT a.key, a.person_id, a.device_id FROM messages m JOIN agents a"
                                       " ON a.key=m.to_key WHERE m.id=?", (msg_id,)).fetchone()
-                if row is None or not _owns(row, principal):
+                if row is None or (not _owns(row, principal)
+                                   and row["key"] not in self._launched_keys(principal)):
                     return False
             if ok:
                 self.db.execute("UPDATE messages SET read_at=?, push_state='pushed' WHERE id=?",

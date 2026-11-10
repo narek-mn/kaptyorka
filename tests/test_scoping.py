@@ -50,6 +50,54 @@ def test_offer_respects_the_device(two, tmp_path):
     assert len(s.offer("alice@pc", "", pa)) == 1
 
 
+def _launched_manager(s, pr):
+    """A manager-like session: its own person and device, launched by root's bridge (pr)."""
+    _, tm = person(s, "manager")
+    pm = s.authenticate(tm)
+    s.seen("m1", "manager@srv", "claude-code", "manager", principal=pm)
+    with s.lock:
+        s.db.execute(
+            "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+            " tool, key, state, created) VALUES ('manager','p','t','r1',?,?,'box-1','claude',"
+            "'m1','up',1)", (pr.person_id, pr.device_id))
+    return "manager@srv/claude-code/manager"
+
+
+def test_offer_launched_to_the_launching_device(two):
+    s, _, _, (_, _, pr) = two
+    name = _launched_manager(s, pr)
+    s.send("r1", name, "wake")
+    items = s.offer("root@srv", "", pr)
+    assert [i["key"] for i in items] == ["m1"]
+
+
+def test_offer_launched_only_to_the_launching_device(two):
+    s, _, _, (pa, _, pr) = two
+    name = _launched_manager(s, pr)
+    s.send("r1", name, "wake")
+    assert s.offer("alice@pc", "", pa) == []
+    assert s.offer("root@srv", "", pa) == []
+
+
+def test_offer_skips_closed_worker(two):
+    s, _, _, (_, _, pr) = two
+    name = _launched_manager(s, pr)
+    with s.lock:
+        s.db.execute("UPDATE workers SET closed_at=5, state='closed' WHERE key='m1'")
+    s.send("r1", name, "wake")
+    assert s.offer("root@srv", "", pr) == []
+
+
+def test_ack_launched_marks_read(two):
+    s, _, _, (pa, _, pr) = two
+    name = _launched_manager(s, pr)
+    s.send("r1", name, "wake")
+    mid = s.offer("root@srv", "", pr)[0]["id"]
+    assert s.ack(mid, True, pa) is False
+    assert s.ack(mid, True, pr) is True
+    assert s.messages()[-1].read
+
+
 def test_ack_only_own(two):
     s, _, _, (pa, pb, _) = two
     s.send("r1", "alice@pc/codex/proj-a", "for alice")
