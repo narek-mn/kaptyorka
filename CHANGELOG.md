@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.1
+
+- Home is now a chat like Slack or Telegram: the list on the left (the manager first, then your sessions), the open chat on the right with the box to write pinned at the bottom. The box says whom you write to.
+- Messages show in full, keep their line breaks and are grouped by sender with a line per day; very long ones fold at 12 lines behind Show more. Who a message went to shows when it is not between you and that chat. Unread replies get a count.
+- The admin gets an Activity chat with every message ("from → to"), the hub's notices behind one toggle. The "all" line is gone.
+- A machine where no agent tool is logged in shows as one slim bar over the chat, with the command and a copy button.
+- On a phone: the list first, a tap opens the chat, Back returns. Nothing scrolls sideways.
+- Admin tidied: long folder paths no longer cover the Auto-update switch, empty tables show one quiet line, one New project button, Doors is one line when none are open, row buttons are quiet until hovered.
+
 ## 0.9.0
 
 - Private by default: a member sees and messages only their own sessions and the manager. Everyone else is left out of `who`, the page, the brief and every error, not just masked.

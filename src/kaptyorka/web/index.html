@@ -80,52 +80,82 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel { background: var(--surface); border: 1px solid var(--line); }
 
-/* Home: the sessions on the left, the messages on the right */
-#home { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 24px; width: 100%; max-width: 1100px;
-  margin: 0 auto; padding: 24px; }
-.side { min-height: 0; overflow-y: auto; }
-#warns { list-style: none; margin: 0 0 12px; padding: 0; }
-#warns:empty { display: none; }
-#warns li { display: flex; align-items: baseline; gap: 10px; padding: 7px 4px; color: var(--risk); border-bottom: 1px solid var(--line); }
-#warns li span { min-width: 0; overflow-wrap: anywhere; }
-#warns code { margin-left: auto; flex: none; font: 12px var(--mono); color: var(--ink); user-select: all; }
-.list .row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 4px; text-align: left;
-  border-bottom: 1px solid var(--line); border-left: 2px solid transparent; }
-.list .row:hover { background: var(--surface); }
-.list .row.on { background: var(--surface); border-left-color: var(--accent); }
-.list .row.off { cursor: default; color: var(--muted); }
+/* Home: a two-pane chat. The list on the left (manager first), the open chat on the right,
+   its compose box pinned to the bottom */
+#home { display: grid; grid-template-columns: 296px minmax(0, 1fr); min-height: 0; }
+.side { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-right: 1px solid var(--line); }
+.list { flex: 0 1 auto; min-height: 0; overflow-y: auto; padding: 6px 0; }
+.list .row { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 50px; padding: 6px 14px 6px 14px;
+  text-align: left; border-left: 2px solid transparent; }
+.list .row:hover { background: var(--surface2); }
+.list .row.on { background: var(--hover); border-left-color: var(--accent); }
+.list .row.off { cursor: default; color: var(--faint); }
 .list .row.off:hover { background: none; }
-.list .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.list .who { color: var(--faint); font-size: 12px; white-space: nowrap; }
-.list .n { margin-left: auto; padding-left: 8px; color: var(--faint); font-size: 12px; white-space: nowrap; }
-.list .mgr { color: var(--muted); }
-.list .everyone { color: var(--muted); }
-.list .everyone .dot { visibility: hidden; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
-.dot.busy { background: var(--accent); }
+.list .row > svg { color: var(--muted); }
+.list .row.on > svg { color: var(--ink); }
+.list .row.activity { border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.list .lead { width: 15px; display: flex; justify-content: center; flex: none; }
+.list .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.list .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.list .row.unread .name { font-weight: 650; }
+.list .subline { display: flex; gap: 8px; min-width: 0; font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; }
+.list .subline span { overflow: hidden; text-overflow: ellipsis; }
+.list .who { color: var(--muted); flex: none; }
+.list .n { flex: none; font-size: 12px; color: var(--muted); }
+.list .count { flex: none; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
 .dot.on { background: var(--ok); }
-.link.ask-link { margin-top: 14px; color: var(--faint); }
-.link.ask-link:hover { color: var(--ink); text-decoration: none; }
-/* the compose box right under the last message; the messages scroll once they fill the column */
-.chat { align-self: start; max-height: 100%; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); padding-left: 24px; }
-#log { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
-.msg { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; }
-.msg > b { flex: none; width: 110px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msg > b.mine { color: var(--accent); }
-.msg .body { flex: 1; min-width: 0; }
-.msg .text { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msg .text.open { white-space: pre-wrap; overflow-wrap: anywhere; }
-.msg time { flex: none; padding-left: 8px; color: var(--faint); font-size: 12px; white-space: nowrap; }
-.msg.sys { color: var(--muted); }
-#notices-toggle { align-self: flex-start; margin: 6px 0 0; color: var(--faint); }
-#notices-toggle:hover { color: var(--ink); }
-.compose { flex: none; display: flex; align-items: flex-end; gap: 8px; padding-top: 16px; }
-.compose textarea { flex: 1; min-width: 0; height: 40px; max-height: 160px; padding: 9px 12px; resize: none; line-height: 1.4;
+.quiet-line { padding: 4px 16px 12px; font-size: 12px; color: var(--faint); }
+.side-foot { flex: none; margin-top: auto; padding: 12px 14px; border-top: 1px solid var(--line); }
+.side-foot .btn { width: 100%; }
+.side-foot .btn[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.chat-head { flex: none; display: flex; align-items: center; gap: 11px; height: 58px; padding: 0 24px; border-bottom: 1px solid var(--line); }
+.chat-head #chat-lead { display: flex; color: var(--muted); }
+.chat-title { min-width: 0; display: flex; flex-direction: column; }
+.chat-title b { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-title small { display: flex; gap: 10px; font-size: 12px; color: var(--faint); overflow: hidden; white-space: nowrap; }
+.chat-title small span:first-child { color: var(--muted); }
+#notices-toggle { margin-left: auto; color: var(--muted); }
+#notices-toggle small { color: var(--faint); font-size: 11px; }
+/* a slim bar over the chat: only what stops someone working, and its command */
+#warns { flex: none; list-style: none; margin: 0; padding: 0; }
+#warns:empty { display: none; }
+#warns li { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 5px 16px 5px 24px; font-size: 13px; color: var(--risk);
+  background: rgba(194, 148, 47, .09); border-bottom: 1px solid rgba(194, 148, 47, .35); }
+#warns li > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#warns code { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; font: 12px var(--mono);
+  color: var(--ink); background: var(--bg); border: 1px solid var(--line); user-select: all; }
+#warns .btn { padding: 0 7px; }
+#log { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 24px 18px; }
+.day { display: flex; align-items: center; gap: 12px; margin: 18px 0 6px; font-size: 12px; color: var(--faint); }
+.day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.group { padding: 7px 0 5px; }
+.group .head { display: flex; align-items: baseline; gap: 8px; min-width: 0; margin-bottom: 2px; }
+.group .head b { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group .head b.mine { color: var(--accent); }
+.group .head .to { display: flex; align-items: center; gap: 5px; min-width: 0; color: var(--muted); white-space: nowrap; }
+.group .head .to span { overflow: hidden; text-overflow: ellipsis; }
+.group .head .to svg { color: var(--faint); }
+.group .head time, .msg.sys time { flex: none; font-size: 12px; color: var(--faint); }
+.msg { padding: 2px 0; }
+.msg .text { max-width: 96ch; line-height: 1.5; }
+.msg .text.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 12; overflow: hidden; }
+.msg .more { margin-top: 3px; font-size: 12px; color: var(--muted); }
+.msg .more:hover { color: var(--ink); text-decoration: underline; }
+.msg.sys { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; font-size: 12px; }
+.msg.sys > svg { align-self: center; color: var(--faint); }
+.msg.sys .text { color: var(--muted); min-width: 0; }
+.chat .blank { color: var(--faint); }
+.access-pane { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; }
+.compose { flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 12px 24px 16px; border-top: 1px solid var(--line); }
+.compose textarea { flex: 1; min-width: 0; height: 40px; max-height: 200px; padding: 9px 12px; resize: none; line-height: 1.4;
   background: var(--surface); border-color: var(--line); }
 .compose .btn { height: 40px; }
-.compose .btn.primary { padding: 0 18px; }
+.compose .btn.primary { padding: 0 16px; }
 .compose .attach { padding: 0 11px; color: var(--muted); }
 .compose .file-chip { height: 40px; max-width: 220px; min-width: 0; }
+.chat > .err { padding: 0 24px 10px; margin-top: -6px; }
 .file-chip .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .file-chip small { flex: none; }
 
@@ -314,6 +344,10 @@ th.seen { text-align: right; }
 .task { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .werr { color: var(--danger); font-size: 12px; }
 td.c-act .btn + .btn, td.c-act select + .btn { margin-left: 6px; }
+/* a row's actions are quiet until hovered; only its primary one stands out */
+td.c-act .btn:not(.primary), .dev .btn:not(.primary) { background: none; border-color: transparent; color: var(--muted); }
+td.c-act .btn:not(.primary):hover, .dev .btn:not(.primary):hover { background: var(--surface2); border-color: var(--line); color: var(--ink); }
+td.c-act .btn.danger:hover, .dev .btn.danger:hover { color: var(--danger); border-color: var(--danger); }
 td.c-act .btn, td.c-act select { vertical-align: middle; }
 .acct { display: flex; align-items: center; gap: 9px; }
 .acct small { display: block; color: var(--faint); font-size: 12px; }
@@ -325,16 +359,19 @@ td.c-act .btn, td.c-act select { vertical-align: middle; }
 .login-line { margin-top: 6px; font-size: 12px; color: var(--danger); white-space: normal; }
 .login-line code { font: 12px var(--mono); color: var(--ink); }
 .tag.busy { color: var(--ok); border-color: rgba(105, 159, 8, .4); padding: 0 6px; }
-.folder { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-.folder small { color: var(--faint); font: 12px var(--mono); }
+.folder { display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; }
+.folder > span:first-child { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
+.folder small { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font: 12px var(--mono); }
 #hosts { display: flex; flex-direction: column; gap: 14px; }
 #hosts table { table-layout: fixed; }
-#hosts th:nth-child(1) { width: 15%; }
-#hosts th:nth-child(2) { width: 8%; }
+#hosts td { overflow: hidden; }
+#hosts th:nth-child(1) { width: 17%; }
+#hosts th:nth-child(2) { width: 9%; }
 #hosts th:nth-child(3) { width: 10%; }
 #hosts th:nth-child(4) { width: 6%; }
-#hosts th:nth-child(5) { width: 27%; }
-#hosts th:nth-child(7) { width: 9%; }
+#hosts th:nth-child(5) { width: 24%; }
+#hosts th:nth-child(7) { width: 104px; }
+#hosts td.h-auto { text-align: left; }
 .switch {
   position: relative; width: 30px; height: 16px; flex: none;
   background: var(--surface2); border: 1px solid var(--line);
@@ -394,7 +431,7 @@ tr.archived b { color: var(--muted); }
 .dec { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 
 /* member: what I may use and the ask form, under the sessions behind "Ask for access" */
-#my-access { flex: none; margin-top: 14px; }
+#my-access { flex: none; max-width: 720px; }
 .mine-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; align-items: baseline; padding: 10px 14px; }
 .mine-rows > span { font-size: 12px; color: var(--faint); }
 .mine-rows .none { font-size: 12px; color: var(--faint); }
@@ -408,19 +445,21 @@ tr.archived b { color: var(--muted); }
 @media (max-width: 720px) {
   header { gap: 16px; padding: 0 16px; }
   .brand span { display: none; }
-  /* Home: the sessions over the messages */
-  #home { display: flex; flex-direction: column; gap: 16px; padding: 12px 16px 16px; overflow-y: auto; }
-  .side { flex: none; overflow: visible; }
-  .chat { flex: none; border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 8px; }
-  #log { flex: none; overflow: visible; }
-  .msg { flex-wrap: wrap; row-gap: 0; }
-  .msg > b { width: auto; max-width: 60%; }
-  .msg time { margin-left: auto; }
-  .msg .body { flex-basis: 100%; order: 3; }
-  .compose { flex-wrap: wrap; }
-  .compose textarea { flex-basis: 100%; }
-  .compose .btn.primary { margin-left: auto; }
-  .compose .file-chip { flex: 1 1 0; max-width: none; }
+  /* Home: one column. The list first; a row opens its chat, Back returns */
+  #home { display: flex; flex-direction: column; }
+  #home .side { flex: 1; border-right: 0; }
+  #home.open .side, #home:not(.open) .chat { display: none; }
+  #home .chat { flex: 1; }
+  .chat-head { gap: 9px; padding: 0 12px; }
+  #warns li { padding-left: 12px; padding-right: 12px; }
+  #warns li > span { white-space: normal; }
+  #log { padding: 6px 16px 14px; }
+  .access-pane { padding: 12px 16px; }
+  .compose { padding: 8px 12px 12px; gap: 6px; }
+  .compose .btn.primary { padding: 0 12px; }
+  .compose .btn.primary span { display: none; }
+  .compose .file-chip { max-width: 40%; }
+  .chat > .err { padding: 0 12px 8px; }
   /* Admin: the sub-menu is one row that scrolls sideways */
   #admin { display: flex; flex-direction: column; }
   .sub { flex: none; flex-direction: row; overflow-x: auto; padding: 0 8px; border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: none; }
@@ -482,7 +521,6 @@ tr.archived b { color: var(--muted); }
   .stack td.c-act:empty, .w-attach:empty { display: none; }
   .task { max-width: none; }
   .attach code { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .folder { flex-wrap: wrap; white-space: normal; }
   /* Rules: one column; proposals and conflicts as cards */
   .rules-top { grid-template-columns: minmax(0, 1fr); }
   #rules table { min-width: 0; }
@@ -560,10 +598,22 @@ tr.archived b { color: var(--muted); }
   <main>
     <section id="home" role="tabpanel">
       <div class="side">
-        <ul id="warns" role="alert"></ul>
         <div class="list" id="agents"></div>
-        <div class="blank" id="team-empty" hidden>No sessions online</div>
-        <button type="button" class="link ask-link" id="ask-link" aria-expanded="false" aria-controls="my-access" hidden>Ask for access</button>
+        <div class="quiet-line" id="team-empty" hidden>No sessions online</div>
+        <div class="side-foot" id="side-foot" hidden>
+          <button type="button" class="btn ask-link" id="ask-link" aria-expanded="false" aria-controls="my-access" hidden><svg width="14" height="14"><use href="#i-door"/></svg>Ask for access</button>
+        </div>
+      </div>
+      <div class="chat" id="messages">
+        <div class="chat-head">
+          <button type="button" class="btn small back" id="chat-back" title="Back" aria-label="Back"><svg width="14" height="14"><use href="#i-back"/></svg></button>
+          <span id="chat-lead"></span>
+          <div class="chat-title"><b id="chat-name"></b><small id="chat-sub"></small></div>
+          <button type="button" class="btn small" id="notices-toggle" aria-pressed="false" hidden></button>
+        </div>
+        <ul id="warns" role="alert"></ul>
+        <div id="log"></div>
+        <div class="access-pane" id="access-pane" hidden>
         <div class="panel" id="my-access" hidden>
           <div class="phead">My access</div>
           <div class="mine-rows" id="my-access-rows"></div>
@@ -578,16 +628,13 @@ tr.archived b { color: var(--muted); }
           </form>
           <div class="err" id="ask-err" hidden></div>
         </div>
-      </div>
-      <div class="chat" id="messages">
-        <div id="log"></div>
-        <button type="button" class="link" id="notices-toggle" aria-pressed="false" hidden></button>
+        </div>
         <form class="compose" id="compose" autocomplete="off">
           <span class="tag file-chip" id="file-chip" hidden></span>
           <textarea id="text" rows="1" placeholder="Message manager" aria-label="Message"></textarea>
           <button type="button" class="btn attach" id="attach" aria-label="Attach" title="Attach a file (up to 5 MB)"><svg width="15" height="15"><use href="#i-clip"/></svg></button>
           <input type="file" id="file-in" hidden>
-          <button type="submit" class="btn primary" title="Send (Enter)">Send</button>
+          <button type="submit" class="btn primary" title="Send (Enter)"><svg width="14" height="14"><use href="#i-send"/></svg><span>Send</span></button>
         </form>
         <div class="err" id="send-err" hidden></div>
       </div>
@@ -627,8 +674,8 @@ tr.archived b { color: var(--muted); }
             <div class="phead">Knocks</div>
             <div id="knocks"></div>
           </div>
-          <div class="panel">
-            <div class="phead">Doors</div>
+          <div class="panel" id="doors-panel">
+            <div class="phead" title="Doors let two people's sessions talk directly">Doors<div class="inline" id="door-open"></div></div>
             <div class="doors" id="doors"></div>
             <div class="err" id="door-err" hidden></div>
           </div>
@@ -789,7 +836,7 @@ tr.archived b { color: var(--muted); }
   var VIEWS = ["home"], ADMIN_VIEWS = ["people", "access", "machines", "rules", "notes", "audit", "settings"];
   var token = null, view = "home", adminView = "people";
   var feed = null, seen = {}, timer = null, expanded = {}, me = null;
-  var target = null, showNotices = false, askOpen = false;  /* who the compose box writes to {to, name}; hub notices shown; the ask form open */
+  var conv = "mgr", phoneOpen = false, showNotices = false, askOpen = false;  /* the open chat; a phone shows it over the list; hub notices shown in Activity; the ask form open */
   var note = { key: null, project: null, topic: null, mode: "read", version: 0, history: false };
   var logPerson = "", logKind = "", logRows = null, logFull = false, logKinds = null, LOG_PAGE = 200;
   var settings = null;  /* GET /api/settings: what the feed does not carry (the manager switch) */
@@ -994,49 +1041,118 @@ tr.archived b { color: var(--muted); }
     var yn = function (v) { return v === true ? "yes" : v === false ? "no" : v === null && h ? "n/a" : "unknown"; };
     return "rules text: " + yn(h && h.rules) + ", hooks: " + yn(h && h.hooks) + ", skills: " + yn(h && h.skills);
   }
-  /* Home, left: one line per session, the manager last with its state word (the admin also
-     gets "all"); a click writes to that line, a second click goes back to the manager */
-  function renderSessions() {
-    var box = $("agents");
+  /* Home, left: the chats. The admin's Activity first, then the manager, the sessions the
+     viewer may see, and people this person wrote with. Each row: dot (green online, grey
+     offline), name, machine, unread count; the detail on hover */
+  var ME = "@me", HUB = "@hub", entries = [], entryOf = {};
+  function wide() { return window.innerWidth > 720; }
+  function sessionKey(n) { return n === managerTo() || shortName(n) === "manager" ? "mgr" : n; }
+  /* who a message is between: "mgr", a session name, "@person", ME (this page) or HUB */
+  function parties(m) {
+    var mine = function (n) { return !!me && n === me.person; };
+    var out = [m.web ? (mine(m.sender) ? ME : "@" + m.sender) : m.sender === "hub" ? HUB : sessionKey(m.sender)];
+    m.to.forEach(function (t) { out.push(m.toWeb ? (mine(t) ? ME : "@" + t) : sessionKey(t)); });
+    return out;
+  }
+  /* a member's hub notices to this page sit in the manager's chat; the admin's in Activity */
+  function inConv(m, c) {
+    if (c === "activity") return true;
+    var p = parties(m);
+    return p.indexOf(c) >= 0 || (c === "mgr" && !isAdmin() && p.every(function (x) { return x === ME || x === HUB; }));
+  }
+  /* what this page has read, per chat: kept in this browser; a new browser starts all read */
+  var readMap = null;
+  function readKey() { return "kaptyorka.read." + (me ? me.person : ""); }
+  function readOf(k) { return readMap[k] != null ? readMap[k] : readMap._base || 0; }
+  function markRead(msgs) {
+    if (conv === "activity" || askOpen || document.hidden || (!wide() && !phoneOpen)) return;
+    var top = msgs.reduce(function (n, m) { return Math.max(n, m.last || m.id); }, 0);
+    if (top <= readOf(conv)) return;
+    readMap[conv] = top;
+    var j = JSON.stringify(readMap);
+    store(function (s) { s.setItem(readKey(), j); });
+  }
+  function unread(msgs, k) {
+    var r = readOf(k);
+    return msgs.filter(function (m) {
+      var p = parties(m);
+      return m.id > r && !notice(m) && p[0] !== ME && p.indexOf(ME) > 0 && inConv(m, k); }).length;
+  }
+  function buildEntries(msgs) {
+    var admin = isAdmin(), list = [];
     var agents = feed.agents.filter(function (a) { return a.role !== "manager"; });
     var mgr = feed.agents.filter(function (a) { return a.role === "manager"; })[0] || null;
-    var shape = [agents.map(function (a) { return [a.name, a.person, a.mine, a.doors, a.machine, a.tool, a.project, a.status, a.activity, a.label, a.harness]; }),
-                 mgr && [mgr.name, mgr.activity, mgr.status], feed.manager, target, isAdmin()];
-    if (!changed("team", shape)) return;
-    box.textContent = "";
+    if (admin) list.push({ key: "activity", name: "Activity", icon: "i-list", cls: "activity", sub: "", tip: "Every message", read: true });
+    var ms = mgr ? "up" : feed.manager || "off";
+    list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms, sub: mgr ? mgr.machine : "",
+                to: managerTo(), tip: "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : "") });
     agents.forEach(function (a) {
       var tip = [a.label ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status,
+                 a.activity ? "doing: " + a.activity : null,
                  a.doors && a.doors.length ? "doors: " + a.doors.join(", ") : null,
                  isAdmin() ? harness(a.harness) : null].filter(Boolean).join("\n");
-      box.appendChild(sessionRow(a.name, a.label || shortName(a.name), a.activity, a.machine, tip, hidden(a),
-                                 isAdmin() && !a.mine ? a.person : null));
+      list.push({ key: a.name, name: a.label || shortName(a.name), online: true, sub: a.machine, to: a.name,
+                  who: isAdmin() && !a.mine ? a.person : null, off: hidden(a), tip: hidden(a) ? "A project you have no role in" : tip });
     });
-    box.appendChild(sessionRow(mgr ? mgr.name : "manager", "manager", mgr && mgr.activity, mgr ? "up" : feed.manager || "off",
-                               "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : ""), false, null, "mgr"));
-    if (isAdmin()) box.appendChild(sessionRow("all", "all", null, "", "every session", false, null, "everyone"));
+    var people = {};
+    msgs.forEach(function (m) {
+      var p = parties(m);
+      if (p.indexOf(ME) >= 0) p.forEach(function (x) { if (x.charAt(0) === "@" && x !== ME && x !== HUB) people[x] = 1; });
+    });
+    Object.keys(people).sort().forEach(function (x) {
+      list.push({ key: x, name: x.slice(1), icon: "i-person", sub: "", to: x.slice(1), tip: "On the web page" });
+    });
+    if (!list.some(function (e) { return e.key === conv; }) && conv !== "activity" && conv.charAt(0) !== "@") {
+      list.push({ key: conv, name: labelOf(conv) || shortName(conv), online: false, sub: conv.split("/")[0], to: conv, tip: conv + "\noffline" });
+    }
+    list.forEach(function (e) { e.unread = e.read || e.off ? 0 : unread(msgs, e.key); });
     $("team-empty").hidden = agents.length > 0;
+    return list;
   }
-  function sessionRow(to, name, activity, right, tip, off, person, cls) {
-    var on = !!target && target.to === to;
-    var b = el("button", { type: "button", "class": "row" + (cls ? " " + cls : "") + (on ? " on" : "") + (off ? " off" : ""),
-                           title: off ? "A project you have no role in" : tip || null, "aria-pressed": on ? "true" : "false" }, [
-      el("span", { "class": "dot" + (activity === "busy" ? " busy" : ""), title: activity || null }),
-      el("span", { "class": "name", text: name }),
-      person ? el("span", { "class": "who", text: person }) : null,
-      el("span", { "class": "n", text: right || "" })]);
-    if (!off) b.addEventListener("click", function () { setTarget(on ? null : { to: to, name: name }); });
+  function renderSessions() {
+    if (!changed("team", [entries, conv, askOpen])) return;
+    var box = $("agents");
+    box.textContent = "";
+    entryOf = {};
+    entries.forEach(function (e) { entryOf[e.key] = e; box.appendChild(sessionRow(e)); });
+  }
+  function lead(e) {
+    return e.icon ? icon(e.icon, 15) : el("span", { "class": "dot" + (e.online ? " on" : ""), title: e.online ? "online" : "offline" });
+  }
+  function sessionRow(e) {
+    var on = e.key === conv && !askOpen;
+    var b = el("button", { type: "button", "class": "row" + (e.cls ? " " + e.cls : "") + (on ? " on" : "") + (e.off ? " off" : "") + (e.unread ? " unread" : ""),
+                           title: e.tip || null, "aria-current": on ? "true" : null, "data-key": e.key }, [
+      el("span", { "class": "lead" }, [lead(e)]),
+      el("span", { "class": "meta" }, [el("span", { "class": "name", text: e.name }),
+        e.sub || e.who ? el("small", { "class": "subline" }, [e.sub ? el("span", { text: e.sub }) : null,
+                                                          e.who ? el("span", { "class": "who", text: e.who }) : null]) : null]),
+      e.state ? el("span", { "class": "n", text: e.state }) : null,
+      e.unread ? el("span", { "class": "count", title: e.unread + " unread", text: String(e.unread) }) : null]);
+    if (!e.off) b.addEventListener("click", function () { select(e.key); });
     return b;
   }
-  /* the compose box writes to target, else the manager */
-  function setTarget(t) {
-    target = t;
-    $("text").placeholder = "Message " + (t ? t.name : "manager");
-    renderSessions();
-    $("text").focus();
+  /* open a chat: the compose box writes to it */
+  var drafts = {};  /* what was typed to each chat and not sent */
+  function select(k) {
+    if (k !== conv) { drafts[conv] = $("text").value; $("text").value = drafts[k] || ""; sendErr(""); }
+    conv = k; askOpen = false; phoneOpen = true;
+    $("ask-link").setAttribute("aria-expanded", "false");
+    renderHome(true);
+    grow();
+    if (wide() && k !== "activity") $("text").focus();
   }
-  function managerTo() {
-    var mgr = feed && feed.agents.filter(function (a) { return a.role === "manager"; })[0];
-    return mgr ? mgr.name : "manager";
+  /* the manager's session, or asleep its last one in the messages, so a message wakes it */
+  var mgrKnown = "manager";
+  function managerTo() { return mgrKnown; }
+  function findManager() {
+    var mgr = feed.agents.filter(function (a) { return a.role === "manager"; })[0];
+    if (mgr) { mgrKnown = mgr.name; return; }
+    for (var i = feed.messages.length - 1; i >= 0; i--) {
+      var m = feed.messages[i];
+      if (!m.from_web && shortName(m.sender) === "manager") { mgrKnown = m.sender; return; }
+      if (!m.to_web && shortName(m.to) === "manager") { mgrKnown = m.to; return; }
+    }
   }
 
   /* admin, Access: the open doors, each with its close button, and Open door */
@@ -1057,11 +1173,14 @@ tr.archived b { color: var(--muted); }
       tag.appendChild(x);
       box.appendChild(tag);
     });
-    if (!feed.doors.length) box.appendChild(el("span", { "class": "hint", text: "None open" }));
+    box.hidden = !feed.doors.length;  /* none open: the header line alone */
+    var head = $("door-open");
+    head.textContent = "";
     if (doorPeople.length > 1) {
       var openBtn = button([icon("i-plus", 12), "Open door"], "", function () { openDoor(openBtn, doorPeople); });
-      box.appendChild(openBtn);
+      head.appendChild(openBtn);
     }
+    $("doors-panel").hidden = !feed.doors.length && doorPeople.length < 2;
   }
 
   /* admin: a door between two people, chosen in a sentence that holds through refreshes */
@@ -1132,7 +1251,7 @@ tr.archived b { color: var(--muted); }
   }
   function senderName(m) {
     if (m.web) return me && m.sender === me.person ? "you" : m.sender;
-    return labelOf(m.sender) || shortName(m.sender);
+    return sessionKey(m.sender) === "mgr" ? "manager" : labelOf(m.sender) || shortName(m.sender);
   }
 
   /* an <img> cannot send a header, so images take ?t=; any other file is fetched with the
@@ -1157,50 +1276,140 @@ tr.archived b { color: var(--muted); }
     return b;
   }
 
-  /* Home, right: one line per message (sender, text, age); a click on the text opens it in
-     full; who it went to on hover */
+  /* Home, right: the open chat. Messages in full (very long ones folded at 12 lines),
+     grouped by sender, a line per day, newest at the bottom; who a message went to shows
+     when it is not between this page and the chat */
+  function dayLabel(t) {
+    var d = new Date(t * 1000), now = new Date(), y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    if (d.toDateString() === now.toDateString()) return "Today";
+    if (d.toDateString() === y.toDateString()) return "Yesterday";
+    return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
+  }
+  function hm(t) {
+    var d = new Date(t * 1000);
+    return el("time", { datetime: d.toISOString(), title: full(t), text: pad(d.getHours()) + ":" + pad(d.getMinutes()) });
+  }
+  function toName(m) {
+    if (m.to.length > 1) return "all";
+    if (m.toWeb) return me && m.to[0] === me.person ? "you" : m.to[0];
+    return sessionKey(m.to[0]) === "mgr" ? "manager" : labelOf(m.to[0]) || shortName(m.to[0]) || "—";
+  }
+  function renderChat() {
+    var e = entryOf[conv] || { name: shortName(conv), sub: "" }, act = conv === "activity";
+    var head = $("chat-lead");
+    head.textContent = "";
+    if (askOpen) {
+      head.appendChild(icon("i-door", 15));
+      $("chat-name").textContent = "Access";
+      $("chat-sub").textContent = "";
+    } else {
+      head.appendChild(lead(e));
+      $("chat-name").textContent = e.name;
+      var sub = $("chat-sub");
+      sub.textContent = "";
+      if (!act) [e.state || (e.icon ? "" : e.online ? "online" : "offline"), e.sub, e.who].forEach(function (t) { if (t) sub.appendChild(el("span", { text: t })); });
+    }
+    $("access-pane").hidden = !askOpen;
+    $("log").hidden = askOpen;
+    $("compose").hidden = askOpen || act || !!e.off;
+    $("send-err").hidden = $("send-err").hidden || $("compose").hidden;
+    $("text").placeholder = "Message " + (e.name || "manager");
+    $("home").classList.toggle("open", phoneOpen);
+  }
   function renderMessages(jump) {
     var log = $("log");
-    var stick = jump || log.scrollHeight - log.scrollTop - log.clientHeight < 40, top = log.scrollTop;
+    var stick = jump || log.scrollHeight - log.scrollTop - log.clientHeight < 60, top = log.scrollTop;
     log.textContent = "";
-    var all = fold(feed.messages), notices = all.filter(notice).length;
-    var shown = all.filter(function (m) { return showNotices || !notice(m); });
+    var act = conv === "activity";
+    var all = fold(feed.messages).filter(function (m) { return inConv(m, conv); });
+    var notices = all.filter(notice).length;
+    var shown = all.filter(function (m) { return !act || showNotices || !notice(m); });
+    var day = null, last = null, group = null;
     shown.forEach(function (m) {
-      var text = el("div", { "class": "text" + (expanded[m.id] ? " open" : ""), text: m.text });
-      text.addEventListener("click", function () {
-        if (expanded[m.id]) delete expanded[m.id]; else expanded[m.id] = 1;
-        text.classList.toggle("open", !!expanded[m.id]);
-      });
-      var to = m.to.length > 1 ? "all" : m.toWeb ? m.to[0] : labelOf(m.to[0]) || m.to[0] || "—";
-      log.appendChild(el("div", { "class": "msg" + (notice(m) ? " sys" : ""), "data-id": String(m.id),
-                                  title: senderName(m) + " → " + to }, [
-        el("b", { "class": fromMe(m) ? "mine" : null, text: senderName(m) }),
-        el("div", { "class": "body" }, [text, m.file ? attachment(m.file) : null]),
-        timeEl(m.created, true)]));
+      var d = new Date(m.created * 1000).toDateString();
+      if (d !== day) { log.appendChild(el("div", { "class": "day" }, [el("span", { text: dayLabel(m.created) })])); day = d; last = null; }
+      if (notice(m)) {
+        log.appendChild(el("div", { "class": "msg sys", "data-id": String(m.id), title: senderName(m) + " → " + toName(m) },
+                           [icon("i-status", 12), el("div", { "class": "text", text: m.text }), hm(m.created)]));
+        last = null;
+        return;
+      }
+      var p = parties(m), between = p.every(function (x) { return x === ME || x === conv; });
+      var to = act || !between ? toName(m) : null, k = m.sender + "\n" + (to || "");
+      if (!last || last.k !== k || m.created - last.t > 300) {
+        group = el("div", { "class": "group" }, [el("div", { "class": "head" }, [
+          el("b", { "class": fromMe(m) ? "mine" : null, text: senderName(m) }),
+          to ? el("span", { "class": "to", title: "to " + to }, [icon("i-arrow", 11), el("span", { text: to })]) : null, hm(m.created)])]);
+        log.appendChild(group);
+      }
+      last = { k: k, t: m.created };
+      var text = el("div", { "class": "text", text: m.text });
+      var body = el("div", { "class": "msg", "data-id": String(m.id), title: senderName(m) + " → " + toName(m) },
+                    [text, m.file ? attachment(m.file) : null]);
+      group.appendChild(body);
+      if (m.text.length > 900 || m.text.split("\n").length > 12) fold12(m, text, body);
     });
     if (!shown.length) log.appendChild(el("div", { "class": "blank", text: "No messages yet" }));
     var t = $("notices-toggle");
-    t.hidden = !notices;
-    t.textContent = (showNotices ? "hide notices" : "show notices") + " (" + notices + ")";
+    t.hidden = !act || !notices;
+    t.textContent = "";
+    [icon("i-status", 13), showNotices ? "Hide notices" : "Notices", el("small", { text: String(notices) })].forEach(function (n) { t.appendChild(typeof n === "string" ? document.createTextNode(n) : n); });
+    t.title = (showNotices ? "hide notices" : "show notices") + " (" + notices + ")";
     t.setAttribute("aria-pressed", showNotices ? "true" : "false");
     if (stick) toBottom(); else log.scrollTop = top;
+    markRead(all);
+  }
+  /* a very long message shows 12 lines and Show more */
+  function fold12(m, text, body) {
+    if (expanded[m.id]) { body.appendChild(moreBtn(m, "Show less")); return; }
+    text.classList.add("clamp");
+    if (text.scrollHeight > text.clientHeight + 2) body.appendChild(moreBtn(m, "Show more"));
+    else text.classList.remove("clamp");
+  }
+  function moreBtn(m, label) {
+    var b = el("button", { type: "button", "class": "more", text: label });
+    b.addEventListener("click", function () {
+      if (expanded[m.id]) delete expanded[m.id]; else expanded[m.id] = 1;
+      var log = $("log"), top = log.scrollTop;
+      renderMessages();
+      log.scrollTop = top;
+    });
+    return b;
   }
 
   function toBottom() { var log = $("log"); log.scrollTop = log.scrollHeight; }
+  /* Home: all of it, for a chat change */
+  function renderHome(jump) {
+    findManager();
+    var msgs = fold(feed.messages);
+    entries = buildEntries(msgs);
+    entryOf = {};
+    entries.forEach(function (e) { entryOf[e.key] = e; });
+    renderChat();
+    if (changed("messages", [feed.messages, feed.agents.map(function (a) { return [a.name, a.mine, a.label]; }), showNotices, me && me.person, conv]) || jump) {
+      renderMessages(jump);
+      entries = buildEntries(msgs);  /* the open chat is read now */
+    }
+    renderSessions();
+    renderWarns();
+  }
 
-  /* Home, above the sessions: only what stops this person working, its fix on the right */
+  /* over the chat: only what stops this person working, its command and a copy button */
   function renderWarns() {
     var rows = (isAdmin() ? fleet.warnings : feed.warnings || []).filter(function (w) { return w.blocks; });
     var box = $("warns");
     if (!changed("warns", rows)) return;
     box.textContent = "";
     rows.forEach(function (w) {
-      var fix = /`([^`]+)`/.exec(w.text);
-      box.appendChild(el("li", { title: w.text }, [el("span", { text: w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, "") }),
-                                                   fix ? el("code", { text: fix[1] }) : null]));
+      var fix = /`([^`]+)`/.exec(w.text), code = fix ? el("code", { text: fix[1] }) : null;
+      var copy = code ? button([icon("i-copy", 13)], "", function () { copyCode(code, copy); }, { title: "Copy" }) : null;
+      box.appendChild(el("li", { title: w.text }, [icon("i-warn", 14),
+        el("span", { text: w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, "") }), code, copy]));
     });
   }
-  function grow() { var t = $("text"); t.style.height = "40px"; t.style.height = Math.min(t.scrollHeight + 2, 160) + "px"; }
+  function grow() { var t = $("text"); t.style.height = "40px"; t.style.height = Math.max(40, Math.min(t.scrollHeight + 2, 200)) + "px"; }
+  /* an empty table: its one quiet line, no column heads */
+  function quietEmpty(body) { var h = body.parentNode.querySelector("thead"); if (h) h.hidden = body.rows.length === 1 && !!body.querySelector(".empty-row"); }
   function sendErr(msg) { $("send-err").hidden = !msg; $("send-err").textContent = msg || ""; }
   /* the chosen file as a chip "name · size ×" beside the message */
   function renderAttached() {
@@ -1228,7 +1437,7 @@ tr.archived b { color: var(--muted); }
   function send() {
     var text = $("text").value;
     if (!text.trim() && !attached) return;
-    var to = target ? target.to : managerTo();
+    var e = entryOf[conv], to = e && e.to ? e.to : managerTo();
     var sent = attached;
     upload()
       .then(function (fid) { return api("/api/send", fid ? { to: to, text: text, file_id: fid } : { to: to, text: text }); })
@@ -1616,6 +1825,7 @@ tr.archived b { color: var(--muted); }
   function admins() { return feed.people.filter(function (p) { return p.role === "admin"; }).map(function (p) { return p.name; }); }
   function newProject() {
     $("new-project").hidden = false;
+    $("new-project-btn").hidden = true;
     $("np-name").focus();
   }
   function renderRequests() {
@@ -1696,11 +1906,9 @@ tr.archived b { color: var(--muted); }
     var pb = $("project-rows"), admin = admins();
     pb.textContent = "";
     feed.projects.forEach(function (p) { pb.appendChild(projectRow(p, admin)); });
-    if (!feed.projects.length) {
-      var start = button([icon("i-plus", 13), "New project"], "primary", newProject);
-      pb.appendChild(el("tr", null, [el("td", { colspan: "3", "class": "empty-row" },
-        [el("div", { style: "margin-bottom:10px", text: "No projects yet." }), start])]));
-    }
+    /* one New project button: in the header, the main one while there are none */
+    $("new-project-btn").classList.toggle("primary", !feed.projects.length);
+    if (!feed.projects.length) pb.appendChild(el("tr", null, [el("td", { colspan: "3", "class": "empty-row", text: "No projects yet." })]));
     var gone = feed.archived_projects || [];
     if (gone.length) pb.appendChild(el("tr", { "class": "group" }, [el("td", { colspan: "3", text: "Archived" })]));
     gone.forEach(function (p) {
@@ -1712,6 +1920,7 @@ tr.archived b { color: var(--muted); }
         }, { title: "Its notes come back; nobody has a role in it yet" })])
       ]));
     });
+    quietEmpty(pb);
     var mb = $("machine-rows");
     mb.textContent = "";
     feed.machines.forEach(function (m) {
@@ -1772,6 +1981,7 @@ tr.archived b { color: var(--muted); }
       ]));
     });
     if (!feed.machines.length) mb.appendChild(el("tr", null, [el("td", { colspan: "4", "class": "empty-row", text: "No machines yet" })]));
+    quietEmpty(mb);
   }
 
   /* admin: Settings: how long messages stay, the manager's switch (read only); and the old shared token (Access) */
@@ -1816,9 +2026,7 @@ tr.archived b { color: var(--muted); }
     }
     var rows = $("legacy-rows");
     rows.textContent = "";
-    if (!lg.unassigned.length) {
-      rows.appendChild(el("div", { "class": "empty-row", text: "No old machines waiting for a person" }));
-    } else {
+    if (lg.unassigned.length) {
       var t = el("table"), tb = el("tbody");
       t.appendChild(tb);
       lg.unassigned.forEach(function (m) {
@@ -1850,6 +2058,7 @@ tr.archived b { color: var(--muted); }
     });
     if (!rows.length) body.appendChild(el("tr", null, [el("td", { colspan: "3", "class": "empty-row",
       text: logPerson || logKind ? "Nothing for this choice" : "Nothing logged yet" })]));
+    quietEmpty(body);
     $("log-more-row").hidden = logRows ? !logFull : feed.log.length < LOG_PAGE;
   }
   function logQuery(limit, before) {
@@ -1946,6 +2155,7 @@ tr.archived b { color: var(--muted); }
       ]));
     });
     if (!ws.length) body.appendChild(el("tr", null, [el("td", { colspan: "7", "class": "empty-row", text: "No workers", title: "An agent starts one with work(project, task)" })]));
+    quietEmpty(body);
   }
   /* every warning here; Home shows only those that block */
   function renderWarnings() {
@@ -1991,7 +2201,7 @@ tr.archived b { color: var(--muted); }
           var busy = fleet.workers.some(function (w) {
             return LIVE[w.state] && !w.worktree && w.host === m.host && w.os_user === d.os_user && w.folder === path;
           });
-          return el("div", { "class": "folder" }, [el("span", { text: p }), el("small", { text: path }),
+          return el("div", { "class": "folder", title: p + "\n" + path }, [el("span", { text: p }), el("small", { text: path }),
                     busy ? el("span", { "class": "tag busy", title: "A worker is in this folder" }, ["busy"]) : null]);
         }));
         var row = [
@@ -2147,6 +2357,7 @@ tr.archived b { color: var(--muted); }
         el("td", { "class": "c-plain", text: size(k.size) }),
         el("td", { "class": "seen", title: "by " + k.author }, [timeEl(k.time)])]));
     });
+    quietEmpty(body);
   }
   function renderProposals() {
     var body = $("prop-rows");
@@ -2190,6 +2401,7 @@ tr.archived b { color: var(--muted); }
         el("td", { "class": "seen" }, [timeEl(p.time)]),
         acts]));
     });
+    quietEmpty(body);
   }
   function renderConflicts() {
     $("conflict-panel").hidden = !isAdmin();
@@ -2203,6 +2415,7 @@ tr.archived b { color: var(--muted); }
                                         el("div", null, [el("span", { text: "B" }), c.rule_b])]),
         el("td", { "class": "seen r-side" }, [timeEl(c.time)])]));
     });
+    quietEmpty(body);
   }
 
   /* an admin panel is not redrawn while someone is choosing or typing in it, or answers a confirm */
@@ -2220,10 +2433,11 @@ tr.archived b { color: var(--muted); }
     return true;
   }
   function render() {
-    renderSessions();
-    renderWarns();
-    var places = feed.agents.map(function (a) { return [a.name, a.mine, a.label]; });
-    if (changed("messages", [feed.messages, places, showNotices, me && me.person])) renderMessages();
+    if (!readMap) {  /* a new browser: everything so far counts as read */
+      readMap = { _base: feed.messages.reduce(function (n, m) { return Math.max(n, m.id); }, 0) };
+      store(function (st) { st.setItem(readKey(), JSON.stringify(readMap)); });
+    }
+    renderHome();
     if (isAdmin() && note.mode === "read" && !busy("doc") && changed("notes", feed.notes)) renderNotes();
     if (feed.people) {
       $("n-access").textContent = feed.requests.length + feed.knocks.length;
@@ -2301,11 +2515,15 @@ tr.archived b { color: var(--muted); }
   document.querySelectorAll(".tab, #sub button").forEach(function (b) {
     b.addEventListener("click", function () { show(b.dataset.view); });
   });
-  $("notices-toggle").addEventListener("click", function () { showNotices = !showNotices; renderMessages(true); });
+  $("notices-toggle").addEventListener("click", function () { showNotices = !showNotices; renderHome(true); });
+  $("chat-back").addEventListener("click", function () { phoneOpen = false; if (askOpen) { askOpen = false; $("ask-link").setAttribute("aria-expanded", "false"); } renderHome(); });
+  document.addEventListener("visibilitychange", function () { if (feed && !document.hidden) { seen.messages = null; renderHome(); } });
   $("ask-link").addEventListener("click", function () {
     askOpen = !askOpen;
+    phoneOpen = askOpen || wide();
     $("ask-link").setAttribute("aria-expanded", askOpen ? "true" : "false");
     if (askOpen) loadAccess(); else $("my-access").hidden = true;
+    if (feed) renderHome(!askOpen);
   });
   /* the name opens Sign out; a click outside or Esc closes it */
   function viewerOpen(open) {
@@ -2330,13 +2548,13 @@ tr.archived b { color: var(--muted); }
   });
   $("grant-role").addEventListener("change", grantHint);
   $("new-project-btn").addEventListener("click", newProject);
-  $("np-cancel").addEventListener("click", function () { $("new-project").hidden = true; $("new-project").reset(); });
+  $("np-cancel").addEventListener("click", function () { $("new-project").hidden = true; $("new-project-btn").hidden = false; $("new-project").reset(); });
   $("new-project").addEventListener("submit", function (e) {
     e.preventDefault();
     var name = $("np-name").value.trim();
     if (!name) return;
     act("grant-err", "/api/projects", { name: name, description: $("np-desc").value.trim() })
-      .then(function () { $("new-project").reset(); $("new-project").hidden = true; seen.access = null; }, function () {});
+      .then(function () { $("new-project").reset(); $("new-project").hidden = true; $("new-project-btn").hidden = false; seen.access = null; }, function () {});
   });
   $("grant").addEventListener("submit", function (e) {
     e.preventDefault();
@@ -2398,13 +2616,15 @@ tr.archived b { color: var(--muted); }
   }
   function start(m) {
     me = m;
-    seen = {}; feed = null; invites = []; myAccess = null; target = null; askOpen = false;
+    seen = {}; feed = null; invites = []; myAccess = null; mgrKnown = "manager"; conv = "mgr"; phoneOpen = false; askOpen = false;
+    readMap = store(function (s) { var r = JSON.parse(s.getItem("kaptyorka.read." + m.person) || "null"); return r && typeof r === "object" ? r : null; });
     fleet = { machines: [], workers: [], warnings: [] }; fleetAt = 0;
     logPerson = logKind = ""; logRows = logKinds = settings = null;
     $("viewer-name").textContent = m.person;
     $("viewer-name").title = "Signed in as " + m.person + (m.role === "admin" ? " (admin)" : "") + " on " + m.device;
     document.querySelectorAll(".admin-only").forEach(function (n) { n.hidden = m.role !== "admin"; });
     $("ask-link").hidden = m.role === "admin";
+    $("side-foot").hidden = m.role === "admin";
     $("text").placeholder = "Message manager";
     show(view);
     poll();

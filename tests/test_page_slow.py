@@ -123,7 +123,7 @@ def test_member_asks_for_access(tmp_path):
     try:
         with chrome() as page:
             page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
-            page.wait('!document.getElementById("ask-link").hidden')
+            page.wait('document.getElementById("ask-link") && !document.getElementById("ask-link").hidden')
             assert page.js('document.getElementById("my-access").hidden')  # behind the link
             page.js('document.getElementById("ask-link").click()')
             page.wait('!document.getElementById("my-access").hidden')
@@ -261,7 +261,7 @@ def test_member_sees_only_home(member_page):
     page.go(url + "&view=notes")
     page.wait('document.querySelectorAll("#agents .row").length === 2')
     assert page.js('document.getElementById("tab-admin").hidden') and page.js('document.getElementById("admin").hidden')
-    assert page.js('[...document.querySelectorAll("#agents .row .name")].map(n => n.textContent)') == ["proj-a", "manager"]
+    assert page.js('[...document.querySelectorAll("#agents .row .name")].map(n => n.textContent)') == ["manager", "proj-a"]
     assert page.js('document.querySelector("#agents .mgr .n").textContent') == "off"
     assert page.js('document.getElementById("text").placeholder') == "Message manager"
     time.sleep(2.5)  # a poll or two
@@ -330,9 +330,51 @@ def test_manager_asleep_on_settings_and_machines(tmp_path, monkeypatch):
             assert page.js('document.querySelector("#worker-rows .c-act button")') is None
             assert page.js('document.querySelector("#worker-rows .werr")') is None
             page.screenshot(tmp_path / "machines-asleep.png")
-            # Home: the manager is the last line, with its state word
+            # Home: the manager's line, with its state word
             page.js('document.getElementById("tab-home").click()')
             assert page.wait('document.querySelector("#agents .mgr .n")?.textContent') == "asleep"
+    finally:
+        stop()
+        store.close()
+
+
+def test_chat_reads_in_full_and_phone_goes_back(tmp_path):
+    """A long message folds at 12 lines behind Show more; who it went to shows when it is not
+    between this page and the chat; a phone shows the list, a tapped chat, then Back. No
+    screen scrolls sideways."""
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    alice, token = person(store, "alice", "admin")
+    me = store.authenticate(token)
+    for i in range(9):
+        store.seen(f"k{i}", "box-1", "codex", f"proj-{i}", principal=me)
+    name = store.agent("k0").name
+    store.send_from_web("alice", name, "first", alice)
+    store.send("k0", "alice", "\n".join(f"line {i}" for i in range(30)))
+    store.send("k0", store.agent("k1").name, "x" * 300)  # one long word, to another session
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    try:
+        for w, h in ((1440, 900), (390, 844)):
+            with chrome(w, h) as page:
+                page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+                page.wait('document.querySelectorAll("#agents .row").length === 11')  # Activity, manager, 9
+                assert page.js(wide)
+                if w < 720:
+                    assert page.js('getComputedStyle(document.getElementById("messages")).display') == "none"
+                page.js('[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name").textContent === "proj-0").click()')
+                assert page.wait('document.getElementById("text").placeholder') == "Message proj-0"
+                page.wait('!!document.querySelector("#log .more")')
+                assert page.js('document.querySelector("#log .more").textContent') == "Show more"
+                assert page.js('[...document.querySelectorAll("#log .head .to")].map(t => t.textContent)') == ["proj-1"]
+                assert page.js(wide)
+                page.js('document.querySelector("#log .more").click()')
+                assert page.wait('document.querySelector("#log .more")?.textContent') == "Show less"
+                if w < 720:
+                    assert page.js('getComputedStyle(document.querySelector("#home .side")).display') == "none"
+                    page.js('document.getElementById("chat-back").click()')
+                    page.wait('getComputedStyle(document.querySelector("#home .side")).display !== "none"')
+                    assert page.js(wide)
     finally:
         stop()
         store.close()

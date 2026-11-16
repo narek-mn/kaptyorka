@@ -82,23 +82,26 @@ def test_member_access_view_and_ask_form(hub):
     assert '$("ask-link").hidden = m.role === "admin";' in html
 
 
-def test_home_one_line_per_session_and_message(hub):
+def test_home_two_pane_chat(hub):
     html = page(hub)
     home = re.search(r'<section id="home".*?\n    </section>', html, re.S).group(0)
     assert 'id="agents"' in home and 'id="log"' in home and 'id="compose"' in home
     assert 'id="to"' not in home and "<select" not in home.split('id="compose"')[1]  # no select: a click sets the target
     assert 'placeholder="Message manager"' in home
+    assert 'id="chat-back"' in home and 'id="chat-name"' in home  # the chat's header; Back on a phone
     # detail on hover: the full name, person, folder, tool and doing
     assert "var tip = [a.label ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status," in html
-    # the admin sees whose a line is, and can write to all
-    assert "isAdmin() && !a.mine ? a.person : null" in html and 'sessionRow("all", "all"' in html
+    # the admin sees whose a line is and an Activity chat of every message; no "all" line
+    assert "who: isAdmin() && !a.mine ? a.person : null" in html and 'sessionRow("all"' not in html
+    assert 'if (admin) list.push({ key: "activity", name: "Activity"' in html
     assert "isAdmin() ? harness(a.harness) : null" in html  # what the tool loaded, on hover
-    assert "setTarget(on ? null : { to: to, name: name })" in html  # a second click goes back to the manager
-    # messages: sender, text, age; hub notices behind a toggle with their count
+    assert '$("text").placeholder = "Message " + (e.name || "manager");' in html  # whom you write to
+    # messages in full, grouped by sender, a line per day; very long ones fold at 12 lines
     assert 'function notice(m) { return m.kind !== "message" || m.sender === "hub"; }' in html
     assert '(showNotices ? "hide notices" : "show notices") + " (" + notices + ")"' in html
     assert 'el("b", { "class": fromMe(m) ? "mine" : null, text: senderName(m) })' in html
-    assert "timeEl(m.created, true)" in html
+    assert "-webkit-line-clamp: 12" in html and '"Show more"' in html and "dayLabel(m.created)" in html
+    assert "overflow-wrap: anywhere" in html
 
 
 def test_home_warns_only_what_blocks(hub):
@@ -143,6 +146,7 @@ def test_phone_layouts(hub):
     assert "min-width: 560px" not in html  # admin tables are cards on a phone, not cut off
     # Home stacks; the Admin sub-menu is one row that scrolls sideways
     assert "#home { display: flex; flex-direction: column;" in phone
+    assert "#home.open .side, #home:not(.open) .chat { display: none; }" in phone  # the list, or one chat
     assert ".sub { flex: none; flex-direction: row; overflow-x: auto;" in phone
     assert "#people td.c-act, #access td.c-act, #settings td.c-act { display: flex; flex-wrap: wrap;" in phone
     assert "#audit td.l-what" in phone
@@ -177,7 +181,7 @@ def test_doors_close_open_and_hint(hub):
     assert '"/api/doors/" + d.id + "/close"' in html and '"/api/doors", { a_person:' in html
     assert '"Open door"' in html and '"Open a door between"' in html
     doors = html[html.index("function renderDoors("):html.index("function openDoor(")]
-    assert '"None open"' in doors and "isAdmin()" not in doors  # the admin's Access section only
+    assert "box.hidden = !feed.doors.length" in doors and "isAdmin()" not in doors  # the admin's Access section only
 
 
 def test_notes_delete_undo_restore(hub):
