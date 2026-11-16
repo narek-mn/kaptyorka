@@ -407,8 +407,8 @@ def test_page_access_admin_flows():
         assert hint in html
     assert 'el("small", { text: "admin" })' in html
     assert 'role: role ? role.value : "read"' in html and 'reason: why || ""' in html
-    assert 'id="dec-panel"' in html and ">Recent decisions<" in html and "feed.decisions" in html
-    assert ">Who may use each machine<" in html and '"Shared with others who use this machine"' in html
+    assert 'id="dec-panel"' in html and ">Decided<" in html and "feed.decisions" in html
+    assert ">Machine use<" in html and '"Shared with others who use this machine"' in html
     assert 'text: "Saved"' in html
     assert "feed.archived_projects" in html and '"Archived"' in html and '"Register again"' in html
     assert '"\\u00b7 archived, read-only"' in html and "archived(n.project) ? null : edit" in html
@@ -421,28 +421,23 @@ def test_page_login_and_sign_out():
     unlock = html[html.index('$("unlock").addEventListener'):html.index('$("signout")')]
     assert "location.reload" not in unlock and 'get("/api/me")' in unlock
     assert 'id="signout"' in html and 'title="Sign out"' in html and "lock(false)" in html
-    # the label shows at desktop widths; the phone layout hides it, and so does the admin's
-    # nine-tab header from 721 to 1400 px (the tab names go too, kept on hover)
-    assert '<span class="label">Sign out</span>' in html
-    assert html.count(".signout .label { display: none; }") == 2
-    assert ".is-admin .tab .label, .is-admin .signout .label { display: none; }" in html
-    phone = html[html.index("@media (max-width: 720px)"):]
-    assert ".signout .label { display: none; }" in phone
-    assert 'id="viewer-initial"' in html and ".viewer .initial { display: grid; }" in html
+    # Sign out sits under the person's name: on hover, or a click on the name (Esc or a click
+    # outside closes it)
+    assert 'id="viewer-name" aria-haspopup="true"' in html
+    assert ".viewer:hover .signout, .viewer.open .signout { display: flex; }" in html
+    assert 'if (!$("viewer").contains(e.target)) viewerOpen(false);' in html
 
 
 def test_page_empty_states():
     html = page_html()
     for text in (
-            "No sessions online. Open your coding tool in a project folder on a joined machine and it appears here.",
-            "No messages yet. Click a session on the Team tab to write to it.",
-            "No notes yet. Notes are shared documents your team and its agents keep. Start one with the Write button.",
-            "No machines yet. Invite a person on the People tab; their machines appear here when they join.",
-            "No workers. Ask your agent to work(project, task) and the session appears here.",
-            "No team rules yet. Write the rules every agent on the team follows. ",
-            "No team skills. Upload them with kaptyorka rules push <folder>.",
-            "No proposals. Agents file one when their person corrects them the same way twice."):
+            ">No sessions online<", '"No messages yet"', '"No notes yet"', '"No machines yet"',
+            '"No workers"', '"No team rules yet. "', '"No skills"', '"No proposals"'):
         assert text in html, text
+    # few words: the old explaining sentences are gone
+    for text in ("Click a session on the Team tab", "Notes are shared documents",
+                 "Invite a person on the People tab", "Agents file one when"):
+        assert text not in html, text
 
 
 def test_page_review_fixes():
@@ -459,9 +454,9 @@ def test_page_remove_says_which_workers_may_still_run():
     html = page_html()
     assert 'id="people-ok"' in html and "removedLine(p.name, r)" in html
     assert '" may still run on " + w.host + "; close it on that machine."' in html
-    assert "The device the old shared token logs in as. Switch the shared token off in Settings when every machine has its own token." in html
-    # the shared-token device says where its switch went, with a link to Settings
-    assert '["Its switch is in ",\n            button("Settings", "", function () { show("settings"); }' in html
+    assert "The device the old shared token logs in as. Switch the shared token off in Access when every machine has its own token." in html
+    # the shared-token device says where its switch is, with a link to Access
+    assert '["Its switch is in ",\n            button("Access", "", function () { show("access"); }' in html
 
 
 def test_register_again_keeps_description(app):

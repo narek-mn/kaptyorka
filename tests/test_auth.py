@@ -88,6 +88,7 @@ def test_open_routes_need_no_token(app):
     assert http.request("GET", app.url + "/", "")[0] == 200
     assert http.request("GET", app.url + "/i/nope", "")[0] != 401
     assert http.request("POST", app.url + "/i/nope", "", {})[0] != 401
+    assert http.request("GET", app.url + "/fonts/archivo-latin.woff2", "")[0] == 200  # the page's font
 
 
 def test_legacy_token_is_admin(app, store):

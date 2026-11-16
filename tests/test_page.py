@@ -12,7 +12,7 @@ def page(hub) -> str:
 
 def test_page_served_without_token(hub):
     s, html = http.request("GET", hub.url + "/", "")
-    assert s == 200 and all(v in html for v in ['id="team"', 'id="messages"', 'id="notes"'])
+    assert s == 200 and all(v in html for v in ['id="home"', 'id="admin"', 'id="messages"', 'id="notes"'])
 
 
 def test_page_has_no_external_urls(hub):
@@ -46,11 +46,11 @@ def test_activity_branch_lookup_is_own_property(hub):
 
 def test_page_has_rules_tab(hub):
     html = page(hub)
-    assert 'data-view="rules"' in html and 'id="rules"' in html and 'id="i-rules"' in html
-    assert re.search(r'VIEWS = \[[^\]]*"rules"', html)
-    # between Notes and Machines, visible to everyone
-    assert html.index('data-view="notes"') < html.index('data-view="rules"') < html.index('data-view="machines"')
-    assert "admin-only" not in re.search(r'<button[^>]*data-view="rules"[^>]*>', html).group(0)
+    assert 'data-view="rules"' in html and 'id="rules"' in html
+    # an Admin section: between Machines and Notes, and fetched only for the admin
+    assert re.search(r'ADMIN_VIEWS = \[[^\]]*"rules"', html)
+    assert html.index('data-view="machines"') < html.index('data-view="rules"') < html.index('data-view="notes"')
+    assert "if (!isAdmin() || (!force && view !== \"rules\"" in html
     assert '"/api/rules"' in html and '"/api/proposals"' in html and '"/api/conflicts"' in html
     assert '"/api/proposals/"' in html and 'id="n-rules"' in html
     code = html[html.index("function loadRules("):html.index("function busy(")]
@@ -61,7 +61,8 @@ def test_page_has_rules_tab(hub):
 def test_page_shows_manager_badge(hub):
     html = page(hub)
     assert 'a.role === "manager"' in html and "the team's manager session" in html
-    assert ".who .role" in html and "a.role]" in html  # the badge redraws when the role shows up
+    # the manager is the last line on Home, with its state word from the feed
+    assert 'mgr ? "up" : feed.manager || "off"' in html
     assert 'w.manager ? el("span", { text: "manager" }) : bossEl' in html
 
 
@@ -75,40 +76,77 @@ def test_member_access_view_and_ask_form(hub):
     assert 'id="ask-why"' in form and "Send" in form
     assert 'api("/api/requests", { kind: kind' in html and 'id="ask-err"' in html
     assert '"Projects"' in html and '"Machines"' in html and '"Asked"' in html
-    # only members get it, and it reloads with the poll while Team is open
-    assert 'if (!me || isAdmin() || view !== "team") return;' in html
-    assert 'if (v === "team") loadAccess();' in html
+    # only members get it, behind one "Ask for access" link on Home, fetched while it is open
+    assert 'if (!me || isAdmin() || view !== "home" || !askOpen) return;' in html
+    assert 'id="ask-link"' in html and ">Ask for access<" in html
+    assert '$("ask-link").hidden = m.role === "admin";' in html
 
 
-def test_team_second_line_and_admin_legend(hub):
+def test_home_one_line_per_session_and_message(hub):
     html = page(hub)
-    assert '"class": "where", text: [a.person, a.machine, a.project].filter(Boolean).join(" \\u00b7 ")' in html
-    assert "#team .who .where { display: block;" in html
-    assert "isAdmin() ? harnessMarks(a.harness) : null" in html
-    assert html.count("R rules · H hooks · S skills: what each session's tool has loaded") == 1
-    assert 'id="team-key"' in html
-    assert '$("team-key").hidden = !isAdmin() || !agents.length;' in html
+    home = re.search(r'<section id="home".*?\n    </section>', html, re.S).group(0)
+    assert 'id="agents"' in home and 'id="log"' in home and 'id="compose"' in home
+    assert 'id="to"' not in home and "<select" not in home.split('id="compose"')[1]  # no select: a click sets the target
+    assert 'placeholder="Message manager"' in home
+    # detail on hover: the full name, person, folder, tool and doing
+    assert "var tip = [a.label ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status," in html
+    # the admin sees whose a line is, and can write to all
+    assert "isAdmin() && !a.mine ? a.person : null" in html and 'sessionRow("all", "all"' in html
+    assert "isAdmin() ? harness(a.harness) : null" in html  # what the tool loaded, on hover
+    assert "setTarget(on ? null : { to: to, name: name })" in html  # a second click goes back to the manager
+    # messages: sender, text, age; hub notices behind a toggle with their count
+    assert 'function notice(m) { return m.kind !== "message" || m.sender === "hub"; }' in html
+    assert '(showNotices ? "hide notices" : "show notices") + " (" + notices + ")"' in html
+    assert 'el("b", { "class": fromMe(m) ? "mine" : null, text: senderName(m) })' in html
+    assert "timeEl(m.created, true)" in html
+
+
+def test_home_warns_only_what_blocks(hub):
+    html = page(hub)
+    assert 'var rows = (isAdmin() ? fleet.warnings : feed.warnings || []).filter(function (w) { return w.blocks; });' in html
+    assert 'id="warns"' in html and 'id="warn-banner"' not in html
+
+
+def test_member_page_makes_no_admin_fetch(hub):
+    html = page(hub)
+    for fn in ("loadFleet", "loadRules", "loadSettings", "loadInvites", "loadKinds"):
+        body = html[html.index(f"function {fn}("):]
+        assert "isAdmin()" in body[:body.index("\n  }")], fn
+
+
+def test_fonts_served_open_and_nothing_else(hub):
+    import urllib.request
+    with urllib.request.urlopen(hub.url + "/fonts/archivo-latin.woff2") as r:
+        assert r.status == 200 and r.headers["Content-Type"] == "font/woff2"
+        assert r.read()[:4] == b"wOF2"
+    for bad in ("/fonts/OFL.txt", "/fonts/..%2Fweb%2Findex.html", "/fonts/%2e%2e%2fhub.db", "/fonts/nope.woff2"):
+        assert http.request("GET", hub.url + bad, "")[0] == 404, bad
+    assert (importlib.resources.files("kaptyorka") / "web/fonts/OFL.txt").is_file()  # the license ships too
+
+
+def test_page_csp_allows_own_font(hub):
+    import urllib.request
+    with urllib.request.urlopen(hub.url + "/") as r:
+        csp = r.headers["Content-Security-Policy"]
+    assert "font-src 'self'" in csp and "default-src 'none'" in csp
+    assert "url(/fonts/archivo-latin.woff2)" in page(hub)
+
+
+def test_feed_carries_the_manager_state(hub):
+    status, f = http.request("GET", hub.url + "/api/feed", hub.token)
+    assert status == 200 and f["manager"] == "off"  # the hub fixture switches it off
 
 
 def test_phone_layouts(hub):
     html = page(hub)
-    phone = html[html.index("@media (max-width: 720px)"):html.index("@media (prefers-reduced-motion")]
+    phone = html[html.index("@media (max-width: 720px)"):]
     assert "min-width: 560px" not in html  # admin tables are cards on a phone, not cut off
-    # tabs: a bottom bar with names under the icons; past five, More opens a menu of the rest
-    assert "nav { position: fixed; left: 0; right: 0; bottom: 0;" in phone and ".tab .label { display: none; }" not in phone
-    assert "nav .tab.overflow, nav .sep { display: none; }" in phone and "#view-title { display: block;" in phone
-    assert 'var PHONE_BAR = ["team", "messages", "notes", "machines"];' in html
-    assert 'id="more" type="button" aria-haspopup="menu"' in html and 'id="more-menu" role="menu"' in html
-    assert '$("more-label").textContent = cur ? cur.title : "More";' in html
-    assert 'n && !n.hidden ? el("span", { "class": "count", text: n.textContent }) : null' in html
-    assert "/* a click outside closes the menu */" in html and "mask-image" not in phone
+    # Home stacks; the Admin sub-menu is one row that scrolls sideways
+    assert "#home { display: flex; flex-direction: column;" in phone
+    assert ".sub { flex: none; flex-direction: row; overflow-x: auto;" in phone
     assert "#people td.c-act, #access td.c-act, #settings td.c-act { display: flex; flex-wrap: wrap;" in phone
     assert "#audit td.l-what" in phone
     assert ".stack td.nil { display: none; }" in phone and '"sw-label", text: "Auto-update"' in html
-    assert 'id="chips-toggle"' in html and ".chips.folded { display: none; }" in phone
-    # the admin's door controls are behind the same fold, so its label names them
-    assert '(withDoors ? "Filter and doors" : "Filter")' in html
-    assert '"Filter: " + on.join(", ") + (withDoors ? ", doors" : "")' in html
 
 
 def test_log_rows_are_sentences(hub):
@@ -138,8 +176,8 @@ def test_doors_close_open_and_hint(hub):
     assert '"Close the door between " + d.a_person + " and " + d.b_person + "? Their sessions stop talking directly."' in html
     assert '"/api/doors/" + d.id + "/close"' in html and '"/api/doors", { a_person:' in html
     assert '"Open door"' in html and '"Open a door between"' in html
-    assert "A door lets two people's sessions talk directly, without the admin." in html
-    assert '"kaptyorka.door-hint"' in html
+    doors = html[html.index("function renderDoors("):html.index("function openDoor(")]
+    assert '"None open"' in doors and "isAdmin()" not in doors  # the admin's Access section only
 
 
 def test_notes_delete_undo_restore(hub):
@@ -161,7 +199,7 @@ def test_rules_history_and_proposal_form(hub):
     assert 'aria-label="Why (what happened)"' in form and 'maxlength="4000"' in form
     assert ">Send<" in form and ">Cancel<" in form
     assert "Propose a rule" in html and 'act("prop-err", "/api/proposals", { text:' in html
-    assert "No proposals yet. Propose a rule when your agent keeps getting the same correction." in html
+    assert '"No proposals yet"' in html
 
 
 def test_machine_cards_name_missing_tools(hub):
@@ -187,20 +225,19 @@ def test_log_kind_filter_and_load_more(hub):
 def test_settings_tab(hub):
     html = page(hub)
     assert '<symbol id="i-gear"' in html
-    nav = re.search(r"<nav.*?</nav>", html, re.S).group(0)
-    tabs = re.findall(r'data-view="(\w+)"', nav)
-    assert tabs[-1] == "settings"
-    for view, title in re.findall(r'data-view="(\w+)" title="([^"]+)"', nav):
-        assert f'data-view="{view}" title="{title}" aria-label="{title}"' in nav
-    assert re.search(r'<button class="tab admin-only" role="tab" data-view="settings" title="Settings" aria-label="Settings" hidden>'
-                     r'<svg[^>]*><use href="#i-gear"/>', nav)
+    sub = re.search(r'<nav class="sub".*?</nav>', html, re.S).group(0)
+    assert re.findall(r'data-view="(\w+)"', sub) == ["people", "access", "machines", "rules", "notes", "audit", "settings"]
+    top = re.search(r'<nav role="tablist">.*?</nav>', html, re.S).group(0)
+    assert re.findall(r'data-view="(\w+)"', top) == ["home", "admin"]
+    assert re.search(r'<button class="tab admin-only" role="tab" data-view="admin" id="tab-admin" hidden>', top)
     sec = re.search(r'<section id="settings".*?</section>', html, re.S).group(0)
     assert 'class="admin"' in sec
     assert 'id="retention"' in sec and 'id="ret-days"' in sec
-    assert "Keep messages for" in sec and "<span>days.</span>" in sec
-    assert "Older messages and their files are deleted every night." in sec
-    assert ">Manager<" in sec and 'id="legacy-panel"' in sec
-    assert "Machines that joined before personal tokens" in sec
+    assert "Keep messages for" in sec and "<span>days</span>" in sec
+    assert 'title="Older messages and their files are deleted every night."' in sec
+    assert ">Manager<" in sec and 'id="legacy-panel"' not in sec
+    access = re.search(r'<section id="access".*?</section>', html, re.S).group(0)
+    assert 'id="legacy-panel"' in access and 'title="Machines that joined before personal tokens">Shared token' in access
     assert "settings.manager_state" in html and "settings.manager_reason" in html
     assert '"The manager session is starting."' in html and '"The manager session is running."' in html
     assert '"The manager session is on but cannot start: " + why + "."' in html
@@ -212,7 +249,7 @@ def test_settings_tab(hub):
     assert '"/api/settings"' in html and "manager_state" in html
     people = re.search(r'<section id="people".*?</section>', html, re.S).group(0)
     assert "legacy" not in people and "Old machines" not in people
-    assert 'ADMIN_VIEWS = ["people", "access", "audit", "settings"]' in html
+    assert 'ADMIN_VIEWS = ["people", "access", "machines", "rules", "notes", "audit", "settings"]' in html
 
 
 def test_proposal_fields_have_visible_labels(hub):

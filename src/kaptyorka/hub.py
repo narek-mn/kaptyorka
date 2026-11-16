@@ -41,7 +41,8 @@ OWN_TOKEN = ("use your own device token: run kaptyorka join with an invite, or a
 REMOVED = "{project} was removed; ask the admin to register it again"
 ON_SHARED = "a worker on a shared account cannot start, adopt or close workers; ask your boss"
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
-       "style-src 'unsafe-inline'; img-src 'self' data:")
+       "style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'")
+FONTS = ("archivo-latin.woff2",)  # the page's font files (web/fonts/, SIL OFL 1.1)
 
 INVITE_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
                "<title>kaptyorka</title><style>body{{background:#111418;color:#e6e8eb;"
@@ -858,9 +859,27 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         return JSONResponse({"person": p.person_name, "role": p.role, "device": p.device_name,
                              "person_id": p.person_id})
 
+    def manager_state():
+        """The manager session's state word, why it cannot start, and its worker row."""
+        now = store.clock()
+        row = ws.by_name(manager.WORKER)
+        running = row is not None and row["state"] in LIVE
+        reason = "" if running else mm.launch_reason(now)
+        if running:  # unattended or abandoned: the session is there, just nobody watching
+            state = "starting" if row["state"] == "starting" else "up"
+        elif not mm.enabled():
+            state = "off"
+        elif mm.asleep(now):
+            state, reason = "asleep", ""
+        else:  # nothing in the way: the next tick starts it
+            state = "blocked" if reason else "starting"
+        return state, reason, row
+
     @server.custom_route("/api/feed", methods=["GET"])
     async def api_feed(request: Request) -> Response:
-        return JSONResponse(feed(store, request.scope["state"]["principal"], ws))
+        # everyone writes to the manager, so everyone sees its state word on Home
+        return JSONResponse({**feed(store, request.scope["state"]["principal"], ws),
+                             "manager": manager_state()[0]})
 
     @server.custom_route("/api/files", methods=["POST"])
     async def api_file_upload(request: Request) -> Response:
@@ -1014,18 +1033,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         denied = admin_only(request)
         if denied:
             return denied
-        now = store.clock()
-        row = ws.by_name(manager.WORKER)
-        running = row is not None and row["state"] in LIVE
-        reason = "" if running else mm.launch_reason(now)
-        if running:  # unattended or abandoned: the session is there, just nobody watching
-            state = "starting" if row["state"] == "starting" else "up"
-        elif not mm.enabled():
-            state = "off"
-        elif mm.asleep(now):
-            state, reason = "asleep", ""
-        else:  # nothing in the way: the next tick starts it
-            state = "blocked" if reason else "starting"
+        state, reason, row = manager_state()
         return JSONResponse({
             "retention_days": store.retention_days(), "manager_enabled": mm.enabled(),
             "manager_state": state, "manager_reason": reason,
@@ -1700,6 +1708,15 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     async def page(request: Request) -> Response:
         html = (importlib.resources.files("kaptyorka") / "web/index.html").read_text("utf-8")
         return HTMLResponse(html, headers={"Cache-Control": "no-store", "Content-Security-Policy": CSP})
+
+    @server.custom_route("/fonts/{name}", methods=["GET"])
+    async def font(request: Request) -> Response:
+        name = request.path_params["name"]
+        if name not in FONTS:  # only the bundled files: no other path is ever read
+            return PlainTextResponse("not found", status_code=404)
+        data = (importlib.resources.files("kaptyorka") / "web/fonts" / name).read_bytes()
+        return Response(data, media_type="font/woff2",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
     async def tick_loop() -> None:
         while True:

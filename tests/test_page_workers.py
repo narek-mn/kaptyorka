@@ -1,4 +1,4 @@
-"""The page's Machines tab: workers, machines, the admin's warnings and auto-update switch."""
+"""The Admin > Machines section: workers, machines, warnings and the auto-update switch."""
 import importlib.resources
 import re
 
@@ -10,14 +10,14 @@ def html() -> str:
     return (importlib.resources.files("kaptyorka") / "web/index.html").read_text()
 
 
-def test_machines_tab_between_notes_and_people(html):
-    tabs = re.findall(r'class="tab[^"]*" role="tab" data-view="(\w+)"', html)
-    assert tabs.index("machines") == tabs.index("rules") + 1 == tabs.index("notes") + 2
-    assert tabs.index("people") == tabs.index("machines") + 1
-    tab = re.search(r'<button class="([^"]*)" role="tab" data-view="machines"[^>]*>', html)
-    assert "admin-only" not in tab.group(1) and "hidden" not in tab.group(0)
+def test_machines_section_under_admin(html):
+    sub = re.search(r'<nav class="sub".*?</nav>', html, re.S).group(0)
+    views = re.findall(r'data-view="(\w+)"', sub)
+    assert views.index("machines") == views.index("access") + 1 == views.index("people") + 2
     assert 'id="machines" role="tabpanel"' in html
-    assert re.search(r'VIEWS = \[[^\]]*"machines"', html)
+    assert re.search(r'ADMIN_VIEWS = \[[^\]]*"machines"', html)
+    # members have no Machines view: the fleet is fetched for the admin only
+    assert "if (!isAdmin() || (!force && view !== \"machines\"" in html
 
 
 def test_routes_referenced(html):
@@ -34,11 +34,10 @@ def test_all_worker_states_have_badges(html):
         assert f".state.{s}" in html, s
 
 
-def test_warnings_banner_and_attach_code(html):
-    banner = re.search(r'<div[^>]*id="warn-banner"[^>]*>', html).group(0)
-    assert "admin-only" not in banner and "hidden" in banner  # shown by script, admin only
-    assert html.index('id="warn-banner"') < html.index('<nav role="tablist">')
-    assert "more" in html and "slice(0, 3)" in html
+def test_warnings_panel_and_attach_code(html):
+    machines = re.search(r'<section id="machines".*?</section>', html, re.S).group(0)
+    assert machines.index('id="warn-panel"') < machines.index('id="worker-rows"')  # every warning, first
+    assert 'id="warns"' in re.search(r'<section id="home".*?</section>', html, re.S).group(0)  # Home: only blocking
     assert 'el("code"' in html and "w.attach" in html
 
 
@@ -47,8 +46,6 @@ def test_auto_update_switch_sends_on(html):
     assert re.search(r'"/auto_update", \{ on: !', html)
 
 
-def test_machines_empty_state_fits_the_viewer(html):
-    """A member has no People tab: their empty Machines tab names their own next step."""
-    assert ('text: isAdmin()\n      ? "No machines yet. Invite a person on the People tab; their machines appear'
-            ' here when they join."\n      : "No machines yet. Run kaptyorka join with your invite link on your'
-            ' machine."') in html
+def test_machines_empty_state_is_short(html):
+    assert '? "No machines yet" : "No machines yet. Run kaptyorka join with your invite link." })]));' in html
+    assert '"No workers", title: "An agent starts one with work(project, task)"' in html

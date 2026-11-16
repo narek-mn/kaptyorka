@@ -728,6 +728,8 @@ def test_warnings_texts_and_order(store, ws, alice, bob, clock):
     ]
     assert got[0]["person"] == "alice" and got[1]["person"] == "bob"
     assert got[1]["host"] == "box-3" and got[1]["os_user"] == "bob"
+    # only a failed launch and an offline bridge stop the person working (Home shows those)
+    assert [w["blocks"] for w in got] == [True, True, False, False, False, False, False]
 
 
 def test_warnings_none_when_healthy_and_skip_revoked_legacy(store, ws, alice, clock):
@@ -827,7 +829,7 @@ def test_warning_when_no_tool_logged_in(store, ws, alice, clock):
     # one line, with the login of a tool installed there (the first that reports a state)
     assert [w["text"] for w in got] == [
         "box-1 (alice): no agent tool is logged in. Run `codex login` there."]
-    assert got[0]["host"] == "box-1" and got[0]["person"] == "alice"
+    assert got[0]["host"] == "box-1" and got[0]["person"] == "alice" and got[0]["blocks"]
     ws.facts_seen(a, {"version": "0.3.0", "tmux": True, "logins": {"codex": None}}, {})
     assert ws.warnings(clock[0], "0.3.0") == []  # no tool knows: nothing to say
 

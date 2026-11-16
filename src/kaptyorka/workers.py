@@ -853,7 +853,8 @@ class WorkerStore:
 
     def warnings(self, now: float, hub_version: str) -> List[dict]:
         """Things a person should look at: failed launches, offline bridges, old versions,
-        missing hooks or tmux, unattended or abandoned workers."""
+        missing hooks or tmux, unattended or abandoned workers. `blocks`: the person cannot
+        work until it is fixed (a failed launch, an offline bridge, no tool logged in)."""
         failed, offline, rest = [], [], []
         with self.lock:
             devices = self.db.execute(
@@ -872,13 +873,13 @@ class WorkerStore:
             host, user = d["host"], d["os_user"]
             who = f"{host} ({user})"
 
-            def add(out, text):
+            def add(out, text, blocks=False):
                 out.append({"host": host, "os_user": user, "person": d["person"] or "",
-                            "text": text})
+                            "text": text, "blocks": blocks})
             if (d["facts"] and d["last_used"] is not None  # only bridges report facts
                     and d["last_used"] < now - OFFLINE_S):
                 add(offline, f"bridge on {who} has been offline for"
-                    f" {int((now - d['last_used']) // 60)} minutes")
+                    f" {int((now - d['last_used']) // 60)} minutes", True)
             facts = json.loads(d["facts"]) if d["facts"] else {}
             v = facts.get("version") or d["version"] or ""
             if _version_tuple(v) and _version_tuple(v) < _version_tuple(hub_version):
@@ -892,11 +893,12 @@ class WorkerStore:
             out = [t for t, ok in known.items() if ok is False and t in LOGIN_COMMANDS]
             if out and not any(known.values()):
                 add(rest, f"{who}: no agent tool is logged in."
-                    f" Run `{LOGIN_COMMANDS[out[0]]}` there.")
+                    f" Run `{LOGIN_COMMANDS[out[0]]}` there.", True)
             if d["shared"] and facts.get("tmux") is False:
                 add(rest, f"{who} has no tmux: only Claude Code workers can run there")
         for w in workers:
-            item = {"host": w["host"], "os_user": w["os_user"] or "", "person": w["person"] or ""}
+            item = {"host": w["host"], "os_user": w["os_user"] or "", "person": w["person"] or "",
+                    "blocks": w["state"] == "failed"}
             if w["state"] == "failed":
                 failed.append({**item, "text": f"worker {w['name']} on {w['host']} failed to"
                                f" start: {w['error']}"})

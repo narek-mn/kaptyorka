@@ -123,6 +123,9 @@ def test_member_asks_for_access(tmp_path):
     try:
         with chrome() as page:
             page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+            page.wait('!document.getElementById("ask-link").hidden')
+            assert page.js('document.getElementById("my-access").hidden')  # behind the link
+            page.js('document.getElementById("ask-link").click()')
             page.wait('!document.getElementById("my-access").hidden')
             assert page.js('document.getElementById("my-access-rows").textContent').startswith(
                 "ProjectsNone yet. Ask below.")
@@ -143,14 +146,14 @@ def test_member_asks_for_access(tmp_path):
             assert [(r["person"], r["target"], r["role"], r["why"]) for r in store.requests()] == \
                 [("bob", "proj-a", "write", "to review")]
             # the admin-only parts stay away
-            assert page.js('document.getElementById("team-key").hidden')
+            assert page.js('document.getElementById("tab-admin").hidden')
     finally:
         stop()
         store.close()
 
 
-def test_phone_more_menu(tmp_path):
-    """At 390 px the admin sees five named slots; More lists the rest by name and opens them."""
+def test_phone_admin_submenu(tmp_path):
+    """At 390 px the Admin sub-menu is one row that scrolls sideways; the page never does."""
     store = Store(tmp_path / "hub.db")
     ManagerStore(store).set_enabled(False, "test")
     stop = start_hub(store)
@@ -158,22 +161,21 @@ def test_phone_more_menu(tmp_path):
     try:
         with chrome(390, 844) as page:
             page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
-            page.wait('!document.getElementById("more").hidden')
-            shown = page.js('[...document.querySelectorAll("nav .tab, nav .tab-more")]'
-                            '.filter(b => b.offsetWidth > 0).map(b => b.textContent.replace(/\\d+/g, ""))')
-            assert shown == ["Team", "Messages", "Notes", "Machines", "More"]
-            assert page.js('document.getElementById("view-title").textContent') == "Team"
-            page.js('document.getElementById("more").click()')
-            items = page.wait('[...document.querySelectorAll("#more-menu button")].map(b => b.textContent)')
-            assert [i.rstrip("0123456789") for i in items] == ["Rules", "People", "Access", "Log", "Settings"]
-            page.js('document.body.click()')  # a click outside closes it
-            assert page.js('document.getElementById("more-menu").hidden')
-            page.js('document.getElementById("more").click()')
-            page.js('[...document.querySelectorAll("#more-menu button")].find(b => b.textContent.startsWith("People")).click()')
+            page.wait('!document.getElementById("tab-admin").hidden')
+            assert page.js('document.getElementById("home").offsetWidth') <= 390
+            page.js('document.getElementById("tab-admin").click()')
             page.wait('!document.getElementById("people").hidden')
-            assert page.js('document.getElementById("more-menu").hidden')
-            assert page.js('document.getElementById("more-label").textContent') == "People"
-            assert page.js('document.getElementById("view-title").textContent') == "People"
+            sub = page.js('(() => { const s = document.getElementById("sub"); '
+                          'return [s.scrollWidth > s.clientWidth, getComputedStyle(s).flexDirection]; })()')
+            assert sub == [True, "row"]
+            assert page.js('[...document.querySelectorAll("#sub button")].map(b => b.textContent.replace(/\\d+/g, ""))') == \
+                ["People", "Access", "Machines", "Rules", "Notes", "Log", "Settings"]
+            page.js('document.querySelector(\'#sub button[data-view="settings"]\').click()')
+            page.wait('!document.getElementById("settings").hidden')
+            assert page.js('document.querySelector("#sub button[aria-current=page]").textContent') == "Settings"
+            assert page.js("document.documentElement.scrollWidth") == 390
+            page.js('document.getElementById("tab-home").click()')
+            page.wait('!document.getElementById("home").hidden')
             assert page.js("document.documentElement.scrollWidth") == 390
     finally:
         stop()
@@ -189,13 +191,17 @@ def test_attach_sends_file(admin_page):
     store, page, url = admin_page
     _, bob_t = person(store, "bob")
     store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(bob_t))
-    page.go(url.replace("view=people", "view=messages"))
-    page.wait('[...document.querySelectorAll("#to option")].some(o => o.value === "box-1/codex/proj-a")')
+    page.go(url.replace("&view=people", ""))
+    # a click on bob's line writes to it; no select
+    page.wait('[...document.querySelectorAll("#agents .row")].some(r => r.title.startsWith("box-1/codex/proj-a") '
+              '|| r.querySelector(".name").textContent === "proj-a")')
+    page.js('[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name").textContent === "proj-a").click()')
+    assert page.wait('document.getElementById("text").placeholder') == "Message proj-a"
+    assert page.js('document.querySelector("#agents .row.on .who").textContent') == "bob"  # the admin sees whose
     page.js("""(() => { const dt = new DataTransfer(); dt.items.add(new File(["hello"], "a.txt"));
       const i = document.getElementById("file-in"); i.files = dt.files; i.dispatchEvent(new Event("change")); })()""")
     assert page.wait('!document.getElementById("file-chip").hidden && '
                      'document.getElementById("file-chip").textContent') == "a.txt· 5 B"
-    page.js('document.getElementById("to").value = "box-1/codex/proj-a"')
     page.js('document.getElementById("text").value = "see the file"')
     page.js('document.querySelector("#compose button[type=submit]").click()')
     assert page.wait('document.querySelector("#log .msg .file")?.textContent') == "a.txt5 B"
@@ -227,11 +233,11 @@ def test_note_delete_undo(admin_page):
     assert len(store.note_history("plan")) == 3
 
 
-def test_propose_from_page(member_page):
-    store, page, url = member_page
-    page.go(url + "&view=rules")
+def test_propose_from_page(admin_page):
+    store, page, url = admin_page
+    page.go(url.replace("view=people", "view=rules"))
     assert page.wait('document.querySelector("#prop-rows .empty-row")?.textContent') == \
-        "No proposals yet. Propose a rule when your agent keeps getting the same correction."
+        "No proposals"
     page.js('document.getElementById("propose-btn").click()')
     page.wait('!document.getElementById("propose").hidden')
     page.js('document.querySelector("#propose button[type=submit]").click()')  # empty: nothing sent
@@ -243,35 +249,24 @@ def test_propose_from_page(member_page):
     assert page.js('document.querySelector("#prop-rows .prop b").textContent') == "run the tests before a commit"
     assert page.js('document.getElementById("propose").hidden')
     assert [(p["person"], p["evidence"]) for p in RulesStore(store).proposals()] == \
-        [("bob", "it pushed a broken build twice")]
+        [("alice", "it pushed a broken build twice")]
 
 
-def test_member_sees_no_restore(member_page):
+def test_member_sees_only_home(member_page):
+    """A member's page: Home only (an admin view in the link falls back to it), their own
+    sessions and the manager, and no admin route fetched at all."""
     store, page, url = member_page
-    store.notes_write_from_web("alice", "plan", "first", "proj-a")
-    store.notes_write_from_web("alice", "plan", "second", "proj-a")
-    RulesStore(store).set_rules("old rule", "alice")
-    RulesStore(store).set_rules("new rule", "alice")
+    bob = store.authenticate(url.split("#t=")[1])
+    store.seen("b1", "box-1", "codex", "proj-a", principal=bob)
     page.go(url + "&view=notes")
-    page.wait('[...document.querySelectorAll("#topics .topic b")].some(b => b.textContent === "plan")')
-    page.js('[...document.querySelectorAll("#topics .topic")]'
-            '.find(t => t.querySelector("b").textContent === "plan").click()')
-    page.wait('document.querySelector("#doc h2")?.textContent === "plan"')
-    click(page, "#doc .tools", "History 2")
-    page.wait('document.querySelectorAll("#doc .version").length === 2')
-    page.js('document.querySelectorAll("#doc .version")[1].click()')
-    assert page.wait('document.querySelector("#doc .byline .old")?.textContent') == "old version v1"
-    buttons = page.js('[...document.querySelectorAll("#doc button")].map(b => b.textContent)')
-    assert "Restore this version" not in buttons and "Delete" not in buttons
-    page.js('document.querySelector(".tab[data-view=rules]").click()')
-    page.wait('document.querySelector("#rules-doc .tag")?.textContent === "v2"')
-    click(page, "#rules-doc .tools", "History 2")
-    page.wait('document.querySelectorAll("#rules-doc .version").length === 2')
-    page.js('document.querySelectorAll("#rules-doc .version")[1].click()')
-    assert page.wait('document.querySelector("#rules-doc .byline .old")?.textContent') == "old version v1"
-    assert page.js('document.querySelector("#rules-doc .doc-body").textContent') == "old rule"
-    buttons = page.js('[...document.querySelectorAll("#rules-doc button")].map(b => b.textContent)')
-    assert "Restore this version" not in buttons and "Edit" not in buttons
+    page.wait('document.querySelectorAll("#agents .row").length === 2')
+    assert page.js('document.getElementById("tab-admin").hidden') and page.js('document.getElementById("admin").hidden')
+    assert page.js('[...document.querySelectorAll("#agents .row .name")].map(n => n.textContent)') == ["proj-a", "manager"]
+    assert page.js('document.querySelector("#agents .mgr .n").textContent') == "off"
+    assert page.js('document.getElementById("text").placeholder') == "Message manager"
+    time.sleep(2.5)  # a poll or two
+    fetched = page.js('[...new Set(performance.getEntriesByType("resource").map(e => new URL(e.name).pathname))]')
+    assert set(fetched) <= {"/api/me", "/api/feed", "/fonts/archivo-latin.woff2", "/favicon.ico"}, fetched
 
 
 def test_admin_restores_old_versions(admin_page):
@@ -291,7 +286,7 @@ def test_admin_restores_old_versions(admin_page):
     assert page.js('document.querySelector("#doc .doc-body").textContent') == "first"
     assert page.js('!document.querySelector("#doc .byline .old")')
     assert store.note_history("plan")[0].text == "first"
-    page.js('document.querySelector(".tab[data-view=rules]").click()')
+    page.js('document.querySelector("#sub button[data-view=rules]").click()')
     page.wait('document.querySelector("#rules-doc .tag")?.textContent === "v2"')
     click(page, "#rules-doc .tools", "History 2")
     page.wait('document.querySelectorAll("#rules-doc .version").length === 2')
@@ -328,13 +323,16 @@ def test_manager_asleep_on_settings_and_machines(tmp_path, monkeypatch):
             assert page.js('document.querySelector("#manager-state b").textContent') \
                 == "Asleep: it wakes when someone sends it a message."
             page.screenshot(tmp_path / "settings-asleep.png")
-            page.js('document.querySelector(\'.tab[data-view="machines"]\').click()')
+            page.js('document.querySelector(\'#sub button[data-view="machines"]\').click()')
             page.wait('document.querySelector("#worker-rows .state") !== null')
             time.sleep(0.3)  # let the tab paint
             assert page.js('document.querySelector("#worker-rows .state").textContent') == "asleep"
             assert page.js('document.querySelector("#worker-rows .c-act button")') is None
             assert page.js('document.querySelector("#worker-rows .werr")') is None
             page.screenshot(tmp_path / "machines-asleep.png")
+            # Home: the manager is the last line, with its state word
+            page.js('document.getElementById("tab-home").click()')
+            assert page.wait('document.querySelector("#agents .mgr .n")?.textContent') == "asleep"
     finally:
         stop()
         store.close()

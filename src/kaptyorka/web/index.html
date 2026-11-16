@@ -7,287 +7,229 @@
 <meta name="color-scheme" content="dark">
 <title>kaptyorka</title>
 <style>
+/* the team design tokens (dark): warm stone and charcoal, square corners, no shadows,
+   coral as the one accent, Archivo */
+@font-face { font-family: "Archivo"; font-style: normal; font-weight: 100 900; font-display: swap;
+  src: url(/fonts/archivo-latin.woff2) format("woff2"); }
 :root {
-  --canvas: #111217;
-  --panel: #181b1f;
-  --raised: #22252b;
-  --line: rgba(204, 204, 220, .12);
-  --line-strong: rgba(204, 204, 220, .2);
-  --text: #ccccdc;
-  --dim: rgba(204, 204, 220, .62);
-  --faint: rgba(204, 204, 220, .4);
-  --blue: #6e9fff;
-  --blue-deep: #3d71d9;
-  --green: #73bf69;
-  --amber: #f5b73d;
-  --red: #f2495c;
-  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --bg: #1b1a16;
+  --surface: #211f1a;
+  --surface2: #2a2822;
+  --hover: #302d26;
+  --ink: #e7e4dc;
+  --muted: #aaa498;
+  --faint: #79766c;
+  --line: rgba(231, 228, 220, 0.18);
+  --line-strong: rgba(231, 228, 220, 0.5);
+  --danger: #d59587;
+  --risk: #c2942f;
+  --ok: #699f08;
+  --accent: #da6947;
+  --accent-soft: rgba(218, 105, 71, 0.2);
+  --sans: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
-  background: var(--canvas);
-  color: var(--text);
-  font: 14px/1.45 var(--sans);
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.4 var(--sans);
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
 }
 svg { display: block; flex: none; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
-:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 [hidden] { display: none !important; }
 
 /* lock */
 #lock { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 22px; color: var(--faint); }
 #unlock { display: flex; gap: 8px; width: min(360px, calc(100vw - 32px)); }
 #unlock input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; font-family: var(--mono); font-size: 13px; }
-#lock .hint { text-align: center; margin: -10px 0 0; width: min(360px, calc(100vw - 32px)); font-size: 13px; color: var(--dim); }
+#lock .hint { text-align: center; margin: -10px 0 0; width: min(360px, calc(100vw - 32px)); font-size: 13px; color: var(--muted); }
 #lock-err { text-align: center; margin-top: -14px; width: min(360px, calc(100vw - 32px)); padding: 0; font-size: 13px; }
 
-/* top bar */
+/* top bar: the mark, Home and Admin, the person */
 #app { display: flex; flex-direction: column; height: 100%; }
 header {
-  display: flex; align-items: stretch; gap: 16px;
-  height: 52px; padding: 0 24px;
-  background: var(--panel); border-bottom: 1px solid var(--line);
-  flex: none;
+  display: flex; align-items: stretch; gap: 28px;
+  height: 48px; padding: 0 24px; flex: none;
+  border-bottom: 1px solid var(--line);
 }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; letter-spacing: .01em; color: #e8e8f0; }
-.brand svg { color: var(--blue); }
-nav { display: flex; align-items: stretch; gap: 4px; }
-.tab {
-  position: relative; display: flex; align-items: center; gap: 8px;
-  padding: 0 14px; color: var(--dim); font-weight: 500;
-}
-.tab:hover { color: var(--text); }
-.tab[aria-selected="true"] { color: #fff; }
-.tab[aria-selected="true"]::after {
-  content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px;
-  background: linear-gradient(90deg, var(--blue-deep), var(--blue));
-}
-.count {
-  min-width: 20px; padding: 1px 6px; border-radius: 3px;
-  background: var(--raised); color: var(--text); font-size: 12px; text-align: center;
-}
-.sep { width: 1px; margin: 15px 6px; background: var(--line-strong); }
-.tab-more { position: relative; display: none; align-items: center; color: var(--dim); font-weight: 500; }
-.tab-more[aria-selected="true"] { color: #fff; }
-.tab-more[aria-selected="true"]::after {
-  content: ""; position: absolute; height: 2px; background: linear-gradient(90deg, var(--blue-deep), var(--blue));
-}
-#more-menu { display: none; position: fixed; right: 8px; bottom: 64px; z-index: 21; min-width: 200px; padding: 6px;
-  background: var(--raised); border: 1px solid var(--line-strong); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
-#more-menu button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 12px; border-radius: 4px;
-  color: var(--text); font-size: 14px; text-align: left; }
-#more-menu button:hover, #more-menu button[aria-current="page"] { background: rgba(255, 255, 255, .06); }
-#more-menu button[aria-current="page"] { color: #fff; }
-#more-menu button svg { color: var(--dim); }
-#more-menu .count { margin-left: auto; }
-#view-title { display: none; }
-.viewer { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--dim); font-size: 13px; white-space: nowrap; }
-.viewer b { font-weight: 500; color: var(--text); }
-.viewer .role, .who .role { padding: 1px 6px; border-radius: 3px; font-size: 11px; color: var(--blue); border: 1px solid rgba(110, 159, 255, .35); }
-.who .role { margin-left: 6px; font-weight: 400; }
-.viewer .initial { display: none; width: 26px; height: 26px; border-radius: 50%; place-content: center;
-  font-size: 12px; font-weight: 600; color: #fff; background: rgba(61, 113, 217, .3); border: 1px solid var(--blue-deep); }
-.signout { margin-left: 14px; display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; white-space: nowrap; }
-.signout:hover { color: var(--text); }
-.live { margin-left: 14px; display: flex; align-items: center; flex: none; }
-.live i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(115, 191, 105, .18); }
-.live.down i { background: var(--red); box-shadow: 0 0 0 3px rgba(242, 73, 92, .2); }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 650; }
+nav { display: flex; align-items: stretch; gap: 20px; }
+.tab { position: relative; display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] { color: var(--ink); }
+.tab[aria-selected="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent); }
+.count { min-width: 18px; padding: 0 5px; font-size: 11px; line-height: 16px; text-align: center; color: var(--bg); background: var(--accent); }
+.viewer { position: relative; margin-left: auto; display: flex; align-items: center; }
+#viewer-name { color: var(--muted); height: 100%; }
+#viewer-name:hover, .viewer.open #viewer-name { color: var(--ink); }
+/* Sign out under the name, on hover or click */
+.signout { display: none; position: absolute; top: 100%; right: -8px; z-index: 30; align-items: center; gap: 8px;
+  padding: 9px 12px; white-space: nowrap; color: var(--ink); background: var(--surface2); border: 1px solid var(--line); }
+.signout:hover { background: var(--hover); }
+.viewer:hover .signout, .viewer.open .signout { display: flex; }
+.live { display: flex; align-items: center; flex: none; margin-left: -12px; }
+.live i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.live.down i { background: var(--danger); }
 
-main { flex: 1; min-height: 0; padding: 20px 24px 24px; display: flex; flex-direction: column; }
-/* nine tabs for the admin: tighter tabs on a laptop, icons and counts only below that (names on hover) */
-@media (max-width: 1520px) { header { gap: 12px; } .tab { gap: 6px; padding: 0 10px; } }
-@media (min-width: 721px) and (max-width: 1400px) {
-  .is-admin .tab .label, .is-admin .signout .label { display: none; }
-  .is-admin #view-title { display: block; color: #fff; }
-}
-@media (min-width: 721px) and (max-width: 980px) {
-  .is-admin .brand span, .is-admin .viewer > svg, .is-admin .viewer b, .is-admin .viewer .role { display: none; }
-  .is-admin .viewer .initial { display: grid; }
-  .is-admin header { gap: 8px; } .is-admin nav { gap: 0; } .is-admin .tab { padding: 0 8px; }
-  .is-admin .signout, .is-admin .live { margin-left: 10px; }
-}
+main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; }
+.panel { background: var(--surface); border: 1px solid var(--line); }
 
-/* team */
-.bar { display: flex; align-items: center; gap: 16px; min-height: 28px; margin-bottom: 10px; flex: none; font-size: 12px; color: var(--dim); }
-.legend { margin-left: auto; display: flex; align-items: center; gap: 14px; }
-.legend span { display: flex; align-items: center; gap: 6px; }
-.legend .dot { width: 9px; height: 9px; animation: none; }
-#team .panel { overflow: auto; }
-table { width: 100%; border-collapse: collapse; }
-th {
-  text-align: left; font-weight: 500; font-size: 12px; color: var(--dim);
-  padding: 9px 14px; border-bottom: 1px solid var(--line-strong); white-space: nowrap;
-  background: var(--panel); position: sticky; top: 0; z-index: 1;
-}
-td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
-tbody tr:last-child td { border-bottom: 0; }
-tbody tr { cursor: pointer; }
-tbody tr:hover td { background: rgba(110, 159, 255, .06); }
-tbody tr:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
-.c-dot { width: 34px; padding-right: 0; }
-.who { min-width: 0; }
-.who b { display: block; font-weight: 600; color: #f0f0f6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.who small { display: block; font-size: 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.c-plain { color: var(--text); white-space: nowrap; }
-.status { color: var(--text); max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.status:empty::before { content: "\2014"; color: var(--faint); }
-.seen { color: var(--dim); white-space: nowrap; text-align: right; }
-th.seen { text-align: right; }
-.seen.late { color: var(--amber); }
-tr.mine td:first-child { box-shadow: inset 2px 0 0 var(--blue-deep); }
-#team .harness { margin-left: 8px; font-size: 11px; letter-spacing: 2px; }
-#team .harness i { font-style: normal; color: var(--dim); }
-#team .harness i.off { opacity: .35; text-decoration: line-through; }
-.c-plain.private { color: var(--faint); }
-.who .doors { display: flex; align-items: center; gap: 5px; color: var(--green); }
-.dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--faint); flex: none; }
-.dot.busy { border-color: var(--green); background: var(--green); animation: pulse 1.6s ease-out infinite; }
-.dot.idle { border-color: var(--dim); background: var(--dim); }
-@keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(115, 191, 105, .55); }
-  100% { box-shadow: 0 0 0 7px rgba(115, 191, 105, 0); }
-}
+/* Home: the sessions on the left, the messages on the right */
+#home { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 24px; width: 100%; max-width: 1100px;
+  margin: 0 auto; padding: 24px; }
+.side { min-height: 0; overflow-y: auto; }
+#warns { list-style: none; margin: 0 0 12px; padding: 0; }
+#warns:empty { display: none; }
+#warns li { display: flex; align-items: baseline; gap: 10px; padding: 7px 4px; color: var(--risk); border-bottom: 1px solid var(--line); }
+#warns li span { min-width: 0; overflow-wrap: anywhere; }
+#warns code { margin-left: auto; flex: none; font: 12px var(--mono); color: var(--ink); user-select: all; }
+.list .row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 4px; text-align: left;
+  border-bottom: 1px solid var(--line); border-left: 2px solid transparent; }
+.list .row:hover { background: var(--surface); }
+.list .row.on { background: var(--surface); border-left-color: var(--accent); }
+.list .row.off { cursor: default; color: var(--muted); }
+.list .row.off:hover { background: none; }
+.list .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list .who { color: var(--faint); font-size: 12px; white-space: nowrap; }
+.list .n { margin-left: auto; padding-left: 8px; color: var(--faint); font-size: 12px; white-space: nowrap; }
+.list .mgr { color: var(--muted); }
+.list .everyone { color: var(--muted); }
+.list .everyone .dot { visibility: hidden; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+.dot.busy { background: var(--accent); }
+.dot.on { background: var(--ok); }
+.link.ask-link { margin-top: 14px; color: var(--faint); }
+.link.ask-link:hover { color: var(--ink); text-decoration: none; }
+/* the compose box right under the last message; the messages scroll once they fill the column */
+.chat { align-self: start; max-height: 100%; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); padding-left: 24px; }
+#log { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+.msg { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; }
+.msg > b { flex: none; width: 110px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg > b.mine { color: var(--accent); }
+.msg .body { flex: 1; min-width: 0; }
+.msg .text { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg .text.open { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg time { flex: none; padding-left: 8px; color: var(--faint); font-size: 12px; white-space: nowrap; }
+.msg.sys { color: var(--muted); }
+#notices-toggle { align-self: flex-start; margin: 6px 0 0; color: var(--faint); }
+#notices-toggle:hover { color: var(--ink); }
+.compose { flex: none; display: flex; align-items: flex-end; gap: 8px; padding-top: 16px; }
+.compose textarea { flex: 1; min-width: 0; height: 40px; max-height: 160px; padding: 9px 12px; resize: none; line-height: 1.4;
+  background: var(--surface); border-color: var(--line); }
+.compose .btn { height: 40px; }
+.compose .btn.primary { padding: 0 18px; }
+.compose .attach { padding: 0 11px; color: var(--muted); }
+.compose .file-chip { height: 40px; max-width: 220px; min-width: 0; }
+.file-chip .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.file-chip small { flex: none; }
 
-/* messages */
-.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 6px; margin-bottom: 10px; flex: none; }
-.chips .group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.chips .group + .group { margin-left: 8px; padding-left: 14px; border-left: 1px solid var(--line-strong); }
-.chips .cap { font-size: 12px; color: var(--faint); margin-right: 2px; }
-.chip {
-  padding: 2px 9px; border-radius: 3px; border: 1px solid var(--line-strong);
-  color: var(--dim); font-size: 12px; background: var(--panel);
-}
-.chip:hover { color: var(--text); border-color: rgba(204, 204, 220, .32); }
-.chip[aria-pressed="true"] { color: #fff; background: rgba(61, 113, 217, .25); border-color: var(--blue-deep); }
+/* shared parts */
 .tag {
-  display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 3px;
-  border: 1px solid var(--line-strong); color: var(--text); font-size: 12px; background: var(--panel); white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px;
+  border: 1px solid var(--line); color: var(--ink); font-size: 12px; background: var(--surface); white-space: nowrap;
 }
 .tag small { font-size: 12px; color: var(--faint); }
 .tag .x { color: var(--faint); margin-right: -3px; padding: 0 2px; }
-.tag .x:hover { color: var(--red); }
-.tag.door { color: var(--green); border-color: rgba(115, 191, 105, .35); }
-.chips .group .btn.small { height: 24px; padding: 0 8px; }
-.door-hint { flex: none; margin: -4px 0 10px; }
-#door-err { margin: -6px 0 8px; padding-top: 0; }
-.compose .file-chip { height: 34px; max-width: 260px; min-width: 0; }
-.file-chip .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.file-chip small { flex: none; }
-.toast { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 12px; color: var(--text);
-  border-bottom: 1px solid var(--line); background: rgba(61, 113, 217, .1); }
+.tag .x:hover { color: var(--danger); }
+.tag.door { color: var(--ok); border-color: rgba(105, 159, 8, .45); }
+.doors { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 14px; }
+#door-err { padding: 0 14px 8px; }
+.toast { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 12px; color: var(--ink);
+  border-bottom: 1px solid var(--line); background: var(--accent-soft); }
 .toast .link { margin-left: auto; font-weight: 600; }
 .sentence.propose { align-items: flex-start; }
 .propose > .btn { margin-top: 20px; }
 .propose .field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 320px; min-width: 0; max-width: 560px; }
 .propose .field + .field { flex: 1 1 220px; max-width: 420px; }
-.propose label { font-size: 12px; color: var(--dim); }
+.propose label { font-size: 12px; color: var(--muted); }
 .propose textarea { min-height: 52px; padding: 6px 8px; font-size: 12px; resize: vertical; }
 .propose textarea, .propose input { width: 100%; min-width: 0; }
 .more-row { display: flex; justify-content: center; padding: 10px 14px; border-top: 1px solid var(--line); }
-.sentence code { font: 12px var(--mono); color: var(--text); }
-#manager-state b { color: var(--text); font-weight: 600; }
-#knocks { flex: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.sentence code { font: 12px var(--mono); color: var(--ink); }
+#manager-state b { color: var(--ink); font-weight: 600; }
 #knocks:empty { display: none; }
-.knock {
-  display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px;
-  background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 3px;
-}
-.knock > svg { color: var(--amber); }
+.knock { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); border-left: 2px solid var(--risk); }
+.knock > svg { color: var(--risk); }
 .knock .what { flex: 1; min-width: 0; }
-.knock .what b { font-weight: 600; color: #f0f0f6; }
+.knock .what b { font-weight: 600; }
 .knock .what small { color: var(--faint); font-size: 12px; }
 .knock .about { overflow-wrap: anywhere; }
-.knock .acts { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
-.knock .acts div { display: flex; gap: 6px; }
+.knock .acts { display: flex; gap: 6px; flex: none; }
 .hint { font-size: 12px; color: var(--faint); }
-.msg.sys .text { color: var(--dim); }
-.att { display: block; max-width: min(360px, 100%); max-height: 260px; margin-top: 7px; border: 1px solid var(--line); border-radius: 3px; background: var(--canvas); }
-.file { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--blue); font-size: 12px; text-decoration: none; }
+.att { display: block; max-width: min(360px, 100%); max-height: 260px; margin-top: 7px; border: 1px solid var(--line); background: var(--bg); }
+.file { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--accent); font-size: 12px; text-decoration: none; }
 .file:hover { text-decoration: underline; }
-.file.failed { color: var(--red); }
+.file.failed { color: var(--danger); }
 .file small { color: var(--faint); font-size: 12px; }
-.chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-#log { flex: 1; min-height: 0; overflow-y: auto; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-.msg { padding: 9px 14px 10px; border-bottom: 1px solid var(--line); }
-.msg:last-child { border-bottom: 0; }
-.route { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 13px; margin-bottom: 2px; }
-.route b { font-weight: 600; color: #f0f0f6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.route .person { display: flex; align-items: center; gap: 5px; color: var(--amber); flex: none; }
-.route .to-person, .route .to-person .to { color: var(--blue); }
-.route .to { color: var(--blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.route svg { color: var(--faint); }
-.route .all { display: flex; align-items: center; gap: 5px; color: var(--amber); }
-.route .all svg { color: var(--amber); }
-.route time { margin-left: auto; padding-left: 10px; color: var(--faint); font-size: 12px; white-space: nowrap; flex: none; }
-.text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
-.msg .text.clip { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
-.more { margin-top: 2px; font-size: 12px; color: var(--blue); }
-.more:hover { text-decoration: underline; }
-.compose {
-  flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 10px;
-  border: 1px solid var(--line); border-top-color: var(--line-strong); border-radius: 0 0 3px 3px;
-  background: var(--raised);
-}
-.compose label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); height: 34px; }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 select, input, textarea {
-  font: inherit; color: var(--text); background: var(--canvas);
-  border: 1px solid var(--line-strong); border-radius: 3px;
+  font: inherit; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line);
 }
-select:focus, input:focus, textarea:focus { outline: none; border-color: var(--blue); }
-.compose select { height: 34px; max-width: 260px; padding: 0 8px; }
-.compose textarea { flex: 1; min-width: 0; height: 34px; max-height: 160px; padding: 6px 10px; resize: none; line-height: 1.45; }
+select:focus, input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .btn {
-  height: 34px; padding: 0 14px; border-radius: 3px; display: inline-flex; align-items: center; gap: 7px;
-  border: 1px solid var(--line-strong); color: var(--text); background: var(--panel); font-weight: 500; font-size: 13px; flex: none;
+  height: 34px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  border: 1px solid var(--line); color: var(--ink); background: var(--surface2); font-weight: 500; font-size: 13px; flex: none;
 }
-.btn:hover { border-color: rgba(204, 204, 220, .34); color: #fff; }
-.btn.primary { background: var(--blue-deep); border-color: var(--blue-deep); color: #fff; }
-.btn.primary:hover { background: #4b80e8; }
-.btn.danger:hover { border-color: var(--red); color: var(--red); }
+.btn:hover { background: var(--hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+.btn.primary:hover { background: #e27a5a; }
+.btn.danger:hover { border-color: var(--danger); color: var(--danger); }
 .btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
-.btn[aria-pressed="true"] { border-color: var(--blue-deep); color: #fff; background: rgba(61, 113, 217, .25); }
-.ok { color: var(--green); font-size: 12px; }
-.err { flex: none; color: var(--red); font-size: 12px; padding: 6px 2px 0; }
+.btn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.ok { color: var(--ok); font-size: 12px; }
+.err { flex: none; color: var(--danger); font-size: 12px; padding: 6px 2px 0; }
+.blank { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--muted); min-height: 200px; padding: 24px; text-align: center; }
+.list + .blank, .chat .blank { min-height: 120px; color: var(--faint); }
+
+/* Admin: the sub-menu on the left, the section on the right */
+#admin { display: grid; grid-template-columns: 170px minmax(0, 1fr); min-height: 0; }
+.sub { display: flex; flex-direction: column; gap: 0; padding: 20px 0; border-right: 1px solid var(--line); }
+.sub button { display: flex; align-items: center; gap: 8px; padding: 8px 24px; text-align: left; color: var(--muted); border-left: 2px solid transparent; white-space: nowrap; }
+.sub button:hover { color: var(--ink); }
+.sub button[aria-current="page"] { color: var(--ink); border-left-color: var(--accent); background: var(--surface); }
+.sub .count { margin-left: auto; }
+.pane { min-height: 0; display: flex; flex-direction: column; padding: 20px 24px 24px; }
 
 /* notes */
 .notes { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; }
 .topics { display: flex; flex-direction: column; min-height: 0; }
-.topics .head { display: flex; align-items: center; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line-strong); font-size: 12px; color: var(--dim); flex: none; }
+.topics .head { display: flex; align-items: center; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); flex: none; }
 .topics .head .btn { margin-left: auto; }
 #topics { overflow-y: auto; min-height: 0; }
 .topic { display: block; width: 100%; text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); border-left: 2px solid transparent; }
-.topic:hover { background: rgba(204, 204, 220, .035); }
-.topic[aria-current="true"] { background: rgba(61, 113, 217, .14); border-left-color: var(--blue); }
-.topic b { display: block; font-weight: 600; color: #f0f0f6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topic:hover { background: rgba(231, 228, 220, .035); }
+.topic[aria-current="true"] { background: var(--hover); border-left-color: var(--accent); }
+.topic b { display: block; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topic small { display: flex; gap: 8px; font-size: 12px; color: var(--faint); }
 .topic small span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topic small time { margin-left: auto; white-space: nowrap; }
 .topics[hidden] + .doc { grid-column: 1 / -1; }
 .doc { display: flex; flex-direction: column; min-height: 0; }
-.doc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid var(--line-strong); flex: none; }
-.doc-head h2 { margin: 0 8px 0 0; font-size: 16px; font-weight: 600; color: #f0f0f6; min-width: 0; overflow-wrap: anywhere; }
+.doc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid var(--line); flex: none; }
+.doc-head h2 { margin: 0 8px 0 0; font-size: 16px; font-weight: 600; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 .doc-head .tools { margin-left: auto; display: flex; gap: 6px; }
-.byline { display: flex; gap: 10px; align-items: baseline; font-size: 12px; color: var(--dim); padding: 8px 14px 0; flex: none; }
-.byline b { font-weight: 500; color: var(--text); }
-.byline .old { color: var(--amber); }
+.byline { display: flex; gap: 10px; align-items: baseline; font-size: 12px; color: var(--muted); padding: 8px 14px 0; flex: none; }
+.byline b { font-weight: 500; color: var(--ink); }
+.byline .old { color: var(--risk); }
 .doc-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px 16px; }
 .doc-body .text { max-width: 80ch; }
 .doc textarea { width: 100%; min-height: 320px; height: 100%; padding: 10px 12px; resize: vertical; line-height: 1.5; }
 .doc .topic-in { width: 100%; height: 34px; padding: 0 10px; font-size: 15px; font-weight: 600; }
 .history { flex: none; border-bottom: 1px solid var(--line); background: rgba(0, 0, 0, .16); max-height: 200px; overflow-y: auto; }
-.version { display: flex; gap: 12px; width: 100%; text-align: left; padding: 7px 14px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--line); }
+.version { display: flex; gap: 12px; width: 100%; text-align: left; padding: 7px 14px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
 .version:last-child { border-bottom: 0; }
-.version:hover { color: var(--text); background: rgba(204, 204, 220, .04); }
-.version[aria-current="true"] { color: #fff; background: rgba(61, 113, 217, .14); }
+.version:hover { color: var(--ink); background: rgba(231, 228, 220, .04); }
+.version[aria-current="true"] { color: var(--ink); background: var(--hover); }
 .version b { font-weight: 500; color: inherit; }
 .version time { margin-left: auto; }
-.blank { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--dim); min-height: 240px; padding: 24px; text-align: center; }
+.blank { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--muted); min-height: 240px; padding: 24px; text-align: center; }
 .back { display: none; }
 .topic-group { display: flex; align-items: center; gap: 6px; padding: 10px 14px 5px; font-size: 12px; color: var(--faint); border-bottom: 1px solid var(--line); }
 .doc-head select { height: 28px; padding: 0 8px; font-size: 12px; }
@@ -298,23 +240,34 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 .project-info .tag { font-weight: 400; }
 .pi-body { overflow-y: auto; min-height: 0; padding: 4px 14px 12px; }
 .pi-body .empty { color: var(--faint); font-size: 12px; padding-top: 8px; }
-.state-note b { display: block; margin: 10px 0 2px; font-size: 12px; font-weight: 600; color: #f0f0f6; }
-.state-note p { margin: 0; color: var(--text); max-width: 90ch; overflow-wrap: anywhere; }
+.state-note b { display: block; margin: 10px 0 2px; font-size: 12px; font-weight: 600; color: var(--ink); }
+.state-note p { margin: 0; color: var(--ink); max-width: 90ch; overflow-wrap: anywhere; }
 .git { list-style: none; margin: 0; padding: 0; }
-.git li { display: flex; gap: 6px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); white-space: nowrap; }
+.git li { display: flex; gap: 6px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); white-space: nowrap; }
 .git li:last-child { border-bottom: 0; }
-.git li b { font-weight: 500; color: var(--text); }
-.git .branch { font-family: var(--mono); font-size: 11px; color: var(--blue); }
-.git .branch.live::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: var(--green); vertical-align: 1px; }
-.git .subj { color: var(--text); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.git li b { font-weight: 500; color: var(--ink); }
+.git .branch { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+.git .branch.live::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: var(--ok); vertical-align: 1px; }
+.git .subj { color: var(--ink); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .git time { margin-left: auto; padding-left: 8px; color: var(--faint); }
 
 /* admin */
 .admin { overflow-y: auto; gap: 14px; }
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left; font-weight: 500; font-size: 12px; color: var(--muted);
+  padding: 9px 14px; border-bottom: 1px solid var(--line); white-space: nowrap;
+  background: var(--surface); position: sticky; top: 0; z-index: 1;
+}
+td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: 0; }
+.c-plain { color: var(--ink); white-space: nowrap; }
+.seen { color: var(--muted); white-space: nowrap; text-align: right; }
+th.seen { text-align: right; }
 .admin .panel { flex: none; overflow-x: auto; }
-.phead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 45px; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line-strong); font-size: 13px; font-weight: 600; color: #f0f0f6; }
-.phead .note { font-weight: 400; font-size: 12px; color: var(--dim); }
-.inline { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 400; font-size: 12px; color: var(--dim); }
+.phead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 45px; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--ink); }
+.phead .note { font-weight: 400; font-size: 12px; color: var(--muted); }
+.inline { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 400; font-size: 12px; color: var(--muted); }
 .inline input, .inline select { height: 28px; padding: 0 8px; font-size: 12px; }
 .inline input[type="number"] { width: 72px; }
 .admin tbody tr { cursor: default; }
@@ -326,60 +279,52 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--b
 .cell-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .cell-tags select, select.own { height: 24px; padding: 0 6px; font-size: 12px; }
 .dev { display: flex; align-items: center; gap: 10px; min-height: 24px; }
-.dev span { color: var(--text); }
+.dev span { color: var(--ink); }
 .dev small { color: var(--faint); font-size: 12px; }
 .dev.with-hint { flex-wrap: wrap; row-gap: 2px; }
 .dev .legacy-hint { flex-basis: 100%; }
 .dev.revoked span, .dev.revoked small { color: var(--faint); }
 .empty-row { padding: 14px; color: var(--faint); font-size: 13px; }
-.invite { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: rgba(61, 113, 217, .08); font-size: 12px; color: var(--dim); }
+.invite { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: rgba(218, 105, 71, .08); font-size: 12px; color: var(--muted); }
 .invite input { flex: 1; min-width: 0; height: 28px; padding: 0 8px; font: 12px var(--mono); }
-.log-kind { color: var(--blue); white-space: nowrap; }
-.log-time { color: var(--dim); white-space: nowrap; }
+.log-kind { color: var(--accent); white-space: nowrap; }
+.log-time { color: var(--muted); white-space: nowrap; }
 #audit th:nth-child(1) { width: 110px; }
 #audit th:nth-child(2) { width: 140px; }
 
 /* machines */
-#warn-banner {
-  flex: none; display: flex; align-items: flex-start; gap: 10px; padding: 7px 24px;
-  background: rgba(245, 183, 61, .08); border-bottom: 1px solid rgba(245, 183, 61, .32); font-size: 13px;
-}
-#warn-banner > svg { color: var(--amber); margin-top: 2px; }
-#warn-banner ul { flex: 1; min-width: 0; margin: 0; padding: 0; list-style: none; }
-#warn-banner li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#warn-banner .more { margin: 0; flex: none; }
 .warn-list { margin: 0; padding: 0; list-style: none; }
 .warn-list li { display: flex; gap: 10px; align-items: baseline; padding: 8px 14px; border-bottom: 1px solid var(--line); }
 .warn-list li:last-child { border-bottom: 0; }
-.warn-list svg { color: var(--amber); align-self: center; }
+.warn-list svg { color: var(--risk); align-self: center; }
 .warn-list small { margin-left: auto; color: var(--faint); font-size: 12px; white-space: nowrap; }
-.state { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 12px; border: 1px solid var(--line-strong); color: var(--dim); white-space: nowrap; }
-.state.starting { color: var(--blue); border-color: rgba(110, 159, 255, .4); background: rgba(110, 159, 255, .1); }
-.state.up { color: var(--green); border-color: rgba(115, 191, 105, .4); background: rgba(115, 191, 105, .1); }
-.state.unattended { color: var(--amber); border-color: rgba(245, 183, 61, .4); background: rgba(245, 183, 61, .1); }
-.state.abandoned { color: var(--red); border-color: rgba(242, 73, 92, .4); background: rgba(242, 73, 92, .08); }
-.state.failed { color: var(--red); border-color: rgba(242, 73, 92, .55); background: rgba(242, 73, 92, .16); }
+.state { display: inline-block; padding: 1px 7px; font-size: 12px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.state.starting { color: var(--accent); border-color: rgba(218, 105, 71, .4); background: rgba(218, 105, 71, .1); }
+.state.up { color: var(--ok); border-color: rgba(105, 159, 8, .4); background: rgba(105, 159, 8, .1); }
+.state.unattended { color: var(--risk); border-color: rgba(194, 148, 47, .4); background: rgba(194, 148, 47, .1); }
+.state.abandoned { color: var(--danger); border-color: rgba(213, 149, 135, .4); background: rgba(213, 149, 135, .08); }
+.state.failed { color: var(--danger); border-color: rgba(213, 149, 135, .55); background: rgba(213, 149, 135, .16); }
 .state.closed { color: var(--faint); }
 .attach { display: flex; align-items: center; gap: 4px; }
 .attach code {
-  padding: 3px 7px; border: 1px solid var(--line); border-radius: 3px; background: var(--canvas);
-  font: 12px var(--mono); color: var(--text); white-space: nowrap; user-select: all;
+  padding: 3px 7px; border: 1px solid var(--line); background: var(--bg);
+  font: 12px var(--mono); color: var(--ink); white-space: nowrap; user-select: all;
 }
 .attach .btn { padding: 0 7px; }
 .task { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.werr { color: var(--red); font-size: 12px; }
+.werr { color: var(--danger); font-size: 12px; }
 td.c-act .btn + .btn, td.c-act select + .btn { margin-left: 6px; }
 td.c-act .btn, td.c-act select { vertical-align: middle; }
 .acct { display: flex; align-items: center; gap: 9px; }
 .acct small { display: block; color: var(--faint); font-size: 12px; }
-.dot.on { border-color: var(--green); background: var(--green); }
-.tag.warn { color: var(--amber); border-color: rgba(245, 183, 61, .4); }
-.tag .login-off { width: 6px; height: 6px; border-radius: 50%; background: var(--red); margin-right: -2px; }
+.dot.on { border-color: var(--ok); background: var(--ok); }
+.tag.warn { color: var(--risk); border-color: rgba(194, 148, 47, .4); }
+.tag .login-off { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); margin-right: -2px; }
 .tag .login-off.quiet { background: var(--faint); }
 .tag[title] { cursor: help; }
-.login-line { margin-top: 6px; font-size: 12px; color: var(--red); white-space: normal; }
-.login-line code { font: 12px var(--mono); color: var(--text); }
-.tag.busy { color: var(--green); border-color: rgba(115, 191, 105, .4); padding: 0 6px; }
+.login-line { margin-top: 6px; font-size: 12px; color: var(--danger); white-space: normal; }
+.login-line code { font: 12px var(--mono); color: var(--ink); }
+.tag.busy { color: var(--ok); border-color: rgba(105, 159, 8, .4); padding: 0 6px; }
 .folder { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .folder small { color: var(--faint); font: 12px var(--mono); }
 #hosts { display: flex; flex-direction: column; gap: 14px; }
@@ -391,143 +336,105 @@ td.c-act .btn, td.c-act select { vertical-align: middle; }
 #hosts th:nth-child(5) { width: 27%; }
 #hosts th:nth-child(7) { width: 9%; }
 .switch {
-  position: relative; width: 30px; height: 16px; border-radius: 8px; flex: none;
-  background: var(--raised); border: 1px solid var(--line-strong);
+  position: relative; width: 30px; height: 16px; flex: none;
+  background: var(--surface2); border: 1px solid var(--line);
 }
 .switch::after {
   content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%;
-  background: var(--dim); transition: transform .15s;
+  background: var(--muted); transition: transform .15s;
 }
-.switch[aria-checked="true"] { background: rgba(115, 191, 105, .25); border-color: var(--green); }
-.switch[aria-checked="true"]::after { transform: translateX(14px); background: var(--green); }
+.switch[aria-checked="true"] { background: rgba(105, 159, 8, .25); border-color: var(--ok); }
+.switch[aria-checked="true"]::after { transform: translateX(14px); background: var(--ok); }
 
 /* rules */
 .rules-top { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
 #rules-doc .doc-body { flex: none; max-height: 60vh; }
 #rules-doc textarea { min-height: 360px; }
-.rules-text b { display: block; margin: 14px 0 4px; font-weight: 600; color: #f0f0f6; }
+.rules-text b { display: block; margin: 14px 0 4px; font-weight: 600; color: var(--ink); }
 .rules-text b:first-child { margin-top: 4px; }
 .rules-text p { margin: 0 0 8px; max-width: 80ch; white-space: pre-line; overflow-wrap: anywhere; }
 .rules-text .empty, #rules .empty-row { color: var(--faint); }
 #rules td { overflow-wrap: anywhere; }
-.skill { font: 12px var(--mono); color: var(--text); }
-.prop b { display: block; font-weight: 400; color: var(--text); white-space: pre-line; }
-.prop small, .clash small { display: block; margin-top: 3px; font-size: 12px; color: var(--dim); white-space: pre-line; }
+.skill { font: 12px var(--mono); color: var(--ink); }
+.prop b { display: block; font-weight: 400; color: var(--ink); white-space: pre-line; }
+.prop small, .clash small { display: block; margin-top: 3px; font-size: 12px; color: var(--muted); white-space: pre-line; }
 .prop small i { font-style: normal; color: var(--faint); }
-tr.decided .prop b { color: var(--dim); }
+tr.decided .prop b { color: var(--muted); }
 .clash div + div { margin-top: 4px; }
 .clash span { color: var(--faint); margin-right: 6px; }
-.state.open { color: var(--blue); border-color: rgba(110, 159, 255, .4); background: rgba(110, 159, 255, .1); }
-.state.accepted { color: var(--green); border-color: rgba(115, 191, 105, .4); background: rgba(115, 191, 105, .1); }
+.state.open { color: var(--accent); border-color: rgba(218, 105, 71, .4); background: rgba(218, 105, 71, .1); }
+.state.accepted { color: var(--ok); border-color: rgba(105, 159, 8, .4); background: rgba(105, 159, 8, .1); }
 .state.rejected { color: var(--faint); }
 .reject { display: inline-flex; gap: 6px; align-items: center; }
 .reject input { width: 220px; height: 28px; padding: 0 8px; font-size: 12px; }
 
 /* inline confirm: the button gives way to the question and its answers */
 .confirm { max-width: 560px; display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; white-space: normal;
-  padding: 3px 4px 3px 9px; border: 1px solid rgba(242, 73, 92, .45); border-radius: 3px; background: rgba(242, 73, 92, .07);
-  font-size: 12px; font-weight: 400; color: var(--text); text-align: left; }
+  padding: 3px 4px 3px 9px; border: 1px solid rgba(213, 149, 135, .45); background: rgba(213, 149, 135, .07);
+  font-size: 12px; font-weight: 400; color: var(--ink); text-align: left; }
 .confirm input { width: 220px; max-width: 100%; height: 28px; padding: 0 8px; font-size: 12px; }
-.confirm.edit { display: flex; justify-content: flex-start; width: fit-content; margin-top: 4px; border-color: var(--blue-deep); background: rgba(61, 113, 217, .08); padding-left: 4px; }
+.confirm.edit { display: flex; justify-content: flex-start; width: fit-content; margin-top: 4px; border-color: var(--accent); background: rgba(218, 105, 71, .08); padding-left: 4px; }
 .confirm.edit input { width: 300px; }
-.link { color: var(--blue); font-size: 12px; }
+.link { color: var(--accent); font-size: 12px; }
 .link:hover { text-decoration: underline; }
-.sentence { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--dim); }
+.sentence { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
 .sentence select, .sentence input { height: 28px; padding: 0 8px; font-size: 12px; }
 .sentence .hint { flex-basis: 100%; }
 #new-project input[name="description"] { flex: 1; min-width: 160px; max-width: 420px; }
 .invites { padding: 8px 14px; border-top: 1px solid var(--line); }
 .invites ul { list-style: none; margin: 6px 0 0; padding: 0; }
-.invites li { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 12px; color: var(--dim); }
-.invites li b { font-weight: 500; color: var(--text); }
+.invites li { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 12px; color: var(--muted); }
+.invites li b { font-weight: 500; color: var(--ink); }
 tr.group td { padding: 9px 14px 5px; font-size: 12px; color: var(--faint); }
-tr.archived b { color: var(--dim); }
-.swl { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); }
-.swl:hover { color: var(--text); }
-.swl[aria-checked="true"] .switch { background: rgba(115, 191, 105, .25); border-color: var(--green); }
-.swl[aria-checked="true"] .switch::after { transform: translateX(14px); background: var(--green); }
+tr.archived b { color: var(--muted); }
+.swl { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+.swl:hover { color: var(--ink); }
+.swl[aria-checked="true"] .switch { background: rgba(105, 159, 8, .25); border-color: var(--ok); }
+.swl[aria-checked="true"] .switch::after { transform: translateX(14px); background: var(--ok); }
 .dec { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 
-/* member: my access and the ask form, above the sessions */
-#my-access { flex: none; margin-bottom: 14px; }
+/* member: what I may use and the ask form, under the sessions behind "Ask for access" */
+#my-access { flex: none; margin-top: 14px; }
 .mine-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; align-items: baseline; padding: 10px 14px; }
 .mine-rows > span { font-size: 12px; color: var(--faint); }
 .mine-rows .none { font-size: 12px; color: var(--faint); }
 .mine-rows .cell-tags .tag[title] { cursor: help; }
-.ask { border-top: 1px solid var(--line); border-bottom: 0; color: var(--text); }
-.ask b { font-weight: 600; color: #f0f0f6; margin-right: 4px; }
-.ask #ask-target { width: 180px; }
-.ask #ask-why { flex: 1; min-width: 180px; max-width: 420px; }
+.ask { border-top: 1px solid var(--line); border-bottom: 0; color: var(--ink); }
+.ask b { font-weight: 600; color: var(--ink); margin-right: 4px; }
+.ask #ask-target, .ask #ask-why { flex: 1 1 100%; min-width: 0; }
 #ask-err { padding: 0 14px 10px; }
-.team-key { flex: none; padding: 8px 2px 0; }
-.who .where { display: none; }
 .sw-label { display: none; }
-.filter-btn { display: none; }
 
 @media (max-width: 720px) {
-  header { gap: 10px; padding: 0 16px; }
+  header { gap: 16px; padding: 0 16px; }
   .brand span { display: none; }
-  main { padding: 12px 16px 16px; }
-  .bar { margin-bottom: 8px; }
-  .chips { flex-direction: column; align-items: stretch; }
-  .filter-btn { display: inline-flex; align-self: flex-start; margin-bottom: 8px; }
-  .chips.folded { display: none; }
-  .chips .group + .group { margin-left: 0; padding-left: 0; border-left: 0; }
-  .legend { gap: 12px; }
-  #team thead { display: none; }
-  #team table, #team tbody, #team tr, #team td { display: block; }
-  #team tr {
-    display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 3px 10px;
-    padding: 10px 14px; border-bottom: 1px solid var(--line);
-  }
-  #team tbody tr:last-child { border-bottom: 0; }
-  #team td { padding: 0; border: 0; }
-  #team tbody tr:hover td { background: none; }
-  #team .c-dot { width: auto; padding-top: 4px; }
-  #team .who { grid-column: 2; }
-  #team .seen { grid-column: 3; grid-row: 1; padding-top: 1px; }
-  #team .c-plain { display: none; }
-  #team .status { grid-column: 2 / 4; max-width: none; white-space: normal; color: var(--dim); }
-  #team .status:empty { display: none; }
-  #team .who .where { display: block; color: var(--dim); }
-  .team-key { display: none; }
+  /* Home: the sessions over the messages */
+  #home { display: flex; flex-direction: column; gap: 16px; padding: 12px 16px 16px; overflow-y: auto; }
+  .side { flex: none; overflow: visible; }
+  .chat { flex: none; border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 8px; }
+  #log { flex: none; overflow: visible; }
+  .msg { flex-wrap: wrap; row-gap: 0; }
+  .msg > b { width: auto; max-width: 60%; }
+  .msg time { margin-left: auto; }
+  .msg .body { flex-basis: 100%; order: 3; }
+  .compose { flex-wrap: wrap; }
+  .compose textarea { flex-basis: 100%; }
+  .compose .btn.primary { margin-left: auto; }
+  .compose .file-chip { flex: 1 1 0; max-width: none; }
+  /* Admin: the sub-menu is one row that scrolls sideways */
+  #admin { display: flex; flex-direction: column; }
+  .sub { flex: none; flex-direction: row; overflow-x: auto; padding: 0 8px; border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+  .sub::-webkit-scrollbar { display: none; }
+  .sub button { padding: 12px 10px; border-left: 0; border-bottom: 2px solid transparent; }
+  .sub button[aria-current="page"] { border-bottom-color: var(--accent); background: none; }
+  .pane { padding: 12px 16px 16px; }
   .mine-rows { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .mine-rows > span:not(:first-child) { margin-top: 6px; }
-  .ask #ask-target, .ask #ask-why { flex: 1 1 100%; width: auto; max-width: none; min-width: 0; }
-  .msg { padding: 9px 12px; }
-  .compose { flex-wrap: wrap; padding: 8px; }
-  .compose label { flex: none; }
-  .compose select { flex: 1; max-width: none; min-width: 0; }
-  .compose textarea { flex-basis: 100%; order: 5; }
-  .compose .btn.primary { order: 6; margin-left: auto; }
-  .compose .attach, .compose .file-chip { order: 6; }
-  .compose .attach { padding: 0 10px; }
-  .compose .attach .label { display: none; }
-  .compose .file-chip { flex: 1 1 0; max-width: none; }
   .propose .field, .propose .field + .field { flex-basis: 100%; max-width: none; }
   .propose > .btn { margin-top: 0; }
-  /* the tabs: a bar at the bottom, each icon over its name; past five, the rest under More */
-  #app { padding-bottom: 58px; }
-  nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; height: 58px; gap: 0;
-        padding-bottom: env(safe-area-inset-bottom); background: var(--panel); border-top: 1px solid var(--line); }
-  nav .tab, nav .tab-more { flex: 1 1 0; min-width: 0; flex-direction: column; justify-content: center; gap: 3px;
-                        padding: 0 2px; font-size: 11px; }
-  nav .tab .label, nav .tab-more .label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  nav .tab .count { position: absolute; top: 5px; left: calc(50% + 7px); min-width: 16px; padding: 0 4px;
-                    font-size: 10px; line-height: 15px; }
-  nav .tab[aria-selected="true"]::after, nav .tab-more[aria-selected="true"]::after { top: -1px; bottom: auto; left: 22%; right: 22%; }
-  nav .tab.overflow, nav .sep { display: none; }
-  nav .tab-more:not([hidden]) { display: flex; }
-  #view-title { display: block; font-size: 16px; color: #fff; }
-  #more-menu:not([hidden]) { display: block; }
-  .viewer > svg, .viewer b, .viewer .role { display: none; }
-  .viewer .initial { display: grid; }
-  .signout { margin-left: 10px; }
-  .signout .label { display: none; }
   #lock .hint { margin-top: -8px; }
-  .live { margin-left: 10px; }
   .knock { flex-wrap: wrap; }
-  .knock .acts { flex-basis: 100%; align-items: stretch; }
+  .knock .acts { flex-basis: 100%; }
   /* People, Access and Log: each row a card, its buttons on their own line */
   #people thead, #access thead, #audit thead, #settings thead { display: none; }
   #people table, #people tbody, #people tr, #people td, #settings table, #settings tbody, #settings tr, #settings td,
@@ -555,9 +462,7 @@ tr.archived b { color: var(--dim); }
   .project-info { grid-template-columns: minmax(0, 1fr); max-height: 50vh; overflow-y: auto; }
   .notes.reading .topics, .notes:not(.reading) .doc { display: none; }
   .back { display: inline-flex; }
-  #warn-banner { padding: 7px 16px; }
   /* Machines: each row a card */
-  #machines .admin table, #machines table.stack { min-width: 0; }
   .stack thead { display: none; }
   .stack, .stack tbody, .stack tr, .stack td { display: block; }
   .stack tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 6px 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
@@ -568,7 +473,7 @@ tr.archived b { color: var(--dim); }
   .stack td.nil { display: none; }
   .stack td.c-plain { white-space: normal; }
   .stack td.h-auto { display: flex; align-items: center; gap: 8px; }
-  .sw-label { display: inline; font-size: 12px; color: var(--dim); }
+  .sw-label { display: inline; font-size: 12px; color: var(--muted); }
   #hosts table { table-layout: auto; }
   .w-name, .h-acct { grid-column: 1 / 4; }
   .w-state, .h-auto { grid-column: 4; grid-row: 1; justify-self: end; }
@@ -589,7 +494,6 @@ tr.archived b { color: var(--dim); }
   .reject { display: flex; }
   .reject input { flex: 1; width: auto; min-width: 0; }
 }
-@media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; } }
 </style>
 </head>
 <body>
@@ -633,251 +537,245 @@ tr.archived b { color: var(--dim); }
   <div class="err" id="lock-err" role="alert" hidden>That token did not work.</div></div>
 
 <div id="app" hidden>
-  <div id="warn-banner" role="alert" hidden></div>
   <header>
-    <div class="brand"><svg width="22" height="22"><use href="#i-cube"/></svg><span>kaptyorka</span><b id="view-title"></b></div>
+    <div class="brand"><svg class="mark" width="22" height="22" viewBox="0 0 512 512" aria-hidden="true">
+      <rect width="512" height="512" rx="112" fill="#111217"/>
+      <g stroke="#3a3f4a" stroke-width="14" stroke-linecap="round">
+        <line x1="256" y1="256" x2="256" y2="118"/><line x1="256" y1="256" x2="394" y2="256"/>
+        <line x1="256" y1="256" x2="256" y2="394"/><line x1="256" y1="256" x2="118" y2="256"/>
+      </g>
+      <g fill="#ccccdc"><circle cx="256" cy="118" r="34"/><circle cx="394" cy="256" r="34"/><circle cx="256" cy="394" r="34"/><circle cx="118" cy="256" r="34"/></g>
+      <circle cx="256" cy="256" r="52" fill="#f5b73d"/>
+    </svg><span>kaptyorka</span></div>
     <nav role="tablist">
-      <button class="tab" role="tab" data-view="team" title="Team" aria-label="Team"><svg width="18" height="18"><use href="#i-team"/></svg><span class="label">Team</span><span class="count" id="n-team">0</span></button>
-      <button class="tab" role="tab" data-view="messages" title="Messages" aria-label="Messages"><svg width="18" height="18"><use href="#i-msg"/></svg><span class="label">Messages</span><span class="count" id="n-messages">0</span></button>
-      <button class="tab" role="tab" data-view="notes" title="Notes" aria-label="Notes"><svg width="18" height="18"><use href="#i-note"/></svg><span class="label">Notes</span><span class="count" id="n-notes">0</span></button>
-      <button class="tab" role="tab" data-view="rules" title="Rules" aria-label="Rules"><svg width="18" height="18"><use href="#i-rules"/></svg><span class="label">Rules</span><span class="count" id="n-rules" hidden>0</span></button>
-      <button class="tab" role="tab" data-view="machines" title="Machines" aria-label="Machines"><svg width="18" height="18"><use href="#i-machine"/></svg><span class="label">Machines</span><span class="count" id="n-machines">0</span></button>
-      <span class="sep admin-only" hidden></span>
-      <button class="tab admin-only" role="tab" data-view="people" title="People" aria-label="People" hidden><svg width="18" height="18"><use href="#i-people"/></svg><span class="label">People</span><span class="count" id="n-people">0</span></button>
-      <button class="tab admin-only" role="tab" data-view="access" title="Access" aria-label="Access" hidden><svg width="18" height="18"><use href="#i-shield"/></svg><span class="label">Access</span><span class="count" id="n-access" hidden>0</span></button>
-      <button class="tab admin-only" role="tab" data-view="audit" title="Log" aria-label="Log" hidden><svg width="18" height="18"><use href="#i-list"/></svg><span class="label">Log</span></button>
-      <button class="tab admin-only" role="tab" data-view="settings" title="Settings" aria-label="Settings" hidden><svg width="18" height="18"><use href="#i-gear"/></svg><span class="label">Settings</span></button>
-      <button class="tab-more" id="more" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu" hidden><svg width="18" height="18"><use id="more-icon" href="#i-more"/></svg><span class="label" id="more-label">More</span></button>
+      <button class="tab" role="tab" data-view="home" id="tab-home">Home</button>
+      <button class="tab admin-only" role="tab" data-view="admin" id="tab-admin" hidden>Admin<span class="count" id="n-admin" hidden>0</span></button>
     </nav>
-    <div id="more-menu" role="menu" aria-label="More tabs" hidden></div>
-    <div class="viewer" id="viewer" title="Signed in"><svg width="15" height="15"><use href="#i-person"/></svg><b id="viewer-name"></b><span class="role" id="viewer-role" hidden>admin</span><span class="initial" id="viewer-initial"></span></div>
-    <button class="signout" id="signout" type="button" title="Sign out"><svg width="16" height="16"><use href="#i-signout"/></svg><span class="label">Sign out</span></button>
+    <div class="viewer" id="viewer">
+      <button type="button" id="viewer-name" aria-haspopup="true" aria-expanded="false"></button>
+      <button class="signout" id="signout" type="button" title="Sign out"><svg width="15" height="15"><use href="#i-signout"/></svg>Sign out</button>
+    </div>
     <div class="live" id="live" title="Connecting"><i></i></div>
   </header>
   <main>
-    <section id="team" role="tabpanel">
-      <div class="panel" id="my-access" hidden>
-        <div class="phead">My access</div>
-        <div class="mine-rows" id="my-access-rows"></div>
-        <form class="sentence ask" id="ask-access" autocomplete="off">
-          <b>Ask for</b>
-          <select id="ask-role" aria-label="Role"><option value="read">read</option><option value="write">write</option></select>
-          <select id="ask-kind" aria-label="What"><option value="project">access to project</option><option value="machine">use of machine</option></select>
-          <input id="ask-target" list="ask-names" placeholder="Project name" aria-label="Name" maxlength="80" required>
-          <datalist id="ask-names"></datalist>
-          <input id="ask-why" placeholder="Why (optional)" aria-label="Why" maxlength="500">
-          <button type="submit" class="btn small primary"><svg width="13" height="13"><use href="#i-send"/></svg>Send</button>
-        </form>
-        <div class="err" id="ask-err" hidden></div>
-      </div>
-      <div class="bar">
-        <div class="legend">
-          <span title="Working on a task"><i class="dot busy"></i>busy</span>
-          <span title="Waiting for input"><i class="dot idle"></i>idle</span>
-          <span title="The tool does not report activity"><i class="dot"></i>unknown</span>
+    <section id="home" role="tabpanel">
+      <div class="side">
+        <ul id="warns" role="alert"></ul>
+        <div class="list" id="agents"></div>
+        <div class="blank" id="team-empty" hidden>No sessions online</div>
+        <button type="button" class="link ask-link" id="ask-link" aria-expanded="false" aria-controls="my-access" hidden>Ask for access</button>
+        <div class="panel" id="my-access" hidden>
+          <div class="phead">My access</div>
+          <div class="mine-rows" id="my-access-rows"></div>
+          <form class="sentence ask" id="ask-access" autocomplete="off">
+            <b>Ask for</b>
+            <select id="ask-role" aria-label="Role"><option value="read">read</option><option value="write">write</option></select>
+            <select id="ask-kind" aria-label="What"><option value="project">access to project</option><option value="machine">use of machine</option></select>
+            <input id="ask-target" list="ask-names" placeholder="Project name" aria-label="Name" maxlength="80" required>
+            <datalist id="ask-names"></datalist>
+            <input id="ask-why" placeholder="Why (optional)" aria-label="Why" maxlength="500">
+            <button type="submit" class="btn small primary"><svg width="13" height="13"><use href="#i-send"/></svg>Send</button>
+          </form>
+          <div class="err" id="ask-err" hidden></div>
         </div>
       </div>
-      <div class="panel">
-        <table>
-          <thead><tr>
-            <th class="c-dot"></th>
-            <th>Session</th>
-            <th>Person</th>
-            <th>Machine</th>
-            <th>Tool</th>
-            <th>Folder</th>
-            <th>Doing</th>
-            <th class="seen">Seen</th>
-          </tr></thead>
-          <tbody id="agents"></tbody>
-        </table>
-        <div class="blank" id="team-empty" hidden><svg width="40" height="40"><use href="#i-team"/></svg>No sessions online. Open your coding tool in a project folder on a joined machine and it appears here.</div>
-      </div>
-      <div class="hint team-key" id="team-key" title="After the tool name: does it get the team rules text, run the kaptyorka hooks, have the team skills" hidden>R rules · H hooks · S skills: what each session's tool has loaded</div>
-    </section>
-    <section id="messages" role="tabpanel" hidden>
-      <button type="button" class="btn small filter-btn" id="chips-toggle" aria-expanded="false" aria-controls="chips" hidden>Filter</button>
-      <div class="chips folded" id="chips"></div>
-      <div id="knocks"></div>
-      <div class="err" id="door-err" hidden></div>
-      <div class="hint door-hint" id="door-hint" hidden>A door lets two people's sessions talk directly, without the admin.</div>
-      <div class="chat">
-        <div class="panel" id="log"></div>
+      <div class="chat" id="messages">
+        <div id="log"></div>
+        <button type="button" class="link" id="notices-toggle" aria-pressed="false" hidden></button>
         <form class="compose" id="compose" autocomplete="off">
-          <label for="to">To</label>
-          <select id="to"></select>
-          <textarea id="text" rows="1" placeholder="Message" aria-label="Message"></textarea>
           <span class="tag file-chip" id="file-chip" hidden></span>
-          <button type="button" class="btn attach" id="attach" aria-label="Attach" title="Attach a file (up to 5 MB)"><svg width="15" height="15"><use href="#i-clip"/></svg><span class="label">Attach</span></button>
+          <textarea id="text" rows="1" placeholder="Message manager" aria-label="Message"></textarea>
+          <button type="button" class="btn attach" id="attach" aria-label="Attach" title="Attach a file (up to 5 MB)"><svg width="15" height="15"><use href="#i-clip"/></svg></button>
           <input type="file" id="file-in" hidden>
-          <button type="submit" class="btn primary" title="Send (Enter)"><svg width="15" height="15"><use href="#i-send"/></svg>Send</button>
+          <button type="submit" class="btn primary" title="Send (Enter)">Send</button>
         </form>
         <div class="err" id="send-err" hidden></div>
       </div>
     </section>
-    <section id="notes" role="tabpanel" hidden>
-      <div class="project-info" id="project-info" hidden></div>
-      <div class="notes" id="notes-grid">
-        <div class="panel topics">
-          <div class="head">Topics<button class="btn small" id="new-topic"><svg width="13" height="13"><use href="#i-plus"/></svg>New topic</button></div>
-          <div id="topics"></div>
-        </div>
-        <div class="panel doc" id="doc"></div>
-      </div>
-    </section>
-    <section id="rules" role="tabpanel" class="admin" hidden>
-      <div class="err" id="rules-load-err" hidden></div>
-      <div class="rules-top">
-        <div class="panel doc" id="rules-doc"></div>
-        <div class="panel">
-          <div class="phead">Skills</div>
-          <table>
-            <thead><tr><th>Name</th><th>Size</th><th class="seen">Changed</th></tr></thead>
-            <tbody id="skill-rows"></tbody>
-          </table>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="phead">Proposals
-          <div class="inline"><button type="button" class="btn small" id="propose-btn"><svg width="13" height="13"><use href="#i-plus"/></svg>Propose a rule</button></div>
-        </div>
-        <form class="sentence propose" id="propose" autocomplete="off" hidden>
-          <span class="field"><label for="prop-text">The rule</label>
-          <textarea id="prop-text" rows="2" aria-label="The rule" maxlength="2000" required></textarea></span>
-          <span class="field"><label for="prop-why">Why (what happened)</label>
-          <input id="prop-why" aria-label="Why (what happened)" maxlength="4000"></span>
-          <button type="submit" class="btn small primary">Send</button>
-          <button type="button" class="btn small" id="prop-cancel">Cancel</button>
-        </form>
-        <div class="err" id="prop-err" hidden></div>
-        <table class="stack">
-          <thead><tr><th>Person</th><th>Proposal</th><th>State</th><th class="seen">When</th><th></th></tr></thead>
-          <tbody id="prop-rows"></tbody>
-        </table>
-      </div>
-      <div class="panel admin-only" id="conflict-panel" hidden>
-        <div class="phead">Conflicts</div>
-        <table class="stack">
-          <thead><tr><th>Person</th><th>Folder</th><th>Rules that clash</th><th class="seen">When</th></tr></thead>
-          <tbody id="conflict-rows"></tbody>
-        </table>
-      </div>
-    </section>
-    <section id="machines" role="tabpanel" class="admin" hidden>
-      <div class="err" id="fleet-err" hidden></div>
-      <div class="panel">
-        <div class="phead">Workers</div>
-        <div class="err" id="worker-err" hidden></div>
-        <table class="stack">
-          <thead><tr><th>Worker</th><th>Project</th><th>Machine</th><th>State</th><th>Boss</th><th>Attach</th><th></th></tr></thead>
-          <tbody id="worker-rows"></tbody>
-        </table>
-      </div>
-      <div class="panel" id="warn-panel" hidden>
-        <div class="phead">Warnings</div>
-        <ul class="warn-list" id="warn-rows"></ul>
-      </div>
-      <div class="err" id="device-err" hidden></div>
-      <div id="hosts"></div>
-    </section>
-    <section id="people" role="tabpanel" class="admin" hidden>
-      <div class="panel">
-        <div class="phead">People
-          <form class="inline" id="add-person" autocomplete="off">
-            <input id="new-name" placeholder="Name" aria-label="Name" maxlength="40" required>
-            <select id="new-role" aria-label="Role" title="member: works in the projects you give them. manager: can also decide work requests and message anyone."><option value="member">member</option><option value="manager">manager</option></select>
-            <button type="submit" class="btn small primary"><svg width="13" height="13"><use href="#i-plus"/></svg>Add person</button>
-          </form>
-        </div>
-        <div class="invite" id="invite" hidden></div>
-        <div class="err" id="people-err" hidden></div>
-        <div class="ok" id="people-ok" hidden></div>
-        <table>
-          <thead><tr><th>Name</th><th>Role</th><th>Devices</th><th></th></tr></thead>
-          <tbody id="people-rows"></tbody>
-        </table>
-        <div class="invites" id="invites-open" hidden></div>
-      </div>
-    </section>
-    <section id="access" role="tabpanel" class="admin" hidden>
-      <div class="panel" id="req-panel" hidden>
-        <div class="phead">Requests</div>
-        <div class="err" id="req-err" hidden></div>
-        <table><tbody id="req-rows"></tbody></table>
-      </div>
-      <div class="panel" id="dec-panel" hidden>
-        <div class="phead">Recent decisions</div>
-        <table><tbody id="dec-rows"></tbody></table>
-      </div>
-      <div class="panel">
-        <div class="phead">Projects
-          <div class="inline"><button type="button" class="btn small" id="new-project-btn"><svg width="13" height="13"><use href="#i-plus"/></svg>New project</button></div>
-        </div>
-        <form class="sentence" id="new-project" autocomplete="off" hidden>
-          <input name="name" id="np-name" placeholder="Name" aria-label="Project name" maxlength="80" required>
-          <input name="description" id="np-desc" placeholder="What it is, in a few words" aria-label="Description" maxlength="200">
-          <button type="submit" class="btn small primary">Create</button>
-          <button type="button" class="btn small" id="np-cancel">Cancel</button>
-        </form>
-        <form class="sentence" id="grant" autocomplete="off">
-          Give <select id="grant-person" aria-label="Person"></select>
-          <select id="grant-role" aria-label="Role"><option value="read">read</option><option value="write">write</option><option value="manage">manage</option></select>
-          access to <select id="grant-project" aria-label="Project"></select>
-          <button type="submit" class="btn small primary">Give access</button>
-          <span class="hint" id="grant-hint"></span>
-        </form>
-        <div class="err" id="grant-err" hidden></div>
-        <table>
-          <thead><tr><th>Project</th><th>People</th><th></th></tr></thead>
-          <tbody id="project-rows"></tbody>
-        </table>
-      </div>
-      <div class="panel">
-        <div class="phead">Who may use each machine</div>
-        <div class="err" id="machine-err" hidden></div>
-        <table>
-          <thead><tr><th>Machine</th><th>Owner</th><th>Devices</th><th>Can use</th></tr></thead>
-          <tbody id="machine-rows"></tbody>
-        </table>
-      </div>
-    </section>
-    <section id="audit" role="tabpanel" class="admin" hidden>
-      <div class="panel">
-        <div class="phead">Log
-          <div class="inline">
-            <select id="log-person" aria-label="Person"></select>
-            <select id="log-kind" aria-label="Kind"><option value="">Everything</option></select>
+    <section id="admin" role="tabpanel" hidden>
+      <nav class="sub" id="sub" aria-label="Admin">
+        <button type="button" data-view="people">People</button>
+        <button type="button" data-view="access">Access<span class="count" id="n-access" hidden>0</span></button>
+        <button type="button" data-view="machines">Machines</button>
+        <button type="button" data-view="rules">Rules<span class="count" id="n-rules" hidden>0</span></button>
+        <button type="button" data-view="notes">Notes</button>
+        <button type="button" data-view="audit">Log</button>
+        <button type="button" data-view="settings">Settings</button>
+      </nav>
+      <div class="pane">
+        <section id="people" role="tabpanel" class="admin" hidden>
+          <div class="panel">
+            <div class="phead">People
+              <form class="inline" id="add-person" autocomplete="off">
+                <input id="new-name" placeholder="Name" aria-label="Name" maxlength="40" required>
+                <select id="new-role" aria-label="Role" title="member: works in the projects you give them. manager: can also decide work requests and message anyone."><option value="member">member</option><option value="manager">manager</option></select>
+                <button type="submit" class="btn small primary"><svg width="13" height="13"><use href="#i-plus"/></svg>Add person</button>
+              </form>
+            </div>
+            <div class="invite" id="invite" hidden></div>
+            <div class="err" id="people-err" hidden></div>
+            <div class="ok" id="people-ok" hidden></div>
+            <table>
+              <thead><tr><th>Name</th><th>Role</th><th>Devices</th><th></th></tr></thead>
+              <tbody id="people-rows"></tbody>
+            </table>
+            <div class="invites" id="invites-open" hidden></div>
           </div>
-        </div>
-        <div class="err" id="log-err" hidden></div>
-        <table>
-          <thead><tr><th>When</th><th>Person</th><th>What</th></tr></thead>
-          <tbody id="log-rows"></tbody>
-        </table>
-        <div class="more-row" id="log-more-row" hidden><button type="button" class="btn small" id="log-more">Load more</button></div>
-      </div>
-    </section>
-    <section id="settings" role="tabpanel" class="admin" hidden>
-      <div class="panel">
-        <div class="phead">Messages</div>
-        <form class="sentence" id="retention" autocomplete="off">
-          <label for="ret-days">Keep messages for</label>
-          <input type="number" id="ret-days" min="1" max="3650" required>
-          <span>days.</span>
-          <span>Older messages and their files are deleted every night.</span>
-          <button type="submit" class="btn small primary">Save</button>
-          <span class="ok" id="ret-ok" hidden>Saved</span>
-        </form>
-        <div class="err" id="settings-err" hidden></div>
-      </div>
-      <div class="panel">
-        <div class="phead">Manager</div>
-        <div class="sentence" id="manager-state"></div>
-      </div>
-      <div class="panel" id="legacy-panel">
-        <div class="phead">Machines that joined before personal tokens <span class="note" id="legacy-state"></span><div class="inline" id="legacy-toggle"></div></div>
-        <div class="err" id="legacy-err" hidden></div>
-        <div id="legacy-rows"></div>
+        </section>
+        <section id="access" role="tabpanel" class="admin" hidden>
+          <div class="panel" id="knock-panel" hidden>
+            <div class="phead">Knocks</div>
+            <div id="knocks"></div>
+          </div>
+          <div class="panel">
+            <div class="phead">Doors</div>
+            <div class="doors" id="doors"></div>
+            <div class="err" id="door-err" hidden></div>
+          </div>
+          <div class="panel" id="req-panel" hidden>
+            <div class="phead">Requests</div>
+            <div class="err" id="req-err" hidden></div>
+            <table><tbody id="req-rows"></tbody></table>
+          </div>
+          <div class="panel" id="dec-panel" hidden>
+            <div class="phead">Decided</div>
+            <table><tbody id="dec-rows"></tbody></table>
+          </div>
+          <div class="panel">
+            <div class="phead">Projects
+              <div class="inline"><button type="button" class="btn small" id="new-project-btn"><svg width="13" height="13"><use href="#i-plus"/></svg>New project</button></div>
+            </div>
+            <form class="sentence" id="new-project" autocomplete="off" hidden>
+              <input name="name" id="np-name" placeholder="Name" aria-label="Project name" maxlength="80" required>
+              <input name="description" id="np-desc" placeholder="What it is, in a few words" aria-label="Description" maxlength="200">
+              <button type="submit" class="btn small primary">Create</button>
+              <button type="button" class="btn small" id="np-cancel">Cancel</button>
+            </form>
+            <form class="sentence" id="grant" autocomplete="off">
+              Give <select id="grant-person" aria-label="Person"></select>
+              <select id="grant-role" aria-label="Role"><option value="read">read</option><option value="write">write</option><option value="manage">manage</option></select>
+              access to <select id="grant-project" aria-label="Project"></select>
+              <button type="submit" class="btn small primary">Give access</button>
+              <span class="hint" id="grant-hint"></span>
+            </form>
+            <div class="err" id="grant-err" hidden></div>
+            <table>
+              <thead><tr><th>Project</th><th>People</th><th></th></tr></thead>
+              <tbody id="project-rows"></tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <div class="phead">Machine use</div>
+            <div class="err" id="machine-err" hidden></div>
+            <table>
+              <thead><tr><th>Machine</th><th>Owner</th><th>Devices</th><th>Can use</th></tr></thead>
+              <tbody id="machine-rows"></tbody>
+            </table>
+          </div>
+          <div class="panel" id="legacy-panel">
+            <div class="phead" title="Machines that joined before personal tokens">Shared token <span class="note" id="legacy-state"></span><div class="inline" id="legacy-toggle"></div></div>
+            <div class="err" id="legacy-err" hidden></div>
+            <div id="legacy-rows"></div>
+          </div>
+        </section>
+        <section id="machines" role="tabpanel" class="admin" hidden>
+          <div class="err" id="fleet-err" hidden></div>
+          <div class="panel" id="warn-panel" hidden>
+            <div class="phead">Warnings</div>
+            <ul class="warn-list" id="warn-rows"></ul>
+          </div>
+          <div class="panel">
+            <div class="phead">Workers</div>
+            <div class="err" id="worker-err" hidden></div>
+            <table class="stack">
+              <thead><tr><th>Worker</th><th>Project</th><th>Machine</th><th>State</th><th>Boss</th><th>Attach</th><th></th></tr></thead>
+              <tbody id="worker-rows"></tbody>
+            </table>
+          </div>
+          <div class="err" id="device-err" hidden></div>
+          <div id="hosts"></div>
+        </section>
+        <section id="rules" role="tabpanel" class="admin" hidden>
+          <div class="err" id="rules-load-err" hidden></div>
+          <div class="rules-top">
+            <div class="panel doc" id="rules-doc"></div>
+            <div class="panel">
+              <div class="phead">Skills</div>
+              <table>
+                <thead><tr><th>Name</th><th>Size</th><th class="seen">Changed</th></tr></thead>
+                <tbody id="skill-rows"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="phead">Proposals
+              <div class="inline"><button type="button" class="btn small" id="propose-btn"><svg width="13" height="13"><use href="#i-plus"/></svg>Propose a rule</button></div>
+            </div>
+            <form class="sentence propose" id="propose" autocomplete="off" hidden>
+              <span class="field"><label for="prop-text">The rule</label>
+              <textarea id="prop-text" rows="2" aria-label="The rule" maxlength="2000" required></textarea></span>
+              <span class="field"><label for="prop-why">Why (what happened)</label>
+              <input id="prop-why" aria-label="Why (what happened)" maxlength="4000"></span>
+              <button type="submit" class="btn small primary">Send</button>
+              <button type="button" class="btn small" id="prop-cancel">Cancel</button>
+            </form>
+            <div class="err" id="prop-err" hidden></div>
+            <table class="stack">
+              <thead><tr><th>Person</th><th>Proposal</th><th>State</th><th class="seen">When</th><th></th></tr></thead>
+              <tbody id="prop-rows"></tbody>
+            </table>
+          </div>
+          <div class="panel admin-only" id="conflict-panel" hidden>
+            <div class="phead">Conflicts</div>
+            <table class="stack">
+              <thead><tr><th>Person</th><th>Folder</th><th>Rules that clash</th><th class="seen">When</th></tr></thead>
+              <tbody id="conflict-rows"></tbody>
+            </table>
+          </div>
+        </section>
+        <section id="notes" role="tabpanel" hidden>
+          <div class="project-info" id="project-info" hidden></div>
+          <div class="notes" id="notes-grid">
+            <div class="panel topics">
+              <div class="head">Topics<button class="btn small" id="new-topic"><svg width="13" height="13"><use href="#i-plus"/></svg>New topic</button></div>
+              <div id="topics"></div>
+            </div>
+            <div class="panel doc" id="doc"></div>
+          </div>
+        </section>
+        <section id="audit" role="tabpanel" class="admin" hidden>
+          <div class="panel">
+            <div class="phead">Log
+              <div class="inline">
+                <select id="log-person" aria-label="Person"></select>
+                <select id="log-kind" aria-label="Kind"><option value="">Everything</option></select>
+              </div>
+            </div>
+            <div class="err" id="log-err" hidden></div>
+            <table>
+              <thead><tr><th>When</th><th>Person</th><th>What</th></tr></thead>
+              <tbody id="log-rows"></tbody>
+            </table>
+            <div class="more-row" id="log-more-row" hidden><button type="button" class="btn small" id="log-more">Load more</button></div>
+          </div>
+        </section>
+        <section id="settings" role="tabpanel" class="admin" hidden>
+          <div class="panel">
+            <div class="phead">Messages</div>
+            <form class="sentence" id="retention" autocomplete="off" title="Older messages and their files are deleted every night.">
+              <label for="ret-days">Keep messages for</label>
+              <input type="number" id="ret-days" min="1" max="3650" required>
+              <span>days</span>
+              <button type="submit" class="btn small primary">Save</button>
+              <span class="ok" id="ret-ok" hidden>Saved</span>
+            </form>
+            <div class="err" id="settings-err" hidden></div>
+          </div>
+          <div class="panel">
+            <div class="phead">Manager</div>
+            <div class="sentence" id="manager-state"></div>
+          </div>
+        </section>
       </div>
     </section>
   </main>
@@ -887,9 +785,11 @@ tr.archived b { color: var(--dim); }
 (function () {
   "use strict";
   var KEY = "kaptyorka.token";
-  var VIEWS = ["team", "messages", "notes", "rules", "machines"], ADMIN_VIEWS = ["people", "access", "audit", "settings"];
-  var token = null, view = "team", filter = { machine: null, project: null };
-  var feed = null, seen = {}, timer = null, expanded = {}, me = null, myProjects = [];
+  /* Home for everyone; the Admin tab and its sections for the admin only */
+  var VIEWS = ["home"], ADMIN_VIEWS = ["people", "access", "machines", "rules", "notes", "audit", "settings"];
+  var token = null, view = "home", adminView = "people";
+  var feed = null, seen = {}, timer = null, expanded = {}, me = null;
+  var target = null, showNotices = false, askOpen = false;  /* who the compose box writes to {to, name}; hub notices shown; the ask form open */
   var note = { key: null, project: null, topic: null, mode: "read", version: 0, history: false };
   var logPerson = "", logKind = "", logRows = null, logFull = false, logKinds = null, LOG_PAGE = 200;
   var settings = null;  /* GET /api/settings: what the feed does not carry (the manager switch) */
@@ -897,8 +797,8 @@ tr.archived b { color: var(--dim); }
   var rules = null, rulesAt = 0, rulesUi = { edit: false, rejecting: null, history: false, hist: null, version: null };
   var holding = null, holdClose = null;  /* an open inline confirm or edit: refreshes leave its panel alone */
   var peopleUi = { revoked: {}, invitesOpen: false }, invites = [], savedHost = null;
-  var myAccess = null, chipsOpen = false;
-  var attached = null, doorHint = null;  /* the file waiting in the compose bar {file, id}; the door hint shown this visit */
+  var myAccess = null;
+  var attached = null;  /* the file waiting in the compose bar {file, id} */
   var noteToast = null, toastTimer = null, deletedKey = null;  /* a line over the topics for 8 s: {text, undo}; the note this page deleted */
 
   function store(fn) { try { return fn(window.localStorage); } catch (e) { return null; } }
@@ -911,7 +811,7 @@ tr.archived b { color: var(--dim); }
     token = store(function (s) { return s.getItem(KEY); });
   }
   if (VIEWS.concat(ADMIN_VIEWS).indexOf(params.get("view")) >= 0) view = params.get("view");
-  history.replaceState(null, "", location.pathname + (view === "team" ? "" : "#view=" + view));
+  history.replaceState(null, "", location.pathname + (view === "home" ? "" : "#view=" + view));
 
   function $(id) { return document.getElementById(id); }
   function el(tag, attrs, kids) {
@@ -945,26 +845,28 @@ tr.archived b { color: var(--dim); }
     });
     if (keep != null && values.some(function (v) { return (Array.isArray(v) ? v[0] : v) === keep; })) sel.value = keep;
   }
-  function ago(s) {
+  /* short: "5m" for the message lines, else "5m ago" */
+  function ago(s, short) {
     s = Math.max(0, Math.round(s));
+    var t = short ? "" : " ago";
     if (s < 5) return "now";
-    if (s < 60) return s + "s ago";
-    if (s < 3600) return Math.floor(s / 60) + "m ago";
-    if (s < 86400) return Math.floor(s / 3600) + "h ago";
-    return Math.floor(s / 86400) + "d ago";
+    if (s < 60) return s + "s" + t;
+    if (s < 3600) return Math.floor(s / 60) + "m" + t;
+    if (s < 86400) return Math.floor(s / 3600) + "h" + t;
+    return Math.floor(s / 86400) + "d" + t;
   }
   function pad(n) { return (n < 10 ? "0" : "") + n; }
   function clock(t) { var d = new Date(t * 1000); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); }
   function full(t) { return new Date(t * 1000).toLocaleString(); }
   function size(n) { return n < 1000 ? n + " B" : n < 1e6 ? Math.round(n / 1000) + " KB" : (n / 1e6).toFixed(1) + " MB"; }
   /* relative time; the exact time on hover; refreshed after every poll */
-  function timeEl(t) {
-    return el("time", { "data-t": String(t), datetime: new Date(t * 1000).toISOString(), title: full(t),
-                        text: ago(Date.now() / 1000 - t) });
+  function timeEl(t, short) {
+    return el("time", { "data-t": String(t), "data-short": short ? "1" : null, datetime: new Date(t * 1000).toISOString(),
+                        title: full(t), text: ago(Date.now() / 1000 - t, short) });
   }
   function tick() {
     var now = Date.now() / 1000;
-    document.querySelectorAll("time[data-t]").forEach(function (n) { n.textContent = ago(now - n.dataset.t); });
+    document.querySelectorAll("time[data-t]").forEach(function (n) { n.textContent = ago(now - n.dataset.t, !!n.dataset.short); });
   }
 
   /* refused: the token did not work (a 401), as against signing out */
@@ -1045,7 +947,7 @@ tr.archived b { color: var(--dim); }
   }
   /* after a confirm closes: draw what the refreshes skipped while it was open */
   function redrawAdmin() {
-    ["people", "access", "fleet", "invites", "messages", "settings"].forEach(function (k) { seen[k] = null; });
+    ["people", "access", "doors", "knocks", "fleet", "invites", "messages", "settings"].forEach(function (k) { seen[k] = null; });
     if (feed) render();
     if (fleet) renderFleet();
     renderInvites();
@@ -1055,67 +957,27 @@ tr.archived b { color: var(--dim); }
   function isAdmin() { return !!me && me.role === "admin"; }
 
   function show(v) {
-    if (ADMIN_VIEWS.indexOf(v) >= 0 && !isAdmin()) v = "team";
+    if (ADMIN_VIEWS.indexOf(v) >= 0 && !isAdmin()) v = "home";
+    if (v === "admin") v = adminView;
     if (holdClose && v !== view) holdClose();  /* a confirm does not wait on a tab nobody sees */
     view = v;
-    document.querySelectorAll(".tab").forEach(function (b) {
-      b.setAttribute("aria-selected", b.dataset.view === v ? "true" : "false");
+    var inAdmin = ADMIN_VIEWS.indexOf(v) >= 0;
+    if (inAdmin) adminView = v;
+    $("tab-home").setAttribute("aria-selected", inAdmin ? "false" : "true");
+    $("tab-admin").setAttribute("aria-selected", inAdmin ? "true" : "false");
+    document.querySelectorAll("#sub button").forEach(function (b) {
+      if (b.dataset.view === v) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     });
-    VIEWS.concat(ADMIN_VIEWS).forEach(function (id) { $(id).hidden = id !== v; });
-    $("view-title").textContent = document.querySelector('.tab[data-view="' + v + '"]').title;
-    moreOpen(false);
-    navMore();
-    history.replaceState(null, "", location.pathname + (v === "team" ? "" : "#view=" + v));
-    if (v === "messages") { markClipped(); toBottom(); if (feed) renderDoorHint(); }
+    $("home").hidden = inAdmin;
+    $("admin").hidden = !inAdmin;
+    ADMIN_VIEWS.forEach(function (id) { $(id).hidden = id !== v; });
+    history.replaceState(null, "", location.pathname + (v === "home" ? "" : "#view=" + v));
+    if (v === "home") { toBottom(); loadAccess(); }
     if (v === "audit") loadKinds();
     if (v === "settings") loadSettings();
     if (v === "machines") loadFleet(true);
     if (v === "rules") loadRules(true);
     if (v === "people") loadInvites();
-    if (v === "team") loadAccess();
-  }
-  /* on a phone the tab bar holds five: past that, the fifth slot is More, a menu of the rest by
-     name with their counts. When the open tab is one of those, More shows its icon and name. */
-  var PHONE_BAR = ["team", "messages", "notes", "machines"];
-  function overflowTabs() {
-    var tabs = [].filter.call(document.querySelectorAll("nav .tab"), function (b) { return !b.hidden; });
-    return tabs.length > 5 ? tabs.filter(function (b) { return PHONE_BAR.indexOf(b.dataset.view) < 0; }) : [];
-  }
-  function navMore() {
-    var over = overflowTabs();
-    document.querySelectorAll("nav .tab").forEach(function (b) { b.classList.toggle("overflow", over.indexOf(b) >= 0); });
-    var cur = over.filter(function (b) { return b.dataset.view === view; })[0];
-    $("more").hidden = !over.length;
-    $("more").setAttribute("aria-selected", cur ? "true" : "false");
-    $("more-label").textContent = cur ? cur.title : "More";
-    $("more-icon").setAttribute("href", cur ? cur.querySelector("use").getAttribute("href") : "#i-more");
-    if (!$("more-menu").hidden) fillMore(over);
-  }
-  function fillMore(over) {
-    var menu = $("more-menu");
-    menu.textContent = "";
-    over.forEach(function (b) {
-      var n = b.querySelector(".count");
-      var item = el("button", { type: "button", role: "menuitem", "aria-current": b.dataset.view === view ? "page" : null }, [
-        icon(b.querySelector("use").getAttribute("href").slice(1), 18), el("span", { text: b.title }),
-        n && !n.hidden ? el("span", { "class": "count", text: n.textContent }) : null]);
-      item.addEventListener("click", function () { show(b.dataset.view); });
-      menu.appendChild(item);
-    });
-  }
-  function moreOpen(open) {
-    if (open) fillMore(overflowTabs());
-    $("more-menu").hidden = !open;
-    $("more").setAttribute("aria-expanded", open ? "true" : "false");
-  }
-
-  /* where a name lives: from the online list, else from the name itself */
-  function place(name) {
-    var a = (feed.agents || []).filter(function (x) { return x.name === name; })[0];
-    if (a) return { machine: a.machine, project: a.project };
-    var p = name.split("/");
-    if (p.length < 3) return { machine: null, project: null };
-    return { machine: p[0], project: p.slice(2).join("/").replace(/-\d+$/, "") };
   }
 
   function labelOf(name) {
@@ -1124,135 +986,82 @@ tr.archived b { color: var(--dim); }
   }
 
   function hidden(a) { return a.project === "(private)"; }
+  /* a session's short name: the folder part of machine/tool/folder */
+  function shortName(name) { var p = (name || "").split("/"); return p.length >= 3 ? p.slice(2).join("/") : name; }
 
-  function seenCell(td, a) {
-    td.className = "seen" + (a.last_seen_s >= 20 ? " late" : "");
-    td.title = "Last seen " + full(Date.now() / 1000 - a.last_seen_s);
-    td.textContent = ago(a.last_seen_s);
-  }
-
-  function harnessMarks(h) {
-    var span = el("span", { "class": "harness" });
+  /* the admin's hover detail: what the session's tool has loaded */
+  function harness(h) {
     var yn = function (v) { return v === true ? "yes" : v === false ? "no" : v === null && h ? "n/a" : "unknown"; };
-    span.title = h ? "rules text: " + yn(h.rules) + ", hooks: " + yn(h.hooks) + ", skills: " + yn(h.skills)
-                   : "rules text: unknown, hooks: unknown, skills: unknown";
-    [["R", "rules"], ["H", "hooks"], ["S", "skills"]].forEach(function (p) {
-      var v = h ? h[p[1]] : null;
-      span.appendChild(el("i", { "class": v === true ? "on" : v === false ? "off" : "", text: v == null ? "\u2013" : p[0] }));
-    });
-    return span;
+    return "rules text: " + yn(h && h.rules) + ", hooks: " + yn(h && h.hooks) + ", skills: " + yn(h && h.skills);
   }
-
-  var ACT = { busy: "busy", idle: "idle" };
-
-  function renderTeam() {
-    var body = $("agents");
-    var agents = feed.agents;
-    var shape = agents.map(function (a) { return [a.name, a.person, a.mine, a.doors, a.machine, a.tool, a.project, a.status, a.activity, a.label, a.harness, a.role]; });
-    if (!changed("team", shape)) {
-      body.querySelectorAll("td.seen").forEach(function (td, i) { seenCell(td, agents[i]); });
-      return;
-    }
-    body.textContent = "";
-    agents.forEach(function (a) {
-      var act = ACT[a.activity] || "";
-      var who = a.label ? [el("b", { text: a.label }), el("small", { text: a.name })] : [el("b", { text: a.name })];
-      who.push(el("small", { "class": "where", text: [a.person, a.machine, a.project].filter(Boolean).join(" \u00b7 ") }));
-      if (a.role === "manager") who[0].appendChild(el("span", { "class": "role", title: "the team's manager session", text: "manager" }));
-      if (a.doors && a.doors.length) {
-        who.push(el("small", { "class": "doors", title: "Open doors: " + a.doors.join(", ") },
-                    [icon("i-door", 12), a.doors.join(", ")]));
-      }
-      var tr = el("tr", { "class": a.mine ? "mine" : null, tabindex: hidden(a) ? null : "0",
-                          title: hidden(a) ? "A project you have no role in" : "Message " + (a.label || a.name) }, [
-        el("td", { "class": "c-dot" }, [el("div", { "class": "dot " + act, title: act || "unknown" })]),
-        el("td", { "class": "who" }, who),
-        el("td", { "class": "c-plain", text: a.person || "" }),
-        el("td", { "class": "c-plain", text: a.machine }),
-        el("td", { "class": "c-plain" }, [document.createTextNode(a.tool), isAdmin() ? harnessMarks(a.harness) : null]),
-        el("td", { "class": "c-plain" + (hidden(a) ? " private" : ""), text: a.project }),
-        el("td", { "class": "status", title: a.status || null, text: a.status || "" }),
-        (function () { var td = el("td"); seenCell(td, a); return td; })()
-      ]);
-      if (!hidden(a)) {
-        var go = function () { compose(a.name); };
-        tr.addEventListener("click", go);
-        tr.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
-      } else {
-        tr.style.cursor = "default";
-      }
-      body.appendChild(tr);
-    });
-    $("team-empty").hidden = agents.length > 0;
-    $("team-key").hidden = !isAdmin() || !agents.length;
-    document.querySelector("#team table").hidden = agents.length === 0;
-  }
-
-  function renderChips() {
-    var box = $("chips");
+  /* Home, left: one line per session, the manager last with its state word (the admin also
+     gets "all"); a click writes to that line, a second click goes back to the manager */
+  function renderSessions() {
+    var box = $("agents");
+    var agents = feed.agents.filter(function (a) { return a.role !== "manager"; });
+    var mgr = feed.agents.filter(function (a) { return a.role === "manager"; })[0] || null;
+    var shape = [agents.map(function (a) { return [a.name, a.person, a.mine, a.doors, a.machine, a.tool, a.project, a.status, a.activity, a.label, a.harness]; }),
+                 mgr && [mgr.name, mgr.activity, mgr.status], feed.manager, target, isAdmin()];
+    if (!changed("team", shape)) return;
     box.textContent = "";
-    box.classList.toggle("folded", !chipsOpen);
-    var sets = { machine: {}, project: {} };
-    feed.agents.forEach(function (a) { sets.machine[a.machine] = 1; if (!hidden(a)) sets.project[a.project] = 1; });
-    feed.messages.forEach(function (m) {
-      [m.sender, m.to].forEach(function (n) {
-        var p = place(n);
-        if (p.machine) sets.machine[p.machine] = 1;
-        if (p.project && p.project !== "(private)") sets.project[p.project] = 1;
-      });
+    agents.forEach(function (a) {
+      var tip = [a.label ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status,
+                 a.doors && a.doors.length ? "doors: " + a.doors.join(", ") : null,
+                 isAdmin() ? harness(a.harness) : null].filter(Boolean).join("\n");
+      box.appendChild(sessionRow(a.name, a.label || shortName(a.name), a.activity, a.machine, tip, hidden(a),
+                                 isAdmin() && !a.mine ? a.person : null));
     });
-    [["machine", "Machine"], ["project", "Folder"]].forEach(function (g) {
-      var keys = Object.keys(sets[g[0]]).sort();
-      if (keys.indexOf(filter[g[0]]) < 0) filter[g[0]] = null;
-      if (!keys.length) return;
-      var group = el("div", { "class": "group" }, [el("span", { "class": "cap", text: g[1] })]);
-      keys.forEach(function (k) {
-        var b = el("button", { "class": "chip", title: "Show only " + g[1].toLowerCase() + " " + k, text: k,
-                               "aria-pressed": filter[g[0]] === k ? "true" : "false" });
-        b.addEventListener("click", function () {
-          filter[g[0]] = filter[g[0]] === k ? null : k;
-          renderMessages(true);
-        });
-        group.appendChild(b);
-      });
-      box.appendChild(group);
-    });
+    box.appendChild(sessionRow(mgr ? mgr.name : "manager", "manager", mgr && mgr.activity, mgr ? "up" : feed.manager || "off",
+                               "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : ""), false, null, "mgr"));
+    if (isAdmin()) box.appendChild(sessionRow("all", "all", null, "", "every session", false, null, "everyone"));
+    $("team-empty").hidden = agents.length > 0;
+  }
+  function sessionRow(to, name, activity, right, tip, off, person, cls) {
+    var on = !!target && target.to === to;
+    var b = el("button", { type: "button", "class": "row" + (cls ? " " + cls : "") + (on ? " on" : "") + (off ? " off" : ""),
+                           title: off ? "A project you have no role in" : tip || null, "aria-pressed": on ? "true" : "false" }, [
+      el("span", { "class": "dot" + (activity === "busy" ? " busy" : ""), title: activity || null }),
+      el("span", { "class": "name", text: name }),
+      person ? el("span", { "class": "who", text: person }) : null,
+      el("span", { "class": "n", text: right || "" })]);
+    if (!off) b.addEventListener("click", function () { setTarget(on ? null : { to: to, name: name }); });
+    return b;
+  }
+  /* the compose box writes to target, else the manager */
+  function setTarget(t) {
+    target = t;
+    $("text").placeholder = "Message " + (t ? t.name : "manager");
+    renderSessions();
+    $("text").focus();
+  }
+  function managerTo() {
+    var mgr = feed && feed.agents.filter(function (a) { return a.role === "manager"; })[0];
+    return mgr ? mgr.name : "manager";
+  }
+
+  /* admin, Access: the open doors, each with its close button, and Open door */
+  function renderDoors() {
+    var box = $("doors");
+    box.textContent = "";
     var doorPeople = (feed.people || []).filter(function (p) { return !(p.role === "manager" && p.name === "manager"); })
       .map(function (p) { return p.name; });  /* not the manager's own account */
-    var hasDoors = feed.doors.length || doorPeople.length > 1;
-    if (hasDoors) {
-      var doors = el("div", { "class": "group" }, [el("span", { "class": "cap", text: "Doors" })]);
-      feed.doors.forEach(function (d) {
-        var mine = me && (d.a_person === me.person || d.b_person === me.person);
-        var other = !mine ? d.a_person + " ↔ " + d.b_person : d.a_person === me.person ? d.b_person : d.a_person;
-        var detail = d.scope === "group" ? "all sessions" : ((d.a_session || "page") + " ↔ " + (d.b_session || "page"));
-        var tag = el("span", { "class": "tag door", title: "Open door: " + detail }, [icon("i-door", 12), other || "—"]);
-        if (isAdmin()) {
-          var x = el("button", { "class": "x", type: "button", title: "Close this door", "aria-label": "Close the door " + d.a_person + " ↔ " + d.b_person }, [icon("i-x", 11)]);
-          x.addEventListener("click", function () {
-            confirmInline(tag, "Close the door between " + d.a_person + " and " + d.b_person + "? Their sessions stop talking directly.", "Close", function () {
-              return act("door-err", "/api/doors/" + d.id + "/close");
-            });
-          });
-          tag.appendChild(x);
-        }
-        doors.appendChild(tag);
+    feed.doors.forEach(function (d) {
+      var detail = d.scope === "group" ? "all sessions" : ((d.a_session || "page") + " ↔ " + (d.b_session || "page"));
+      var tag = el("span", { "class": "tag door", title: "Open door: " + detail }, [icon("i-door", 12), d.a_person + " ↔ " + d.b_person]);
+      var x = el("button", { "class": "x", type: "button", title: "Close this door", "aria-label": "Close the door " + d.a_person + " ↔ " + d.b_person }, [icon("i-x", 11)]);
+      x.addEventListener("click", function () {
+        confirmInline(tag, "Close the door between " + d.a_person + " and " + d.b_person + "? Their sessions stop talking directly.", "Close", function () {
+          return act("door-err", "/api/doors/" + d.id + "/close");
+        });
       });
-      if (isAdmin() && doorPeople.length > 1) {
-        var openBtn = button([icon("i-plus", 12), "Open door"], "", function () { openDoor(openBtn, doorPeople); });
-        doors.appendChild(openBtn);
-      }
-      box.appendChild(doors);
+      tag.appendChild(x);
+      box.appendChild(tag);
+    });
+    if (!feed.doors.length) box.appendChild(el("span", { "class": "hint", text: "None open" }));
+    if (doorPeople.length > 1) {
+      var openBtn = button([icon("i-plus", 12), "Open door"], "", function () { openDoor(openBtn, doorPeople); });
+      box.appendChild(openBtn);
     }
-    /* on a phone the chips fold behind one button that names the filter in use */
-    var t = $("chips-toggle"), on = [filter.machine, filter.project].filter(Boolean);
-    /* the admin's door controls live here too, so the button says so */
-    var withDoors = isAdmin() && hasDoors;
-    t.textContent = on.length ? "Filter: " + on.join(", ") + (withDoors ? ", doors" : "")
-                              : (withDoors ? "Filter and doors" : "Filter");
-    t.setAttribute("aria-expanded", chipsOpen ? "true" : "false");
-    t.setAttribute("aria-pressed", on.length ? "true" : "false");
-    t.hidden = !box.childNodes.length;
   }
 
   /* admin: a door between two people, chosen in a sentence that holds through refreshes */
@@ -1272,20 +1081,12 @@ tr.archived b { color: var(--dim); }
       return act("door-err", "/api/doors", { a_person: a.value, b_person: b.value });
     }, { edit: true, parts: [a, el("span", { text: "and" }), b] });
   }
-  /* the first time a knock or door shows: one line on what a door is, once per browser */
-  function renderDoorHint() {
-    var any = feed.knocks.length || feed.doors.length;
-    if (doorHint === null && any && view === "messages") {  /* shown means seen: only on the open tab */
-      doorHint = !store(function (s) { return s.getItem("kaptyorka.door-hint"); });
-      store(function (s) { s.setItem("kaptyorka.door-hint", "1"); });
-    }
-    $("door-hint").hidden = !(doorHint && any);
-  }
 
-  /* pending knocks for the viewer: the person answers here, or the admin for anyone */
+  /* admin, Access: pending knocks; only the admin answers */
   function renderKnocks() {
     var box = $("knocks");
     box.textContent = "";
+    $("knock-panel").hidden = !feed.knocks.length;
     var online = feed.agents.some(function (a) { return a.mine; });
     feed.knocks.forEach(function (k) {
       var forMe = me && k.to === me.person;
@@ -1297,17 +1098,14 @@ tr.archived b { color: var(--dim); }
       var hint = !forMe ? "Yes opens a door between " + k.from + " and " + k.to
         : online ? "Yes opens a door for your earliest session online" : "Yes opens a door for all your sessions";
       box.appendChild(el("div", { "class": "knock" }, [
-        icon("i-door", 20),
+        icon("i-door", 18),
         el("div", { "class": "what" }, [
-          el("div", null, [el("b", { text: k.from }), forMe ? " knocks" : " knocks for ", forMe ? null : el("b", { text: k.to }),
+          el("div", null, [el("b", { text: k.from }), " → ", el("b", { text: k.to }),
                            " ", el("small", { text: k.from_session }), " ", el("small", null, [timeEl(k.created)])]),
           el("div", { "class": "about", text: k.about }), err
         ]),
-        el("div", { "class": "acts" }, [
-          el("div", null, [button("Yes", "primary", function () { answer(true); }),
-                           button("No", "", function () { answer(false); })]),
-          el("span", { "class": "hint", text: hint })
-        ])
+        el("div", { "class": "acts" }, [button("Yes", "primary", function () { answer(true); }, { title: hint }),
+                                        button("No", "", function () { answer(false); })])
       ]));
     });
   }
@@ -1326,11 +1124,15 @@ tr.archived b { color: var(--dim); }
     });
     return rows;
   }
-
-  function matches(m) {
-    var ps = [m.sender].concat(m.to).map(place);
-    function any(k) { return !filter[k] || ps.some(function (p) { return p[k] === filter[k]; }); }
-    return any("machine") && any("project");
+  /* the hub's own notices (workers, doors, knocks): hidden until asked for */
+  function notice(m) { return m.kind !== "message" || m.sender === "hub"; }
+  function fromMe(m) {
+    if (m.web) return !!me && m.sender === me.person;
+    return feed.agents.some(function (a) { return a.mine && a.name === m.sender; });
+  }
+  function senderName(m) {
+    if (m.web) return me && m.sender === me.person ? "you" : m.sender;
+    return labelOf(m.sender) || shortName(m.sender);
   }
 
   /* an <img> cannot send a header, so images take ?t=; any other file is fetched with the
@@ -1355,76 +1157,50 @@ tr.archived b { color: var(--dim); }
     return b;
   }
 
+  /* Home, right: one line per message (sender, text, age); a click on the text opens it in
+     full; who it went to on hover */
   function renderMessages(jump) {
-    if (!busy("chips")) renderChips();
     var log = $("log");
     var stick = jump || log.scrollHeight - log.scrollTop - log.clientHeight < 40, top = log.scrollTop;
     log.textContent = "";
-    var shown = fold(feed.messages).filter(matches);
+    var all = fold(feed.messages), notices = all.filter(notice).length;
+    var shown = all.filter(function (m) { return showNotices || !notice(m); });
     shown.forEach(function (m) {
-      var to = m.to.length > 1
-        ? el("span", { "class": "all", title: m.to.join("\n") }, [icon("i-all", 14), "all"])
-        : m.toWeb
-          ? el("span", { "class": "person to-person", title: "Read on this page" }, [icon("i-person", 13), el("span", { "class": "to", text: m.to[0] })])
-          : el("span", { "class": "to", title: m.to[0], text: labelOf(m.to[0]) || m.to[0] || "—" });
-      var from = m.web
-        ? el("span", { "class": "person", title: "Sent from this page" }, [icon("i-person", 13), el("b", { text: m.sender })])
-        : el("b", { title: m.sender, text: labelOf(m.sender) || m.sender });
-      var text = el("div", { "class": "text" + (expanded[m.id] ? "" : " clip"), text: m.text });
-      var row = el("div", { "class": "msg" + (m.kind !== "message" ? " sys" : ""), "data-id": String(m.id) }, [
-        el("div", { "class": "route" }, [m.kind !== "message" ? icon("i-door", 13) : null, from, icon("i-arrow", 13), to, timeEl(m.created)]),
-        text,
-        m.file ? attachment(m.file) : null
-      ]);
-      log.appendChild(row);
-    });
-    if (!shown.length) log.appendChild(el("div", { "class": "blank" }, [icon("i-msg", 40),
-      feed.messages.length ? "No messages here" : "No messages yet. Click a session on the Team tab to write to it."]));
-    markClipped();
-    if (stick) toBottom(); else log.scrollTop = top;
-  }
-
-  /* add "more" under texts cut by the line clamp; needs layout, so only while visible */
-  function markClipped() {
-    if (view !== "messages") return;
-    $("log").querySelectorAll(".msg").forEach(function (row) {
-      var text = row.querySelector(".text"), id = row.dataset.id, old = row.querySelector(".more");
-      if (old) old.remove();
-      var cut = text.classList.contains("clip") && text.scrollHeight > text.clientHeight + 1;
-      if (!cut && !expanded[id]) return;
-      var b = el("button", { "class": "more", type: "button", text: expanded[id] ? "less" : "more" });
-      b.addEventListener("click", function () {
-        if (expanded[id]) delete expanded[id]; else expanded[id] = 1;
-        text.classList.toggle("clip", !expanded[id]);
-        markClipped();
+      var text = el("div", { "class": "text" + (expanded[m.id] ? " open" : ""), text: m.text });
+      text.addEventListener("click", function () {
+        if (expanded[m.id]) delete expanded[m.id]; else expanded[m.id] = 1;
+        text.classList.toggle("open", !!expanded[m.id]);
       });
-      row.insertBefore(b, text.nextSibling);
+      var to = m.to.length > 1 ? "all" : m.toWeb ? m.to[0] : labelOf(m.to[0]) || m.to[0] || "—";
+      log.appendChild(el("div", { "class": "msg" + (notice(m) ? " sys" : ""), "data-id": String(m.id),
+                                  title: senderName(m) + " → " + to }, [
+        el("b", { "class": fromMe(m) ? "mine" : null, text: senderName(m) }),
+        el("div", { "class": "body" }, [text, m.file ? attachment(m.file) : null]),
+        timeEl(m.created, true)]));
     });
+    if (!shown.length) log.appendChild(el("div", { "class": "blank", text: "No messages yet" }));
+    var t = $("notices-toggle");
+    t.hidden = !notices;
+    t.textContent = (showNotices ? "hide notices" : "show notices") + " (" + notices + ")";
+    t.setAttribute("aria-pressed", showNotices ? "true" : "false");
+    if (stick) toBottom(); else log.scrollTop = top;
   }
 
   function toBottom() { var log = $("log"); log.scrollTop = log.scrollHeight; }
 
-  /* compose: as the signed-in person; private sessions cannot be named, so they are not offered */
-  function renderTo() {
-    var sel = $("to"), keep = sel.value || store(function (s) { return s.getItem("kaptyorka.to"); }) || "all";
-    sel.textContent = "";
-    sel.appendChild(el("option", { value: "all", text: "all" }));
-    var open = feed.agents.filter(function (a) { return !hidden(a); });
-    open.forEach(function (a) {
-      sel.appendChild(el("option", { value: a.name, text: a.label ? a.label + "  (" + a.name + ")" : a.name }));
+  /* Home, above the sessions: only what stops this person working, its fix on the right */
+  function renderWarns() {
+    var rows = (isAdmin() ? fleet.warnings : feed.warnings || []).filter(function (w) { return w.blocks; });
+    var box = $("warns");
+    if (!changed("warns", rows)) return;
+    box.textContent = "";
+    rows.forEach(function (w) {
+      var fix = /`([^`]+)`/.exec(w.text);
+      box.appendChild(el("li", { title: w.text }, [el("span", { text: w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, "") }),
+                                                   fix ? el("code", { text: fix[1] }) : null]));
     });
-    if (keep !== "all" && !open.some(function (a) { return a.name === keep; })) {
-      sel.appendChild(el("option", { value: keep, text: keep + "  (offline)" }));
-    }
-    sel.value = keep;
   }
-  function compose(to) {
-    show("messages");
-    renderTo();
-    $("to").value = to;
-    $("text").focus();
-  }
-  function grow() { var t = $("text"); t.style.height = "34px"; t.style.height = Math.min(t.scrollHeight + 2, 160) + "px"; }
+  function grow() { var t = $("text"); t.style.height = "40px"; t.style.height = Math.min(t.scrollHeight + 2, 160) + "px"; }
   function sendErr(msg) { $("send-err").hidden = !msg; $("send-err").textContent = msg || ""; }
   /* the chosen file as a chip "name · size ×" beside the message */
   function renderAttached() {
@@ -1452,8 +1228,7 @@ tr.archived b { color: var(--dim); }
   function send() {
     var text = $("text").value;
     if (!text.trim() && !attached) return;
-    var to = $("to").value;
-    store(function (s) { s.setItem("kaptyorka.to", to); });
+    var to = target ? target.to : managerTo();
     var sent = attached;
     upload()
       .then(function (fid) { return api("/api/send", fid ? { to: to, text: text, file_id: fid } : { to: to, text: text }); })
@@ -1468,8 +1243,7 @@ tr.archived b { color: var(--dim); }
   function nkey(project, topic) { return (project || "") + "\n" + topic; }
   function topicOf(key) { return feed.notes.filter(function (n) { return nkey(n.project, n.topic) === key; })[0]; }
   function writable() {
-    var ps = isAdmin() ? (feed.projects || []) : myProjects.filter(function (p) { return p.role === "write" || p.role === "manage"; });
-    return ps.map(function (p) { return p.name; });
+    return (feed.projects || []).map(function (p) { return p.name; });  /* notes are the admin's view */
   }
   function renderTopics() {
     var box = $("topics");
@@ -1546,7 +1320,7 @@ tr.archived b { color: var(--dim); }
       var start = el("button", { "class": "btn primary", type: "button" }, [icon("i-edit", 14), "Write"]);
       start.addEventListener("click", newTopic);
       doc.appendChild(el("div", { "class": "blank" }, [icon("i-note", 40),
-        el("div", { text: "No notes yet. Notes are shared documents your team and its agents keep. Start one with the Write button." }), start]));
+        el("div", { text: "No notes yet" }), start]));
       return;
     }
     var back = el("button", { "class": "btn small back", type: "button", title: "Topics" }, [icon("i-back", 14)]);
@@ -1714,7 +1488,7 @@ tr.archived b { color: var(--dim); }
         }, { title: "The link stops working" })]);
     })));
   }
-  var LEGACY_TITLE = "The device the old shared token logs in as. Switch the shared token off in Settings when every machine has its own token.";
+  var LEGACY_TITLE = "The device the old shared token logs in as. Switch the shared token off in Access when every machine has its own token.";
   var MANAGER_HINT = "The team's manager session runs as this account";
   function isManagerAccount(p) { return p.name === "manager" && p.role === "manager"; }
   function roleCell(p) {
@@ -1736,7 +1510,7 @@ tr.archived b { color: var(--dim); }
     feed.people.forEach(function (p) {
       function devRow(d) {
         var gone = d.revoked_at != null;
-        /* the shared token is switched off in Settings, not revoked here */
+        /* the shared token is switched off in Access, not revoked here */
         var rv = gone || d.legacy ? null : button("Revoke", "danger", function () {
           confirmInline(rv, "Revoke " + d.name + "? It stops working at once.", "Revoke", function () {
             return act("people-err", "/api/devices/" + d.id + "/revoke");
@@ -1749,7 +1523,7 @@ tr.archived b { color: var(--dim); }
                         text: gone ? "revoked" : d.last_used ? "seen " + ago(Date.now() / 1000 - d.last_used) : "never used" }),
           rv,
           d.legacy && !gone ? el("small", { "class": "legacy-hint" }, ["Its switch is in ",
-            button("Settings", "", function () { show("settings"); }, { "class": "link" }), "."]) : null
+            button("Access", "", function () { show("access"); }, { "class": "link" }), "."]) : null
         ]);
       }
       var live = p.devices.filter(function (d) { return d.revoked_at == null; });
@@ -1789,13 +1563,14 @@ tr.archived b { color: var(--dim); }
   }
 
   /* member: what I may use, what I asked for, and the form to ask for more */
+  /* member: behind "Ask for access" on Home; fetched only while it is open */
   function loadAccess() {
-    if (!me || isAdmin() || view !== "team") return;
+    if (!me || isAdmin() || view !== "home" || !askOpen) return;
     get("/api/me/access").then(function (a) { myAccess = a; renderMyAccess(); }, function () {});
   }
   function renderMyAccess() {
-    $("my-access").hidden = !myAccess || isAdmin();
-    if (!myAccess || !changed("my-access", [myAccess, fleet.machines, feed && feed.agents.map(function (a) { return [a.machine, a.project]; })])) return;
+    $("my-access").hidden = !myAccess || isAdmin() || !askOpen;
+    if (!myAccess || !changed("my-access", [myAccess, feed && feed.agents.map(function (a) { return [a.machine, a.project]; })])) return;
     var rows = $("my-access-rows");
     rows.textContent = "";
     function line(cap, items, none) {
@@ -1823,7 +1598,6 @@ tr.archived b { color: var(--dim); }
     (kind === "project" ? myAccess.projects.map(function (p) { return p.name; })
                         : myAccess.machines.map(function (m) { return m.host; })).forEach(function (n) { have[n] = 1; });
     myAccess.requests.forEach(function (r) { if (r.kind === kind) have[r.target] = 1; });
-    if (kind === "machine") fleet.machines.forEach(function (m) { names[m.host] = 1; });
     (feed ? feed.agents : []).forEach(function (a) {
       var n = kind === "machine" ? a.machine : hidden(a) ? null : a.project;
       if (n) names[n] = 1;
@@ -1838,7 +1612,7 @@ tr.archived b { color: var(--dim); }
   }
   var GRANT_HINT = { read: "read: see notes and sessions", write: "write: also edit notes and start workers",
                      manage: "manage: the same as write for now; only the admin gives access" };
-  function grantHint() { $("grant-hint").textContent = GRANT_HINT[$("grant-role").value] + ". Giving access again changes the role."; }
+  function grantHint() { $("grant-hint").textContent = GRANT_HINT[$("grant-role").value]; $("grant-hint").title = "Giving access again changes the role."; }
   function admins() { return feed.people.filter(function (p) { return p.role === "admin"; }).map(function (p) { return p.name; }); }
   function newProject() {
     $("new-project").hidden = false;
@@ -1997,10 +1771,10 @@ tr.archived b { color: var(--dim); }
         el("td", null, [tags])
       ]));
     });
-    if (!feed.machines.length) mb.appendChild(el("tr", null, [el("td", { colspan: "4", "class": "empty-row", text: "No machines yet. Invite a person on the People tab; their machines appear here when they join." })]));
+    if (!feed.machines.length) mb.appendChild(el("tr", null, [el("td", { colspan: "4", "class": "empty-row", text: "No machines yet" })]));
   }
 
-  /* admin: Settings: how long messages stay, the manager's switch (read only), the old shared token */
+  /* admin: Settings: how long messages stay, the manager's switch (read only); and the old shared token (Access) */
   function loadSettings() {
     if (!isAdmin() || view !== "settings") return;
     get("/api/settings").then(function (r) { settings = r; $("settings-err").hidden = true; render(); },
@@ -2027,8 +1801,7 @@ tr.archived b { color: var(--dim); }
     }
     var lg = feed.legacy;
     $("legacy-panel").hidden = !lg.enabled && !lg.unassigned.length;
-    $("legacy-state").textContent = !lg.enabled ? "Shared token off"
-      : lg.ready_to_disable ? "Shared token on. Every old machine has its own token now." : "Shared token on";
+    $("legacy-state").textContent = !lg.enabled ? "off" : lg.ready_to_disable ? "on, no longer needed" : "on";
     var tg = $("legacy-toggle");
     tg.textContent = "";
     if (lg.enabled) {
@@ -2076,7 +1849,7 @@ tr.archived b { color: var(--dim); }
       ]));
     });
     if (!rows.length) body.appendChild(el("tr", null, [el("td", { colspan: "3", "class": "empty-row",
-      text: logPerson || logKind ? "Nothing logged for this choice. Pick Everyone and Everything to see all." : "Nothing logged yet" })]));
+      text: logPerson || logKind ? "Nothing for this choice" : "Nothing logged yet" })]));
     $("log-more-row").hidden = logRows ? !logFull : feed.log.length < LOG_PAGE;
   }
   function logQuery(limit, before) {
@@ -2112,10 +1885,11 @@ tr.archived b { color: var(--dim); }
   /* a tool's name and its own login command, for a machine where it is not logged in */
   var LOGINS = { "claude-code": ["Claude Code", "claude auth login"], codex: ["Codex", "codex login"],
                  opencode: ["OpenCode", "opencode auth login"] };
+  /* the admin's only: every poll while Machines is open, else every 10 s for Home's warnings */
   function loadFleet(force) {
-    if (!me || (!force && view !== "machines" && Date.now() - fleetAt < 10000)) return;
+    if (!isAdmin() || (!force && view !== "machines" && Date.now() - fleetAt < 10000)) return;
     fleetAt = Date.now();
-    Promise.all([get("/api/machines"), get("/api/workers"), isAdmin() ? get("/api/warnings") : []])
+    Promise.all([get("/api/machines"), get("/api/workers"), get("/api/warnings")])
       .then(function (r) {
         fleet = { machines: r[0], workers: r[1], warnings: r[2] };
         $("fleet-err").hidden = true;
@@ -2171,19 +1945,12 @@ tr.archived b { color: var(--dim); }
         el("td", { "class": "c-act" }, acts)
       ]));
     });
-    if (!ws.length) body.appendChild(el("tr", null, [el("td", { colspan: "7", "class": "empty-row", text: "No workers. Ask your agent to work(project, task) and the session appears here." })]));
+    if (!ws.length) body.appendChild(el("tr", null, [el("td", { colspan: "7", "class": "empty-row", text: "No workers", title: "An agent starts one with work(project, task)" })]));
   }
+  /* every warning here; Home shows only those that block */
   function renderWarnings() {
-    var all = isAdmin() ? fleet.warnings : [], ban = $("warn-banner");
-    ban.textContent = "";
-    ban.hidden = !all.length;
-    if (all.length) {
-      ban.appendChild(icon("i-warn", 15));
-      ban.appendChild(el("ul", null, all.slice(0, 3).map(function (w) { return el("li", { title: w.text, text: w.text }); })));
-      if (all.length > 3) ban.appendChild(button("+" + (all.length - 3) + " more", "", function () {
-        show("machines"); $("warn-panel").scrollIntoView({ block: "start" });
-      }));
-    }
+    var all = isAdmin() ? fleet.warnings : [];
+    if (feed) renderWarns();
     $("warn-panel").hidden = !all.length;
     var list = $("warn-rows");
     list.textContent = "";
@@ -2258,11 +2025,9 @@ tr.archived b { color: var(--dim); }
       ]));
     });
     if (!fleet.machines.length) box.appendChild(el("div", { "class": "panel" }, [el("div", { "class": "empty-row", text: isAdmin()
-      ? "No machines yet. Invite a person on the People tab; their machines appear here when they join."
-      : "No machines yet. Run kaptyorka join with your invite link on your machine." })]));
+      ? "No machines yet" : "No machines yet. Run kaptyorka join with your invite link." })]));
   }
   function renderFleet() {
-    $("n-machines").textContent = fleet.machines.length;
     if (changed("warnings", fleet.warnings)) renderWarnings();
     /* not while someone selects an attach line */
     var sel = getSelection();
@@ -2276,7 +2041,7 @@ tr.archived b { color: var(--dim); }
   /* Rules: team rules, skills, proposals, conflicts (admin); fetched apart from the feed,
      every poll while the tab is open, else every 10 s for the admin's badge */
   function loadRules(force) {
-    if (!me || (!force && view !== "rules" && (!isAdmin() || Date.now() - rulesAt < 10000))) return;
+    if (!isAdmin() || (!force && view !== "rules" && Date.now() - rulesAt < 10000)) return;
     rulesAt = Date.now();
     Promise.all([get("/api/rules"), get("/api/proposals"), isAdmin() ? get("/api/conflicts") : []])
       .then(function (r) {
@@ -2304,6 +2069,7 @@ tr.archived b { color: var(--dim); }
     var open = rules.proposals.filter(function (p) { return p.status === "open"; }).length;
     $("n-rules").textContent = open;
     $("n-rules").hidden = !isAdmin() || !open;
+    adminCount();
     if (!rulesUi.edit && changed("rules-doc", rules.rules)) renderRulesDoc();
     if (changed("skills", rules.rules.skills)) renderSkills();
     if (!rules.proposals.some(function (p) { return p.id === rulesUi.rejecting && p.status === "open"; })) rulesUi.rejecting = null;
@@ -2369,13 +2135,13 @@ tr.archived b { color: var(--dim); }
     }
     if (r.version) doc.appendChild(el("div", { "class": "byline" }, [el("b", { text: r.author }), timeEl(r.time)]));
     doc.appendChild(el("div", { "class": "doc-body rules-text" }, r.text.trim() ? ruleBlocks(r.text)
-      : [el("div", { "class": "empty" }, isAdmin() ? ["No team rules yet. Write the rules every agent on the team follows. ",
-          button("Edit", "", function () { rulesUi.edit = true; renderRulesDoc(); }, { "class": "link" }), "."] : ["No team rules yet."])]));
+      : [el("div", { "class": "empty" }, isAdmin() ? ["No team rules yet. ",
+          button("Edit", "", function () { rulesUi.edit = true; renderRulesDoc(); }, { "class": "link" })] : ["No team rules yet."])]));
   }
   function renderSkills() {
     var body = $("skill-rows"), ks = rules.rules.skills;
     body.textContent = "";
-    if (!ks.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "3", text: "No team skills. Upload them with kaptyorka rules push <folder>." })]));
+    if (!ks.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "3", text: "No skills", title: "kaptyorka rules push <folder>" })]));
     ks.forEach(function (k) {
       body.appendChild(el("tr", null, [el("td", { "class": "skill", text: k.name }),
         el("td", { "class": "c-plain", text: size(k.size) }),
@@ -2388,8 +2154,7 @@ tr.archived b { color: var(--dim); }
     var ps = rules.proposals.filter(function (p) { return p.status === "open"; })
       .concat(rules.proposals.filter(function (p) { return p.status !== "open"; }));
     if (!ps.length) body.appendChild(el("tr", null, [el("td", { "class": "empty-row", colspan: "5", text: isAdmin()
-      ? "No proposals. Agents file one when their person corrects them the same way twice."
-      : "No proposals yet. Propose a rule when your agent keeps getting the same correction." })]));
+      ? "No proposals" : "No proposals yet" })]));
     ps.forEach(function (p) {
       var what = el("div", { "class": "prop" }, [el("b", { text: p.text }),
         p.evidence ? el("small", { text: p.evidence }) : null,
@@ -2455,28 +2220,30 @@ tr.archived b { color: var(--dim); }
     return true;
   }
   function render() {
-    $("n-team").textContent = feed.agents.length;
-    $("n-messages").textContent = fold(feed.messages).length + feed.knocks.length;
-    $("n-notes").textContent = feed.notes.length;
-    renderTeam();
-    var places = feed.agents.map(function (a) { return [a.name, a.machine, a.project, a.label]; });
-    if (changed("messages", [feed.messages, feed.doors, places, filter])) renderMessages();
-    if (changed("knocks", [feed.knocks, feed.agents.some(function (a) { return a.mine; })])) renderKnocks();
-    renderDoorHint();
-    if (changed("to", places)) renderTo();
-    if (note.mode === "read" && !busy("doc") && changed("notes", feed.notes)) renderNotes();
+    renderSessions();
+    renderWarns();
+    var places = feed.agents.map(function (a) { return [a.name, a.mine, a.label]; });
+    if (changed("messages", [feed.messages, places, showNotices, me && me.person])) renderMessages();
+    if (isAdmin() && note.mode === "read" && !busy("doc") && changed("notes", feed.notes)) renderNotes();
     if (feed.people) {
-      $("n-people").textContent = feed.people.length;
-      $("n-access").textContent = feed.requests.length;
-      $("n-access").hidden = !feed.requests.length;
+      $("n-access").textContent = feed.requests.length + feed.knocks.length;
+      $("n-access").hidden = !(feed.requests.length + feed.knocks.length);
+      adminCount();
       if (!busy("people") && changed("people", feed.people)) renderPeople();
+      if (!busy("access") && changed("knocks", [feed.knocks, feed.agents.some(function (a) { return a.mine; })])) renderKnocks();
+      if (!busy("access") && changed("doors", [feed.doors, feed.people])) renderDoors();
       if (!busy("access") && changed("access", [feed.requests, feed.decisions, feed.projects, feed.archived_projects, feed.machines, feed.people, savedHost])) renderAccess();
       if (!busy("audit") && changed("audit", [feed.log, feed.people, logPerson, logKind, logRows, logFull, logKinds])) renderLog();
       if (changed("log-src", feed.log) && logRows) loadLog();
-      if (!busy("settings") && changed("settings", [feed.settings, feed.legacy, feed.people, settings])) renderSettings();
+      if (!busy("settings") && !busy("legacy-panel") && changed("settings", [feed.settings, feed.legacy, feed.people, settings])) renderSettings();
     }
-    navMore();
     tick();
+  }
+  /* the Admin tab's badge: what waits for the admin (requests, knocks, open proposals) */
+  function adminCount() {
+    var n = (+$("n-access").textContent || 0) * !$("n-access").hidden + (+$("n-rules").textContent || 0) * !$("n-rules").hidden;
+    $("n-admin").textContent = n;
+    $("n-admin").hidden = !n;
   }
 
   function live(ok) {
@@ -2531,9 +2298,23 @@ tr.archived b { color: var(--dim); }
     $("lock").hidden = true;
     $("app").hidden = false;
   }
-  document.querySelectorAll(".tab").forEach(function (b) {
+  document.querySelectorAll(".tab, #sub button").forEach(function (b) {
     b.addEventListener("click", function () { show(b.dataset.view); });
   });
+  $("notices-toggle").addEventListener("click", function () { showNotices = !showNotices; renderMessages(true); });
+  $("ask-link").addEventListener("click", function () {
+    askOpen = !askOpen;
+    $("ask-link").setAttribute("aria-expanded", askOpen ? "true" : "false");
+    if (askOpen) loadAccess(); else $("my-access").hidden = true;
+  });
+  /* the name opens Sign out; a click outside or Esc closes it */
+  function viewerOpen(open) {
+    $("viewer").classList.toggle("open", open);
+    $("viewer-name").setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  $("viewer-name").addEventListener("click", function () { viewerOpen(!$("viewer").classList.contains("open")); });
+  document.addEventListener("click", function (e) { if (!$("viewer").contains(e.target)) viewerOpen(false); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") viewerOpen(false); });
   $("compose").addEventListener("submit", function (e) { e.preventDefault(); send(); });
   $("text").addEventListener("input", grow);
   $("text").addEventListener("keydown", function (e) {
@@ -2609,12 +2390,6 @@ tr.archived b { color: var(--dim); }
     act("prop-err", "/api/proposals", { text: text, evidence: $("prop-why").value.trim() })
       .then(function () { proposeOpen(false); loadRules(true); }, function () {});
   });
-  $("chips-toggle").addEventListener("click", function () { chipsOpen = !chipsOpen; renderChips(); });
-  $("more").addEventListener("click", function () { moreOpen($("more-menu").hidden); });
-  document.addEventListener("click", function (e) {  /* a click outside closes the menu */
-    if (!$("more-menu").hidden && !$("more").contains(e.target) && !$("more-menu").contains(e.target)) moreOpen(false);
-  });
-  document.addEventListener("keydown", function (e) { if (e.key === "Escape") moreOpen(false); });
   function boot() {
     get("/api/me").then(start).catch(function () {
       if ($("app").hidden) return;  /* locked: the token was refused */
@@ -2623,15 +2398,14 @@ tr.archived b { color: var(--dim); }
   }
   function start(m) {
     me = m;
-    seen = {}; feed = null; invites = []; myProjects = []; myAccess = null;
+    seen = {}; feed = null; invites = []; myAccess = null; target = null; askOpen = false;
+    fleet = { machines: [], workers: [], warnings: [] }; fleetAt = 0;
     logPerson = logKind = ""; logRows = logKinds = settings = null;
     $("viewer-name").textContent = m.person;
-    $("viewer-initial").textContent = m.person.charAt(0).toUpperCase();
-    $("viewer").title = "Signed in as " + m.person + " on " + m.device;
-    $("viewer-role").hidden = m.role !== "admin";
+    $("viewer-name").title = "Signed in as " + m.person + (m.role === "admin" ? " (admin)" : "") + " on " + m.device;
     document.querySelectorAll(".admin-only").forEach(function (n) { n.hidden = m.role !== "admin"; });
-    $("app").classList.toggle("is-admin", m.role === "admin");  /* nine tabs: the header packs tighter */
-    if (m.role !== "admin") get("/api/projects").then(function (ps) { myProjects = ps; }, function () {});
+    $("ask-link").hidden = m.role === "admin";
+    $("text").placeholder = "Message manager";
     show(view);
     poll();
   }
