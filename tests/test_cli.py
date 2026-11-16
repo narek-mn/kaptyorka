@@ -1013,6 +1013,24 @@ def test_status_manager_off_is_ok(monkeypatch, home, capsys):
     assert capsys.readouterr().out.splitlines()[-1] == "manager: off"
 
 
+def test_status_token_refused(monkeypatch, home, capsys):
+    _joined("http://10.0.0.9:8765")
+    _units(monkeypatch, bridge=True)
+    monkeypatch.setattr(http, "request", lambda *a, **k: (401, "unauthorized"))
+    assert entry_with_exit(["status"]) == 1
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "hub: refused this machine's token (ask your admin for a new invite link, then: kaptyorka join <link>)")
+
+
+def test_status_foreground_hub_counts_as_running(monkeypatch, home, capsys):
+    _joined()
+    _hub_json()
+    _units(monkeypatch, bridge=True, hub=False)
+    monkeypatch.setattr(http, "request", lambda *a, **k: (200, {"manager_state": "up", "manager_reason": ""}))
+    assert entry_with_exit(["status"]) == 0
+    assert capsys.readouterr().out.splitlines()[2:] == ["hub: running", "manager: running"]
+
+
 def test_status_hub_unreachable(monkeypatch, home, capsys):
     _joined("http://10.0.0.9:8765")
 

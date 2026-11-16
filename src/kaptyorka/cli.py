@@ -263,10 +263,12 @@ def _status(args) -> int:
         else:
             print(f"hub: not reachable at {hub}")
         return 1
-    if own:
-        up = service.is_active("kaptyorka-hub") is True
-        ok = ok and up
-        print("hub: running" if up else "hub: stopped (kaptyorka start)")
+    if own:  # it answered, so it runs, even in the foreground
+        print("hub: running")
+    if got[0] == 401:
+        print("hub: refused this machine's token (ask your admin for a new invite link, "
+              "then: kaptyorka join <link>)")
+        return 1
     if got[0] == 200 and isinstance(got[1], dict):
         state = got[1].get("manager_state")
         why = got[1].get("manager_reason") or ""
