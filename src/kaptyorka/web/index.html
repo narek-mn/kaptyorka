@@ -21,6 +21,8 @@
   --faint: #79766c;
   --line: rgba(231, 228, 220, 0.18);
   --line-strong: rgba(231, 228, 220, 0.5);
+  --line-ctl: rgba(231, 228, 220, 0.3);  /* the edge of a control: buttons, inputs, selects */
+  --ease: 150ms cubic-bezier(.2, .7, .3, 1);
   --danger: #d59587;
   --risk: #c2942f;
   --ok: #699f08;
@@ -85,18 +87,22 @@ section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #home { display: grid; grid-template-columns: 296px minmax(0, 1fr); min-height: 0; }
 .side { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-right: 1px solid var(--line); }
 .list { flex: 0 1 auto; min-height: 0; overflow-y: auto; padding: 6px 0; }
-.list .row { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 50px; padding: 6px 14px 6px 14px;
-  text-align: left; border-left: 2px solid transparent; }
+.list .row { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto auto; align-items: center; column-gap: 11px;
+  width: 100%; min-height: 54px; padding: 8px 16px 8px 14px; text-align: left;
+  border-left: 3px solid transparent; box-shadow: inset 0 -1px rgba(231, 228, 220, .06);
+  transition: background-color var(--ease), border-color var(--ease); }
 .list .row:hover { background: var(--surface2); }
+.list .row:active { background: var(--hover); }
 .list .row.on { background: var(--hover); border-left-color: var(--accent); }
+.list .row.on .name { color: var(--ink); font-weight: 650; }
 .list .row.off { cursor: default; color: var(--faint); }
 .list .row.off:hover { background: none; }
 .list .row > svg { color: var(--muted); }
 .list .row.on > svg { color: var(--ink); }
 .list .row.activity { border-bottom: 1px solid var(--line); margin-bottom: 6px; }
 .list .lead { width: 15px; display: flex; justify-content: center; flex: none; }
-.list .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.list .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.list .meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.list .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--ink); }
 .list .row.unread .name { font-weight: 650; }
 .list .subline { display: flex; gap: 8px; min-width: 0; font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; }
 .list .subline span { overflow: hidden; text-overflow: ellipsis; }
@@ -130,30 +136,35 @@ section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #log { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 24px 18px; }
 .day { display: flex; align-items: center; gap: 12px; margin: 18px 0 6px; font-size: 12px; color: var(--faint); }
 .day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-.group { padding: 7px 0 5px; }
+.group { padding: 8px 0 6px; margin-top: 8px; }
+/* my own messages: a rule on the left */
+.group.mine { margin-left: -14px; padding-left: 12px; border-left: 2px solid var(--accent); }
 .group .head { display: flex; align-items: baseline; gap: 8px; min-width: 0; margin-bottom: 2px; }
-.group .head b { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group .head b { font-weight: 650; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group .head b.mine { color: var(--accent); }
-.group .head .to { display: flex; align-items: center; gap: 5px; min-width: 0; color: var(--muted); white-space: nowrap; }
+.group .head .to { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .group .head .to span { overflow: hidden; text-overflow: ellipsis; }
 .group .head .to svg { color: var(--faint); }
 .group .head time, .msg.sys time { flex: none; font-size: 12px; color: var(--faint); }
-.msg { padding: 2px 0; }
-.msg .text { max-width: 96ch; line-height: 1.5; }
+.msg { padding: 1px 0; }
+.msg .text { max-width: 76ch; line-height: 1.55; }
+.msg .text.moving { overflow: hidden; transition: max-height 180ms cubic-bezier(.2, .7, .3, 1); }
+.new { animation: rise 180ms cubic-bezier(.2, .7, .3, 1); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .msg .text.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 12; overflow: hidden; }
-.msg .more { margin-top: 3px; font-size: 12px; color: var(--muted); }
-.msg .more:hover { color: var(--ink); text-decoration: underline; }
+.msg .more { margin-top: 4px; font-size: 12px; font-weight: 500; color: var(--accent); }
+.msg .more:hover { text-decoration: underline; }
 .msg.sys { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; font-size: 12px; }
 .msg.sys > svg { align-self: center; color: var(--faint); }
 .msg.sys .text { color: var(--muted); min-width: 0; }
 .chat .blank { color: var(--faint); }
 .access-pane { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; }
-.compose { flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 12px 24px 16px; border-top: 1px solid var(--line); }
+.compose { flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 12px 24px 16px; border-top: 1px solid var(--line); background: var(--surface); }
 .compose textarea { flex: 1; min-width: 0; height: 40px; max-height: 200px; padding: 9px 12px; resize: none; line-height: 1.4;
-  background: var(--surface); border-color: var(--line); }
+  background: var(--bg); }
 .compose .btn { height: 40px; }
 .compose .btn.primary { padding: 0 16px; }
-.compose .attach { padding: 0 11px; color: var(--muted); }
+.compose .attach { color: var(--muted); }
 .compose .file-chip { height: 40px; max-width: 220px; min-width: 0; }
 .chat > .err { padding: 0 24px 10px; margin-top: -6px; }
 .file-chip .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -200,18 +211,32 @@ section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 select, input, textarea {
   font: inherit; color: var(--ink); background: var(--bg);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-ctl); transition: border-color var(--ease);
 }
-select:focus, input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+select { background: var(--surface2); cursor: pointer; }
+select:hover, input:hover, textarea:hover { border-color: var(--line-strong); }
+::placeholder { color: var(--faint); opacity: 1; }
+/* the focus ring: the border and an inner line in the accent, inside the box */
+select:focus, input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+/* three kinds of button: primary (filled), secondary (outlined), icon (square) */
 .btn {
   height: 34px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  border: 1px solid var(--line); color: var(--ink); background: var(--surface2); font-weight: 500; font-size: 13px; flex: none;
+  border: 1px solid var(--line-ctl); color: var(--ink); background: transparent; font-weight: 500; font-size: 13px; flex: none;
+  transition: background-color var(--ease), border-color var(--ease), color var(--ease);
 }
-.btn:hover { background: var(--hover); }
+.btn:hover { background: var(--surface2); border-color: var(--line-strong); }
+.btn:active { background: var(--hover); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn:disabled, .btn[aria-busy="true"] { opacity: .5; cursor: default; pointer-events: none; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
-.btn.primary:hover { background: #e27a5a; }
+.btn.primary:hover { background: #e27a5a; border-color: #e27a5a; }
+.btn.primary:active { background: #c45a3a; border-color: #c45a3a; }
 .btn.danger:hover { border-color: var(--danger); color: var(--danger); }
 .btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
+.btn.icon { width: 34px; padding: 0; }
+.btn.icon.small { width: 28px; }
+.compose .btn.icon { width: 40px; }
+.btn.copied { color: var(--ok); border-color: var(--ok); }
 .btn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .ok { color: var(--ok); font-size: 12px; }
 .err { flex: none; color: var(--danger); font-size: 12px; padding: 6px 2px 0; }
@@ -285,7 +310,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .admin { overflow-y: auto; gap: 14px; }
 table { width: 100%; border-collapse: collapse; }
 th {
-  text-align: left; font-weight: 500; font-size: 12px; color: var(--muted);
+  text-align: left; font-weight: 500; font-size: 12px; color: var(--faint);
   padding: 9px 14px; border-bottom: 1px solid var(--line); white-space: nowrap;
   background: var(--surface); position: sticky; top: 0; z-index: 1;
 }
@@ -295,13 +320,15 @@ tbody tr:last-child td { border-bottom: 0; }
 .seen { color: var(--muted); white-space: nowrap; text-align: right; }
 th.seen { text-align: right; }
 .admin .panel { flex: none; overflow-x: auto; }
-.phead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 45px; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--ink); }
+.phead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 46px; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line); background: var(--surface2); font-size: 14px; font-weight: 650; color: var(--ink); }
 .phead .note { font-weight: 400; font-size: 12px; color: var(--muted); }
 .inline { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 400; font-size: 12px; color: var(--muted); }
 .inline input, .inline select { height: 28px; padding: 0 8px; font-size: 12px; }
 .inline input[type="number"] { width: 72px; }
 .admin tbody tr { cursor: default; }
-.admin tbody tr:hover td { background: none; }
+.admin tbody tr td { transition: background-color var(--ease); }
+.admin tbody tr:hover td { background: rgba(231, 228, 220, .03); }
+.admin tbody tr:hover td.empty-row { background: none; }
 .admin td { vertical-align: top; }
 .admin td.c-act { text-align: right; white-space: nowrap; }
 .admin .err, .admin #people-ok { padding: 8px 14px; }
@@ -345,9 +372,6 @@ th.seen { text-align: right; }
 .werr { color: var(--danger); font-size: 12px; }
 td.c-act .btn + .btn, td.c-act select + .btn { margin-left: 6px; }
 /* a row's actions are quiet until hovered; only its primary one stands out */
-td.c-act .btn:not(.primary), .dev .btn:not(.primary) { background: none; border-color: transparent; color: var(--muted); }
-td.c-act .btn:not(.primary):hover, .dev .btn:not(.primary):hover { background: var(--surface2); border-color: var(--line); color: var(--ink); }
-td.c-act .btn.danger:hover, .dev .btn.danger:hover { color: var(--danger); border-color: var(--danger); }
 td.c-act .btn, td.c-act select { vertical-align: middle; }
 .acct { display: flex; align-items: center; gap: 9px; }
 .acct small { display: block; color: var(--faint); font-size: 12px; }
@@ -371,12 +395,13 @@ td.c-act .btn, td.c-act select { vertical-align: middle; }
 #hosts th:nth-child(7) { width: 104px; }
 #hosts td.h-auto { text-align: left; }
 .switch {
-  position: relative; width: 30px; height: 16px; flex: none;
-  background: var(--surface2); border: 1px solid var(--line);
+  position: relative; width: 32px; height: 18px; flex: none;
+  background: var(--surface2); border: 1px solid var(--line-ctl); transition: background-color var(--ease), border-color var(--ease);
 }
+.switch:hover, .swl:hover .switch { border-color: var(--line-strong); }
 .switch::after {
-  content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%;
-  background: var(--muted); transition: transform .15s;
+  content: ""; position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--muted); transition: transform var(--ease), background-color var(--ease);
 }
 .switch[aria-checked="true"] { background: rgba(105, 159, 8, .25); border-color: var(--ok); }
 .switch[aria-checked="true"]::after { transform: translateX(14px); background: var(--ok); }
@@ -444,10 +469,12 @@ tr.archived b { color: var(--muted); }
   header { gap: 16px; padding: 0 16px; }
   .brand span { display: none; }
   /* Home: one column. The list first; a row opens its chat, Back returns */
-  #home { display: flex; flex-direction: column; }
+  #home { display: flex; flex-direction: column; overflow: hidden; }  /* a sliding chat never widens the page */
   #home .side { flex: 1; border-right: 0; }
   #home.open .side, #home:not(.open) .chat { display: none; }
   #home .chat { flex: 1; }
+  #home.open .chat.enter { animation: slide-in 180ms cubic-bezier(.2, .7, .3, 1); }
+  #home.open .chat.leave { animation: slide-out 160ms ease-in forwards; }
   .chat-head { gap: 9px; padding: 0 12px; }
   #warns li { padding-left: 12px; padding-right: 12px; }
   #warns li > span { white-space: normal; }
@@ -456,6 +483,7 @@ tr.archived b { color: var(--muted); }
   .compose { padding: 8px 12px 12px; gap: 6px; }
   .compose .btn.primary { padding: 0 12px; }
   .compose .btn.primary span { display: none; }
+  .compose .btn[aria-busy="true"]::before { left: calc(50% - 6px); }
   .compose .file-chip { max-width: 40%; }
   .chat > .err { padding: 0 12px 8px; }
   /* Admin: the sub-menu is one row that scrolls sideways */
@@ -530,6 +558,16 @@ tr.archived b { color: var(--muted); }
   .reject { display: flex; }
   .reject input { flex: 1; width: auto; min-width: 0; }
 }
+@keyframes slide-in { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes slide-out { to { transform: translateX(32px); opacity: 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn[aria-busy="true"] { position: relative; }
+.btn[aria-busy="true"] svg { visibility: hidden; }
+.btn[aria-busy="true"]::before { content: ""; position: absolute; left: 16px; width: 12px; height: 12px; border: 2px solid currentColor;
+  border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
 </style>
 </head>
 <body>
@@ -564,6 +602,7 @@ tr.archived b { color: var(--muted); }
   <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 22 20H2z"/><path d="M12 10v4.5M12 17.5v.01"/></symbol>
   <symbol id="i-signout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4H6.5A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20H14"/><path d="M10 12h10M16.5 8.5 20 12l-3.5 3.5"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18.8 9.8 21.3 10.0 21.3 14.0 18.8 14.2 18.4 15.3 20.0 17.1 17.1 20.0 15.3 18.4 14.2 18.8 14.0 21.3 10.0 21.3 9.8 18.8 8.7 18.4 6.9 20.0 4.0 17.1 5.6 15.3 5.2 14.2 2.7 14.0 2.7 10.0 5.2 9.8 5.6 8.7 4.0 6.9 6.9 4.0 8.7 5.6 9.8 5.2 10.0 2.7 14.0 2.7 14.2 5.2 15.3 5.6 17.1 4.0 20.0 6.9 18.4 8.7z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></symbol>
 </svg>
 
@@ -604,7 +643,7 @@ tr.archived b { color: var(--muted); }
       </div>
       <div class="chat" id="messages">
         <div class="chat-head">
-          <button type="button" class="btn small back" id="chat-back" title="Back" aria-label="Back"><svg width="14" height="14"><use href="#i-back"/></svg></button>
+          <button type="button" class="btn small icon back" id="chat-back" title="Back" aria-label="Back"><svg width="14" height="14"><use href="#i-back"/></svg></button>
           <span id="chat-lead"></span>
           <div class="chat-title"><b id="chat-name"></b><small id="chat-sub"></small></div>
           <button type="button" class="btn small" id="notices-toggle" aria-pressed="false" hidden></button>
@@ -630,7 +669,7 @@ tr.archived b { color: var(--muted); }
         <form class="compose" id="compose" autocomplete="off">
           <span class="tag file-chip" id="file-chip" hidden></span>
           <textarea id="text" rows="1" placeholder="Message manager" aria-label="Message"></textarea>
-          <button type="button" class="btn attach" id="attach" aria-label="Attach" title="Attach a file (up to 5 MB)"><svg width="15" height="15"><use href="#i-clip"/></svg></button>
+          <button type="button" class="btn icon attach" id="attach" aria-label="Attach" title="Attach a file (up to 5 MB)"><svg width="15" height="15"><use href="#i-clip"/></svg></button>
           <input type="file" id="file-in" hidden>
           <button type="submit" class="btn primary" title="Send (Enter)"><svg width="14" height="14"><use href="#i-send"/></svg><span>Send</span></button>
         </form>
@@ -1108,7 +1147,7 @@ tr.archived b { color: var(--muted); }
     return list;
   }
   function renderSessions() {
-    if (!changed("team", [entries, conv, askOpen])) return;
+    if (!changed("team", [entries, conv, askOpen, phoneOpen || wide()])) return;
     var box = $("agents");
     box.textContent = "";
     entryOf = {};
@@ -1118,7 +1157,7 @@ tr.archived b { color: var(--muted); }
     return e.icon ? icon(e.icon, 15) : el("span", { "class": "dot" + (e.online ? " on" : ""), title: e.online ? "online" : "offline" });
   }
   function sessionRow(e) {
-    var on = e.key === conv && !askOpen;
+    var on = e.key === conv && !askOpen && (phoneOpen || wide());  /* a phone marks a chat only while it is open */
     var b = el("button", { type: "button", "class": "row" + (e.cls ? " " + e.cls : "") + (on ? " on" : "") + (e.off ? " off" : "") + (e.unread ? " unread" : ""),
                            title: e.tip || null, "aria-current": on ? "true" : null, "data-key": e.key }, [
       el("span", { "class": "lead" }, [lead(e)]),
@@ -1134,7 +1173,8 @@ tr.archived b { color: var(--muted); }
   var drafts = {};  /* what was typed to each chat and not sent */
   function select(k) {
     if (k !== conv) { drafts[conv] = $("text").value; $("text").value = drafts[k] || ""; sendErr(""); }
-    conv = k; askOpen = false; phoneOpen = true;
+    conv = k; askOpen = false;
+    slideIn();
     $("ask-link").setAttribute("aria-expanded", "false");
     renderHome(true);
     grow();
@@ -1309,6 +1349,7 @@ tr.archived b { color: var(--muted); }
     $("text").placeholder = "Message " + (e.name || "manager");
     $("home").classList.toggle("open", phoneOpen);
   }
+  var shownTo = {};
   function renderMessages(jump) {
     var log = $("log");
     var stick = jump || log.scrollHeight - log.scrollTop - log.clientHeight < 60, top = log.scrollTop;
@@ -1318,11 +1359,14 @@ tr.archived b { color: var(--muted); }
     var notices = all.filter(notice).length;
     var shown = all.filter(function (m) { return !act || showNotices || !notice(m); });
     var day = null, last = null, group = null;
+    /* what this chat showed last time: newer messages come in with a short rise */
+    var before = shownTo[conv] == null ? Infinity : shownTo[conv];
+    shownTo[conv] = shown.reduce(function (n, m) { return Math.max(n, m.id); }, 0);
     shown.forEach(function (m) {
       var d = new Date(m.created * 1000).toDateString();
       if (d !== day) { log.appendChild(el("div", { "class": "day" }, [el("span", { text: dayLabel(m.created) })])); day = d; last = null; }
       if (notice(m)) {
-        log.appendChild(el("div", { "class": "msg sys", "data-id": String(m.id), title: senderName(m) + " → " + toName(m) },
+        log.appendChild(el("div", { "class": "msg sys" + (m.id > before ? " new" : ""), "data-id": String(m.id), title: senderName(m) + " → " + toName(m) },
                            [icon("i-status", 12), el("div", { "class": "text", text: m.text }), hm(m.created)]));
         last = null;
         return;
@@ -1330,14 +1374,14 @@ tr.archived b { color: var(--muted); }
       var p = parties(m), between = p.every(function (x) { return x === ME || x === conv; });
       var to = act || !between ? toName(m) : null, k = m.sender + "\n" + (to || "");
       if (!last || last.k !== k || m.created - last.t > 300) {
-        group = el("div", { "class": "group" }, [el("div", { "class": "head" }, [
-          el("b", { "class": fromMe(m) ? "mine" : null, text: senderName(m) }),
+        group = el("div", { "class": "group" + (p[0] === ME ? " mine" : "") + (m.id > before ? " new" : "") }, [el("div", { "class": "head" }, [
+          el("b", { "class": p[0] === ME ? "mine" : null, text: senderName(m) }),
           to ? el("span", { "class": "to", title: "to " + to }, [icon("i-arrow", 11), el("span", { text: to })]) : null, hm(m.created)])]);
         log.appendChild(group);
       }
       last = { k: k, t: m.created };
       var text = el("div", { "class": "text", text: m.text });
-      var body = el("div", { "class": "msg", "data-id": String(m.id), title: senderName(m) + " → " + toName(m) },
+      var body = el("div", { "class": "msg" + (m.id > before && group.firstChild.nextSibling ? " new" : ""), "data-id": String(m.id), title: senderName(m) + " → " + toName(m) },
                     [text, m.file ? attachment(m.file) : null]);
       group.appendChild(body);
       if (m.text.length > 900 || m.text.split("\n").length > 12) fold12(m, text, body);
@@ -1360,15 +1404,29 @@ tr.archived b { color: var(--muted); }
     else text.classList.remove("clamp");
   }
   function moreBtn(m, label) {
-    var b = el("button", { type: "button", "class": "more", text: label });
+    var b = el("button", { type: "button", "class": "more", "aria-expanded": label === "Show less" ? "true" : "false", text: label });
     b.addEventListener("click", function () {
-      if (expanded[m.id]) delete expanded[m.id]; else expanded[m.id] = 1;
-      var log = $("log"), top = log.scrollTop;
-      renderMessages();
-      log.scrollTop = top;
+      var text = b.parentNode.querySelector(".text"), open = !expanded[m.id];
+      if (open) expanded[m.id] = 1; else delete expanded[m.id];
+      var from = text.clientHeight;
+      text.classList.remove("clamp");
+      var to = open ? text.scrollHeight : null;
+      if (!open) { text.classList.add("clamp"); to = text.clientHeight; text.classList.remove("clamp"); }
+      text.style.maxHeight = from + "px";
+      text.classList.add("moving");
+      void text.offsetHeight;
+      text.style.maxHeight = to + "px";
+      var done = function () {
+        text.classList.remove("moving"); text.style.maxHeight = "";
+        if (!open) text.classList.add("clamp");
+      };
+      if (reduced()) done(); else text.addEventListener("transitionend", done, { once: true });
+      b.textContent = open ? "Show less" : "Show more";
+      b.setAttribute("aria-expanded", open ? "true" : "false");
     });
     return b;
   }
+  function reduced() { return window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches; }
 
   function toBottom() { var log = $("log"); log.scrollTop = log.scrollHeight; }
   /* Home: all of it, for a chat change */
@@ -1394,7 +1452,7 @@ tr.archived b { color: var(--muted); }
     box.textContent = "";
     rows.forEach(function (w) {
       var fix = /`([^`]+)`/.exec(w.text), code = fix ? el("code", { text: fix[1] }) : null;
-      var copy = code ? button([icon("i-copy", 13)], "", function () { copyCode(code, copy); }, { title: "Copy" }) : null;
+      var copy = code ? button([icon("i-copy", 13)], "icon", function () { copyCode(code, copy); }, { title: "Copy" }) : null;
       box.appendChild(el("li", { title: w.text }, [icon("i-warn", 14),
         el("span", { text: w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, "") }), code, copy]));
     });
@@ -1430,14 +1488,17 @@ tr.archived b { color: var(--muted); }
     var text = $("text").value;
     if (!text.trim() && !attached) return;
     var e = entryOf[conv], to = e && e.to ? e.to : "manager";  /* the manager by its label: a member may write to it, and it wakes it */
-    var sent = attached;
+    var sent = attached, btn = $("compose").querySelector("button[type=submit]");
+    if (btn.getAttribute("aria-busy") === "true") return;
+    btn.setAttribute("aria-busy", "true");  /* the Send button shows it is sending */
     upload()
       .then(function (fid) { return api("/api/send", fid ? { to: to, text: text, file_id: fid } : { to: to, text: text }); })
       .then(function () {
         $("text").value = ""; grow(); sendErr(""); $("text").focus(); seen.messages = null;
         if (attached === sent) { attached = null; $("file-in").value = ""; renderAttached(); }
       })
-      .catch(function (e) { sendErr(e.message); });
+      .catch(function (e) { sendErr(e.message); })
+      .then(function () { btn.removeAttribute("aria-busy"); });
   }
 
   /* notes: the team board first, then each project the viewer may read */
@@ -1524,7 +1585,7 @@ tr.archived b { color: var(--muted); }
         el("div", { text: "No notes yet" }), start]));
       return;
     }
-    var back = el("button", { "class": "btn small back", type: "button", title: "Topics" }, [icon("i-back", 14)]);
+    var back = el("button", { "class": "btn small icon back", type: "button", title: "Topics" }, [icon("i-back", 14)]);
     back.addEventListener("click", function () { note = { key: null, mode: "read", version: 0, history: false }; renderNotes(true); });
     if (note.mode === "new" || note.mode === "edit") return editor(doc, back);
     var n = topicOf(note.key);
@@ -1656,7 +1717,7 @@ tr.archived b { color: var(--muted); }
     });
     box.textContent = "";
     [icon("i-link", 14), el("span", { id: "invite-text", text: "Send this link to " + name + ". It works for 7 days." }), input, copy, done,
-     button([icon("i-x", 12)], "", function () { box.hidden = true; }, { title: "Close" })]
+     button([icon("i-x", 12)], "icon", function () { box.hidden = true; }, { title: "Close" })]
       .forEach(function (n) { box.appendChild(n); });
     box.hidden = false;
     input.select();
@@ -2102,7 +2163,12 @@ tr.archived b { color: var(--muted); }
   function ownWorker(w) { return w.person === me.person; }
   function copyCode(code, b) {
     var t = code.textContent;
-    function ok() { b.title = "Copied"; b.classList.add("ok"); setTimeout(function () { b.classList.remove("ok"); b.title = "Copy"; }, 1500); }
+    /* a short "copied": a green check for 1.5 s */
+    function ok() {
+      var was = b.firstChild;
+      b.title = "Copied"; b.classList.add("copied"); b.replaceChild(icon("i-check", 13), was);
+      setTimeout(function () { b.classList.remove("copied"); b.title = "Copy"; b.replaceChild(was, b.firstChild); }, 1500);
+    }
     if (navigator.clipboard) navigator.clipboard.writeText(t).then(ok, function () {});
     else { var r = document.createRange(); r.selectNodeContents(code); getSelection().removeAllRanges(); getSelection().addRange(r); document.execCommand("copy"); ok(); }
   }
@@ -2132,7 +2198,7 @@ tr.archived b { color: var(--muted); }
         acts.push(closeBtn);
       }
       var code = el("code", { text: w.attach });
-      var copy = button([icon("i-copy", 13)], "", function () { copyCode(code, copy); }, { title: "Copy" });
+      var copy = button([icon("i-copy", 13)], "icon", function () { copyCode(code, copy); }, { title: "Copy" });
       body.appendChild(el("tr", null, [
         el("td", { "class": "w-name" }, [el("b", { text: w.name }),
                         el("div", { "class": "hint task", title: w.task, text: w.task }),
@@ -2502,11 +2568,31 @@ tr.archived b { color: var(--muted); }
     b.addEventListener("click", function () { show(b.dataset.view); });
   });
   $("notices-toggle").addEventListener("click", function () { showNotices = !showNotices; renderHome(true); });
-  $("chat-back").addEventListener("click", function () { phoneOpen = false; if (askOpen) { askOpen = false; $("ask-link").setAttribute("aria-expanded", "false"); } renderHome(); });
+  /* a phone: a chat slides in from the right, Back slides it out */
+  function slideIn() {
+    var c = $("messages");
+    if (!phoneOpen && !wide() && !reduced()) {
+      c.classList.add("enter");
+      c.addEventListener("animationend", function () { c.classList.remove("enter"); }, { once: true });
+    }
+    phoneOpen = true;
+  }
+  $("chat-back").addEventListener("click", function () {
+    var c = $("messages");
+    function back() {
+      c.classList.remove("leave");
+      phoneOpen = false;
+      if (askOpen) { askOpen = false; $("ask-link").setAttribute("aria-expanded", "false"); }
+      renderHome();
+    }
+    if (reduced()) return back();
+    c.classList.add("leave");
+    c.addEventListener("animationend", back, { once: true });
+  });
   document.addEventListener("visibilitychange", function () { if (feed && !document.hidden) { seen.messages = null; renderHome(); } });
   $("ask-link").addEventListener("click", function () {
     askOpen = !askOpen;
-    phoneOpen = askOpen || wide();
+    if (askOpen) slideIn(); else phoneOpen = wide();
     $("ask-link").setAttribute("aria-expanded", askOpen ? "true" : "false");
     if (askOpen) loadAccess(); else $("my-access").hidden = true;
     if (feed) renderHome(!askOpen);

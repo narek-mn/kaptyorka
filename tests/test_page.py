@@ -99,7 +99,7 @@ def test_home_two_pane_chat(hub):
     # messages in full, grouped by sender, a line per day; very long ones fold at 12 lines
     assert 'function notice(m) { return m.kind !== "message" || m.sender === "hub"; }' in html
     assert '(showNotices ? "hide notices" : "show notices") + " (" + notices + ")"' in html
-    assert 'el("b", { "class": fromMe(m) ? "mine" : null, text: senderName(m) })' in html
+    assert 'el("b", { "class": p[0] === ME ? "mine" : null, text: senderName(m) })' in html
     assert "-webkit-line-clamp: 12" in html and '"Show more"' in html and "dayLabel(m.created)" in html
     assert "overflow-wrap: anywhere" in html
 
