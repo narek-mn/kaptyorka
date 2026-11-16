@@ -10,7 +10,7 @@
 
 **Spec:** Narek's request (2026-11-07, confirmed 2026-11-10): a command on his laptop that copies his own Claude login to another machine under his user, over ssh, never via the hub; Claude Code only in this first version; private file mode on the target; one plain line saying what happened. Recorded in project memory `kaptyorka-login-copy.md`. A login wrapper around each tool's interactive login was rejected.
 
-Facts it relies on (checked on Claude Code 2.1.322, Linux): the login lives in `${CLAUDE_CONFIG_DIR:-~/.claude}/.credentials.json`, mode 0600; copying that one file to the DGX made `claude auth status` there report `loggedIn: true` (done by hand on 2026-11-07). `claude auth status` prints JSON on stdout and exits 1 when logged out. On macOS Claude Code keeps the login in the keychain, not in that file.
+Facts it relies on (checked on Claude Code 2.1.322, Linux): the login lives in `${CLAUDE_CONFIG_DIR:-~/.claude}/.credentials.json`, mode 0600; copying that one file to another machine made `claude auth status` there report `loggedIn: true` (done by hand on 2026-11-07). `claude auth status` prints JSON on stdout and exits 1 when logged out. On macOS Claude Code keeps the login in the keychain, not in that file.
 
 ## Global Constraints
 

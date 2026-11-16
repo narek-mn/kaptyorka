@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** One pipx package, `kaptyorka`, that lets every coding-agent session on the team (Claude Code, OpenCode, Codex CLI, Cursor) see the others, message them with push delivery where the tool allows it, and share versioned notes, through one hub on the DGX.
+**Goal:** One pipx package, `kaptyorka`, that lets every coding-agent session on the team (Claude Code, OpenCode, Codex CLI, Cursor) see the others, message them with push delivery where the tool allows it, and share versioned notes, through one hub on the GPU server.
 
 **Architecture:** `kaptyorka serve` runs the hub: an `mcp` SDK `MCPServer` over streamable HTTP plus a few plain HTTP routes (bridge, hooks, web page) on the same Starlette app, storing everything in one SQLite file. On every machine, `kaptyorka join` writes each installed tool's user config so the tool starts a tiny local stdio shim (`kaptyorka mcp`) that relays MCP calls to the hub and stamps them with the session's identity, found from its parent process; `join` also installs the bridge service, which reports presence and pushes incoming messages through each tool's door, falling back to pull via hooks.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Python floor 3.10 (Jetson stock Ubuntu). No syntax or stdlib newer than 3.10. CI: 3.10 to 3.13 on Linux and macOS.
+- Python floor 3.10 (stock Ubuntu on small boards). No syntax or stdlib newer than 3.10. CI: 3.10 to 3.13 on Linux and macOS.
 - Runtime dependency: `mcp` only (checked 2026-11-04: latest is 2.3.0, `Requires-Python >=3.10`; it brings starlette, uvicorn, httpx2). Plain HTTP calls use stdlib `urllib.request`. Nothing else.
 - mcp 2.x API, checked in the 2.3.0 wheel: `from mcp.server.mcpserver import MCPServer, Context`; `Context.headers` gives request headers; `@server.custom_route(path, methods=[...])` adds plain routes (they skip MCP auth); `server.streamable_http_app(host="0.0.0.0")` returns the Starlette app (any host other than localhost turns off DNS-rebinding checks, which a LAN hub needs); `mcp.Client` connects to a URL or a `Transport`. `mcp.server.fastmcp` no longer exists.
 - Tool names exactly: `who`, `send`, `inbox`, `status`, `notes_list`, `notes_read`, `notes_write`. `send(to, text)` takes a session name or `all`.
@@ -31,7 +31,7 @@
 
 ## Review Focus
 
-1. Hub unreachable (DGX rebooting, VPN down): a shim tool call returns the text `kaptyorka hub unreachable at <url>` within 5 s instead of hanging; a hook prints nothing and exits 0 within 3 s, so the session is never blocked. Tests: Task 8 `test_shim_hub_down`, Task 10 `test_hook_hub_down_is_silent`.
+1. Hub unreachable (hub machine rebooting, VPN down): a shim tool call returns the text `kaptyorka hub unreachable at <url>` within 5 s instead of hanging; a hook prints nothing and exits 0 within 3 s, so the session is never blocked. Tests: Task 8 `test_shim_hub_down`, Task 10 `test_hook_hub_down_is_silent`.
 2. `join` run on a machine that already has config: other MCP servers and other hooks (Narek's `~/.claude/settings.json` already has SessionStart and UserPromptSubmit hooks) are kept; running `join` twice adds nothing twice; a config file that is a symlink stays a symlink (here `~/.claude/settings.json` points into `~/claude-setup`); a file with broken JSON is left untouched and named in the output. Tests in Tasks 10 to 14 (`test_configure_*`).
 3. `send` to a name that is not online and was never seen (typo): refused with the list of online names, not stored as a forever-unread message. Test: Task 3 `test_send_unknown_name_lists_online`.
 4. Multi-line text, quotes and emoji in a message pushed through the Claude Code socket arrive as one JSON line and intact. Test: Task 10 `test_socket_push_multiline_text`.
@@ -80,7 +80,7 @@ docs/superpowers/spikes/2026-11-04-doors.md
   - `cli.entry() -> None` with subcommands `serve`, `join`, `who`, `mcp`, `hook`, `bridge` (each stub prints `not implemented` and exits 2 until its task).
   - Fixture `home(tmp_path, monkeypatch)` sets `HOME=tmp_path/"home"` and `KAPTYORKA_HOME=tmp_path/"home"/".kaptyorka"`, returns the `HOME` path.
 
-- [ ] **Step 1:** `git init` in `/home/narek/workspace/projects/kaptyorka`. Write `pyproject.toml` in libraryan's shape (`/home/narek/workspace/projects/libraryan/pyproject.toml`): setuptools>=77, name `kaptyorka`, `requires-python = ">=3.10"`, `dependencies = ["mcp>=2.3,<3"]`, script `kaptyorka = "kaptyorka.cli:entry"`, src layout (`[tool.setuptools.packages.find] where = ["src"]`), `package-data` `kaptyorka = ["web/*.html"]`, pytest marker `slow` and `addopts = "-m 'not slow'"`, URLs `https://github.com/narek-mn/kaptyorka`. `CLAUDE.md` lists: run `python3 -m pytest tests -q` in a venv with `pip install -e . pytest`; 3.10 floor; never call real agent tools in tests except `-m slow`; no push or PyPI without approval. `test.yml` copies libraryan's matrix with `pip install -e . pytest`.
+- [ ] **Step 1:** `git init` in the project folder. Write `pyproject.toml` in a sibling project's shape: setuptools>=77, name `kaptyorka`, `requires-python = ">=3.10"`, `dependencies = ["mcp>=2.3,<3"]`, script `kaptyorka = "kaptyorka.cli:entry"`, src layout (`[tool.setuptools.packages.find] where = ["src"]`), `package-data` `kaptyorka = ["web/*.html"]`, pytest marker `slow` and `addopts = "-m 'not slow'"`, URLs `https://github.com/narek-mn/kaptyorka`. `CLAUDE.md` lists: run `python3 -m pytest tests -q` in a venv with `pip install -e . pytest`; 3.10 floor; never call real agent tools in tests except `-m slow`; no push or PyPI without approval. `test.yml` copies a sibling project's matrix with `pip install -e . pytest`.
 - [ ] **Step 2: Write the failing tests** in `tests/test_cli.py`:
 
 ```python
@@ -165,9 +165,9 @@ Rules the tests pin:
 
 ```python
 def test_names_get_suffix_when_shared(store):
-    a = store.seen("claude:1", "pc", "claude-code", "murmur")
-    b = store.seen("claude:2", "pc", "claude-code", "murmur")
-    assert (a.name, b.name) == ("pc/claude-code/murmur", "pc/claude-code/murmur-2")
+    a = store.seen("claude:1", "pc", "claude-code", "proj-a")
+    b = store.seen("claude:2", "pc", "claude-code", "proj-a")
+    assert (a.name, b.name) == ("pc/claude-code/proj-a", "pc/claude-code/proj-a-2")
 
 def test_offline_after_30s(store, clock):
     store.seen("k", "pc", "codex", "nav"); clock.t += 31
@@ -175,35 +175,35 @@ def test_offline_after_30s(store, clock):
 
 def test_send_unknown_name_lists_online(store):
     store.seen("k", "pc", "codex", "nav")
-    with pytest.raises(KaptyorkaError, match="pc/codex/nav"): store.send("k", "dgx/codex/typo", "hi")
+    with pytest.raises(KaptyorkaError, match="pc/codex/nav"): store.send("k", "box-1/codex/typo", "hi")
 
 def test_send_all_online_only(store, clock):
-    for i, m in enumerate(["pc", "dgx", "jet"]): store.seen(f"k{i}", m, "codex", "p")
-    clock.t += 31; store.seen("k0", "pc", "codex", "p"); store.seen("k1", "dgx", "codex", "p")
+    for i, m in enumerate(["pc", "box-1", "box-3"]): store.seen(f"k{i}", m, "codex", "p")
+    clock.t += 31; store.seen("k0", "pc", "codex", "p"); store.seen("k1", "box-1", "codex", "p")
     assert store.send("k0", "all", "hi") == 1
 
 def test_held_message_goes_to_next_session_same_project(store, clock):
-    store.seen("s", "pc", "codex", "a"); store.seen("old", "dgx", "claude-code", "murmur")
-    store.send("s", "dgx/claude-code/murmur", "hi"); clock.t += 31
-    store.seen("new", "dgx", "claude-code", "murmur")
+    store.seen("s", "pc", "codex", "a"); store.seen("old", "box-1", "claude-code", "proj-a")
+    store.send("s", "box-1/claude-code/proj-a", "hi"); clock.t += 31
+    store.seen("new", "box-1", "claude-code", "proj-a")
     assert [m.text for m in store.inbox("new")] == ["hi"]
     assert store.inbox("new") == []
 
 def test_message_to_online_dash2_not_taken_by_first(store):
     store.seen("s", "pc", "codex", "a")
-    store.seen("one", "dgx", "codex", "m"); store.seen("two", "dgx", "codex", "m")
-    store.send("s", "dgx/codex/m-2", "hi")
+    store.seen("one", "box-1", "codex", "m"); store.seen("two", "box-1", "codex", "m")
+    store.send("s", "box-1/codex/m-2", "hi")
     assert store.inbox("one") == [] and len(store.inbox("two")) == 1
 
 def test_offer_frames_and_ack_marks_read(store):
-    store.seen("s", "pc", "codex", "a"); store.seen("t", "dgx", "codex", "b")
-    store.send("s", "dgx/codex/b", "hi")
-    [o] = store.offer("dgx")
+    store.seen("s", "pc", "codex", "a"); store.seen("t", "box-1", "codex", "b")
+    store.send("s", "box-1/codex/b", "hi")
+    [o] = store.offer("box-1")
     assert o["key"] == "t" and o["text"] == "Kaptyorka message from pc/codex/a:\n\nhi"
-    store.ack(o["id"], True); assert store.inbox("t") == [] and store.offer("dgx") == []
+    store.ack(o["id"], True); assert store.inbox("t") == [] and store.offer("box-1") == []
 
 def test_failed_push_stays_for_pull(store):
-    ...  # send, offer, ack(False): offer("dgx") == [], inbox("t") has the message
+    ...  # send, offer, ack(False): offer("box-1") == [], inbox("t") has the message
 
 def test_offer_lease_reoffers_unacked(store, clock):
     ...  # send, offer -> 1 item; offer again -> []; clock.t += 61; seen() sender and target again (else both are offline); offer -> same id
@@ -245,16 +245,16 @@ def test_survives_reopen(tmp_path):
 - [ ] **Step 1: Write the failing tests:**
 
 ```python
-PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "murmur"}
-DGX = {"key": "claude:2", "machine": "dgx", "tool": "claude-code", "project": "backend"}
+PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "proj-a"}
+BOX = {"key": "claude:2", "machine": "box-1", "tool": "claude-code", "project": "backend"}
 
 def test_lists_exactly_seven_tools(hub): assert tool_names(hub) == {"who","send","inbox","status","notes_list","notes_read","notes_write"}
 def test_wrong_token_401(hub): assert http.request("POST", hub.url + "/mcp", "bad", {})[0] == 401
 def test_missing_identity_refused(hub): assert "kaptyorka join" in call_error(hub, {}, "who")
 def test_send_then_inbox_between_two_sessions(hub):
-    run(call(hub, DGX, "who"))
-    assert run(call(hub, PC, "send", to="dgx/claude-code/backend", text="move api?")) == "sent to 1 session"
-    assert run(call(hub, DGX, "inbox"))[0]["from"] == "pc/claude-code/murmur"
+    run(call(hub, BOX, "who"))
+    assert run(call(hub, PC, "send", to="box-1/claude-code/backend", text="move api?")) == "sent to 1 session"
+    assert run(call(hub, BOX, "inbox"))[0]["from"] == "pc/claude-code/proj-a"
 def test_status_shows_in_who(hub): ...  # status("working on /move") -> who() row for PC has that status, "you": True
 def test_notes_roundtrip(hub): ...      # notes_write then notes_read returns text and author name; missing topic -> "no note named x"
 ```
@@ -287,15 +287,15 @@ def test_notes_roundtrip(hub): ...      # notes_write then notes_read returns te
 def test_heartbeat_makes_sessions_online(hub): ...  # POST heartbeat with 2 sessions -> feed agents has 2 names
 def test_poll_returns_immediately_when_queued(hub): ...  # send then poll(wait=25) returns in < 1 s with 1 item
 def test_poll_wakes_on_send(hub):
-    t0 = time.time(); th = start_thread(lambda: http.request("GET", f"{hub.url}/bridge/poll?machine=dgx&wait=10", "T", timeout=15))
-    time.sleep(0.5); hub_send(hub, PC, "dgx/claude-code/backend", "hi")
+    t0 = time.time(); th = start_thread(lambda: http.request("GET", f"{hub.url}/bridge/poll?machine=box-1&wait=10", "T", timeout=15))
+    time.sleep(0.5); hub_send(hub, PC, "box-1/claude-code/backend", "hi")
     status, items = th.join_result()
     assert status == 200 and len(items) == 1 and time.time() - t0 < 3
 def test_poll_empty_after_wait(hub): ...  # wait=1 with nothing -> [] after ~1 s
 def test_ack_false_leaves_message_for_brief(hub): ...  # poll, ack(ok=False), brief(event=prompt) contains the text
 def test_brief_start_summary_exact(hub):
-    # PC and DGX online, DGX activity "idle", note "murmur-api", one unread for PC
-    assert brief(hub, PC, "start").startswith("Kaptyorka: you are `pc/claude-code/murmur`. 1 other online: dgx/claude-code/backend (idle). 1 unread message. Board topics: murmur-api.")
+    # PC and BOX online, BOX activity "idle", note "proj-a-api", one unread for PC
+    assert brief(hub, PC, "start").startswith("Kaptyorka: you are `pc/claude-code/proj-a`. 1 other online: box-1/claude-code/backend (idle). 1 unread message. Board topics: proj-a-api.")
 def test_brief_prompt_empty_when_nothing_new(hub): assert brief(hub, PC, "prompt") == ""
 def test_feed_requires_token(hub): assert http.request("GET", hub.url + "/api/feed", "bad")[0] == 401
 ```
@@ -316,7 +316,7 @@ Use the `frontend-design` skill before writing the page. Look at two or three re
 
 **Interfaces:**
 - Consumes: `GET /api/feed` (Task 5).
-- Produces: `GET /` (no token) returns the page. The page reads the token from the URL fragment (`http://dgx:8765/#t=<token>`, never sent in a request line or server log), stores it in `localStorage` (try/catch), and polls `/api/feed` every 2 s with the bearer header. Without a token it shows only a lock icon. Three views switched by tabs with icons: Team (table: name, machine, tool, project, status, activity dot, last seen), Messages (newest at the bottom, from → to, filter chips by machine and by project, read-only), Notes (one card per topic, latest text, history expands on click). No explaining sentences; detail on hover (`title`). Dark theme only; no external requests.
+- Produces: `GET /` (no token) returns the page. The page reads the token from the URL fragment (`http://box-1:8765/#t=<token>`, never sent in a request line or server log), stores it in `localStorage` (try/catch), and polls `/api/feed` every 2 s with the bearer header. Without a token it shows only a lock icon. Three views switched by tabs with icons: Team (table: name, machine, tool, project, status, activity dot, last seen), Messages (newest at the bottom, from → to, filter chips by machine and by project, read-only), Notes (one card per topic, latest text, history expands on click). No explaining sentences; detail on hover (`title`). Dark theme only; no external requests.
 
 - [ ] **Step 1: Write the failing tests:**
 
@@ -395,9 +395,9 @@ Why a shim: the tool configs are per user, not per session, so a static header c
 
 ```python
 def test_identify_claude_from_session_file(home, monkeypatch):
-    write_session_file(home, pid=4242, cwd="/w/murmur")
+    write_session_file(home, pid=4242, cwd="/w/proj-a")
     monkeypatch.setattr(identity, "ancestors", lambda pid: [(100, "sh"), (4242, "claude")])
-    assert identify("pc", pid=1) == Identity("claude:4242", "pc", "claude-code", "murmur")
+    assert identify("pc", pid=1) == Identity("claude:4242", "pc", "claude-code", "proj-a")
 def test_identify_uses_resolver(monkeypatch): ...  # ancestors [(7,"node"),(9,"opencode")], proc_cwd(9)="/w/nav", RESOLVERS["opencode"] stubbed -> "opencode:S1" -> Identity("opencode:S1","pc","opencode","nav")
 def test_identify_cursor_workspace(monkeypatch): ...  # ancestors [(5,"Cursor")], workspace="/w/app" -> Identity("cursor:/w/app","pc","cursor","app")
 def test_identify_none_outside_a_tool(monkeypatch): ...  # ancestors [(1,"systemd")] -> None
@@ -440,7 +440,7 @@ def test_shim_reconnects_after_hub_restart(home, tmp_path): ...  # hub on fixed 
 def test_heartbeat_reports_all_sessions(hub, home): ...  # 2 fake adapters, 3 sessions -> hub.store.online() has 3
 def test_poll_delivers_and_acks(hub, home):
     # sender online elsewhere; send to the fake session; poll_once(wait=1)
-    assert fake.delivered == [("codex:5", "Kaptyorka message from pc/claude-code/murmur:\n\nhi")]
+    assert fake.delivered == [("codex:5", "Kaptyorka message from pc/claude-code/proj-a:\n\nhi")]
     assert hub.store.inbox("codex:5") == []
 def test_failed_door_logs_and_leaves_for_pull(hub, home):
     fake.fail = True; bridge.poll_once(1)
@@ -476,7 +476,7 @@ def test_merge_json_broken_file_untouched(tmp_path): ...  # "{not json" -> retur
 - [ ] **Step 1: Write the failing tests:**
 
 ```python
-def test_sessions_from_folder(home): ...  # session file for os.getpid() with cwd /w/murmur, status idle -> [Session("claude:<pid>","claude-code","murmur","idle")]; a file for a dead pid is skipped
+def test_sessions_from_folder(home): ...  # session file for os.getpid() with cwd /w/proj-a, status idle -> [Session("claude:<pid>","claude-code","proj-a","idle")]; a file for a dead pid is skipped
 def test_socket_push_multiline_text(home, tmp_path):
     srv = unix_server(tmp_path/"s.sock")          # records received lines
     write_session_file(home, pid=os.getpid(), sock=tmp_path/"s.sock", peer_token="P")
@@ -655,7 +655,7 @@ def test_readme_names_every_tool_and_door():
 ```
 
 - [ ] **Step 2:** Run it. Expected: FAIL (no README).
-- [ ] **Step 3:** Write `README.md` in libraryan's style (`/home/narek/workspace/projects/libraryan/README.md`): short plain-English intro (the murmur/DGX example), quick start (`kaptyorka serve` on the hub; `kaptyorka join` on each machine; open the page link), a **For agents** section with exactly the spec's three steps, a table of tools × "push / pull only" × what `join` changes × restart needed, the seven tools in one table, where files live (`~/.kaptyorka`), how to remove (`systemctl --user disable --now kaptyorka-bridge` / `launchctl bootout`, delete `~/.kaptyorka`, remove the `kaptyorka` entries `join` printed). No token in any example (use `<token>`). `CHANGELOG.md` with `0.1.0`. `publish.yml` copied from libraryan's (tag-triggered); add a comment that each release needs Narek's yes.
+- [ ] **Step 3:** Write `README.md` in a sibling project's style: short plain-English intro (the console and GPU server example), quick start (`kaptyorka serve` on the hub; `kaptyorka join` on each machine; open the page link), a **For agents** section with exactly the spec's three steps, a table of tools × "push / pull only" × what `join` changes × restart needed, the seven tools in one table, where files live (`~/.kaptyorka`), how to remove (`systemctl --user disable --now kaptyorka-bridge` / `launchctl bootout`, delete `~/.kaptyorka`, remove the `kaptyorka` entries `join` printed). No token in any example (use `<token>`). `CHANGELOG.md` with `0.1.0`. `publish.yml` copied from a sibling project's (tag-triggered); add a comment that each release needs Narek's yes.
 - [ ] **Step 4:** Run `python3 -m pytest tests -q`. Expected: all pass. Also `git grep -nE "Bearer [A-Za-z0-9_-]{20,}"` prints nothing.
 - [ ] **Step 5: Commit** `git commit -m "docs: README with agent install steps, changelog, publish workflow"`
 
@@ -671,7 +671,7 @@ This test uses a real hub on a scratch port and scratch `KAPTYORKA_HOME`, but th
 - [ ] **Step 1: Write the test** `test_two_sessions_talk` (`@pytest.mark.slow`):
   1. Start `kaptyorka serve --foreground --port 18765` with `KAPTYORKA_HOME=<tmp>/hub`.
   2. `kaptyorka join --hub http://127.0.0.1:18765 --token <t> --name e2e --only claude-code` with `KAPTYORKA_HOME=<tmp>/pc` and `KAPTYORKA_SKIP_SERVICE=1`, then start `kaptyorka bridge` as a subprocess. No Cursor, OpenCode or Codex config is touched.
-  3. Start two `claude --bg` sessions in `<tmp>/murmur` and `<tmp>/backend`, `--permission-mode acceptEdits`, the first told: "Use the kaptyorka send tool to ask e2e/claude-code/backend to write PONG into reply.txt in its folder."
+  3. Start two `claude --bg` sessions in `<tmp>/proj-a` and `<tmp>/backend`, `--permission-mode acceptEdits`, the first told: "Use the kaptyorka send tool to ask e2e/claude-code/backend to write PONG into reply.txt in its folder."
   4. Wait up to 240 s for `<tmp>/backend/reply.txt` to contain `PONG`.
   5. Assert the hub feed shows both names online and the message; assert `bridge.log` has no `failed` line.
   6. `finally`: stop and remove both sessions, stop bridge and hub, restore `settings.json`, `claude mcp remove --scope user kaptyorka`.

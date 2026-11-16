@@ -69,7 +69,7 @@ def test_readme_people_and_access_in_page_order_and_commands_listed():
              "### 5. Change a role", "### 6. Remove a person", "### 7. Projects"]
     at = [people.index(s) for s in steps]
     assert at == sorted(at)
-    for word in ["My access", "Ask for", "request_access", "Register again", "Archived", "7 days", "(removed)"]:
+    for word in ["Ask for access", "Ask for", "request_access", "Register again", "Archived", "7 days", "(removed)"]:
         assert word in people
     commands = r.split("## Commands", 1)[1].split("\n## ", 1)[0]
     for c in ["kaptyorka invites", "kaptyorka people role", "kaptyorka people remove",
@@ -80,7 +80,7 @@ def test_readme_people_and_access_in_page_order_and_commands_listed():
 
 def test_readme_says_logins_and_why_the_manager_is_not_running():
     r = (ROOT / "README.md").read_text()
-    assert ("The Machines tab shows which agent tools are installed and logged in on each machine,"
+    assert ("It shows which agent tools are installed and logged in on each machine,"
             " as the tools report it; a tool that is not logged in cannot run workers there.") in r
     mgr = r.split("## The manager", 1)[1].split("\n## ", 1)[0]
-    assert "When it is not running, the Settings tab says why" in mgr
+    assert "When it is not running, Admin > Settings says why" in mgr

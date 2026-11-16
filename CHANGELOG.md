@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0
+
+- Private by default: a member sees and messages only their own sessions and the manager. Everyone else is left out of `who`, the page, the brief and every error, not just masked.
+- Only the admin opens doors; members ask the manager, who tells the admin who, whom and why. Knock is the admin's only. Doors opened before 0.9.0 stay open: after updating, look at Admin > Access and close the ones not wanted.
+- One logged-in agent tool is enough: the login warning shows only when no tool on a machine is logged in, with the login command of a tool installed there.
+- A new simple page in the team design tokens: two tabs, Home (one line per session, the manager last, the messages and the box to write) and Admin (People, Access, Machines, Rules, Notes, Log, Settings) for the admin only. Far less text; detail on hover; only what truly blocks shows as a warning. Members no longer have Notes, Rules, Machines and Workers on the page; their agents and the commands keep them.
+
 ## 0.8.2
 
 - New `kaptyorka status`: shows in up to four lines whether this machine's bridge, the hub and the manager are running.

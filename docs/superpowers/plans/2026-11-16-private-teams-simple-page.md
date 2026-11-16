@@ -119,7 +119,7 @@ Tests:
 Other:
 16. Login suggestion (Task 3): the command of a tool installed there (the first that reports a state), not always Claude's. The launch-failure text (bridge.py:240) and the manager's hub-login check stay.
 17. MCP send with a file to the manager: hub.py:321 skips `send_via_manager` when a file is attached; pass the file through with the same ownership check (or prove with a test it already works).
-18. No team or company names in the public repo: kaptyorka's own mark in the top bar; tokens called "the team design tokens"; no company name, sibling project names or paths, or "DGX" in committed files (this plan included).
+18. No team or company names in the public repo: kaptyorka's own mark in the top bar; tokens called "the team design tokens"; no company name, sibling project names or paths, or the team's machine names in committed files (this plan included).
 19. Release: doors opened by members before 0.9.0 stay open (group doors do not expire); after the update the admin reviews Admin > Access and closes unwanted ones. No migration code.
 
 Accepted consequence (one README line): a member's session cannot reply to a message from an admin's session except through the manager; replies to the admin's page still work, because the page send opens a door.

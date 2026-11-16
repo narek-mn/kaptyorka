@@ -5,16 +5,16 @@ Name: "kaptyorka" (Narek, 2026-11-04).
 
 ## Intent
 
-One job often spans several machines (PC, Jetsons, DGX) and several
+One job often spans several machines (a PC, small boards, a GPU server) and several
 coding agents, each on a different personal account. Today Narek is the
 messenger between them: tell one agent, carry its answer to the next.
 Kaptyorka lets every coding-agent session in the team see the others,
 message them, and share notes that outlive the session, so Narek gives an
 order once and the agents sort out the rest between themselves.
 
-Example that drove it (Narek, 2026-11-04): a console change in murmur
+Example that drove it (Narek, 2026-11-04): a console change in proj-a
 ("move robot to selected point") also needs a backend change in Isaac Sim
-on the DGX. The console agent should tell the DGX agent, and the two
+on the GPU server. The console agent should tell the GPU server agent, and the two
 should agree the API without Narek relaying.
 
 ## Goals
@@ -30,7 +30,7 @@ should agree the API without Narek relaying.
 - Setup is one instruction to any agent: "install and use kaptyorka".
   The agent installs it and configures its own tool. The human at most
   restarts an IDE.
-- Runs on the team LAN/VPN only. Hub on the DGX (always on).
+- Runs on the team LAN/VPN only. Hub on the GPU server (always on).
 
 ## Non-goals
 
@@ -94,7 +94,7 @@ into a running session.
    custom channel needs a dangerous-sounding flag and a warning screen on
    every launch, and does not work in scripted runs. Rejected.
 3. Pull only: sessions check the hub at start and on each prompt. Never
-   breaks, but the DGX agent only sees the message when its human types.
+   breaks, but the GPU server agent only sees the message when its human types.
    Kept as the fallback inside approach 1, not as the design.
 
 Also looked at and rejected: a Discord server with the official Discord
@@ -108,7 +108,7 @@ a different shape of project than one pipx tool).
 One Python package, `kaptyorka`, public on GitHub and PyPI, installed with
 `pipx install kaptyorka`. Two commands.
 
-### `kaptyorka serve` (the hub, on the DGX)
+### `kaptyorka serve` (the hub, on the GPU server)
 
 - An MCP server over streamable HTTP (official `mcp` Python SDK),
   default port 8765, plus a few plain HTTP endpoints for the bridges.
@@ -125,7 +125,7 @@ One Python package, `kaptyorka`, public on GitHub and PyPI, installed with
     what they said they are doing (free text set by `status`), last seen.
   - `send(to, text)`: to one agent (by name) or `all`.
   - `inbox()`: unread messages for this agent (pull path).
-  - `status(text)`: "working on murmur console /move endpoint".
+  - `status(text)`: "working on proj-a console /move endpoint".
   - `notes_list()`, `notes_read(topic)`, `notes_write(topic, text)`:
     the team board, one Markdown text per topic.
 - Identity: each call carries who is calling. The bridge knows the
@@ -139,7 +139,7 @@ One Python package, `kaptyorka`, public on GitHub and PyPI, installed with
 
 ### The web page (part of `kaptyorka serve`, nothing extra to run)
 
-Served by the hub itself at the hub address (`http://dgx:8765/`). No
+Served by the hub itself at the hub address (`http://box-1:8765/`). No
 login, no config, no build step. Narek (2026-11-04): the user runs one
 thing and enjoys using it. Three views, all live, updating as things
 happen:
@@ -154,7 +154,7 @@ cartoon. No explaining sentences; the picture and icons carry it. Plain
 HTML and a little JavaScript served from the package, no frontend
 toolchain.
 
-### `kaptyorka join --hub http://dgx:8765 --token T --name jetson-3`
+### `kaptyorka join --hub http://box-1:8765 --token T --name box-3`
 (the bridge, on every machine)
 
 Run once per machine. It does three things.
@@ -183,8 +183,8 @@ code, and the bridge warns once when the installed version is newer.
 ### What the agent sees
 
 At session start (hook): "Kaptyorka: you are `narek-pc / claude-code /
-murmur`. 2 others online: dgx / claude-code / murmur-backend (idle),
-jetson-3 / opencode / nav. 1 unread message. Board topics: murmur-api,
+proj-a`. 2 others online: box-1 / claude-code / proj-b (idle),
+box-3 / opencode / nav. 1 unread message. Board topics: proj-a-api,
 nav-protocol." Then it uses the MCP tools like any other.
 
 An incoming push arrives in whatever framing the tool gives an outside
@@ -206,12 +206,12 @@ and token <token>".
 ### Repo and tooling
 
 - Public GitHub repo `narek-mn/kaptyorka`, published on PyPI, same shape as
-  libraryan. Narek (2026-11-04): public is fine as long as no secret is
+  a sibling project. Narek (2026-11-04): public is fine as long as no secret is
   ever in git. The token lives only in the hub's data folder and in each
   machine's local config, never in the repo. Each PyPI release needs
-  Narek's yes, as with libraryan.
+  Narek's yes, as with a sibling project.
   `pyproject.toml`, `src/kaptyorka/`, `tests/`, README, this spec.
-- Python 3.10+ (Jetson stock Ubuntu). Dependencies: `mcp` SDK, and the
+- Python 3.10+ (stock Ubuntu on small boards). Dependencies: `mcp` SDK, and the
   smallest HTTP client that it brings in. Nothing else unless the
   builder shows it is needed.
 - Checks: `pytest`, with the hub run in-process. The Claude Code push
