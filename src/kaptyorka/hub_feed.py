@@ -94,7 +94,7 @@ def feed(store: Store, principal: Principal, ws=None) -> dict:
         "messages": [masked(store, principal, m, (("_from", "sender"), ("_to", "to")))
                      for m in store.messages_for(principal, 500)],
         "notes": _notes(store, principal),
-        "knocks": knocks(store, principal, to_me_only=True),
+        "knocks": knocks(store, principal) if admin else [],  # only the admin answers
         "doors": doors,
     }
     if not admin and ws is not None:  # only what blocks this person; the admin has /api/warnings

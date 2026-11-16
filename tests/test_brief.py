@@ -3,7 +3,7 @@ from dataclasses import replace
 
 import pytest
 
-from helpers import person
+from helpers import old_knock, person
 from kaptyorka import brief, rules as rules_mod
 from kaptyorka.memory import MemoryStore
 from kaptyorka.store import Store
@@ -96,15 +96,6 @@ def test_brief_sections_in_order(store, ws, ms, clock, team):
     assert f"Branches with open sessions: main ({me})" in text
     assert "hi alice" in text.split("Unread messages:")[1]
     assert len(text) <= brief.BUDGET
-
-
-def old_knock(store, from_key, to_person, about):
-    """A knock a member sent before 0.9.0 (only the admin knocks now)."""
-    with store.lock:
-        frm = store.db.execute("SELECT person_id FROM agents WHERE key=?", (from_key,)).fetchone()
-        store.db.execute("INSERT INTO knocks (from_key, from_person, to_key, to_person, about,"
-                         " created) VALUES (?,?,NULL,?,?,?)",
-                         (from_key, frm["person_id"], to_person, about, store.clock()))
 
 
 def test_knocks_line_for_the_admin_only(store, ws, ms, team):

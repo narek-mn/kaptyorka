@@ -74,3 +74,13 @@ def person(store, name: str, role: str = "member"):
                          " VALUES (?,?,?,?)",
                          (pid, f"{name}-laptop", hashlib.sha256(token.encode()).hexdigest(), now))
     return pid, token
+
+
+def old_knock(store, from_key: str, to_person: int, about: str) -> int:
+    """A knock a member sent before 0.9.0 (only the admin knocks now), still pending; its id."""
+    with store.lock:
+        frm = store.db.execute("SELECT person_id FROM agents WHERE key=?", (from_key,)).fetchone()
+        return store.db.execute(
+            "INSERT INTO knocks (from_key, from_person, to_key, to_person, about, created)"
+            " VALUES (?,?,NULL,?,?,?)",
+            (from_key, frm["person_id"], to_person, about, store.clock())).lastrowid

@@ -56,10 +56,10 @@ INVITE_WEB = ("<form method=post action='{action}'><button style='font:inherit;p
 
 INSTRUCTIONS = (
     "kaptyorka connects you with the other coding agents on this team. "
-    "who() lists online sessions; send(to, text) messages one by name or 'all'. "
-    "You may message your own person's sessions; for anyone else, knock(to, about) first "
-    "and wait for a yes; answer(knock_id, 'yes' or 'no') replies to a knock, only after "
-    "asking your person; door_close(to) ends a door; "
+    "who() lists the sessions you may reach; send(to, text) messages one by name or 'all'. "
+    "You may message your own person's sessions and the manager; to reach anyone else, "
+    "message the manager saying who and why: only the admin opens doors. door_close(to) "
+    "ends a door; "
     "inbox() reads your messages; status(text) says what you are working on; "
     "notes_list/notes_read/notes_write share a team board, one text per topic; "
     "pass project to use that project's notes. projects() lists the projects you have a role in. "
@@ -321,7 +321,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                      "the kaptyorka tool uploads it")
             file_id = int(m.group(1))
         key = me(ctx).key
-        n = None if file_id is not None else ws.send_via_manager(key, to, text, mm.person_id())
+        n = ws.send_via_manager(key, to, text, mm.person_id(), file_id)
         if n is None:
             n = store.send(key, to, text, file_id)
         wake_bridges()
@@ -330,8 +330,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.tool()
     @_tool_errors
     async def knock(to: str, about: str, ctx: Context) -> str:
-        """Ask another person's session (name or label), or the person by name, to open a door
-        so you can message it. Say in about what you want."""
+        """The admin only: ask another person's session (name or label), or the person by
+        name, to open a door. Anyone else messages the manager instead."""
         kid = store.knock(me(ctx).key, to, about)
         wake_bridges()
         return f"knocked (#{kid}); waiting for an answer"
@@ -339,8 +339,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.tool()
     @_tool_errors
     async def answer(knock_id: int, answer: str, ctx: Context) -> str:
-        """Answer a knock with "yes" (opens a door with this session) or "no". Ask your person
-        first."""
+        """The admin only: answer a knock with "yes" (opens a door) or "no"."""
         if answer not in ("yes", "no"):
             raise KaptyorkaError('answer must be "yes" or "no"')
         store.answer(knock_id, me(ctx).key, answer == "yes")

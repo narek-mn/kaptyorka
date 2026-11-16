@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import start_hub
-from helpers import person
+from helpers import old_knock, person
 from kaptyorka import http
 from kaptyorka.store import KaptyorkaError, Store
 
@@ -55,15 +55,16 @@ def test_feed_filtered_for_member(app):
     s.notes_write(x1.key, "team-topic", "everyone")
     s.project_register("proj")
     s.notes_write(x1.key, "plan", "secret plan", "proj")
-    kid = s.knock(b1.key, "ann", "can I ask about the api")
-    s.knock(a1.key, "ben", "the other way")
+    old_knock(s, b1.key, app.ids["ann"], "can I ask about the api")
+    old_knock(s, a1.key, app.ids["ben"], "the other way")
 
     f = get(app, "ann", "/api/feed")
     texts = [m["text"] for m in f["messages"]]
     assert "for ann" in texts and "for ben" not in texts
     assert all(m["kind"] in ("message", "knock", "door") and "file" in m for m in f["messages"])
     assert [(n["project"], n["topic"]) for n in f["notes"]] == [(None, "team-topic")]
-    assert [k["id"] for k in f["knocks"]] == [kid]
+    assert f["knocks"] == []  # only the admin answers knocks
+    assert len(get(app, "boss", "/api/feed")["knocks"]) == 2
     assert f["doors"] == []
     for extra in ("people", "requests", "decisions", "legacy", "machines", "projects", "archived_projects",
                   "log", "settings"):
@@ -211,29 +212,28 @@ def test_files_query_token_only_on_files_route(app):
 def test_knock_answer_route(app):
     s = app.store
     a1, b1 = online(app, "ann", "a1", "pc"), online(app, "ben", "b1", "box-2")
-    kid = s.knock(b1.key, "ann", "about the api")
-    status, body = post(app, "ben", f"/api/knocks/{kid}/answer", {"answer": "yes"})
-    assert status == 400 and "only ann or the admin" in body
-    assert post(app, "ann", f"/api/knocks/{kid}/answer", {"answer": "maybe"})[0] == 400
-    assert post(app, "ann", f"/api/knocks/{kid}/answer", {"answer": "yes"}) == \
-        (200, {"door": "session"})
-    assert s.may_message(b1.key, a1.key)
-    assert get(app, "ann", "/api/feed")["knocks"] == []
-    status, body = post(app, "ann", f"/api/knocks/{kid}/answer", {"answer": "yes"})
-    assert status == 400 and "already answered" in body
-
-    # carl has no session online: yes opens a door for all his sessions
-    carl, app.tokens["carl"] = person(s, "carl")
-    kid = s.knock(b1.key, "carl", "and you")
-    assert post(app, "carl", f"/api/knocks/{kid}/answer", {"answer": "yes"}) == \
+    kid = old_knock(s, b1.key, app.ids["ann"], "about the api")
+    for who in ("ann", "ben"):  # the knocked person and the knocker alike
+        assert post(app, who, f"/api/knocks/{kid}/answer", {"answer": "yes"}) == \
+            (400, "only the admin opens doors")
+    assert post(app, "boss", f"/api/knocks/{kid}/answer", {"answer": "maybe"})[0] == 400
+    assert post(app, "boss", f"/api/knocks/{kid}/answer", {"answer": "yes"}) == \
         (200, {"door": "group"})
-    c1 = online(app, "carl", "c1", "lab")
-    assert s.may_message(b1.key, c1.key)
-    kid = s.knock(b1.key, "carl", "once more")
-    assert post(app, "carl", f"/api/knocks/{kid}/answer", {"answer": "no"}) == (200, {"door": None})
+    assert s.may_message(b1.key, a1.key) and s.may_message(a1.key, b1.key)
+    assert get(app, "boss", "/api/feed")["knocks"] == []
+    status, body = post(app, "boss", f"/api/knocks/{kid}/answer", {"answer": "yes"})
+    assert status == 400 and "already answered" in body
+    # a knock to the admin, answered from the admin's own session: a session door
+    x1 = online(app, "boss", "x1", "box-1")
+    kid = old_knock(s, b1.key, app.ids["boss"], "and you")
+    assert post(app, "boss", f"/api/knocks/{kid}/answer", {"answer": "yes"}) == \
+        (200, {"door": "session"})
+    assert s.may_message(b1.key, x1.key)
+    kid = old_knock(s, b1.key, app.ids["ann"], "once more")
+    assert post(app, "boss", f"/api/knocks/{kid}/answer", {"answer": "no"}) == (200, {"door": None})
     log = [(r["person"], r["kind"]) for r in s.log(5)]
-    assert ("carl", "knock_answer") in log
-    assert post(app, "carl", "/api/knocks/9999/answer", {"answer": "no"})[0] == 400
+    assert ("boss", "knock_answer") in log
+    assert post(app, "boss", "/api/knocks/9999/answer", {"answer": "no"})[0] == 400
 
 
 def test_invite_web_login(app):
@@ -311,23 +311,14 @@ def test_admin_actions_log_the_admin(app):
                    ("boss", "person", "zed created as member")]
 
 
-def old_knock(s, from_key, to_person_id, about):
-    """A knock a member sent before 0.9.0 (members cannot knock now); its id."""
-    with s.lock:
-        frm = s.db.execute("SELECT person_id FROM agents WHERE key=?", (from_key,)).fetchone()
-        return s.db.execute(
-            "INSERT INTO knocks (from_key, from_person, to_key, to_person, about, created)"
-            " VALUES (?,?,NULL,?,?,?)",
-            (from_key, frm["person_id"], to_person_id, about, s.clock())).lastrowid
-
-
 def test_knock_and_door_sessions_masked(app):
     s = app.store
     online(app, "ann", "a1", "pc", "mine")
     b1 = online(app, "ben", "b1", "box-2", "secret")
     kid = old_knock(s, b1.key, app.ids["ann"], "a question")
-    # ben's session is not listed for ann: the knock names no session
-    assert get(app, "ann", "/api/feed")["knocks"][0]["from_session"] == ""
+    # only the admin answers, so ann's page shows no knock; ben's session is not listed for
+    # her, so the knock names no session
+    assert get(app, "ann", "/api/feed")["knocks"] == []
     assert get(app, "ann", "/api/knocks")[0]["from_session"] == ""
     assert get(app, "boss", "/api/feed")["knocks"][0]["from_session"] == b1.name
     assert post(app, "boss", f"/api/knocks/{kid}/answer", {"answer": "yes"}) == \

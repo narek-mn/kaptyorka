@@ -9,7 +9,7 @@ import pytest
 
 import kaptyorka
 from conftest import start_hub
-from helpers import call, call_error, person, run
+from helpers import call, call_error, old_knock, person, run
 from test_hub_workers import BOSS, as_token, bridge, heartbeat, ident, member, poll
 from kaptyorka import http, identity, manager, paths
 from kaptyorka.hub import MANAGER_FAILED, MANAGER_FIRST
@@ -477,11 +477,14 @@ def test_manager_cannot_answer_others_knock(hub):
     _, _, ann = plain(hub, "ann")
     _, _, ben = plain(hub, "ben")
     A, B = ident("k:ann", machine="pc-1"), ident("k:ben", machine="pc-2")
+    run(call(ann, A, "inbox"))
     run(call(ben, B, "inbox"))
-    out = run(call(ann, A, "knock", to="ben", about="review?"))
-    kid = int(out.split("#")[1].split(")")[0])
-    assert call_error(mgr, me, "answer", knock_id=kid, answer="yes")
-    run(call(ben, B, "answer", knock_id=kid, answer="yes"))
+    kid = old_knock(hub.store, "k:ann", hub.store.person_by_name("ben")["id"], "review?")
+    assert call_error(mgr, me, "answer", knock_id=kid, answer="yes").endswith(
+        "only the admin opens doors")
+    assert call_error(mgr, me, "knock", to="ben", about="a door?").endswith(
+        "ask the manager: send it a message saying who you need and why")
+    assert hub.store.doors() == []
 
 
 def test_manager_refused_by_admin_only_routes(hub):

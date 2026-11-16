@@ -47,7 +47,7 @@ def test_readme_manager_section():
     r = (ROOT / "README.md").read_text()
     m = r.split("## The manager", 1)[1].split("\n## ", 1)[0]
     for s in ["claude attach manager", "--no-manager", "work_decide", "~/.kaptyorka/manager/", "manager-config.json",
-              "cannot answer other people's knocks", "It messages, knocks and files proposals",
+              "cannot answer other people's knocks", "It messages and files proposals",
               "signs in as the manager, so exit it", "`kaptyorka start --manager`",
               "`--settings ~/.kaptyorka/manager/settings.json`",
               "`--strict-mcp-config --mcp-config ~/.kaptyorka/manager/mcp.json`", "`--setting-sources project,local`",

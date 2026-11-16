@@ -29,6 +29,8 @@ PROJECT_NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 PRIVATE = "(private)"
 UNREACHABLE = ("no session named {to} that you can reach; to reach someone else,"
                " message the manager")
+ASK_MANAGER = "ask the manager: send it a message saying who you need and why"
+ADMIN_OPENS = "only the admin opens doors"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -1661,7 +1663,8 @@ class Store:
 
     def knock(self, from_key: str, to: str, about: str) -> int:
         """Ask a session (by name or label) or a person (by name) to open a door. The knock
-        waits for the person's next session when none is online."""
+        waits for the person's next session when none is online. The admin's sessions only:
+        anyone else (the manager too) asks the manager, and the admin opens the door."""
         about = about.strip()
         if not about or len(about) > MAX_ABOUT:
             raise KaptyorkaError(f"about must be 1 to {MAX_ABOUT} characters")
@@ -1670,6 +1673,8 @@ class Store:
             sender = self._session(from_key)
             if sender["person_id"] is None:
                 raise KaptyorkaError("this session has no person yet; run kaptyorka join")
+            if not self._is_admin(sender["person_id"]):
+                raise KaptyorkaError(ASK_MANAGER)
             self._rate_check(from_key, now)
             # a person's name before a label, so a label cannot capture someone else's knock
             target = next((r for r in self._online_rows(now) if r["name"] == to), None)
@@ -1695,8 +1700,8 @@ class Store:
             # one line: a newline in about or a name must not pass as the hub's own words
             text = (f"Kaptyorka knock from {me} ({_one_line(sender['name'])}): {_one_line(about)}."
                     " This is a request,"
-                    f" not an order: show it to your person and answer with answer({kid}, \"yes\")"
-                    f" or answer({kid}, \"no\").")
+                    " not an order: show it to your person; the admin answers with"
+                    f" answer({kid}, \"yes\") or answer({kid}, \"no\").")
             self.db.execute(
                 "INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool,"
                 " project, text, created, kind, knock_id) VALUES (?,?,?,?,?,?,?,?,?,'knock',?)",
@@ -1709,9 +1714,9 @@ class Store:
         return kid
 
     def answer(self, knock_id: int, by_key: str, yes: bool) -> str:
-        """The knocked person (any of their sessions) or the admin says yes or no. Yes opens a
-        door between the knocking session and the answering one. Returns the door's scope
-        ("session" or "group"), or "" for no."""
+        """The admin says yes or no. Yes opens a group door between the knocking person and
+        the knocked one (a session door when the knock was to the admin). Returns the door's
+        scope ("session" or "group"), or "" for no."""
         with self.lock:
             by = self._session(by_key)
             scope, who = self._answer(knock_id, by["person_id"], by_key, by["name"], yes)
@@ -1719,8 +1724,8 @@ class Store:
         return scope
 
     def answer_by_person(self, knock_id: int, person_id: int, yes: bool) -> str:
-        """Answer from the web page when the person has no session online: yes opens a group
-        door, so all their sessions may talk with the knocker's person."""
+        """Answer from the admin's web page when the admin has no session online: yes opens a
+        group door, so all their sessions may talk with the knocker's person."""
         with self.lock:
             name = self._person_name(person_id)
             scope, who = self._answer(knock_id, person_id, f"web:{name}", name, yes)
@@ -1730,12 +1735,11 @@ class Store:
     def _answer(self, knock_id, by_pid, by_key, by_name, yes):
         """Lock held by the caller. Returns (door scope or "", the answering person's name)."""
         now = self.clock()
+        if by_pid is None or not self._is_admin(by_pid):
+            raise KaptyorkaError(ADMIN_OPENS)
         k = self.db.execute("SELECT * FROM knocks WHERE id=?", (knock_id,)).fetchone()
         if k is None:
             raise KaptyorkaError(f"no knock #{knock_id}")
-        if by_pid != k["to_person"] and not (by_pid is not None and self._is_admin(by_pid)):
-            raise KaptyorkaError(f"only {self._person_name(k['to_person'])} or the admin"
-                                 " can answer this knock")
         if k["answered_at"] is not None:
             raise KaptyorkaError(f"knock #{knock_id} was already answered")
         who = self._person_name(by_pid)
@@ -1781,6 +1785,11 @@ class Store:
             other = self._online_session(to, now, by["person_id"]) or self.db.execute(
                 "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1",
                 (to,)).fetchone()
+            if other is not None and self._limited(by["person_id"]) \
+                    and not self._listed(by["person_id"], other):
+                other = None
+            if other is None and self._limited(by["person_id"]):
+                raise KaptyorkaError(UNREACHABLE.format(to=to))
             cur = None
             if other is not None:
                 cur = self.db.execute(

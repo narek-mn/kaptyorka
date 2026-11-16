@@ -796,9 +796,11 @@ class WorkerStore:
         return [{"person_id": k, "person": v[2], "error": v[1]} for k, v in by.items() if v[0] >= 2]
 
     def send_via_manager(self, sender_key: str, to: str, text: str,
-                         manager_pid: Optional[int]) -> Optional[int]:
+                         manager_pid: Optional[int],
+                         file_id: Optional[int] = None) -> Optional[int]:
         """The manager needs no door: a send from its sessions, or to one of them, goes in
-        without the door check. None when neither side is the manager (use store.send)."""
+        without the door check. None when neither side is the manager (use store.send).
+        `file_id`: an attachment, checked as store.send checks it."""
         if manager_pid is None:
             return None
         st = self.store
@@ -820,7 +822,12 @@ class WorkerStore:
                 if sender["person_id"] != manager_pid and manager_pid not in pids:
                     return None
                 st._rate_check(sender_key, now)
-            n = st._insert(sender_key, sender["name"], targets, text, now)
+            if file_id is not None:
+                f = st.db.execute("SELECT person_id, message_id FROM files WHERE id=?",
+                                  (file_id,)).fetchone()
+                if f is None or f["person_id"] != sender["person_id"] or f["message_id"] is not None:
+                    raise KaptyorkaError("that file is not yours")
+            n = st._insert(sender_key, sender["name"], targets, text, now, file_id)
             st._rate_hit(sender_key, now)
             return n
 

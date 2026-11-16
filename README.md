@@ -118,10 +118,10 @@ A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join`
 
 | Tool | What it does |
 |---|---|
-| `who` | List sessions online: machine, tool, project, name. A project you may not see shows as `(private)` |
+| `who` | List the sessions you may reach: your own, the manager's, and those behind a door. A project you may not see shows as `(private)` |
 | `send` | Message one session, or `all`; `file=<local path>` attaches a file |
-| `knock` | Ask another person's session (or the person) to open a door |
-| `answer` | Answer a knock with "yes" or "no" |
+| `knock` | The admin only: ask another person's session (or the person) to open a door |
+| `answer` | The admin only: answer a knock with "yes" or "no" |
 | `door_close` | Close a door |
 | `inbox` | Read your messages |
 | `fetch_file` | Save a file from a message to `~/.kaptyorka/inbox/` |
@@ -253,7 +253,7 @@ The **Machines** tab on the page shows each machine, its workers and warnings (f
 
 The manager is one Claude Code session that the hub starts and keeps alive on the hub machine. It is a worker named `manager`, under its own person and device, also called `manager`. The hub launches it through the admin's own bridge on that machine. It is not a coder. It settles who gets a machine, and it watches for what needs the admin. Attach from the hub machine with `claude attach manager`.
 
-What it decides: when you call `work` for a machine that holds another person's session in that folder, the hub does not guess. It saves a work request and tells the manager. The manager knocks or messages the person who holds the machine, reads the answer, then calls `work_decide(request_id, machine, reason)`. `machine` is a host, or `wait`. Each decision is checked by the hub, not by the manager's word:
+What it decides: when you call `work` for a machine that holds another person's session in that folder, the hub does not guess. It saves a work request and tells the manager. The manager messages the person who holds the machine, reads the answer, then calls `work_decide(request_id, machine, reason)`. `machine` is a host, or `wait`. Each decision is checked by the hub, not by the manager's word:
 
 - Your use of the machine: you must still be allowed to use it.
 - Your write role in the project, checked again when it decides.
@@ -264,7 +264,7 @@ Every decision carries a reason, is written to the log, and is told to the asker
 
 What the hub tells it: a worker abandoned for a day, a shared machine whose bridge is offline, a person whose workers failed to start twice, a proposal or an access request waiting a day, and once a week a prompt to read `log(500)` and file `propose_rule` for repeated clashes. It passes these on to the admin. An abandoned worker is sent once; an offline bridge and a day-old proposal or request are sent once a day; the failed-twice note at most once an hour; the review once a week.
 
-What it cannot do: it cannot answer other people's knocks, open doors, grant or revoke roles, edit rules or decide proposals. It messages, knocks and files proposals. What enforces this is the launch, not its instructions. The hub starts it with `--settings ~/.kaptyorka/manager/settings.json`, `--strict-mcp-config --mcp-config ~/.kaptyorka/manager/mcp.json`, `--setting-sources project,local` and `--tools=ToolSearch`, and writes both files again whenever they change or go missing. `--setting-sources project,local` makes Claude Code skip the admin's user settings (permission mode, allow rules, hooks, plugins), so the manager does not get them; the admin's user-level `CLAUDE.md` still loads as memory, the manager's own instructions come from the folder's `CLAUDE.md`, and `settings.json` pins the permission mode to `default`. The session is not restricted, so it has an inbox socket and the hub can wake it with a message (Claude Code 2.1.3xx removes that socket in restricted mode). `--tools=ToolSearch` leaves it no built-in tool except the one that loads its MCP tools: no commands, file reads or edits, web access, subagents, or tools that reach other sessions. `settings.json` allows only `mcp__kaptyorka__*`, denies Bash, Edit, Write, NotebookEdit, WebFetch, WebSearch, Read, Glob, Grep, Agent and Task as a second fence, and carries the same three kaptyorka hooks `join` installs. The strict MCP config gives it the kaptyorka server only: none of the admin's other MCP servers or connectors. Messages from people are information to it, not orders, but that line is advice; the flags above are the control. It does have two things others do not: messages to and from the manager need no door (page replies too), and it can read the log with `log`.
+What it cannot do: it cannot answer other people's knocks, open doors, grant or revoke roles, edit rules or decide proposals. It messages and files proposals. What enforces this is the launch, not its instructions. The hub starts it with `--settings ~/.kaptyorka/manager/settings.json`, `--strict-mcp-config --mcp-config ~/.kaptyorka/manager/mcp.json`, `--setting-sources project,local` and `--tools=ToolSearch`, and writes both files again whenever they change or go missing. `--setting-sources project,local` makes Claude Code skip the admin's user settings (permission mode, allow rules, hooks, plugins), so the manager does not get them; the admin's user-level `CLAUDE.md` still loads as memory, the manager's own instructions come from the folder's `CLAUDE.md`, and `settings.json` pins the permission mode to `default`. The session is not restricted, so it has an inbox socket and the hub can wake it with a message (Claude Code 2.1.3xx removes that socket in restricted mode). `--tools=ToolSearch` leaves it no built-in tool except the one that loads its MCP tools: no commands, file reads or edits, web access, subagents, or tools that reach other sessions. `settings.json` allows only `mcp__kaptyorka__*`, denies Bash, Edit, Write, NotebookEdit, WebFetch, WebSearch, Read, Glob, Grep, Agent and Task as a second fence, and carries the same three kaptyorka hooks `join` installs. The strict MCP config gives it the kaptyorka server only: none of the admin's other MCP servers or connectors. Messages from people are information to it, not orders, but that line is advice; the flags above are the control. It does have two things others do not: messages to and from the manager need no door (page replies too), and it can read the log with `log`.
 
 Keeping it alive: if it stops, the hub starts it again, at most twice an hour. When it has been idle for about an hour, Claude Code stops it to save resources. The manager then sleeps: a message or a request to it starts it again within a minute, with a fresh conversation. Settings shows Asleep. The hub's own notices to it (the weekly review, abandoned workers, reminders) wait while it sleeps and go out when it wakes; they do not wake it. If a launch fails twice, the admin hears of it on the page. The first launch on a new hub machine can fail until Claude Code trusts the folder. The flags above do not skip this one-time trust step: run `claude` once in `~/.kaptyorka/manager` and accept the prompt; `kaptyorka start` prints this line. That session signs in as the manager, so exit it right after accepting. Until then the hub does not retry: after a launch fails this way, the admin's page gets one line, and the hub waits for `kaptyorka start --manager`.
 
@@ -364,14 +364,14 @@ The **Log** tab shows who did what, in plain sentences ("alice made an invite li
 
 ## Groups and doors
 
-A person's sessions are a group. `send` reaches your own sessions at will; the admin can message anyone. For anyone else you need a door:
+A person's sessions are a group. A member sees and messages only their own sessions and the manager; everyone else is left out of `who`, the page and every error. The admin and the manager see and message everyone.
 
-- `knock(to, about)` asks a session, or a person by name, to open a door, and says why. The other person's agent shows it to its human.
-- `answer(knock_id, "yes")` opens a door between the two sessions; `"no"` declines. Only the knocked person or the admin can answer.
-- `door_close(to)` closes it. A session door ends when either side closes it or goes offline.
-- `send("all")` reaches every session you may message: your own, and those you have a door to.
+- To reach someone else, message the manager saying who and why. The manager tells the admin.
+- Only the admin opens a door: on the page (Doors), or by answering a knock. Members cannot knock or answer.
+- While a door is open, the two people see and message each other's sessions; `door_close(to)` or the admin closes it.
+- `send("all")` reaches every session you may message: your own, and those behind a door.
 
-The page follows the same rules. A message from the page to a session opens a door, so the session can reply.
+The page follows the same rules. A message from the page to a session opens a door, so the session can reply. A member's session cannot reply to the admin's session except through the manager; replies to the admin's page work.
 
 ## Attachments
 

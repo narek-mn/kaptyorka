@@ -3,7 +3,7 @@ those behind a door the admin opened."""
 from types import SimpleNamespace
 
 import pytest
-from helpers import call, call_error, person, run
+from helpers import call, call_error, old_knock, person, run
 
 from kaptyorka import http
 from kaptyorka.store import KaptyorkaError
@@ -26,7 +26,7 @@ def team(hub):
     for name, role in (("alice", "member"), ("bob", "member"), ("admin", "admin"),
                        ("manager", "manager")):
         ids[name], tokens[name] = person(s, name, role)
-    labels = {"alice": "front", "bob": "back", "admin": "boss-desk", "manager": "hq"}
+    labels = {"alice": "front", "bob": "bob-desk", "admin": "boss-desk", "manager": "hq"}
     keys = {}
     for name in ("alice", "bob", "admin", "manager"):
         keys[name] = f"k:{name}"
@@ -124,12 +124,170 @@ def test_member_warnings_are_their_own(team):
     assert http.request("GET", team.hub.url + "/api/warnings", team.tokens["alice"])[0] == 403
 
 
-def test_member_offline_or_unknown_name_same_refusal(team):
+# Task 2: only the admin opens doors; members ask the manager
+
+ASK = "ask the manager: send it a message saying who you need and why"
+
+
+def test_member_knock_refused_points_to_manager(team):
     s = team.store
+    for who in ("alice", "manager"):
+        with pytest.raises(KaptyorkaError, match=ASK):
+            s.knock(team.keys[who], "bob", "review?")
+    assert call_error(client(team, "alice"), me(team, "alice"), "knock", to="bob",
+                      about="review?").endswith(ASK)
+    assert s.db.execute("SELECT COUNT(*) FROM knocks").fetchone()[0] == 0
+    assert s.knock(team.keys["admin"], "bob", "a word?") > 0  # the admin still may
+
+
+def test_knocked_member_cannot_answer(team):
+    s = team.store
+    kid = old_knock(s, team.keys["bob"], team.ids["alice"], "help?")
+    with pytest.raises(KaptyorkaError, match="only the admin opens doors"):
+        s.answer(kid, team.keys["alice"], True)
+    assert call_error(client(team, "alice"), me(team, "alice"), "answer", knock_id=kid,
+                      answer="yes").endswith("only the admin opens doors")
+    status, body = http.request("POST", f"{team.hub.url}/api/knocks/{kid}/answer",
+                                team.tokens["alice"], {"answer": "yes"})
+    assert (status, body) == (400, "only the admin opens doors")
+    assert s.doors() == []
+
+
+def test_admin_answer_opens_door(team):
+    s = team.store
+    kid = old_knock(s, team.keys["bob"], team.ids["alice"], "help?")
+    status, body = http.request("POST", f"{team.hub.url}/api/knocks/{kid}/answer",
+                                team.tokens["admin"], {"answer": "yes"})
+    assert (status, body) == (200, {"door": "group"})
+    assert s.send(team.keys["alice"], team.names["bob"], "hi") == 1
+    assert s.send(team.keys["bob"], team.names["alice"], "hi back") == 1
+
+
+def test_member_send_all_reaches_own_and_door_partners_only(team):
+    s = team.store
+    s.heartbeat("box-1", [{"key": "k:alice2", "tool": "codex", "project": "proj-b"}],
+                principal=s.authenticate(team.tokens["alice"]))
+    s.heartbeat("box-1", [{"key": team.keys["alice"], "tool": "codex", "project": "proj-a",
+                           "label": "front"},
+                          {"key": "k:alice2", "tool": "codex", "project": "proj-b"}],
+                principal=s.authenticate(team.tokens["alice"]))
+    assert s.send(team.keys["alice"], "all", "hi") == 1  # her other session only
+    s.open_door_group(team.ids["alice"], team.ids["bob"], "admin")
+    assert s.send(team.keys["alice"], "all", "hi") == 2
+
+
+def test_member_reaches_manager_without_door(team):
+    a = client(team, "alice")
+    assert run(call(a, me(team, "alice"), "send", to=team.names["manager"], text="who?")) \
+        == "sent to 1 session"
+    assert run(call(a, me(team, "alice"), "send", to="hq", text="by label")) \
+        == "sent to 1 session"
+    assert [m.text for m in team.store.inbox(team.keys["manager"])] == ["who?", "by label"]
+
+
+def test_member_sends_a_file_to_the_manager(team):
+    s = team.store
+    fid = s.file_add("a.txt", b"hello", team.ids["alice"])
+    a = client(team, "alice")
+    assert run(call(a, me(team, "alice"), "send", to="hq", text="see this",
+                    file=f"id:{fid}")) == "sent to 1 session"
+    [m] = s.inbox(team.keys["manager"])
+    assert (m.text, m.file["id"]) == ("see this", fid)
+    other = s.file_add("b.txt", b"x", team.ids["bob"])
+    assert call_error(a, me(team, "alice"), "send", to="hq", text="theirs",
+                      file=f"id:{other}").endswith("that file is not yours")
+    assert call_error(a, me(team, "alice"), "send", to="hq", text="again",
+                      file=f"id:{fid}").endswith("that file is not yours")
+
+
+def _alice_reads(team) -> str:
+    """Everything alice can read about sessions: GET routes, read tools, brief, errors."""
+    s, url, tok = team.store, team.hub.url, team.tokens["alice"]
+    a, ident_a = client(team, "alice"), me(team, "alice")
+    out = []
+    for path in ("/api/feed", "/api/machines", "/api/projects", "/api/projects/proj-a/activity",
+                 "/api/knocks", "/api/me/access", "/api/workers", "/api/requests"):
+        status, body = http.request("GET", url + path, tok)
+        assert status == 200, (path, body)
+        out.append(repr(body))
+    for tool in ("who", "projects", "workers", "inbox"):
+        out.append(repr(run(call(a, ident_a, tool))))
+    h = {f"X-Kaptyorka-{k.capitalize()}": v for k, v in ident_a.items()}
+    run(call(client(team, "manager"), me(team, "manager"), "send", to=team.names["alice"],
+             text="x"))  # an unread message: a fresh brief, not the cached one
+    out.append(http.request("GET", url + "/api/brief?event=start", tok, headers=h)[1])
+    return "\n".join(out)
+
+
+def _alice_errors_name_no_one(team, hidden: bool) -> None:
+    """A send or door_close to the admin's session (always) or bob's (unless a door is open)
+    gets the one refusal text, which names only what alice typed."""
+    a, ident_a, tok = client(team, "alice"), me(team, "alice"), team.tokens["alice"]
+    names = ["nobody", team.names["admin"], team.labels["admin"]]
+    if hidden:
+        names += [team.names["bob"], team.labels["bob"]]
+    for to in names:
+        want = ("no session named " + to + " that you can reach; to reach someone else,"
+                " message the manager")
+        assert call_error(a, ident_a, "send", to=to, text="x").endswith(want)
+        assert http.request("POST", team.hub.url + "/api/send", tok,
+                            {"to": to, "text": "x"}) == (400, want)
+        assert call_error(a, ident_a, "door_close", to=to).endswith(want)
+
+
+def _hidden(team, who) -> list:
+    """Words of `who`'s session that show in a text: its name, label and folder."""
+    return [team.names[who], team.labels[who], f"/w/{who}"]
+
+
+def test_sweep_member_reads_name_no_one_else(team):
+    s = team.store
+    s.project_register("proj-a")
+    for name in ("alice", "bob"):
+        s.grant_project("proj-a", team.ids[name], "read", "admin")
+    s.grant_machine("box-1", team.ids["alice"], "admin")
+    for who in ("alice", "bob", "admin", "manager"):  # each session in its own folder, on git
+        cwd = f"/w/{who}"
+        status, _ = http.request("POST", team.hub.url + "/bridge/heartbeat", team.tokens[who], {
+            "machine": "box-1", "folders": {"proj-a": cwd},
+            "sessions": [{"key": team.keys[who], "tool": "codex", "project": "proj-a",
+                          "label": team.labels[who], "cwd": cwd}],
+            "facts": {"host": "box-1", "os_user": who,
+                      "git": {cwd: {"branch": f"br-{who}", "subject": "wip"}}}})
+        assert status == 200
+    old_knock(s, team.keys["bob"], team.ids["alice"], "a word?")  # from before 0.9.0
+
+    def check(visible):
+        text = _alice_reads(team)
+        for who in ("bob", "admin"):
+            for word in _hidden(team, who)[:2]:  # name and label: only behind a door
+                assert (word in text) == (who in visible), (who, word)
+            # the folder never; git lines of a shared project name branches and people (kept)
+            assert f"/w/{who}" not in text, who
+        assert team.names["manager"] in text
+        _alice_errors_name_no_one(team, hidden="bob" not in visible)
+
+    check(visible=())
+    did = s.open_door_group(team.ids["alice"], team.ids["bob"], "admin")
+    check(visible=("bob",))
+    s.close_door(did, "admin")
+    check(visible=())
+
+
+def test_shared_label_and_offline_name(team):
+    s = team.store
+    s.heartbeat("box-1", [{"key": team.keys["bob"], "tool": "codex", "project": "proj-a",
+                           "label": "front"}], principal=s.authenticate(team.tokens["bob"]))
+    s.heartbeat("box-1", [{"key": "k:alice2", "tool": "codex", "project": "proj-b"}],
+                principal=s.authenticate(team.tokens["alice"]))
+    assert s.send("k:alice2", "front", "mine") == 1  # alice's "front", not bob's
+    assert [m.text for m in s.inbox(team.keys["alice"])] == ["mine"]
+    assert s.inbox(team.keys["bob"]) == []
+    bob_name = team.names["bob"]
+    with s.lock:
+        s.db.execute("UPDATE agents SET last_seen=last_seen-100 WHERE key=?", (team.keys["bob"],))
+    with pytest.raises(KaptyorkaError) as offline:
+        s.send("k:alice2", bob_name, "x")
     with pytest.raises(KaptyorkaError) as unknown:
-        with s.lock:
-            s._targets(team.keys["alice"], "nobody", s.clock(), team.ids["alice"])
-    with pytest.raises(KaptyorkaError) as bobs:
-        with s.lock:
-            s._targets(team.keys["alice"], team.names["bob"], s.clock(), team.ids["alice"])
-    assert str(bobs.value) == str(unknown.value).replace("nobody", team.names["bob"])
+        s.send("k:alice2", "nobody", "x")
+    assert str(offline.value) == str(unknown.value).replace("nobody", bob_name)
