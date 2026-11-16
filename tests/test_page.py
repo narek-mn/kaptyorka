@@ -230,7 +230,10 @@ def test_machines_show_which_tools_are_logged_in(hub):
     html = page(hub)
     assert "logins = f.logins || {}" in html and "logins[t] === false" in html
     assert '"not logged in"' in html and '"class": "login-off"' in html
-    assert '" is not logged in on this machine. Run "' in html and '" there."' in html
+    assert '"No agent tool is logged in on this machine. Run "' in html and '" there."' in html
+    # one logged-in tool is enough: the others' dots go grey and no help line shows
+    assert 'return logins[t] === true;' in html and '(anyIn ? " quiet" : "")' in html
+    assert "return !anyIn && logins[t] === false" in html and ".login-off.quiet" in html
     for name, cmd in [("Claude Code", "claude auth login"), ("Codex", "codex login"),
                       ("OpenCode", "opencode auth login")]:
         assert f'["{name}", "{cmd}"]' in html

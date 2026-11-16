@@ -247,7 +247,7 @@ The old shared token cannot start, adopt or close workers. Use your own token.
 
 "Shared" means an account that more than one person uses. The admin marks an account as shared with the **Shared** button on the page (Access tab). A worker started there runs as that OS account. It can read everything the account can read, including the account's kaptyorka token, git keys and ssh keys. So share only an account that was set up for this. The hub does not let a worker on a shared account start, adopt or close workers; it must ask its boss. This stops mistakes. It does not stop a hostile worker. A proper identity for each worker comes in a later version.
 
-The **Machines** tab on the page shows each machine, its workers and warnings (for example an old version). It also has the auto-update switch for each account. The Machines tab shows which agent tools are installed and logged in on each machine, as the tools report it; a tool that is not logged in cannot run workers there.
+The **Machines** tab on the page shows each machine, its workers and warnings (for example an old version). It also has the auto-update switch for each account. The Machines tab shows which agent tools are installed and logged in on each machine, as the tools report it; a tool that is not logged in cannot run workers there. One logged-in tool is enough: the hub warns only when none is.
 
 ## The manager
 

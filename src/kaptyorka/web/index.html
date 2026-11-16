@@ -375,6 +375,7 @@ td.c-act .btn, td.c-act select { vertical-align: middle; }
 .dot.on { border-color: var(--green); background: var(--green); }
 .tag.warn { color: var(--amber); border-color: rgba(245, 183, 61, .4); }
 .tag .login-off { width: 6px; height: 6px; border-radius: 50%; background: var(--red); margin-right: -2px; }
+.tag .login-off.quiet { background: var(--faint); }
 .tag[title] { cursor: help; }
 .login-line { margin-top: 6px; font-size: 12px; color: var(--red); white-space: normal; }
 .login-line code { font: 12px var(--mono); color: var(--text); }
@@ -2202,15 +2203,20 @@ tr.archived b { color: var(--dim); }
       var tb = el("tbody");
       m.devices.forEach(function (d) {
         var f = d.facts || {}, tools = f.tools || {}, hooks = f.hooks_ok || {}, logins = f.logins || {};
+        /* one logged-in tool is enough: the others' dots go grey, their command on hover */
+        var anyIn = Object.keys(logins).some(function (t) { return logins[t] === true; });
         var toolTags = el("div", { "class": "cell-tags" }, Object.keys(tools).sort().map(function (t) {
           var bad = hooks[t] === false, out = logins[t] === false;
-          var why = [bad ? "kaptyorka hooks missing" : "", out ? "not logged in" : ""].filter(Boolean).join("; ");
+          var why = [bad ? "kaptyorka hooks missing" : "",
+                     out ? "not logged in" + (LOGINS[t] ? ": " + LOGINS[t][1] : "") : ""].filter(Boolean).join("; ");
           return el("span", { "class": "tag" + (bad ? " warn" : ""), title: why || null },
-                    [out ? el("i", { "class": "login-off" }) : null, t, el("small", { text: tools[t] || "" })]);
+                    [out ? el("i", { "class": "login-off" + (anyIn ? " quiet" : "") }) : null, t,
+                     el("small", { text: tools[t] || "" })]);
         }));
-        var loginLines = Object.keys(tools).sort().filter(function (t) { return logins[t] === false && LOGINS[t]; })
-          .map(function (t) {
-            return el("div", { "class": "login-line" }, [LOGINS[t][0] + " is not logged in on this machine. Run ",
+        /* as the hub's warning: the first tool that reports a state */
+        var loginLines = Object.keys(logins).filter(function (t) { return !anyIn && logins[t] === false && LOGINS[t]; })
+          .slice(0, 1).map(function (t) {
+            return el("div", { "class": "login-line" }, ["No agent tool is logged in on this machine. Run ",
                       el("code", { text: LOGINS[t][1] }), " there."]);
           });
         var folders = el("div", { "class": "cell-list" }, Object.keys(d.folders || {}).sort().map(function (p) {

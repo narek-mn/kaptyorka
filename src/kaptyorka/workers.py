@@ -886,10 +886,13 @@ class WorkerStore:
             for tool, ok in (facts.get("hooks_ok") or {}).items():
                 if ok is False:
                     add(rest, f"{tool} on {who} is set up but its kaptyorka hooks are missing")
-            for tool, ok in (facts.get("logins") or {}).items():
-                if ok is False and tool in LOGIN_COMMANDS:
-                    add(rest, f"{who}: {TOOL_NAMES[tool]} is not logged in."
-                        f" Run `{LOGIN_COMMANDS[tool]}` there.")
+            # one logged-in tool is enough; warn only when every tool that knows is logged out,
+            # suggesting the login of the first such tool installed there
+            known = {t: ok for t, ok in (facts.get("logins") or {}).items() if ok is not None}
+            out = [t for t, ok in known.items() if ok is False and t in LOGIN_COMMANDS]
+            if out and not any(known.values()):
+                add(rest, f"{who}: no agent tool is logged in."
+                    f" Run `{LOGIN_COMMANDS[out[0]]}` there.")
             if d["shared"] and facts.get("tmux") is False:
                 add(rest, f"{who} has no tmux: only Claude Code workers can run there")
         for w in workers:

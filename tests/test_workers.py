@@ -812,14 +812,24 @@ def test_clean_facts_logins():
     assert "logins" not in clean_facts({"logins": "x"})
 
 
-def test_warning_for_a_tool_not_logged_in(store, ws, alice, clock):
+def test_no_warning_when_one_tool_logged_in(store, ws, alice, clock):
     a = device(store, alice, "box-1", "alice")[0]
     ws.facts_seen(a, {"version": "0.3.0", "tmux": True,
                       "logins": {"claude-code": False, "codex": None, "opencode": True}}, {})
+    assert ws.warnings(clock[0], "0.3.0") == []
+
+
+def test_warning_when_no_tool_logged_in(store, ws, alice, clock):
+    a = device(store, alice, "box-1", "alice")[0]
+    ws.facts_seen(a, {"version": "0.3.0", "tmux": True,
+                      "logins": {"codex": False, "claude-code": False, "opencode": None}}, {})
     got = ws.warnings(clock[0], "0.3.0")
+    # one line, with the login of a tool installed there (the first that reports a state)
     assert [w["text"] for w in got] == [
-        "box-1 (alice): Claude Code is not logged in. Run `claude auth login` there."]
+        "box-1 (alice): no agent tool is logged in. Run `codex login` there."]
     assert got[0]["host"] == "box-1" and got[0]["person"] == "alice"
+    ws.facts_seen(a, {"version": "0.3.0", "tmux": True, "logins": {"codex": None}}, {})
+    assert ws.warnings(clock[0], "0.3.0") == []  # no tool knows: nothing to say
 
 
 # the manager worker
