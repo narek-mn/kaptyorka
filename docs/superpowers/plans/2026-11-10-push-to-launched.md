@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.10, pytest, SQLite. No new dependencies.
 
-**Spec:** observed on the hub machine on 2026-11-10, Claude Code 2.1.322, kaptyorka 0.7.0: the manager session has an inbox socket (0.6.2 fix works), a page message to it stayed `push_state='new'`, `offered_at NULL` for minutes; its agent row has `machine='manager@zeus'`, `device_id=2` (the manager's device), and its worker row has `device_id=3` (the admin's bridge device, machine `box-1`) and the same `key`. `Store.offer` skips it on `t["machine"] != machine` and on `_owns`; `Store.ack` would refuse the receipt on `_owns` and the lease would re-offer it every `LEASE_S`. Separately: `kaptyorka stop` runs `systemctl --user disable --now` on hub and bridge; `kaptyorka start` reinstalls only the hub, so the bridge stays off and the manager (launched through that bridge) never starts.
+**Spec:** observed on the hub machine on 2026-11-10, Claude Code 2.1.322, kaptyorka 0.7.0: the manager session has an inbox socket (0.6.2 fix works), a page message to it stayed `push_state='new'`, `offered_at NULL` for minutes; its agent row has `machine='manager@box-1'`, `device_id=2` (the manager's device), and its worker row has `device_id=3` (the admin's bridge device, machine `box-1`) and the same `key`. `Store.offer` skips it on `t["machine"] != machine` and on `_owns`; `Store.ack` would refuse the receipt on `_owns` and the lease would re-offer it every `LEASE_S`. Separately: `kaptyorka stop` runs `systemctl --user disable --now` on hub and bridge; `kaptyorka start` reinstalls only the hub, so the bridge stays off and the manager (launched through that bridge) never starts.
 
 ## Global Constraints
 
