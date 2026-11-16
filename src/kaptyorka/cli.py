@@ -67,6 +67,7 @@ def _serve(args) -> int:
                     host="0.0.0.0", port=args.port, log_level="warning",
                     timeout_graceful_shutdown=3)  # open agent streams must not hold up a stop
         return 0
+    was_running = service.is_active("kaptyorka-hub") is True
     exe = str(Path(sys.argv[0]).resolve())
     try:
         cmd = [exe, "serve", "--foreground", "--port", str(args.port)]
@@ -101,7 +102,7 @@ def _serve(args) -> int:
         if not getattr(args, "no_manager", False):
             print(MANAGER_NOTE)
     else:
-        print(f"hub restarted: {url}")
+        print(f"hub {'restarted' if was_running else 'started'}: {url}")
         print(PAGE_LINK.format(url=url, token=admin))
     return 0
 
@@ -234,6 +235,45 @@ def _who(args) -> int:
     for r in rows:
         print("  ".join(c.ljust(n) for c, n in zip(r, w)) + "  " + r[4])
     return 0
+
+
+def _status(args) -> int:
+    cfg = paths.load_config()
+    if not cfg.get("hub") or not cfg.get("token"):
+        print("not joined: kaptyorka join <invite link>")
+        return 1
+    hub = cfg["hub"]
+    print(f"joined to {hub} as {cfg.get('machine') or '?'}")
+    ok = True
+    bridge = service.is_active("kaptyorka-bridge") is True
+    ok = ok and bridge
+    print("bridge: running" if bridge else "bridge: stopped (kaptyorka join turns it back on)")
+    try:
+        saved = json.loads((paths.home() / "hub.json").read_text())
+    except (OSError, ValueError):
+        saved = None
+    own = saved is not None and paths.is_own_hub(hub, saved)
+    try:
+        got = http.request("GET", hub.rstrip("/") + "/api/settings", cfg["token"])
+    except http.HubUnreachable:
+        got = None
+    if got is None:
+        if own and service.is_active("kaptyorka-hub") is False:
+            print("hub: stopped (kaptyorka start)")
+        else:
+            print(f"hub: not reachable at {hub}")
+        return 1
+    if own:
+        up = service.is_active("kaptyorka-hub") is True
+        ok = ok and up
+        print("hub: running" if up else "hub: stopped (kaptyorka start)")
+    if got[0] == 200 and isinstance(got[1], dict):
+        state = got[1].get("manager_state")
+        why = got[1].get("manager_reason") or ""
+        shown = {"up": "running", "blocked": f"blocked: {why}" if why else "blocked"}.get(state, state)
+        print(f"manager: {shown}")
+        ok = ok and state in ("up", "asleep", "starting", "off")
+    return 0 if ok else 1
 
 
 NOT_JOINED = "this machine has not joined a hub yet; run: kaptyorka join <invite link>"
@@ -780,7 +820,7 @@ def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents: run the hub, invite people, give them access to projects.")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove,invite,people,"
-                            "invites,project,grant,revoke,machine,who,doctor,fleet,login-copy,rules,backup,restore}")
+                            "invites,project,grant,revoke,machine,who,status,doctor,fleet,login-copy,rules,backup,restore}")
     hide = argparse.SUPPRESS  # subparsers are hidden by giving them no help text
     s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
     s.add_argument("--port", type=int, help="hub port (default 8765)")
@@ -860,6 +900,8 @@ def entry() -> None:
     mo.add_argument("person", help="the person's name")
     mo.set_defaults(run=_machine_owner)
     sub.add_parser("who", help="list the agents on the team and what each is doing").set_defaults(run=_who)
+    sub.add_parser("status", help="show whether this machine's bridge, the hub and the manager are running"
+                   ).set_defaults(run=_status)
     d = sub.add_parser("doctor", help="check this machine's setup; --fix repairs what it can")
     d.add_argument("--fix", action="store_true", help="re-wire failing tools and restart a stopped bridge")
     d.set_defaults(run=_doctor)

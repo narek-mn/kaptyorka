@@ -446,6 +446,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka revoke <person> <project>` | Admin: take it away; or `machine:<host>` |
 | `kaptyorka machine owner <host> <person>` | Admin: name a machine's owner |
 | `kaptyorka who` | List sessions online |
+| `kaptyorka status` | Show whether this machine's bridge, the hub (on the hub machine) and the manager (admin) are running; exit 1 if not |
 | `kaptyorka rules push [--force] <dir>` | Admin: upload the team rules folder (`RULES.md` and `skills/*.md`); stops if the hub has rule lines not in `RULES.md`, unless `--force` |
 | `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
 | `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |
@@ -465,7 +466,7 @@ Everything is in `~/.kaptyorka`:
 
 ```
 src/kaptyorka/
-  cli.py        the commands: start, join, invite, invites, people, project, grant, revoke, rules, doctor, fleet, login-copy, backup, restore, leave, stop, update, remove
+  cli.py        the commands: start, join, status, invite, invites, people, project, grant, revoke, rules, doctor, fleet, login-copy, backup, restore, leave, stop, update, remove
   hub.py        hub app: MCP tools and plain routes behind a device token
   http.py       small HTTP client used by the other parts
   store.py      SQLite storage: people, devices, agents, messages, notes

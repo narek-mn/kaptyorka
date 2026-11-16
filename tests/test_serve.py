@@ -71,7 +71,9 @@ def test_install_darwin_bootstrap(home):
 def test_start_makes_admin_device_once_and_joins_this_machine(home, capsys, monkeypatch):
     from kaptyorka.store import Store
 
-    monkeypatch.setattr(service, "install", lambda *a, **k: [])
+    up = []
+    monkeypatch.setattr(service, "install", lambda *a, **k: up.append(1) or [])
+    monkeypatch.setattr(service, "is_active", lambda name, **k: None)  # no unit running, no real systemctl
     outs = []
     for _ in range(2):
         with pytest.raises(SystemExit) as e:
@@ -84,7 +86,7 @@ def test_start_makes_admin_device_once_and_joins_this_machine(home, capsys, monk
     page = f"open the page: http://10.0.0.5:9999/#t={admin}  (keep this link private: it signs you in)"
     assert outs[0] == ["hub running: http://10.0.0.5:9999", page,
                        "invite a teammate: kaptyorka invite <name>", cli.MANAGER_NOTE]
-    assert outs[1] == ["hub restarted: http://10.0.0.5:9999", page]
+    assert outs[1] == ["hub started: http://10.0.0.5:9999", page]
     assert shared not in "\n".join(outs[0])
     for f in ("hub-token", "admin-token"):
         assert (paths.home() / f).stat().st_mode & 0o777 == 0o600
@@ -470,13 +472,14 @@ def test_update_needs_pipx_install(tmp_path, monkeypatch, capsys):
 
 
 def test_start_again_uses_saved_port_and_host(home, capsys, monkeypatch):
-    monkeypatch.setattr(service, "install", lambda name, argv, **k: seen.append(argv) or [])
     seen = []
+    monkeypatch.setattr(service, "install", lambda name, argv, **k: seen.append(argv) or [])
+    monkeypatch.setattr(service, "is_active", lambda name, **k: None)  # no unit running, no real systemctl
     for args in (["--port", "9999", "--host", "10.0.0.5"], []):
         with pytest.raises(SystemExit):
             run_cli(["start", *args])
     out = capsys.readouterr().out.splitlines()
-    assert out[0] == "hub running: http://10.0.0.5:9999" and out[4] == "hub restarted: http://10.0.0.5:9999"
+    assert out[0] == "hub running: http://10.0.0.5:9999" and out[4] == "hub started: http://10.0.0.5:9999"
     assert seen[0] == seen[1] and seen[1][-2:] == ["--port", "9999"]
 
 
@@ -574,6 +577,7 @@ def test_start_no_manager_persists_and_disables(home, capsys, monkeypatch):
 
 
 def test_start_manager_flag_turns_it_back_on(home, capsys, monkeypatch):
+    monkeypatch.setattr(service, "is_active", lambda name, **k: True)  # the hub was running
     cmds = _unit_cmds(monkeypatch)
     with pytest.raises(SystemExit):
         run_cli(["start", "--port", "9999", "--host", "10.0.0.5", "--no-manager"])

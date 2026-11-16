@@ -38,7 +38,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.8.1" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.8.2" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
@@ -48,7 +48,7 @@ def test_subcommands_listed(capsys):
     listed = out.split("positional arguments:")[1].split("options:")[0]
     names = [l.split()[0] for l in listed.splitlines()[2:] if l.startswith("    ") and l[4] != " "]
     assert names == ["start", "join", "leave", "stop", "update", "remove", "invite", "people", "invites", "grant",
-                     "revoke", "project", "machine", "who", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
+                     "revoke", "project", "machine", "who", "status", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
     for hidden in ("serve", "mcp", "bridge", "hook"):
         assert hidden not in names
 
@@ -210,7 +210,7 @@ def test_cli_machine_owner(monkeypatch, home, capsys):
 def test_metavar_lists_user_commands(capsys):
     with pytest.raises(SystemExit):
         entry_with(["--help"])
-    assert ("{start,join,leave,stop,update,remove,invite,people,invites,project,grant,revoke,machine,who,doctor,fleet,login-copy,rules,backup,restore}"
+    assert ("{start,join,leave,stop,update,remove,invite,people,invites,project,grant,revoke,machine,who,status,doctor,fleet,login-copy,rules,backup,restore}"
             in capsys.readouterr().out)
 
 
@@ -973,3 +973,70 @@ def test_start_on_own_hub_at_a_second_local_address(monkeypatch, home):
     paths.save_config({"hub": "http://10.0.0.2:8765", "token": "t", "machine": "pc"})
     assert entry_with_exit(["start"]) in (0, None)
     assert len(served) == 1
+
+
+# --- status ---
+
+def _joined(hub="http://10.0.0.1:8765"):
+    paths.save_config({"hub": hub, "token": "t", "machine": "box-1"})
+
+
+def test_status_not_joined(home, capsys):
+    assert entry_with_exit(["status"]) == 1
+    assert capsys.readouterr().out == "not joined: kaptyorka join <invite link>\n"
+
+
+def test_status_member_bridge_running(monkeypatch, home, capsys):
+    _joined("http://10.0.0.9:8765")
+    _units(monkeypatch, bridge=True)
+    monkeypatch.setattr(http, "request", lambda *a, **k: (403, "admin only"))
+    assert entry_with_exit(["status"]) == 0
+    assert capsys.readouterr().out == "joined to http://10.0.0.9:8765 as box-1\nbridge: running\n"
+
+
+def test_status_hub_machine_with_manager_asleep(monkeypatch, home, capsys):
+    _joined()
+    _hub_json()
+    _units(monkeypatch, bridge=True, hub=True)
+    monkeypatch.setattr(http, "request", lambda *a, **k: (200, {"manager_state": "asleep", "manager_reason": ""}))
+    assert entry_with_exit(["status"]) == 0
+    assert capsys.readouterr().out == ("joined to http://10.0.0.1:8765 as box-1\nbridge: running\n"
+                                       "hub: running\nmanager: asleep\n")
+
+
+def test_status_manager_off_is_ok(monkeypatch, home, capsys):
+    _joined()
+    _hub_json()
+    _units(monkeypatch, bridge=True, hub=True)
+    monkeypatch.setattr(http, "request", lambda *a, **k: (200, {"manager_state": "off", "manager_reason": ""}))
+    assert entry_with_exit(["status"]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "manager: off"
+
+
+def test_status_hub_unreachable(monkeypatch, home, capsys):
+    _joined("http://10.0.0.9:8765")
+
+    def boom(*a, **k):
+        raise http.HubUnreachable("x")
+
+    _units(monkeypatch, bridge=True)
+    monkeypatch.setattr(http, "request", boom)
+    assert entry_with_exit(["status"]) == 1
+    assert capsys.readouterr().out.splitlines()[-1] == "hub: not reachable at http://10.0.0.9:8765"
+
+
+def test_status_bridge_stopped_exit_1(monkeypatch, home, capsys):
+    _joined("http://10.0.0.9:8765")
+    _units(monkeypatch, bridge=False)
+    monkeypatch.setattr(http, "request", lambda *a, **k: (403, "admin only"))
+    assert entry_with_exit(["status"]) == 1
+    assert "bridge: stopped (kaptyorka join turns it back on)" in capsys.readouterr().out
+
+
+def test_start_after_stop_says_started(monkeypatch, home, capsys):
+    _units(monkeypatch, hub=False, bridge=True)
+    monkeypatch.setattr(cli, "_admin_device", lambda t: "tok")
+    monkeypatch.setattr(cli, "_token", lambda: "legacy")
+    _hub_json()
+    assert entry_with_exit(["start"]) in (0, None)
+    assert capsys.readouterr().out.startswith("hub started: http://10.0.0.1:8765")

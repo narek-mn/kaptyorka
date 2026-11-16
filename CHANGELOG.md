@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2
+
+- New `kaptyorka status`: shows in up to four lines whether this machine's bridge, the hub and the manager are running.
+- `kaptyorka start` says `hub started` after a `stop`, and `hub restarted` only when the hub was running.
+- No more false "bridge offline" warning for devices that never ran a bridge (the manager's, the admin's command line).
+
 ## 0.8.1
 
 - `kaptyorka start` on a machine joined to another team's hub now refuses even when that machine once ran a hub of its own, and `doctor` no longer tells it to start one.

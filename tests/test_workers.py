@@ -935,3 +935,12 @@ def test_clean_facts_git_age():
         assert "age" not in clean_facts({"git": {"/p": {"branch": "m", "age": bad}}})["git"]["/p"]
     assert clean_facts({"git": {"/p": {"age": 10 ** 9}}})["git"]["/p"]["age"] == 86400
     assert clean_facts({"git": {"/p": {"read_at": 5.0}}})["git"]["/p"]["read_at"] == 5.0
+
+
+def test_no_offline_warning_without_bridge_facts(store, ws, alice, clock):
+    m = device(store, alice, "box-1", "alice")[0]  # never ran a bridge: no facts
+    b = device(store, alice, "box-2", "alice")[0]
+    ws.facts_seen(b, {"version": "0.3.0"}, {})
+    store.db.execute("UPDATE devices SET last_used=? WHERE id IN (?,?)", (clock[0] - 125 * 60, m, b))
+    got = [w["text"] for w in ws.warnings(clock[0], "0.3.0")]
+    assert got == ["bridge on box-2 (alice) has been offline for 125 minutes"]

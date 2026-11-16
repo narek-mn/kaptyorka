@@ -868,7 +868,8 @@ class WorkerStore:
             def add(out, text):
                 out.append({"host": host, "os_user": user, "person": d["person"] or "",
                             "text": text})
-            if d["last_used"] is not None and d["last_used"] < now - OFFLINE_S:
+            if (d["facts"] and d["last_used"] is not None  # only bridges report facts
+                    and d["last_used"] < now - OFFLINE_S):
                 add(offline, f"bridge on {who} has been offline for"
                     f" {int((now - d['last_used']) // 60)} minutes")
             facts = json.loads(d["facts"]) if d["facts"] else {}
