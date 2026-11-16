@@ -40,7 +40,8 @@ def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: 
     if ws is not None and a.device_id is not None:
         row["harness"] = ws.facts(a.device_id).get("harness", {}).get(a.tool)
     if mine:
-        row["doors"] = [d["with"] or d["person"] for d in store.doors_for(a.key)]
+        row["doors"] = [masked(store, principal, d, (("_side", "with"),))["with"] or d["person"]
+                        for d in store.doors_for(a.key)]
     return row
 
 

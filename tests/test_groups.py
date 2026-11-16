@@ -59,8 +59,41 @@ def test_send_across_groups_refused_points_to_manager(store, team):
 def test_admin_sends_anywhere(store, team):
     assert store.send("x1", "box-2/codex/p", "hi") == 1
     assert store.inbox("b1")[0].text == "hi"
-    with pytest.raises(KaptyorkaError, match="that you can reach"):  # the rule is about the sender
-        store.send("b1", "srv/codex/p", "back")
+    store.send("b1", "srv/codex/p", "back")  # the admin's message opened a door for the reply
+    assert store.inbox("x1")[0].text == "back"
+
+
+def test_admin_send_opens_a_session_door(store, team):
+    store.send("x1", "box-2/codex/p", "please check")
+    [door] = store.doors()
+    assert (door["scope"], door["a_session"], door["b_session"], door["opened_by"]) == \
+        ("session", "srv/codex/p", "box-2/codex/p", "boss")
+    assert [(r["kind"], r["detail"]) for r in store.log(1)] == \
+        [("door_open", "srv/codex/p <-> box-2/codex/p")]
+    assert store.send("b1", "srv/codex/p", "done") == 1
+    store.send("x1", "box-2/codex/p", "again")  # no second door
+    assert len(store.doors()) == 1
+    for frm, to in (("a1", "srv/codex/p"), ("a1", "box-2/codex/p"), ("b1", "pc/codex/p")):
+        with pytest.raises(KaptyorkaError, match="that you can reach"):  # the door is two sessions
+            store.send(frm, to, "hi")
+    store.door_close("b1", "srv/codex/p")
+    assert store.doors() == []
+    with pytest.raises(KaptyorkaError, match="that you can reach"):
+        store.send("b1", "srv/codex/p", "later")
+    store.send("x1", "box-2/codex/p", "and again")  # reopens; the admin may close it too
+    store.door_close("x1", "box-2/codex/p")
+    assert store.doors() == []
+
+
+def test_sends_that_open_no_door(store, team):
+    with pytest.raises(KaptyorkaError, match="that you can reach"):
+        store.send("a1", "box-2/codex/p", "hi")  # member to member
+    assert store.send("a1", "pc2/codex/p", "own") == 1  # same person
+    assert store.send("x1", "all", "news") == 3  # a broadcast is one-way
+    _, tm = person(store, "manager", "manager")
+    session(store, tm, "m1", "hubbox")
+    store.send("x1", "hubbox/codex/p", "for the manager")  # the manager needs no door
+    assert store.doors() == []
 
 
 def test_knock_answer_yes_opens_door_and_send_works(store, team):
@@ -200,6 +233,22 @@ def test_tools_knock_answer_door_close(hub):
     [door] = hub.store.doors()
     hub.store.close_door(door["id"], "admin")
     assert "that you can reach" in call_error(ann, A, "send", to="box-2/codex/p", text="hi")
+
+def test_admin_session_door_in_tools(hub):
+    _, tb = person(hub.store, "ben")
+    ben = as_person(hub, tb)
+    B, X = ident("b1", "box-2"), ident("x1", "srv")
+    run(call(ben, B, "who"))
+    run(call(hub, X, "who"))
+    assert [r["name"] for r in run(call(ben, B, "who"))] == ["box-2/codex/p"]
+    assert run(call(hub, X, "send", to="box-2/codex/p", text="check")) == "sent to 1 session"
+    assert [r["name"] for r in run(call(ben, B, "who"))] == ["box-2/codex/p", "srv/codex/(private)"]
+    [msg] = run(call(ben, B, "inbox"))
+    assert run(call(ben, B, "send", to=msg["from"], text="ok")) == "sent to 1 session"
+    run(call(ben, B, "door_close", to="srv/codex/p"))
+    assert [r["name"] for r in run(call(ben, B, "who"))] == ["box-2/codex/p"]
+    assert "that you can reach" in call_error(ben, B, "send", to="srv/codex/p", text="hi")
+
 
 def test_door_and_knock_routes(hub):
     pa, ta = person(hub.store, "ann")

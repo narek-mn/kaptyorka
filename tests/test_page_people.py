@@ -65,7 +65,8 @@ def test_feed_filtered_for_member(app):
     assert [(n["project"], n["topic"]) for n in f["notes"]] == [(None, "team-topic")]
     assert f["knocks"] == []  # only the admin answers knocks
     assert len(get(app, "boss", "/api/feed")["knocks"]) == 2
-    assert f["doors"] == []
+    assert [(d["scope"], d["a_person"], d["b_person"]) for d in f["doors"]] == \
+        [("session", "boss", "ann")]  # the admin wrote: ann may reply
     for extra in ("people", "requests", "decisions", "legacy", "machines", "projects", "archived_projects",
                   "log", "settings"):
         assert extra not in f
@@ -85,13 +86,13 @@ def test_feed_masks_private_sessions(app):
     rows = {a["person"]: a for a in get(app, "ann", "/api/feed")["agents"]}
     assert (rows["ann"]["name"], rows["ann"]["project"], rows["ann"]["mine"]) == \
         ("pc/codex/mine", "mine", True)
-    assert set(rows) == {"ann"}  # no door: ben and the admin are not listed at all
+    assert set(rows) == {"ann", "boss"}  # no door to ben; the admin's message opened one
     s.open_door_group(app.ids["ann"], app.ids["ben"], "boss")
     rows = {a["person"]: a for a in get(app, "ann", "/api/feed")["agents"]}
-    assert set(rows) == {"ann", "ben"}
+    assert set(rows) == {"ann", "ben", "boss"}
     assert (rows["ben"]["name"], rows["ben"]["project"], rows["ben"]["mine"]) == \
         ("box-2/codex/(private)", "(private)", False)
-    assert rows["ann"]["doors"] == ["ben"] and "doors" not in rows["ben"]
+    assert rows["ann"]["doors"] == ["box-1/codex/(private)", "ben"] and "doors" not in rows["ben"]
     msg = get(app, "ann", "/api/feed")["messages"][-1]
     assert (msg["sender"], msg["to"]) == ("box-1/codex/(private)", "pc/codex/mine")
     assert not any(k.startswith("_") for k in msg)

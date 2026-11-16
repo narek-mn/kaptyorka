@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.3
+
+- A member's session can now reply to the admin's session. When the admin's session writes directly to a session of another person, the hub opens a door between just those two sessions, as a message from the page already did. It shows under Admin > Access > Doors and in the log, and closes when either session goes offline or with `door_close`. Messages to `all` or to the manager open no door.
+- A session door no longer shows the other session's hidden project in a member's own session row.
+
 ## 0.9.2
 
 - Claude Code background jobs (`claude --bg`) no longer look like normal sessions on Home: they have a small clock instead of the dot, the word "background" before the machine, and "background job" in the chat header. The manager runs this way too but keeps its own look.

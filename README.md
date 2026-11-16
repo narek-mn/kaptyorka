@@ -371,7 +371,7 @@ A person's sessions are a group. A member sees and messages only their own sessi
 - While a door is open, the two people see and message each other's sessions; `door_close(to)` or the admin closes it.
 - `send("all")` reaches every session you may message: your own, and those behind a door.
 
-The page follows the same rules. A message from the page to a session opens a door, so the session can reply. Doors opened before 0.9.0, when members could open them, stay open (group doors do not expire): after updating, the admin looks at Admin > Access and closes the ones not wanted. A member's session cannot reply to the admin's session except through the manager; replies to the admin's page work.
+The page follows the same rules. A message from the page to a session opens a door, so the session can reply. Doors opened before 0.9.0, when members could open them, stay open (group doors do not expire): after updating, the admin looks at Admin > Access and closes the ones not wanted. A direct message from the admin's session to another person's session works the same way: it opens a door between just those two sessions, so the session can reply. No one else gains anything, and it closes like any session door (when either session goes offline, or with `door_close`). A message to `all`, or to the manager, opens no door.
 
 ## Attachments
 

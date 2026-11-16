@@ -1234,9 +1234,17 @@ class Store:
                 targets = [t for t in targets if self._may_message(sender, t)]
             elif not all(self._may_message(sender, self._as_target(t)) for t in targets):
                 raise KaptyorkaError(UNREACHABLE.format(to=to))
+            opened, sp = [], sender["person_id"]
+            if to != "all" and sp is not None and self._is_admin(sp):  # so the session can reply
+                opened = [t["name"] for t in targets
+                          if (t["key"].startswith("web:") or self._role_of(t["person_id"]) != "manager")
+                          and self._reply_door(sender_key, sp, t, now)]
             n = self._insert(sender_key, sender["name"], targets, text, now, file_id)
             self._rate_hit(sender_key, now)
-            return n
+            who = self._person_name(sp) if opened else ""
+        for other in opened:
+            self.log_add(who, "door_open", f"{sender['name']} <-> {other}")
+        return n
 
     def _rate_check(self, key, now):
         count, window = RATE
@@ -1268,7 +1276,7 @@ class Store:
                 elif not all(self._may_message(me, self._as_target(t)) for t in targets):
                     raise KaptyorkaError(UNREACHABLE.format(to=to))
                 if to != "all":  # so the session can reply to the page; a broadcast is one-way
-                    opened = [t["name"] for t in targets if self._web_door(key, person_id, t, now)]
+                    opened = [t["name"] for t in targets if self._reply_door(key, person_id, t, now)]
             n = self._insert(key, name, targets, text, now, file_id)
         for other in opened:
             self.log_add(name, "door_open", f"{key} <-> {other}")
@@ -1281,10 +1289,10 @@ class Store:
             return {"key": t["key"], "person_id": p["id"] if p else None}
         return {"key": t["key"], "person_id": t["person_id"]}
 
-    def _web_door(self, web_key, person_id, t, now):
-        """A session door between a person's page and a session it wrote to, unless one is
-        open or they are the same person. It closes when the session goes offline. True when
-        a door was opened."""
+    def _reply_door(self, web_key, person_id, t, now):
+        """A session door between a person's page, or the admin's session, and a session it
+        wrote to, unless one is open or they are the same person. It closes when a session
+        goes offline. True when a door was opened."""
         tp = None if t["key"].startswith("web:") else t["person_id"]
         if tp is None or tp == person_id:
             return False
@@ -1814,13 +1822,14 @@ class Store:
         self.log_add(who, "door_close", f"{by['name']} -> {other['name']}")
 
     def _door_row(self, d, key=None, person_id=None) -> dict:
-        """A door as seen from one side (`key`'s session or `person_id`'s group)."""
+        """A door as seen from one side (`key`'s session or `person_id`'s group); `_side` is
+        the other session (see `_side`), for masking."""
         mine_a = d["a_key"] == key if d["scope"] == "session" else d["a_person"] == person_id
         other_key, other_person = (d["b_key"], d["b_person"]) if mine_a else (d["a_key"], d["a_person"])
         other = self.db.execute("SELECT name FROM agents WHERE key=?", (other_key,)).fetchone()
         return {"id": d["id"], "with": other["name"] if other else "",
                 "person": self._person_name(other_person), "scope": d["scope"],
-                "opened_at": d["opened_at"]}
+                "opened_at": d["opened_at"], "_side": self._side(other_key)}
 
     def doors_for(self, key: str) -> List[dict]:
         """Open doors of a session: its own session doors and its person's group doors."""
