@@ -356,8 +356,6 @@ td.c-act .btn, td.c-act select { vertical-align: middle; }
 .tag .login-off { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); margin-right: -2px; }
 .tag .login-off.quiet { background: var(--faint); }
 .tag[title] { cursor: help; }
-.login-line { margin-top: 6px; font-size: 12px; color: var(--danger); white-space: normal; }
-.login-line code { font: 12px var(--mono); color: var(--ink); }
 .tag.busy { color: var(--ok); border-color: rgba(105, 159, 8, .4); padding: 0 6px; }
 .folder { display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; }
 .folder > span:first-child { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
@@ -1085,7 +1083,7 @@ tr.archived b { color: var(--muted); }
     if (admin) list.push({ key: "activity", name: "Activity", icon: "i-list", cls: "activity", sub: "", tip: "Every message", read: true });
     var ms = mgr ? "up" : feed.manager || "off";
     list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms, sub: mgr ? mgr.machine : "",
-                to: managerTo(), tip: "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : "") });
+                to: "manager", tip: "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : "") });
     agents.forEach(function (a) {
       var tip = [a.label ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status,
                  a.activity ? "doing: " + a.activity : null,
@@ -1142,17 +1140,10 @@ tr.archived b { color: var(--muted); }
     grow();
     if (wide() && k !== "activity") $("text").focus();
   }
-  /* the manager's session, or asleep its last one in the messages, so a message wakes it */
-  var mgrKnown = "manager";
-  function managerTo() { return mgrKnown; }
-  function findManager() {
-    var mgr = feed.agents.filter(function (a) { return a.role === "manager"; })[0];
-    if (mgr) { mgrKnown = mgr.name; return; }
-    for (var i = feed.messages.length - 1; i >= 0; i--) {
-      var m = feed.messages[i];
-      if (!m.from_web && shortName(m.sender) === "manager") { mgrKnown = m.sender; return; }
-      if (!m.to_web && shortName(m.to) === "manager") { mgrKnown = m.to; return; }
-    }
+  /* the manager's session name as this page sees it, to know its messages */
+  function managerTo() {
+    var mgr = feed && feed.agents.filter(function (a) { return a.role === "manager"; })[0];
+    return mgr ? mgr.name : "manager";
   }
 
   /* admin, Access: the open doors, each with its close button, and Open door */
@@ -1380,7 +1371,6 @@ tr.archived b { color: var(--muted); }
   function toBottom() { var log = $("log"); log.scrollTop = log.scrollHeight; }
   /* Home: all of it, for a chat change */
   function renderHome(jump) {
-    findManager();
     var msgs = fold(feed.messages);
     entries = buildEntries(msgs);
     entryOf = {};
@@ -1437,7 +1427,7 @@ tr.archived b { color: var(--muted); }
   function send() {
     var text = $("text").value;
     if (!text.trim() && !attached) return;
-    var e = entryOf[conv], to = e && e.to ? e.to : managerTo();
+    var e = entryOf[conv], to = e && e.to ? e.to : "manager";  /* the manager by its label: a member may write to it, and it wakes it */
     var sent = attached;
     upload()
       .then(function (fid) { return api("/api/send", fid ? { to: to, text: text, file_id: fid } : { to: to, text: text }); })
@@ -2190,12 +2180,6 @@ tr.archived b { color: var(--muted); }
                     [out ? el("i", { "class": "login-off" + (anyIn ? " quiet" : "") }) : null, t,
                      el("small", { text: tools[t] || "" })]);
         }));
-        /* as the hub's warning: the first tool that reports a state */
-        var loginLines = Object.keys(logins).filter(function (t) { return !anyIn && logins[t] === false && LOGINS[t]; })
-          .slice(0, 1).map(function (t) {
-            return el("div", { "class": "login-line" }, ["No agent tool is logged in on this machine. Run ",
-                      el("code", { text: LOGINS[t][1] }), " there."]);
-          });
         var folders = el("div", { "class": "cell-list" }, Object.keys(d.folders || {}).sort().map(function (p) {
           var path = d.folders[p];
           var busy = fleet.workers.some(function (w) {
@@ -2213,7 +2197,7 @@ tr.archived b { color: var(--muted); }
           fact("c-plain", "Version", f.version || d.version),
           fact("c-plain", "Load", f.load != null && f.cpus ? (+f.load).toFixed(1) + " / " + f.cpus + " cpus" : ""),
           fact("c-plain", "tmux", f.tmux === true ? "yes" : f.tmux === false ? "no" : ""),
-          el("td", { "class": "h-wide", "data-label": "Tools" }, toolTags.childNodes.length ? [toolTags].concat(loginLines) : [el("span", { "class": "hint", text: "No tools reported yet" })]),
+          el("td", { "class": "h-wide", "data-label": "Tools" }, toolTags.childNodes.length ? [toolTags] : [el("span", { "class": "hint", text: "No tools reported yet" })]),
           el("td", { "class": "h-wide" + (folders.childNodes.length ? "" : " nil"), "data-label": "Folders" }, [folders])
         ];
         if (admin) {
@@ -2616,7 +2600,7 @@ tr.archived b { color: var(--muted); }
   }
   function start(m) {
     me = m;
-    seen = {}; feed = null; invites = []; myAccess = null; mgrKnown = "manager"; conv = "mgr"; phoneOpen = false; askOpen = false;
+    seen = {}; feed = null; invites = []; myAccess = null; conv = "mgr"; phoneOpen = false; askOpen = false;
     readMap = store(function (s) { var r = JSON.parse(s.getItem("kaptyorka.read." + m.person) || "null"); return r && typeof r === "object" ? r : null; });
     fleet = { machines: [], workers: [], warnings: [] }; fleetAt = 0;
     logPerson = logKind = ""; logRows = logKinds = settings = null;

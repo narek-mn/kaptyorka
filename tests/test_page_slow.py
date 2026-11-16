@@ -378,3 +378,21 @@ def test_chat_reads_in_full_and_phone_goes_back(tmp_path):
     finally:
         stop()
         store.close()
+
+
+def test_member_writes_to_the_manager(member_page):
+    """A member's page sees the manager's session masked, so the manager chat sends to its
+    label "manager", as the real launcher sets it; the message reaches the manager."""
+    store, page, url = member_page
+    mtoken = ManagerStore(store).ensure_account("box-1", "alice")
+    store.heartbeat("box-1", [{"key": "k:mgr", "tool": "claude-code", "project": "manager",
+                               "label": "manager"}], principal=store.authenticate(mtoken),
+                    facts={"host": "box-1", "os_user": "u"})
+    page.go(url)
+    page.wait('document.querySelector("#agents .row.mgr .dot.on") !== null')
+    assert page.js('document.getElementById("text").placeholder') == "Message manager"
+    page.js('document.getElementById("text").value = "may I have proj-b?"')
+    page.js('document.querySelector("#compose button[type=submit]").click()')
+    assert page.wait('[...document.querySelectorAll("#log .msg .text")].pop()?.textContent') == "may I have proj-b?"
+    assert page.js('document.getElementById("send-err").hidden')
+    assert [m.text for m in store.inbox("k:mgr")] == ["may I have proj-b?"]

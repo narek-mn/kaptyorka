@@ -7,7 +7,8 @@
 - The admin gets an Activity chat with every message ("from → to"), the hub's notices behind one toggle. The "all" line is gone.
 - A machine where no agent tool is logged in shows as one slim bar over the chat, with the command and a copy button.
 - On a phone: the list first, a tap opens the chat, Back returns. Nothing scrolls sideways.
-- Admin tidied: long folder paths no longer cover the Auto-update switch, empty tables show one quiet line, one New project button, Doors is one line when none are open, row buttons are quiet until hovered.
+- Fixed: a member's page could not write to the manager (it used the manager's hidden session name); it now writes to `manager`, which also wakes a sleeping manager.
+- Admin tidied: long folder paths no longer cover the Auto-update switch, empty tables show one quiet line, one New project button, Doors is one line when none are open, row buttons are quiet until hovered, and the no-login line under a machine's tools is gone (Warnings already says it).
 
 ## 0.9.0
 
