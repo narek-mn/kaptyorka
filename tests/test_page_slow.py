@@ -2,6 +2,7 @@
 adding a person shows their invite link at once. Run with: pytest -m slow tests/test_page_slow.py"""
 import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -428,3 +429,57 @@ def test_member_manager_chat_while_it_sleeps(member_page):
     page.wait('[...document.querySelectorAll("#log .msg .text")].some(t => t.textContent === "second answer")')
     assert page.wait('document.querySelector("#agents .row.mgr .count") === null')
     assert page.js('[...document.querySelectorAll("#log .head b")].map(b => b.textContent)') == ["manager"]
+
+
+def test_background_job_marked_and_empty_chat(tmp_path):
+    """A background job shows a clock and "background" in the list, "background job" in the
+    chat header and the empty-chat line that says it works on its own; the composer stays.
+    The manager, though it runs as a background job too, keeps its own look."""
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    _, token = person(store, "alice", "admin")
+    mtoken = ManagerStore(store).ensure_account("box-1", "alice")
+    facts = {"host": "box-1", "os_user": "u"}
+    store.heartbeat("box-1", [{"key": "k:mgr", "tool": "claude-code", "project": "manager",
+                               "label": "manager", "background": True}],
+                    principal=store.authenticate(mtoken), facts=facts)
+    store.heartbeat("box-1", [
+        {"key": "k:job", "tool": "claude-code", "project": "proj-a", "label": "nightly-check",
+         "background": True},
+        {"key": "k:term", "tool": "claude-code", "project": "proj-b", "label": "api-dev"}],
+        principal=store.authenticate(token), facts=facts)
+    row = '[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name").textContent === %s)'
+    job, term = row % '"nightly-check"', row % '"api-dev"'
+    try:
+        for w, h, tag in ((1440, 900, "desktop"), (390, 844, "phone")):
+            with chrome(w, h) as page:
+                page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+                page.wait(f'!!({job})')
+                assert page.js(f'!!{job}.querySelector(".bg-lead.on use[href=\\"#i-clock\\"]")')
+                assert page.js(f'{job}.querySelector(".subline").textContent') == "backgroundbox-1"
+                assert page.js(f'!!{term}.querySelector(".dot.on") && !{term}.querySelector(".bg-lead")')
+                mgr = 'document.querySelector("#agents .row.mgr")'
+                assert page.js(f'!!{mgr}.querySelector(".dot.on") && !{mgr}.querySelector(".bg-lead")')
+                assert "background" not in page.js(f'{mgr}.textContent')
+                page.screenshot(shots / f"list-{tag}.png")
+                page.js(f'{job}.click()')
+                assert page.wait('document.getElementById("text").placeholder') == "Message nightly-check"
+                assert page.wait('document.querySelector("#log .blank")?.textContent') == \
+                    "No messages yet. This job works on its own; write to it below."
+                assert page.js('document.getElementById("chat-sub").textContent').startswith("background job")
+                assert page.js('!document.getElementById("compose").hidden')
+                time.sleep(0.4)  # a phone chat slides in
+                page.screenshot(shots / f"bg-chat-{tag}.png")
+                if w < 720:
+                    page.js('document.getElementById("chat-back").click()')
+                    page.wait('getComputedStyle(document.querySelector("#home .side")).display !== "none"')
+                page.js(f'{term}.click()')
+                assert page.wait('document.getElementById("text").placeholder') == "Message api-dev"
+                assert page.wait('document.querySelector("#log .blank")?.textContent') == "No messages yet."
+                assert "background" not in page.js('document.getElementById("chat-sub").textContent')
+    finally:
+        stop()
+        store.close()

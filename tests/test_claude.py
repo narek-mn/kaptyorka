@@ -285,6 +285,18 @@ def test_label_is_session_name_user_or_derived(home, tmp_path):
     assert [s.label for s in ClaudeAdapter(home).sessions()] == [""]
 
 
+def test_background_from_session_kind(home, tmp_path):
+    sock = live_sock(tmp_path)
+    write_session_file(home, pid=os.getpid(), sock=sock, extra={"kind": "bg", "jobId": "j1"})
+    assert [s.background for s in ClaudeAdapter(home).sessions()] == [True]
+    write_session_file(home, pid=os.getpid(), sock=sock, extra={"kind": "interactive"})
+    assert [s.background for s in ClaudeAdapter(home).sessions()] == [False]
+    write_session_file(home, pid=os.getpid(), sock=sock, extra={"kind": "something-new"})
+    assert [s.background for s in ClaudeAdapter(home).sessions()] == [False]
+    write_session_file(home, pid=os.getpid(), sock=sock)  # no kind: an older Claude Code
+    assert [s.background for s in ClaudeAdapter(home).sessions()] == [False]
+
+
 def test_resumed_session_keeps_key_and_deliver_follows_new_pid(home, sock_dir):
     srv = UnixServer(sock_dir / "s.sock")
     write_session_file(home, pid=os.getppid(), session_id="S1", sock=live_sock(sock_dir))

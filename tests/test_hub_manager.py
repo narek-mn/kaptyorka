@@ -899,3 +899,25 @@ def test_retired_but_switched_off_manager_not_shown_asleep(hub, clock):
     status, rows = http.request("GET", hub.url + "/api/workers", b.token)
     [w] = [w for w in rows if w["manager"]]
     assert w["state"] != "asleep"
+
+
+def test_manager_row_never_marked_background(hub):
+    """The manager runs as a background job (claude --bg); the page keeps its manager look."""
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o1] = orders(hub, b)
+    ack(hub, b, o1)
+    mtoken = json.loads(hub.config.read_text())["token"]
+    hub.store.seen("claude:m1", f"manager@{HOST}", "claude-code", "manager",
+                   principal=hub.store.authenticate(mtoken))
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "manager", "key": "claude:m1"})[0] == 204
+    beat(hub, b, [{"key": "claude:m1", "tool": "claude-code", "project": "manager", "background": True},
+                  {"key": "claude:j1", "tool": "claude-code", "project": "proj-a", "background": True}])
+    assert hub.store.agent("claude:m1").background is True  # stored as sent
+    admin = hub.store.authenticate(b.token)
+    rows = {a["person"] + ":" + a["project"]: a for a in feed(hub.store, admin)["agents"]}
+    assert rows["manager:manager"]["role"] == "manager"
+    assert rows["manager:manager"]["background"] is False
+    assert rows["root:proj-a"]["background"] is True

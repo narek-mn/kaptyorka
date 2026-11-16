@@ -10,7 +10,7 @@ from kaptyorka.store import PRIVATE, Agent, Principal, Store, private_name
 def agent_row(a: Agent, now: float) -> dict:
     return {"name": a.name, "machine": a.machine, "tool": a.tool, "project": a.project,
             "status": a.status, "activity": a.activity, "label": a.label,
-            "last_seen_s": round(now - a.last_seen)}
+            "background": a.background, "last_seen_s": round(now - a.last_seen)}
 
 
 def visible(store: Store, principal: Principal, person_id, project: str) -> bool:
@@ -35,6 +35,7 @@ def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: 
         row["worker"] = workers[a.key]
     if manager_id is not None and a.person_id == manager_id:
         row["role"] = "manager"
+        row["background"] = False  # the manager runs as a background job; it keeps its own look
     row["harness"] = None
     if ws is not None and a.device_id is not None:
         row["harness"] = ws.facts(a.device_id).get("harness", {}).get(a.tool)

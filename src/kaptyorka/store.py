@@ -116,6 +116,7 @@ ADDED_COLUMNS = [
     ("rekeys", "secret", "TEXT NOT NULL DEFAULT ''"),
     ("agents", "cwd", "TEXT NOT NULL DEFAULT ''"),
     ("requests", "role", "TEXT NOT NULL DEFAULT 'read'"),
+    ("agents", "background", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -213,6 +214,7 @@ class Agent:
     started: Optional[float] = None
     cwd: str = ""
     device_id: Optional[int] = None
+    background: bool = False
 
 
 @dataclass
@@ -1027,7 +1029,8 @@ class Store:
         return Agent(row["key"], row["name"], row["machine"], row["tool"], row["project"],
                      row["status"], row["activity"], row["last_seen"],
                      now - row["last_seen"] < ONLINE_S, row["label"], row["person_id"],
-                     row["os_user"], row["host"], row["started"], row["cwd"], row["device_id"])
+                     row["os_user"], row["host"], row["started"], row["cwd"], row["device_id"],
+                     bool(row["background"]))
 
     def _online_rows(self, now):
         return self.db.execute("SELECT * FROM agents WHERE last_seen > ? ORDER BY rowid",
@@ -1041,15 +1044,16 @@ class Store:
             name, n = f"{base}-{n}", n + 1
         return name
 
-    def _touch(self, key, machine, tool, project, now, activity=None, label=None, cwd=None):
+    def _touch(self, key, machine, tool, project, now, activity=None, label=None, cwd=None,
+               background=None):
         row = self.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
         if row is None:
             name = self._free_name(key, machine, tool, project, now)
             self.db.execute(
                 "INSERT INTO agents (key, name, machine, tool, project, activity, last_seen, label,"
-                " started, cwd) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                " started, cwd, background) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (key, name, machine, tool, project, activity or "", now, label or "", now,
-                 cwd or ""))
+                 cwd or "", int(bool(background))))
             return
         name = row["name"]
         if now - row["last_seen"] >= ONLINE_S:  # was offline: its name may have been taken
@@ -1063,6 +1067,8 @@ class Store:
             self.db.execute("UPDATE agents SET label=? WHERE key=?", (label, key))
         if cwd is not None:
             self.db.execute("UPDATE agents SET cwd=? WHERE key=?", (cwd, key))
+        if background is not None:
+            self.db.execute("UPDATE agents SET background=? WHERE key=?", (int(background), key))
 
     def _host_of_device(self, device_id) -> str:
         row = self.db.execute("SELECT host FROM devices WHERE id=?", (device_id,)).fetchone()
@@ -1140,6 +1146,7 @@ class Store:
                      "project": clean(s["project"], MAX_IDENT),
                      "label": clean(s.get("label"), MAX_LABEL),
                      "cwd": None if s.get("cwd") is None else clean(s["cwd"], MAX_CWD),
+                     "background": s.get("background") is True,
                      "activity": (None if s.get("activity") is None
                                   else clean(s["activity"], MAX_ACTIVITY))}
                     for s in sessions]
@@ -1165,7 +1172,7 @@ class Store:
                 if others and not manager_held:
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],
-                            s["label"], s["cwd"])
+                            s["label"], s["cwd"], s["background"])
                 if host:
                     self.db.execute("UPDATE agents SET host=?, os_user=? WHERE key=?",
                                     (host, os_user, s["key"]))

@@ -431,7 +431,7 @@ def test_page_login_and_sign_out():
 def test_page_empty_states():
     html = page_html()
     for text in (
-            ">No sessions online<", '"No messages yet"', '"No notes yet"', '"No machines yet"',
+            ">No sessions online<", '"No messages yet."', '"No notes yet"', '"No machines yet"',
             '"No workers"', '"No team rules yet. "', '"No skills"', '"No proposals"'):
         assert text in html, text
     # few words: the old explaining sentences are gone

@@ -107,10 +107,13 @@ section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .list .subline { display: flex; gap: 8px; min-width: 0; font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; }
 .list .subline span { overflow: hidden; text-overflow: ellipsis; }
 .list .who { color: var(--muted); flex: none; }
+.list .subline .bg { flex: none; }
 .list .n { flex: none; font-size: 12px; color: var(--muted); }
 .list .count { flex: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
 .dot.on { background: var(--ok); }
+.bg-lead { display: flex; color: var(--faint); }
+.bg-lead.on { color: var(--ok); }
 .quiet-line { padding: 4px 16px 12px; font-size: 12px; color: var(--faint); }
 .side-foot { flex: none; margin-top: auto; padding: 12px 14px; border-top: 1px solid var(--line); }
 .side-foot .btn { width: 100%; }
@@ -158,6 +161,7 @@ section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .msg.sys > svg { align-self: center; color: var(--faint); }
 .msg.sys .text { color: var(--muted); min-width: 0; }
 .chat .blank { color: var(--faint); }
+#log > .blank:only-child { height: 100%; min-height: 0; font-size: 13px; text-wrap: balance; }
 .access-pane { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; }
 .compose { flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 12px 24px 16px; border-top: 1px solid var(--line); background: var(--surface); }
 .compose textarea { flex: 1; min-width: 0; height: 40px; max-height: 200px; padding: 9px 12px; resize: none; line-height: 1.4;
@@ -1128,7 +1132,7 @@ tr.archived b { color: var(--muted); }
                  a.activity ? "doing: " + a.activity : null,
                  a.doors && a.doors.length ? "doors: " + a.doors.join(", ") : null,
                  isAdmin() ? harness(a.harness) : null].filter(Boolean).join("\n");
-      list.push({ key: a.name, name: a.label || shortName(a.name), online: true, sub: a.machine, to: a.name,
+      list.push({ key: a.name, name: a.label || shortName(a.name), online: true, sub: a.machine, to: a.name, bg: !!a.background,
                   who: isAdmin() && !a.mine ? a.person : null, off: hidden(a), tip: hidden(a) ? "A project you have no role in" : tip });
     });
     var people = {};
@@ -1154,7 +1158,10 @@ tr.archived b { color: var(--muted); }
     entries.forEach(function (e) { entryOf[e.key] = e; box.appendChild(sessionRow(e)); });
   }
   function lead(e) {
-    return e.icon ? icon(e.icon, 15) : el("span", { "class": "dot" + (e.online ? " on" : ""), title: e.online ? "online" : "offline" });
+    if (e.icon) return icon(e.icon, 15);
+    var state = e.online ? "online" : "offline";
+    if (e.bg) return el("span", { "class": "bg-lead" + (e.online ? " on" : ""), title: "background job, " + state }, [icon("i-clock", 13)]);
+    return el("span", { "class": "dot" + (e.online ? " on" : ""), title: state });
   }
   function sessionRow(e) {
     var on = e.key === conv && !askOpen && (phoneOpen || wide());  /* a phone marks a chat only while it is open */
@@ -1162,7 +1169,8 @@ tr.archived b { color: var(--muted); }
                            title: e.tip || null, "aria-current": on ? "true" : null, "data-key": e.key }, [
       el("span", { "class": "lead" }, [lead(e)]),
       el("span", { "class": "meta" }, [el("span", { "class": "name", text: e.name }),
-        e.sub || e.who ? el("small", { "class": "subline" }, [e.sub ? el("span", { text: e.sub }) : null,
+        e.sub || e.who || e.bg ? el("small", { "class": "subline" }, [e.bg ? el("span", { "class": "bg", text: "background" }) : null,
+                                                          e.sub ? el("span", { text: e.sub }) : null,
                                                           e.who ? el("span", { "class": "who", text: e.who }) : null]) : null]),
       e.state ? el("span", { "class": "n", text: e.state }) : null,
       e.unread ? el("span", { "class": "count", title: e.unread + " unread", text: String(e.unread) }) : null]);
@@ -1340,7 +1348,7 @@ tr.archived b { color: var(--muted); }
       $("chat-name").textContent = e.name;
       var sub = $("chat-sub");
       sub.textContent = "";
-      if (!act) [e.state || (e.icon ? "" : e.online ? "online" : "offline"), e.sub, e.who].forEach(function (t) { if (t) sub.appendChild(el("span", { text: t })); });
+      if (!act) [e.bg ? "background job" : null, e.state || (e.icon ? "" : e.online ? "online" : "offline"), e.sub, e.who].forEach(function (t) { if (t) sub.appendChild(el("span", { text: t })); });
     }
     $("access-pane").hidden = !askOpen;
     $("log").hidden = askOpen;
@@ -1350,6 +1358,7 @@ tr.archived b { color: var(--muted); }
     $("home").classList.toggle("open", phoneOpen);
   }
   var shownTo = {};
+  var BG_EMPTY = "No messages yet. This job works on its own; write to it below.";
   function renderMessages(jump) {
     var log = $("log");
     var stick = jump || log.scrollHeight - log.scrollTop - log.clientHeight < 60, top = log.scrollTop;
@@ -1386,7 +1395,8 @@ tr.archived b { color: var(--muted); }
       group.appendChild(body);
       if (m.text.length > 900 || m.text.split("\n").length > 12) fold12(m, text, body);
     });
-    if (!shown.length) log.appendChild(el("div", { "class": "blank", text: "No messages yet" }));
+    var bg = (entryOf[conv] || {}).bg;
+    if (!shown.length) log.appendChild(el("div", { "class": "blank", text: bg ? BG_EMPTY : "No messages yet." }));
     var t = $("notices-toggle");
     t.hidden = !act || !notices;
     t.textContent = "";
@@ -1436,7 +1446,7 @@ tr.archived b { color: var(--muted); }
     entryOf = {};
     entries.forEach(function (e) { entryOf[e.key] = e; });
     renderChat();
-    if (changed("messages", [feed.messages, feed.agents.map(function (a) { return [a.name, a.mine, a.label]; }), showNotices, me && me.person, conv]) || jump) {
+    if (changed("messages", [feed.messages, feed.agents.map(function (a) { return [a.name, a.mine, a.label, a.background]; }), showNotices, me && me.person, conv]) || jump) {
       renderMessages(jump);
       entries = buildEntries(msgs);  /* the open chat is read now */
     }

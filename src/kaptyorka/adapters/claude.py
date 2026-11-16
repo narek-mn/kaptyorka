@@ -95,8 +95,9 @@ class ClaudeAdapter:
                          "push may break, pull still works")
             name = data.get("name")
             label = name if isinstance(name, str) else ""
+            # "kind" is undocumented: "bg" marks a background job; anything else is a normal one
             out.append(Session(f"claude:{session_id}", self.tool, os.path.basename(cwd.rstrip("/")),
-                               data.get("status", ""), label, cwd))
+                               data.get("status", ""), label, cwd, data.get("kind") == "bg"))
         return out
 
     def _find(self, key: str):

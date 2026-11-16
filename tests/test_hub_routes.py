@@ -260,6 +260,19 @@ def test_label_in_feed_brief_and_cli_rows(hub):
     assert "api-dev (box-2/claude-code/proj-b)" in brief(hub, ident, "start")
 
 
+def test_background_from_heartbeat_to_feed(hub):
+    assert heartbeat(hub, "box-2", [
+        {"key": "claude:2", "tool": "claude-code", "project": "proj-b", "background": True},
+        {"key": "claude:3", "tool": "claude-code", "project": "proj-c", "background": False},
+        {"key": "codex:4", "tool": "codex", "project": "proj-d"},  # other tools send nothing
+        {"key": "claude:5", "tool": "claude-code", "project": "proj-e", "background": "yes"}]) == 200
+    bg = {a["project"]: a["background"] for a in feed(hub)["agents"]}
+    assert bg == {"proj-b": True, "proj-c": False, "proj-d": False, "proj-e": False}
+    # a later heartbeat without it (an older bridge) clears it
+    assert heartbeat(hub, "box-2", [{"key": "claude:2", "tool": "claude-code", "project": "proj-b"}]) == 200
+    assert {a["project"]: a["background"] for a in feed(hub)["agents"]}["proj-b"] is False
+
+
 def test_web_send_lands_in_inbox_with_person_name(hub):
     box2_online(hub)
     s, body = http.request("POST", hub.url + "/api/send", "T",

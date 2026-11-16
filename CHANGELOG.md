@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.2
+
+- Claude Code background jobs (`claude --bg`) no longer look like normal sessions on Home: they have a small clock instead of the dot, the word "background" before the machine, and "background job" in the chat header. The manager runs this way too but keeps its own look.
+- An empty chat now says so in one quiet line in the middle. For a background job it adds that the job works on its own and you can write to it below.
+
 ## 0.9.1
 
 - Home is now a chat like Slack or Telegram: the list on the left (the manager first, then your sessions), the open chat on the right with the box to write pinned at the bottom. The box says whom you write to.
