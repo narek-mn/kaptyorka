@@ -209,6 +209,10 @@ def _alice_reads(team) -> str:
                  "/api/knocks", "/api/me/access", "/api/workers", "/api/requests"):
         status, body = http.request("GET", url + path, tok)
         assert status == 200, (path, body)
+        if path == "/api/feed":  # the directory (0.9.4) names everyone, without content:
+            for row in body.pop("others"):  # see test_connects
+                assert set(row) == {"id", "name", "label", "person", "machine", "tool",
+                                    "project", "online", "reachable", "request"}
         out.append(repr(body))
     for tool in ("who", "projects", "workers", "inbox"):
         out.append(repr(run(call(a, ident_a, tool))))

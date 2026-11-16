@@ -91,8 +91,9 @@ def test_home_two_pane_chat(hub):
     assert 'id="chat-back"' in home and 'id="chat-name"' in home  # the chat's header; Back on a phone
     # detail on hover: the full name, person, folder, tool and doing
     assert "var tip = [a.label ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status," in html
-    # the admin sees whose a line is and an Activity chat of every message; no "all" line
-    assert "who: isAdmin() && !a.mine ? a.person : null" in html and 'sessionRow("all"' not in html
+    # the admin sees whose a line is (a member too for a hidden project's session) and an
+    # Activity chat of every message; no "all" line
+    assert "who: !a.mine && (isAdmin() || hidden(a)) ? a.person : null" in html and 'sessionRow("all"' not in html
     assert 'if (admin) list.push({ key: "activity", name: "Activity"' in html
     assert "isAdmin() ? harness(a.harness) : null" in html  # what the tool loaded, on hover
     assert '$("text").placeholder = "Message " + (e.name || "manager");' in html  # whom you write to

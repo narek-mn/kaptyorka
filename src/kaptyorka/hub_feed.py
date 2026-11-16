@@ -4,7 +4,7 @@ from typing import Optional
 
 from kaptyorka import __version__, admin_ops
 from kaptyorka.manager import ManagerStore
-from kaptyorka.store import PRIVATE, Agent, Principal, Store, private_name
+from kaptyorka.store import PRIVATE, Agent, Principal, Store, private_name, session_id
 
 
 def agent_row(a: Agent, now: float) -> dict:
@@ -27,7 +27,8 @@ def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: 
     sessions of live workers to their names; a worker's name shows only with its project.
     `manager_id`: the manager person's id; their session gets role "manager"."""
     mine = a.person_id == principal.person_id
-    row = {**agent_row(a, now), "mine": mine, "person": names.get(a.person_id, "")}
+    row = {**agent_row(a, now), "id": session_id(a.key), "mine": mine,
+           "person": names.get(a.person_id, "")}
     if not visible(store, principal, a.person_id, a.project):
         row["project"] = PRIVATE
         row["name"] = private_name(a.name, a.machine, a.tool, a.project)
@@ -39,6 +40,9 @@ def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: 
     row["harness"] = None
     if ws is not None and a.device_id is not None:
         row["harness"] = ws.facts(a.device_id).get("harness", {}).get(a.tool)
+    if not mine:  # a door from one of the viewer's sessions, not their page: read only here
+        row["writable"] = store.page_may_message(principal.person_name, principal.person_id,
+                                                 a.key, a.person_id)
     if mine:
         row["doors"] = [masked(store, principal, d, (("_side", "with"),))["with"] or d["person"]
                         for d in store.doors_for(a.key)]
@@ -47,11 +51,14 @@ def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: 
 
 def masked(store: Store, principal: Principal, row: dict, sides) -> dict:
     """Pop each (side key, name field) pair's session from `row` and hide its project in the
-    name when the viewer may not see it."""
+    name when the viewer may not see it; `<field>_id` is then its handle, to tell two hidden
+    sessions apart and to write to one."""
     for side, field in sides:
         s = row.pop(side)
         if s is not None and not visible(store, principal, s["person_id"], s["project"]):
             row[field] = private_name(row[field], s["machine"], s["tool"], s["project"])
+            if s.get("key"):
+                row[field + "_id"] = session_id(s["key"])
     return row
 
 
@@ -88,7 +95,7 @@ def _notes(store: Store, principal: Principal) -> list:
     return out
 
 
-def feed(store: Store, principal: Principal, ws=None) -> dict:
+def feed(store: Store, principal: Principal, ws=None, cs=None) -> dict:
     now = store.clock()
     people = store.people()
     names = admin_ops.names(store)  # removed people too: their old sessions keep a name
@@ -106,16 +113,22 @@ def feed(store: Store, principal: Principal, ws=None) -> dict:
         "notes": _notes(store, principal),
         "knocks": knocks(store, principal) if admin else [],  # only the admin answers
         "doors": doors,
+        # everyone else online, without content; see connects.directory
+        "others": cs.directory(principal) if cs is not None else [],
     }
     if not admin and ws is not None:  # only what blocks this person; the admin has /api/warnings
         out["warnings"] = [w for w in ws.warnings(now, __version__) if w["person"] == me]
     if admin:
         members, grants = store.project_members(), store.machine_grants()
+        sides = (("_from", "from_session"), ("_to", "target"))
+        connects = [masked(store, principal, r, sides) for r in cs.requests()] if cs else []
+        decided = [masked(store, principal, r, sides)
+                   for r in cs.requests(pending_only=False)] if cs else []
         out.update({
             "people": [{**p, "devices": store.devices(p["id"])} for p in people],
-            "requests": store.requests(),
-            "decisions": sorted((r for r in store.requests(pending_only=False) if r["decided_at"]),
-                                key=lambda r: r["decided_at"], reverse=True)[:10],
+            "requests": sorted(store.requests() + connects, key=lambda r: r["created"]),
+            "decisions": sorted([r for r in store.requests(pending_only=False) if r["decided_at"]]
+                                + decided, key=lambda r: r["decided_at"], reverse=True)[:10],
             "legacy": {"unassigned": store.legacy_unassigned(), "enabled": store.legacy_enabled(),
                        "ready_to_disable": store.legacy_ready_to_disable()},
             "machines": [{**m, "grants": grants.get(m["host"], [])}

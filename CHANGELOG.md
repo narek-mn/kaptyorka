@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.4
+
+- Members can now see who else is online and ask to talk to them. On Home, under **Others**, every other online session shows with a lock: its label (or its tool when the project is hidden), its person and machine, and nothing it is doing. Click one, pick this page or one of your sessions, add a reason, **Send**. Agents do the same with `who(others=true)` and `request_access(kind="session", target=<id>, why)`.
+- The manager is told about each connection request; only the admin approves, under Admin > Access > **Requests** (with the badge on Admin). Approving opens a door between just those two sessions, and both are told; it shows in Doors and in the log and closes the usual ways. **Deny** sends the reason. A session that went offline before approval gets no door, and the asker is told.
+- Every session now has a short `id` (for example `#3fa2c19b`). A session whose project you may not see can be messaged by that `id`, or by its hidden name when only one session has it. Before, such a session could not be written to from the page at all, and its hidden name did not work in `send`.
+- Fixed: a message from another person's session showed its real project name in `inbox`, pushed messages and the brief, even when that project is hidden from you. It now shows the hidden name and the `id` to reply to.
+
 ## 0.9.3
 
 - A member's session can now reply to the admin's session. When the admin's session writes directly to a session of another person, the hub opens a door between just those two sessions, as a message from the page already did. It shows under Admin > Access > Doors and in the log, and closes when either session goes offline or with `door_close`. Messages to `all` or to the manager open no door.

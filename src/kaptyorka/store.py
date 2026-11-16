@@ -172,6 +172,12 @@ def private_name(name: str, machine: str, tool: str, project: str) -> str:
     return f"{machine}/{tool}/{PRIVATE}{suffix}"
 
 
+def session_id(key: str) -> str:
+    """A session's stable public handle, "#" and 8 hex digits: it names a session without
+    its project, and the key cannot be read back from it."""
+    return "#" + hashlib.sha256(f"kaptyorka-session:{key}".encode()).hexdigest()[:8]
+
+
 def _owns(row, principal) -> bool:
     """True when an agent row is the caller's: its person, and its device where one is set.
     No principal (an internal caller) owns everything."""
@@ -244,6 +250,7 @@ class Message:
     to_web: bool = False
     kind: str = "message"
     file: Optional[dict] = None  # {id, name, size} of the attachment
+    reply_to: str = ""  # the sender's handle when its name is shown with the project hidden
 
 
 @dataclass
@@ -264,12 +271,13 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
-        from kaptyorka import admin_ops, manager, memory, rules, workers  # they import this module
+        from kaptyorka import admin_ops, connects, manager, memory, rules, workers  # they import this module
         workers.ensure_schema(self.db)
         memory.ensure_schema(self.db)
         rules.ensure_schema(self.db)
         manager.ensure_schema(self.db)
         admin_ops.ensure_schema(self.db)
+        connects.ensure_schema(self.db)
         self._migrate(legacy_token)
         self.sends: Dict[str, List[float]] = {}
 
@@ -1351,13 +1359,7 @@ class Store:
         online = [r for r in self._online_rows(now) if not limited or self._listed(viewer, r)]
         if to == "all":
             return [r for r in online if r["key"] != sender_key]
-        match = [r for r in online if r["name"] == to]
-        if not match:
-            labeled = [r for r in online if r["label"] and r["label"].lower() == to.lower()]
-            if len(labeled) > 1:
-                raise KaptyorkaError(f"several sessions are named {to}: "
-                                     + ", ".join(self._shown(r, viewer) for r in labeled))
-            match = labeled
+        match = self._named(online, to, viewer)
         match = match or [r for r in self.db.execute(
             "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1", (to,)).fetchall()
             if not limited or self._listed(viewer, r)]
@@ -1447,16 +1449,30 @@ class Store:
         if m["kind"] == "knock" and m["to_key"] != key:
             self.db.execute("UPDATE messages SET to_key=? WHERE id=?", (key, m["id"]))
 
+    def _from_for(self, m, to_person) -> Tuple[str, str]:
+        """A message's sender as the recipient's person may see it (the who() rule), and its
+        handle to reply to when the project is hidden ("" otherwise)."""
+        if to_person is None or not m["sender_key"] or m["sender_key"].startswith(("web:", "hub:")):
+            return m["sender_name"], ""
+        row = self.db.execute("SELECT * FROM agents WHERE key=?", (m["sender_key"],)).fetchone()
+        if row is None or self._shown(row, to_person) == row["name"]:
+            return m["sender_name"], ""
+        return (private_name(m["sender_name"], row["machine"], row["tool"], row["project"]),
+                session_id(row["key"]))
+
     def inbox(self, key: str) -> List[Message]:
         with self.lock:
             now = self.clock()
-            rows = [m for m, t in self._deliverable(now) if t["key"] == key]
-            for m in rows:
+            rows = [(m, t) for m, t in self._deliverable(now) if t["key"] == key]
+            out = []
+            for m, t in rows:
                 self.db.execute("UPDATE messages SET read_at=? WHERE id=?", (now, m["id"]))
                 self._bind(m, key)
-            return [Message(m["id"], m["sender_name"], m["to_name"], m["text"], m["created"], True,
-                            m["sender_key"].startswith("web:"), kind=m["kind"],
-                            file=self._file_info(m["file_id"])) for m in rows]
+                sender, reply = self._from_for(m, t["person_id"])
+                out.append(Message(m["id"], sender, m["to_name"], m["text"], m["created"], True,
+                                   m["sender_key"].startswith("web:"), kind=m["kind"],
+                                   file=self._file_info(m["file_id"]), reply_to=reply))
+            return out
 
     def _launched_keys(self, principal: Optional[Principal]) -> set:
         """Keys of live workers the principal's device launched. Call with the lock held."""
@@ -1493,7 +1509,9 @@ class Store:
                     self.db.execute("UPDATE messages SET push_state='offered', offered_at=?"
                                     " WHERE id=?", (now, m["id"]))
                     self._bind(m, t["key"])
-                    text = (f"Kaptyorka message from {_one_line(_sender(m))}:\n\n{m['text']}"
+                    shown, reply = self._from_for(m, t["person_id"])
+                    sender = f"{shown} (reply to {reply})" if reply else _sender(m)
+                    text = (f"Kaptyorka message from {_one_line(sender)}:\n\n{m['text']}"
                             if m["kind"] == "message" else m["text"])  # knocks and doors: as written
                     out.append({"kind": "message", "id": m["id"], "key": t["key"], "text": text})
             return out
@@ -1526,7 +1544,8 @@ class Store:
         with self.lock:
             rows = self.db.execute(
                 "SELECT m.*, s.person_id AS s_pid, s.machine AS s_machine, s.tool AS s_tool,"
-                " s.project AS s_project, r.person_id AS r_pid, r.machine AS r_machine,"
+                " s.project AS s_project, s.key AS s_key, r.key AS r_key,"
+                " r.person_id AS r_pid, r.machine AS r_machine,"
                 " r.tool AS r_tool, r.project AS r_project FROM messages m"
                 " LEFT JOIN agents s ON s.key=m.sender_key LEFT JOIN agents r ON r.key=m.to_key"
                 " LEFT JOIN people sp ON m.sender_key='web:' || sp.name"
@@ -1544,7 +1563,7 @@ class Store:
                                    self._file_info(m["file_id"])))
                 for k, p in (("_from", "s_"), ("_to", "r_")):
                     d[k] = None if m[p + "machine"] is None else {
-                        "person_id": m[p + "pid"], "machine": m[p + "machine"],
+                        "key": m[p + "key"], "person_id": m[p + "pid"], "machine": m[p + "machine"],
                         "tool": m[p + "tool"], "project": m[p + "project"]}
                 out.append(d)
             return out
@@ -1638,6 +1657,13 @@ class Store:
             (sender["key"], target["key"], target["key"], sender["key"],
              sp, tp, tp, sp)).fetchone() is not None
 
+    def page_may_message(self, person: str, person_id: int, key: str,
+                         target_person: Optional[int]) -> bool:
+        """Whether a person's page may write to the session `key` (see _may_message)."""
+        with self.lock:
+            return self._may_message({"key": f"web:{person}", "person_id": person_id},
+                                     {"key": key, "person_id": target_person})
+
     def may_message(self, sender_key: str, target_key: str) -> bool:
         with self.lock:
             s = self.db.execute("SELECT * FROM agents WHERE key=?", (sender_key,)).fetchone()
@@ -1668,13 +1694,27 @@ class Store:
         `viewer` is the asking person, for whom names in errors are masked."""
         online = [r for r in self._online_rows(now)
                   if not self._limited(viewer) or self._listed(viewer, r)]
-        match = [r for r in online if r["name"] == to]
+        match = self._named(online, to, viewer)
+        return match[0] if match else None
+
+    def _named(self, rows, to, viewer):
+        """The rows `to` names: a name, a handle (session_id), a name as `viewer` sees it
+        (the project hidden), then a label. Several by a hidden name or a label: an error
+        that lists them by handle, so it never shows a project."""
+        match = [r for r in rows if r["name"] == to]
+        match = match or [r for r in rows if session_id(r["key"]) == to]
         if not match:
-            match = [r for r in online if r["label"] and r["label"].lower() == to.lower()]
+            match = [r for r in rows if self._shown(r, viewer) == to]
+            if len(match) > 1:
+                raise KaptyorkaError(f"several sessions are named {to}; use one of: " + ", ".join(
+                    session_id(r["key"]) + (f" ({r['label']})" if r["label"] else "")
+                    for r in match))
+        if not match:
+            match = [r for r in rows if r["label"] and r["label"].lower() == to.lower()]
             if len(match) > 1:
                 raise KaptyorkaError(f"several sessions are named {to}: "
                                      + ", ".join(self._shown(r, viewer) for r in match))
-        return match[0] if match else None
+        return match
 
     def knock(self, from_key: str, to: str, about: str) -> int:
         """Ask a session (by name or label) or a person (by name) to open a door. The knock

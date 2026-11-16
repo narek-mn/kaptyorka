@@ -115,6 +115,31 @@ section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .bg-lead { display: flex; color: var(--faint); }
 .bg-lead.on { color: var(--ok); }
 .quiet-line { padding: 4px 16px 12px; font-size: 12px; color: var(--faint); }
+/* Others: everyone else online, locked until the admin connects you */
+.list .others-head { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 12px 16px 6px 17px;
+  border-top: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--muted); }
+.list .others-head small { font-weight: 400; color: var(--faint); }
+.list .row.locked .name { color: var(--muted); font-weight: 400; }
+.list .row.locked .lead { color: var(--faint); }
+.list .row.locked:hover .name, .list .row.locked.on .name { color: var(--ink); }
+.list .row.locked:hover .lead { color: var(--muted); }
+.ask-state { flex: none; padding: 1px 7px; font-size: 11px; line-height: 16px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.ask-state.requested { color: var(--accent); border-color: rgba(218, 105, 71, .45); background: rgba(218, 105, 71, .1); }
+.ask-state.denied { color: var(--faint); }
+/* the request panel, where the chat would be */
+#connect { flex: none; max-width: 640px; }
+#connect .phead > svg { color: var(--muted); }
+.connect-state { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink); }
+.connect-state > svg { margin-top: 2px; }
+.connect-state.requested { border-left: 2px solid var(--accent); }
+.connect-state.requested > svg { color: var(--accent); }
+.connect-state.denied { border-left: 2px solid var(--line-strong); color: var(--muted); }
+.connect-state small { display: block; margin-top: 2px; font-size: 12px; color: var(--faint); }
+#connect-form #connect-why { flex: 1 1 220px; min-width: 0; }
+#connect-form select { max-width: 100%; }
+#connect-err { padding: 0 14px 10px; }
+.read-only { flex: none; display: flex; align-items: center; gap: 8px; padding: 14px 24px 18px; border-top: 1px solid var(--line);
+  background: var(--surface); font-size: 12px; color: var(--muted); }
 .side-foot { flex: none; margin-top: auto; padding: 12px 14px; border-top: 1px solid var(--line); }
 .side-foot .btn { width: 100%; }
 .side-foot .btn[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
@@ -670,6 +695,20 @@ tr.archived b { color: var(--muted); }
           <div class="err" id="ask-err" hidden></div>
         </div>
         </div>
+        <div class="access-pane" id="connect-pane" hidden>
+        <div class="panel" id="connect">
+          <div class="phead"><svg width="15" height="15"><use href="#i-lock"/></svg>Request connection</div>
+          <div class="mine-rows" id="connect-rows"></div>
+          <div class="connect-state" id="connect-state" role="status" hidden></div>
+          <form class="sentence ask" id="connect-form" autocomplete="off">
+            <b>Connect</b>
+            <select id="connect-from" aria-label="Which of mine"></select>
+            <input id="connect-why" placeholder="Why (optional)" aria-label="Why" maxlength="500">
+            <button type="submit" class="btn small primary"><svg width="13" height="13"><use href="#i-send"/></svg>Send</button>
+          </form>
+          <div class="err" id="connect-err" hidden></div>
+        </div>
+        </div>
         <form class="compose" id="compose" autocomplete="off">
           <span class="tag file-chip" id="file-chip" hidden></span>
           <textarea id="text" rows="1" placeholder="Message manager" aria-label="Message"></textarea>
@@ -678,6 +717,7 @@ tr.archived b { color: var(--muted); }
           <button type="submit" class="btn primary" title="Send (Enter)"><svg width="14" height="14"><use href="#i-send"/></svg><span>Send</span></button>
         </form>
         <div class="err" id="send-err" hidden></div>
+        <div class="read-only" id="read-only" hidden><svg width="14" height="14"><use href="#i-door"/></svg><span>Connected to one of your sessions, not this page. Write to it from that session.</span></div>
       </div>
     </section>
     <section id="admin" role="tabpanel" hidden>
@@ -1069,11 +1109,13 @@ tr.archived b { color: var(--muted); }
   }
 
   function labelOf(name) {
-    var a = (feed.agents || []).filter(function (x) { return x.name === name; })[0];
-    return a && a.label ? a.label : "";
+    var a = (feed.agents || []).filter(function (x) { return x.id === name || x.name === name; })[0];
+    return a ? rowName(a, "") : "";
   }
 
   function hidden(a) { return a.project === "(private)"; }
+  /* how a session is called: its label, else its folder; a hidden project by its tool */
+  function rowName(a, plain) { return a.label || (hidden(a) ? a.tool + " session" : plain); }
   /* a session's short name: the folder part of machine/tool/folder */
   function shortName(name) { var p = (name || "").split("/"); return p.length >= 3 ? p.slice(2).join("/") : name; }
 
@@ -1091,8 +1133,8 @@ tr.archived b { color: var(--muted); }
   /* who a message is between: "mgr", a session name, "@person", ME (this page) or HUB */
   function parties(m) {
     var mine = function (n) { return !!me && n === me.person; };
-    var out = [m.fromMgr ? "mgr" : m.web ? (mine(m.sender) ? ME : "@" + m.sender) : m.sender === "hub" ? HUB : sessionKey(m.sender)];
-    m.to.forEach(function (t, i) { out.push(m.toMgr[i] ? "mgr" : m.toWeb ? (mine(t) ? ME : "@" + t) : sessionKey(t)); });
+    var out = [m.fromMgr ? "mgr" : m.web ? (mine(m.sender) ? ME : "@" + m.sender) : m.sender === "hub" ? HUB : m.fromId || sessionKey(m.sender)];
+    m.to.forEach(function (t, i) { out.push(m.toMgr[i] ? "mgr" : m.toWeb ? (mine(t) ? ME : "@" + t) : m.toId[i] || sessionKey(t)); });
     return out;
   }
   /* a member's hub notices to this page sit in the manager's chat; the admin's in Activity */
@@ -1132,8 +1174,11 @@ tr.archived b { color: var(--muted); }
                  a.activity ? "doing: " + a.activity : null,
                  a.doors && a.doors.length ? "doors: " + a.doors.join(", ") : null,
                  isAdmin() ? harness(a.harness) : null].filter(Boolean).join("\n");
-      list.push({ key: a.name, name: a.label || shortName(a.name), online: true, sub: a.machine, to: a.name, bg: !!a.background,
-                  who: isAdmin() && !a.mine ? a.person : null, off: hidden(a), tip: hidden(a) ? "A project you have no role in" : tip });
+      /* a hidden project: the row goes by the session's handle, which also tells two apart */
+      var k = hidden(a) ? a.id : a.name;
+      list.push({ key: k, name: rowName(a, shortName(a.name)), online: true, sub: a.machine, to: k, bg: !!a.background,
+                  who: !a.mine && (isAdmin() || hidden(a)) ? a.person : null, ro: !a.mine && a.writable === false,
+                  tip: hidden(a) ? a.person + "'s session in a project you have no role in" : tip });
     });
     var people = {};
     msgs.forEach(function (m) {
@@ -1143,6 +1188,16 @@ tr.archived b { color: var(--muted); }
     Object.keys(people).sort().forEach(function (x) {
       list.push({ key: x, name: x.slice(1), icon: "i-person", sub: "", to: x.slice(1), tip: "On the web page" });
     });
+    (feed.others || []).forEach(function (o) {
+      var st = o.request ? o.request.state : "";
+      list.push({ key: "req:" + o.id, name: rowName(o, shortName(o.name)), sub: o.machine, who: o.person, locked: true, read: true,
+                  req: o, ask: st, tip: [o.person + "'s session", o.project === "(private)" ? "project hidden" : o.project, o.tool,
+                                         st === "denied" ? "denied" + (o.request.reason ? ": " + o.request.reason : "") : st].filter(Boolean).join("\n") });
+    });
+    if (conv.indexOf("req:") === 0 && !list.some(function (e) { return e.key === conv; })) {
+      /* connected: the locked row is now a normal chat; gone offline: back to the manager */
+      conv = list.some(function (e) { return e.key === conv.slice(4); }) ? conv.slice(4) : "mgr";
+    }
     if (!list.some(function (e) { return e.key === conv; }) && conv !== "activity" && conv.charAt(0) !== "@") {
       list.push({ key: conv, name: labelOf(conv) || shortName(conv), online: false, sub: conv.split("/")[0], to: conv, tip: conv + "\noffline" });
     }
@@ -1155,9 +1210,18 @@ tr.archived b { color: var(--muted); }
     var box = $("agents");
     box.textContent = "";
     entryOf = {};
-    entries.forEach(function (e) { entryOf[e.key] = e; box.appendChild(sessionRow(e)); });
+    var head = false;
+    entries.forEach(function (e) {
+      entryOf[e.key] = e;
+      if (e.locked && !head) {
+        head = true;
+        box.appendChild(el("div", { "class": "others-head", title: "Everyone else online. Ask, and the admin may connect you." }, ["Others"]));
+      }
+      box.appendChild(sessionRow(e));
+    });
   }
   function lead(e) {
+    if (e.locked) return el("span", { title: "Locked: ask to connect" }, [icon("i-lock", 14)]);
     if (e.icon) return icon(e.icon, 15);
     var state = e.online ? "online" : "offline";
     if (e.bg) return el("span", { "class": "bg-lead" + (e.online ? " on" : ""), title: "background job, " + state }, [icon("i-clock", 13)]);
@@ -1165,7 +1229,7 @@ tr.archived b { color: var(--muted); }
   }
   function sessionRow(e) {
     var on = e.key === conv && !askOpen && (phoneOpen || wide());  /* a phone marks a chat only while it is open */
-    var b = el("button", { type: "button", "class": "row" + (e.cls ? " " + e.cls : "") + (on ? " on" : "") + (e.off ? " off" : "") + (e.unread ? " unread" : ""),
+    var b = el("button", { type: "button", "class": "row" + (e.cls ? " " + e.cls : "") + (on ? " on" : "") + (e.off ? " off" : "") + (e.locked ? " locked" : "") + (e.unread ? " unread" : ""),
                            title: e.tip || null, "aria-current": on ? "true" : null, "data-key": e.key }, [
       el("span", { "class": "lead" }, [lead(e)]),
       el("span", { "class": "meta" }, [el("span", { "class": "name", text: e.name }),
@@ -1173,6 +1237,7 @@ tr.archived b { color: var(--muted); }
                                                           e.sub ? el("span", { text: e.sub }) : null,
                                                           e.who ? el("span", { "class": "who", text: e.who }) : null]) : null]),
       e.state ? el("span", { "class": "n", text: e.state }) : null,
+      e.ask ? el("span", { "class": "ask-state " + e.ask, text: e.ask === "requested" ? "Requested" : "Denied" }) : null,
       e.unread ? el("span", { "class": "count", title: e.unread + " unread", text: String(e.unread) }) : null]);
     if (!e.off) b.addEventListener("click", function () { select(e.key); });
     return b;
@@ -1186,7 +1251,7 @@ tr.archived b { color: var(--muted); }
     $("ask-link").setAttribute("aria-expanded", "false");
     renderHome(true);
     grow();
-    if (wide() && k !== "activity") $("text").focus();
+    if (wide() && k !== "activity") ($("connect-pane").hidden ? $("text") : $("connect-why")).focus();
   }
   /* the manager's session name as this page sees it, to know its messages */
   function managerTo() {
@@ -1276,9 +1341,10 @@ tr.archived b { color: var(--muted); }
       if (last && last.sender === m.sender && last.text === m.text && Math.abs(m.created - last.created) <= 1) {
         last.to.push(m.to);
         last.toMgr.push(!!m.to_manager);
+        last.toId.push(m.to_id || "");
       } else {
         rows.push({ id: m.id, sender: m.sender, web: !!m.from_web, toWeb: !!m.to_web, to: [m.to], text: m.text,
-                    fromMgr: !!m.from_manager, toMgr: [!!m.to_manager],
+                    fromMgr: !!m.from_manager, toMgr: [!!m.to_manager], fromId: m.sender_id || "", toId: [m.to_id || ""],
                     created: m.created, kind: m.kind || "message", file: m.file });
       }
     });
@@ -1292,7 +1358,7 @@ tr.archived b { color: var(--muted); }
   }
   function senderName(m) {
     if (m.web) return me && m.sender === me.person ? "you" : m.sender;
-    return m.fromMgr || sessionKey(m.sender) === "mgr" ? "manager" : labelOf(m.sender) || shortName(m.sender);
+    return m.fromMgr || sessionKey(m.sender) === "mgr" ? "manager" : labelOf(m.fromId || m.sender) || shortName(m.sender);
   }
 
   /* an <img> cannot send a header, so images take ?t=; any other file is fetched with the
@@ -1333,7 +1399,7 @@ tr.archived b { color: var(--muted); }
   function toName(m) {
     if (m.to.length > 1) return "all";
     if (m.toWeb) return me && m.to[0] === me.person ? "you" : m.to[0];
-    return m.toMgr[0] || sessionKey(m.to[0]) === "mgr" ? "manager" : labelOf(m.to[0]) || shortName(m.to[0]) || "—";
+    return m.toMgr[0] || sessionKey(m.to[0]) === "mgr" ? "manager" : labelOf(m.toId[0] || m.to[0]) || shortName(m.to[0]) || "—";
   }
   function renderChat() {
     var e = entryOf[conv] || { name: shortName(conv), sub: "" }, act = conv === "activity";
@@ -1348,14 +1414,49 @@ tr.archived b { color: var(--muted); }
       $("chat-name").textContent = e.name;
       var sub = $("chat-sub");
       sub.textContent = "";
-      if (!act) [e.bg ? "background job" : null, e.state || (e.icon ? "" : e.online ? "online" : "offline"), e.sub, e.who].forEach(function (t) { if (t) sub.appendChild(el("span", { text: t })); });
+      if (!act) [e.bg ? "background job" : null, e.locked ? "locked" : e.state || (e.icon ? "" : e.online ? "online" : "offline"), e.sub, e.who].forEach(function (t) { if (t) sub.appendChild(el("span", { text: t })); });
     }
+    var locked = !askOpen && !!e.locked;
     $("access-pane").hidden = !askOpen;
-    $("log").hidden = askOpen;
-    $("compose").hidden = askOpen || act || !!e.off;
+    $("connect-pane").hidden = !locked;
+    if (locked) renderConnect(e);
+    $("log").hidden = askOpen || locked;
+    $("compose").hidden = askOpen || act || locked || !!e.off || !!e.ro;
+    $("read-only").hidden = askOpen || locked || !e.ro;
     $("send-err").hidden = $("send-err").hidden || $("compose").hidden;
     $("text").placeholder = "Message " + (e.name || "manager");
     $("home").classList.toggle("open", phoneOpen);
+  }
+  /* a locked row: whose session it is and the request; Send asks the admin to connect it to
+     this page or to one of my sessions */
+  function renderConnect(e) {
+    var o = e.req, st = o.request ? o.request.state : "";
+    var mine = feed.agents.filter(function (a) { return a.mine; });
+    var froms = [["page", "this page"]].concat(mine.map(function (a) { return [a.name, "my session " + (a.label || shortName(a.name)) + " (" + a.machine + ")"]; }));
+    if (!changed("connect", [o, froms]) && $("connect-rows").firstChild) return;
+    var rows = $("connect-rows");
+    rows.textContent = "";
+    [["Session", rowName(o, shortName(o.name))], ["Project", hidden(o) ? null : o.project], ["Person", o.person], ["Machine", o.machine + ", " + o.tool]].forEach(function (r) {
+      rows.appendChild(el("span", { text: r[0] }));
+      rows.appendChild(r[1] ? el("b", { text: r[1] }) : el("span", { "class": "none", text: "hidden", title: "A project you have no role in" }));
+    });
+    var box = $("connect-state");
+    box.textContent = "";
+    box.className = "connect-state " + st;
+    box.hidden = !st;
+    if (st === "requested") {
+      box.appendChild(icon("i-clock", 14));
+      box.appendChild(el("div", null, ["Requested. The admin decides; the answer comes to your manager chat.",
+        el("small", { text: "The manager is told too." })]));
+    } else if (st === "denied") {
+      box.appendChild(icon("i-x", 14));
+      box.appendChild(el("div", null, [o.request.reason ? "Denied: " + o.request.reason : "Denied.",
+        el("small", { text: "You may ask again." })]));
+    }
+    $("connect-form").hidden = st === "requested";
+    var sel = $("connect-from"), keep = sel.dataset.for === o.id ? sel.value : (mine.length === 1 ? mine[0].name : "page");
+    options(sel, froms, keep);
+    sel.dataset.for = o.id;
   }
   var shownTo = {};
   var BG_EMPTY = "No messages yet. This job works on its own; write to it below.";
@@ -1880,6 +1981,8 @@ tr.archived b { color: var(--muted); }
 
   /* admin: Access */
   function wanted(r) {
+    if (r.kind === "session") return "a connection from " + (r.from_session ? "their session " + shortName(r.from_session) : "their page") +
+      " to " + r.target_person + "'s session " + (r.target_label || shortName(r.target)) + (r.target_machine ? " on " + r.target_machine : "");
     return r.kind === "project" ? (r.role === "write" ? "write" : "read") + " access to project " + r.target : "use of machine " + r.target;
   }
   var GRANT_HINT = { read: "read: see notes and sessions", write: "write: also edit notes and start workers",
@@ -1897,24 +2000,24 @@ tr.archived b { color: var(--muted); }
     var rb = $("req-rows");
     rb.textContent = "";
     reqs.forEach(function (r) {
-      var role = null;
+      var role = null, path = (r.kind === "session" ? "/api/connects/" : "/api/requests/") + r.id;
       if (r.kind === "project") {
         role = el("select", { "class": "own", "aria-label": "Role for " + r.person });
         options(role, ["read", "write"], r.role === "write" ? "write" : "read");
       }
       var deny = button("Deny", "", function () {
         confirmInline(deny, "Deny " + r.person + "'s request?", "Deny", function (why) {
-          return act("req-err", "/api/requests/" + r.id, { approve: false, reason: why || "" });
+          return act("req-err", path, { approve: false, reason: why || "" });
         }, { ask: "Reason (optional)" });
       });
       rb.appendChild(el("tr", null, [
-        el("td", null, [el("b", { text: r.person }), " wants " + wanted(r),
-                        r.why ? el("div", { "class": "hint", text: r.why }) : null]),
+        el("td", { title: r.kind === "session" ? [r.from_session || r.person + "'s page", "to " + r.target].join("\n") : null },
+                       [el("b", { text: r.person }), " wants " + wanted(r), r.why ? el("div", { "class": "hint", text: r.why }) : null]),
         el("td", { "class": "log-time" }, [timeEl(r.created)]),
         el("td", { "class": "c-act" }, [role,
           button("Approve", "primary", function () {
-            quiet(act("req-err", "/api/requests/" + r.id, { approve: true, role: role ? role.value : "read" }));
-          }, { title: role ? "Give the chosen role" : null }), deny])
+            quiet(act("req-err", path, { approve: true, role: role ? role.value : "read" }));
+          }, { title: role ? "Give the chosen role" : r.kind === "session" ? "Open a door between just these two" : null }), deny])
       ]));
     });
     var dec = feed.decisions || [];
@@ -1924,7 +2027,8 @@ tr.archived b { color: var(--muted); }
     dec.forEach(function (r) {
       db.appendChild(el("tr", null, [
         el("td", null, [el("div", { "class": "dec" }, [el("span", null, [el("b", { text: r.person }), " asked for " + wanted(r)]),
-          el("span", { "class": "state " + (r.decision === "approved" ? "accepted" : "rejected"), text: r.decision }),
+          el("span", { "class": "state " + (r.decision === "approved" ? "accepted" : "rejected"), text: r.decision === "offline" ? "approved, offline" : r.decision,
+                       title: r.decision === "offline" ? "A session went offline: no door opened" : r.reason || null }),
           r.decided_by ? el("span", { "class": "hint", text: "by " + r.decided_by }) : null])]),
         el("td", { "class": "log-time seen" }, [timeEl(r.decided_at)])
       ]));
@@ -2616,6 +2720,15 @@ tr.archived b { color: var(--muted); }
   document.addEventListener("click", function (e) { if (!$("viewer").contains(e.target)) viewerOpen(false); });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") viewerOpen(false); });
   $("compose").addEventListener("submit", function (e) { e.preventDefault(); send(); });
+  $("connect-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var e = entryOf[conv], btn = $("connect-form").querySelector("button[type=submit]");
+    if (!e || !e.locked || btn.getAttribute("aria-busy") === "true") return;
+    btn.setAttribute("aria-busy", "true");
+    act("connect-err", "/api/connects", { to: e.req.id, from: $("connect-from").value, why: $("connect-why").value.trim() })
+      .then(function () { $("connect-why").value = ""; seen.connect = null; }, function () {})
+      .then(function () { btn.removeAttribute("aria-busy"); });
+  });
   $("text").addEventListener("input", grow);
   $("text").addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }

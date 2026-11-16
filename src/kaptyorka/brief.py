@@ -47,7 +47,8 @@ def _request_lines(store: Store, principal) -> str:
 
 def message_text(m) -> str:
     return m.text if m.kind != "message" else \
-        f"Kaptyorka message from {m.sender}{' (web page)' if m.from_web else ''}:\n\n{m.text}"
+        f"Kaptyorka message from {m.sender}{' (web page)' if m.from_web else ''}" \
+        f"{f' (reply to {m.reply_to})' if m.reply_to else ''}:\n\n{m.text}"
 
 
 def _ago(s: float) -> str:

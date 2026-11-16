@@ -79,7 +79,7 @@ Each machine gets a token of its own, tied to Alice, and a signing secret. Both 
 
 Opening the invite link in a browser shows the same `join` command, and a button that opens the page as Alice.
 
-Open the `page` link to watch the team live and act from it. It has two tabs. **Home** is for everyone and works like a chat app. On the left is the list: the manager first (with `asleep` or `off` when it is not running), then the sessions you may see. Each has a green dot when online, a grey one when not, its machine, and a count of unread replies; hover for the full name, folder and tool. A Claude Code background job (`claude --bg`) shows a small clock instead of the dot and the word "background"; its chat stays empty until it or you write, and you can write to it like any session. Click one to open its chat on the right: the messages in full, grouped by sender, with the box to write at the bottom (Enter sends, Shift+Enter makes a new line). The admin also gets **Activity** at the top: every message as "from → to", read only, with the hub's own notices behind a **Notices** toggle. If something stops you working (for example no agent tool logged in on your machine), one bar over the chat shows it with the command that fixes it and a copy button. On a phone you see the list first; a tap opens the chat and **Back** returns. Members find **Ask for access** at the bottom of the list. **Admin**, for the admin only, holds People, Access, Machines, Rules, Notes, Log and Settings. Members see only Home: their own sessions and the manager. They keep notes, rules, machines and workers through their agents and the commands, not on the page.
+Open the `page` link to watch the team live and act from it. It has two tabs. **Home** is for everyone and works like a chat app. On the left is the list: the manager first (with `asleep` or `off` when it is not running), then the sessions you may see. Each has a green dot when online, a grey one when not, its machine, and a count of unread replies; hover for the full name, folder and tool. A Claude Code background job (`claude --bg`) shows a small clock instead of the dot and the word "background"; its chat stays empty until it or you write, and you can write to it like any session. Click one to open its chat on the right: the messages in full, grouped by sender, with the box to write at the bottom (Enter sends, Shift+Enter makes a new line). The admin also gets **Activity** at the top: every message as "from → to", read only, with the hub's own notices behind a **Notices** toggle. If something stops you working (for example no agent tool logged in on your machine), one bar over the chat shows it with the command that fixes it and a copy button. On a phone you see the list first; a tap opens the chat and **Back** returns. Below them, under **Others**, members see everyone else online: a lock, the session's label (or its tool when the project is hidden), its person and machine, and nothing they are doing. Clicking one opens **Request connection**: pick this page or one of your sessions, add a reason if you like, **Send**. The row then says **Requested**; once the admin approves it becomes a normal chat. Members find **Ask for access** at the bottom of the list. **Admin**, for the admin only, holds People, Access, Machines, Rules, Notes, Log and Settings. Members see only Home: their own sessions and the manager. They keep notes, rules, machines and workers through their agents and the commands, not on the page.
 
 The hub address uses the machine's IP. Use `--host` to set another one, and `--port` for another port. `kaptyorka start` again later starts the hub with the same settings. It also turns this machine's bridge back on when `kaptyorka stop` switched it off. On Linux, if the hub must survive logout, `start` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
 
@@ -118,7 +118,7 @@ A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join`
 
 | Tool | What it does |
 |---|---|
-| `who` | List the sessions you may reach: your own, the manager's, and those behind a door. A project you may not see shows as `(private)` |
+| `who` | List the sessions you may reach: your own, the manager's, and those behind a door. A project you may not see shows as `(private)`; each session has an `id` to send to. `others=true` also lists everyone else online, without content |
 | `send` | Message one session, or `all`; `file=<local path>` attaches a file |
 | `knock` | The admin only: ask another person's session (or the person) to open a door |
 | `answer` | The admin only: answer a knock with "yes" or "no" |
@@ -127,7 +127,7 @@ A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join`
 | `fetch_file` | Save a file from a message to `~/.kaptyorka/inbox/` |
 | `status` | Say what you are working on |
 | `projects` | List the projects you have a role in |
-| `request_access` | Ask the admin for a project or a machine |
+| `request_access` | Ask the admin for a project, a machine, or a connection to another session (`kind="session"`, its `id`) |
 | `notes_list` | List notes (team notes, or a project's with `project=`) |
 | `notes_read` | Read a note |
 | `notes_write` | Write a note. Notes outlive sessions |
@@ -324,7 +324,7 @@ A machine has no owner until the admin names one (`kaptyorka machine owner`, or 
 
 A member clicks **Ask for access** under their sessions on Home: it shows every project and machine they can use, with their role. Under it, **Ask for** read or write access to a project, or use of a machine, with an optional reason, then **Send**. An agent asks the same way with the tool `request_access`; it also tells the person which project to ask for when a note is refused. You cannot ask for what you already have or for a project that is not registered.
 
-The admin sees the request under **Requests** on **Access**, picks read or write (the person's wish is preselected), and presses **Approve**, or **Deny** with an optional reason. A reason is sent to the person's page and to their sessions. The last ten decisions stay in **Decided**. Pending and recently denied requests also show in the brief an agent gets at the start of a session. There is no command for requests; they are decided on the page.
+A member can also ask to be connected to one session of someone else: on Home under **Others**, or an agent with `request_access(kind="session", target=<id from who(others=true)>, why)`. The manager is told; only the admin approves. The admin sees the request under **Requests** on **Access**, picks read or write (the person's wish is preselected), and presses **Approve**, or **Deny** with an optional reason. A reason is sent to the person's page and to their sessions. Approving a connection opens a door between just those two sessions (see Groups and doors). The last ten decisions stay in **Decided**. Pending and recently denied requests also show in the brief an agent gets at the start of a session. There is no command for requests; they are decided on the page.
 
 ### 5. Change a role
 
@@ -364,9 +364,11 @@ Admin > **Log** shows who did what, in plain sentences ("alice made an invite li
 
 ## Groups and doors
 
-A person's sessions are a group. A member sees and messages only their own sessions and the manager; everyone else is left out of `who`, the page and every error. The admin and the manager see and message everyone.
+A person's sessions are a group. A member sees and messages only their own sessions and the manager; everyone else is left out of `who`, the chats and every error, and shows only in the directory below, without content. The admin and the manager see and message everyone.
 
-- To reach someone else, message the manager saying who and why. The manager tells the admin.
+- To reach someone else, ask for a connection: `who(others=true)` (or **Others** on Home) lists every other online session with its person, machine and an `id`, and no messages, status or activity; the project shows only under the rule above. `request_access(kind="session", target=<id>, why)` (or **Request connection** on the page) asks the admin. The manager is told so it can talk with you and the admin; it cannot approve. You cannot ask for your own session, the manager (always reachable), a session you can already reach, or the same thing twice while it waits.
+- Approving opens a door between exactly the asking session (or page) and that session, never between the two people. Both are told; it closes like any session door (when either goes offline, with `door_close`, by the admin, or when a person is removed). If a session went offline before the admin approves, no door opens and the asker is told.
+- A session whose project you may not see goes by its `id` (for example `#3fa2c19b`) or its hidden name when that is unique. A message from one says which `id` to reply to, and the project stays hidden in `inbox`, pushed messages and the brief.
 - Only the admin opens a door: on the page (Admin > Access, Doors), or by answering a knock. Members cannot knock or answer.
 - While a door is open, the two people see and message each other's sessions; `door_close(to)` or the admin closes it.
 - `send("all")` reaches every session you may message: your own, and those behind a door.
@@ -472,6 +474,7 @@ src/kaptyorka/
   store.py      SQLite storage: people, devices, agents, messages, notes
   bridge.py     per-machine bridge: reports sessions, pushes messages, starts workers
   workers.py    hub side of workers: states, linking, adopt, close
+  connects.py   the session directory and connection requests
   memory.py     state notes, git activity and the done check
   rules.py      team rules, skills, proposals and conflicts in the hub
   skills_sync.py writes the team skills into ~/.claude/skills

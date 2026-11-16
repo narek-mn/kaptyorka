@@ -14,7 +14,8 @@ MANAGER = "manager"  # manager.PERSON; manager imports the store
 WEB_KEYS = [("messages", "sender_key"), ("messages", "to_key"), ("workers", "boss_key"),
             ("doors", "a_key"), ("doors", "b_key"), ("knocks", "from_key"), ("knocks", "to_key"),
             ("work_requests", "boss_key"), ("state_writes", "key"), ("done_checks", "key"),
-            ("proposals", "session_key"), ("conflicts", "session_key")]
+            ("proposals", "session_key"), ("conflicts", "session_key"),
+            ("connects", "from_key")]
 
 
 def ensure_schema(db) -> None:
@@ -381,6 +382,24 @@ def _knock_answer(who, d):
     return f"{who} {'said yes to' if m.group(2) == 'yes' else 'declined'} knock {m.group(1)}"
 
 
+def _connect_request(who, d):
+    m = re.fullmatch(r"#(\d+) (.+) -> (.+)", d)
+    if not m:
+        return None
+    side = "their page" if m.group(2).startswith("web:") else m.group(2)
+    return f"{who} asked to connect {side} to {m.group(3)} (request {m.group(1)})"
+
+
+def _connect_decided(who, d):
+    m = re.fullmatch(r"#(\d+) (.+): (approved|denied|offline)", d)
+    if not m:
+        return None
+    if m.group(3) == "offline":
+        return (f"{who} approved {m.group(2)}'s connection request {m.group(1)}, but a session"
+                " was offline, so no door opened")
+    return f"{who} {m.group(3)} {m.group(2)}'s connection request {m.group(1)}"
+
+
 def _auto_update(who, d):
     m = re.fullmatch(r"(.+) (on|off|default)", d)
     if not m:
@@ -421,6 +440,8 @@ SENTENCES = {
     "door_close": _door_close,
     "knock": _match(r"#(\d+) (.+) -> (.+)", "{0} knocked for {3} (knock {1})"),
     "knock_answer": _knock_answer,
+    "connect_request": _connect_request,
+    "connect_decided": _connect_decided,
     "propose": _match(r"proposal (\d+): (.*)", "{0} proposed a rule: {2}", re.S),
     "legacy_toggle": _match(r"(on|off)", "{0} switched the shared token {1}"),
     "legacy_assign": _match(r"(.+) -> (.+)", "{0} gave {1} (old shared token) to {2}"),
@@ -437,7 +458,8 @@ KNOWN_KINDS = tuple(SENTENCES)
 LOG_GROUPS = [
     ("people", ["person", "person_removed", "role", "invite", "invite_cancel", "device",
                 "device_shared", "join"]),
-    ("access", ["grant", "revoke", "request", "request_decided"]),
+    ("access", ["grant", "revoke", "request", "request_decided", "connect_request",
+                "connect_decided"]),
     ("projects", ["project_register", "project_updated", "project_removed"]),
     ("notes", ["note_delete", "note_undo"]),
     ("machines", ["machine_owner", "legacy_toggle", "legacy_assign", "legacy_used", "rekeyed",

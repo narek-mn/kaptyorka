@@ -483,3 +483,89 @@ def test_background_job_marked_and_empty_chat(tmp_path):
     finally:
         stop()
         store.close()
+
+
+def test_member_requests_a_connection_and_admin_approves(tmp_path):
+    """bob sees carol's session under Others, locked, with no content; he asks to connect
+    his page, the row says Requested, the admin approves under Access > Requests, and the
+    row becomes a normal chat he can write in. Desktop and phone."""
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    _, atoken = person(store, "alice", "admin")
+    bob, btoken = person(store, "bob")
+    carol, ctoken = person(store, "carol")
+    store.project_register("proj-a", by="alice")
+    store.grant_project("proj-a", bob, "write", "alice")
+    facts = {"host": "box-1", "os_user": "u"}
+    store.heartbeat("box-1", [{"key": "k:b", "tool": "claude-code", "project": "proj-a", "label": "api-dev"}],
+                    principal=store.authenticate(btoken), facts=facts)
+    store.heartbeat("box-2", [{"key": "k:c", "tool": "codex", "project": "proj-c", "label": "billing"},
+                              {"key": "k:c2", "tool": "codex", "project": "proj-d"}],
+                    principal=store.authenticate(ctoken), facts={"host": "box-2", "os_user": "u"})
+    store.set_status("k:c", "secret status")
+    base = f"http://127.0.0.1:{stop.port}/"
+    row = '[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name").textContent === %s)'
+    billing = row % '"billing"'
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    try:
+        with chrome(390, 844) as page:
+            page.go(base + f"#t={btoken}")
+            page.wait(f'!!({billing})')
+            assert page.js('document.querySelector("#agents .others-head").textContent') == "Others"
+            assert page.js(wide)
+            page.screenshot(shots / "others-phone.png")
+            page.js(f'{billing}.click()')
+            page.wait('!document.getElementById("connect-pane").hidden')
+            time.sleep(0.4)
+            assert page.js(wide)
+            page.screenshot(shots / "request-phone.png")
+        with chrome() as page:
+            page.go(base + f"#t={btoken}")
+            page.wait(f'!!({billing})')
+            assert page.js(f'{billing}.classList.contains("locked") && !!{billing}.querySelector("use[href=\\"#i-lock\\"]")')
+            assert "secret status" not in page.js('document.body.innerText')
+            assert "proj-c" not in page.js('document.body.innerText')
+            page.screenshot(shots / "others-desktop.png")
+            page.js(f'{billing}.click()')
+            page.wait('!document.getElementById("connect-pane").hidden')
+            assert page.js('document.getElementById("compose").hidden && document.getElementById("log").hidden')
+            assert page.js('document.getElementById("connect-from").value') == store.agent("k:b").name  # her one session
+            assert page.js('[...document.getElementById("connect-from").options].map(o => o.textContent)') == \
+                ["this page", "my session api-dev (box-1)"]
+            page.js('document.getElementById("connect-from").value = "page"')
+            page.js('document.getElementById("connect-why").value = "a question about billing"')
+            page.screenshot(shots / "request-desktop.png")
+            page.js('document.querySelector("#connect-form button[type=submit]").click()')
+            page.wait(f'{billing}.querySelector(".ask-state")?.textContent === "Requested"')
+            page.wait('!document.getElementById("connect-state").hidden')
+            assert page.js('document.getElementById("connect-form").hidden')
+            page.screenshot(shots / "requested-desktop.png")
+            with chrome() as admin:
+                admin.go(base + f"#t={atoken}&view=access")
+                admin.wait('!document.getElementById("req-panel").hidden')
+                assert admin.js('document.getElementById("n-admin").textContent') == "1"
+                text = admin.js('document.getElementById("req-rows").textContent')
+                assert text.startswith("bob wants a connection from their page to carol's session billing on box-2")
+                assert "a question about billing" in text
+                admin.screenshot(shots / "admin-requests.png")
+                admin.js('[...document.querySelectorAll("#req-rows button")].find(b => b.textContent === "Approve").click()')
+                admin.wait('document.getElementById("req-panel").hidden')
+            page.wait(f'!!({billing}) && !{billing}.classList.contains("locked")')
+            assert page.js('document.querySelector("#agents .others-head + .row .name").textContent') == \
+                "codex session"  # carol's other session, its project hidden
+            page.wait('!document.getElementById("compose").hidden')
+            assert page.js('document.getElementById("text").placeholder') == "Message billing"
+            page.js('document.getElementById("text").value = "hello carol"')
+            page.js('document.querySelector("#compose button[type=submit]").click()')
+            page.wait('[...document.querySelectorAll("#log .msg .text")].some(t => t.textContent === "hello carol")')
+            assert page.js('document.getElementById("send-err").hidden')
+            assert [m.text for m in store.inbox("k:c")][-1] == "hello carol"
+            store.send("k:c", "bob", "hi bob")
+            page.wait('[...document.querySelectorAll("#log .msg .text")].some(t => t.textContent === "hi bob")')
+            page.screenshot(shots / "approved-desktop.png")
+    finally:
+        stop()
+        store.close()

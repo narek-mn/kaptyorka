@@ -26,6 +26,7 @@ from kaptyorka import __version__, admin_ops, brief, identity, manager, paths
 from kaptyorka import rules as rules_mod
 from kaptyorka.auth import Auth, RateLimiter, bearer
 from kaptyorka.brief import message_text
+from kaptyorka.connects import ConnectStore
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
@@ -58,8 +59,9 @@ INVITE_WEB = ("<form method=post action='{action}'><button style='font:inherit;p
 INSTRUCTIONS = (
     "kaptyorka connects you with the other coding agents on this team. "
     "who() lists the sessions you may reach; send(to, text) messages one by name or 'all'. "
-    "You may message your own person's sessions and the manager; to reach anyone else, "
-    "message the manager saying who and why: only the admin opens doors. door_close(to) "
+    "You may message your own person's sessions and the manager. who(others=true) also lists "
+    "everyone else, without content; request_access(\"session\", id, why) asks to be "
+    "connected to one, and only the admin approves. door_close(to) "
     "ends a door; "
     "inbox() reads your messages; status(text) says what you are working on; "
     "notes_list/notes_read/notes_write share a team board, one text per topic; "
@@ -127,6 +129,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     ms = MemoryStore(store)
     rs = rules_mod.RulesStore(store)
     mm = ManagerStore(store)
+    cs = ConnectStore(store, lambda key, text: ws.notify(key, text), mm.person_id)
     brief_cache: dict = {}  # per session key; see brief.cached
     decide_lock = threading.Lock()
     work_decide_lock = threading.Lock()  # one decision per request, even when two race
@@ -162,10 +165,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     @server.tool()
     @_tool_errors
-    def who(ctx: Context) -> List[dict]:
+    def who(ctx: Context, others: bool = False) -> List[dict]:
         """Online sessions you may reach: your own, the manager's, and those behind a door
-        the admin opened. Name, label, person, machine, tool, project, status, activity, last
-        seen. A project you may not see shows as (private), in the name too."""
+        the admin opened. Name, id, label, person, machine, tool, project, status, activity,
+        last seen. A project you may not see shows as (private), in the name too; send to its
+        id then. others: also list every other online session (reachable false; no status or
+        activity), to ask for one with request_access("session", id, why)."""
         agent, principal = caller(ctx)
         now = store.clock()
         names = admin_ops.names(store)
@@ -178,10 +183,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 continue
             row = {**session_row(store, a, principal, names, now, live, ws, mid),
                    "you": a.key == agent.key}
+            row.pop("writable", None)  # the page's own question
             if a.key == boss:
                 row["boss"] = True
             rows.append(row)
-        return rows
+        return rows + (cs.directory(principal) if others else [])
 
     def wake_bridges():
         sent["event"].set()
@@ -360,7 +366,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     def inbox(ctx: Context) -> List[dict]:
         """Your unread messages; reading marks them read."""
         return [{"from": m.sender, "text": m.text, "time": m.created, "kind": m.kind,
-                 "file": m.file} for m in store.inbox(me(ctx).key)]
+                 "file": m.file, **({"reply_to": m.reply_to} if m.reply_to else {})}
+                for m in store.inbox(me(ctx).key)]
 
     @server.tool()
     @_tool_errors
@@ -467,9 +474,14 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.tool()
     @_tool_errors
     def request_access(kind: str, target: str, ctx: Context, why: str = "") -> str:
-        """Ask the admin for read access to a project (kind "project") or for use of a machine
-        (kind "machine"), with a short reason."""
-        _, principal = caller(ctx)
+        """Ask the admin for read access to a project (kind "project"), for use of a machine
+        (kind "machine"), or to connect this session to another one (kind "session", target
+        its id from who(others=true)), with a short reason."""
+        agent, principal = caller(ctx)
+        if kind == "session":
+            cid = cs.request(principal, agent.key, target, why)
+            wake_bridges()
+            return f"requested #{cid}; the manager is told and the admin decides"
         rid = store.request_access(principal.person_id, kind, target, why)
         return f"requested #{rid}; the admin sees it on the page"
 
@@ -878,7 +890,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.custom_route("/api/feed", methods=["GET"])
     async def api_feed(request: Request) -> Response:
         # everyone writes to the manager, so everyone sees its state word on Home
-        return JSONResponse({**feed(store, request.scope["state"]["principal"], ws),
+        return JSONResponse({**feed(store, request.scope["state"]["principal"], ws, cs),
                              "manager": manager_state()[0]})
 
     @server.custom_route("/api/files", methods=["POST"])
@@ -1490,6 +1502,48 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"id": rid})
+
+    @server.custom_route("/api/connects", methods=["POST"])
+    @_bad_request
+    async def api_connect_create(request: Request) -> Response:
+        """A member asks to connect their page or one of their sessions to a session of the
+        directory: {"to": its id, "from": "page" or one of their session names, "why"}."""
+        principal = request.scope["state"]["principal"]
+        body = await request.json()
+        src = str(body.get("from") or "page")
+        try:
+            if src == "page":
+                key = f"web:{principal.person_name}"
+            else:
+                key = next((a.key for a in store.online() if a.person_id == principal.person_id
+                            and a.name == src), "")
+                if not key:
+                    raise KaptyorkaError("connect one of your own online sessions")
+            cid = cs.request(principal, key, str(body["to"]), str(body.get("why") or ""))
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        wake_bridges()
+        return JSONResponse({"id": cid})
+
+    @server.custom_route("/api/connects/{cid:int}", methods=["POST"])
+    @_bad_request
+    async def api_connect_decide(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        if not isinstance(body["approve"], bool):
+            raise ValueError("approve must be true or false")
+        try:
+            out = cs.decide(request.path_params["cid"], request.scope["state"]["principal"],
+                            body["approve"], str(body.get("reason") or ""))
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        wake_bridges()
+        if out == "offline":
+            return PlainTextResponse("a session went offline, so no door was opened;"
+                                     " the request is closed", status_code=409)
+        return Response(status_code=204)
 
     @server.custom_route("/api/requests/{rid:int}", methods=["POST"])
     @_bad_request

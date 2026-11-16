@@ -1,6 +1,6 @@
 # Session directory and connection requests (0.9.4)
 
-**Approved by Narek, 2026-11-16.** Build after 0.9.3 (admin session message opens a reply door), on top of it.
+**Approved by the owner, 2026-11-16.** Build after 0.9.3 (admin session message opens a reply door), on top of it.
 
 **Goal:** every member (and their agent) can see a list of the team's active sessions, without any content, and ask to be connected to one. The request goes to the manager and to the admin; only the admin approves. Approval opens a session-to-session door, so the two sessions can talk directly until it is closed.
 
