@@ -622,9 +622,40 @@ def _remove(args) -> int:
     return remove.main()
 
 
-def _leave(args) -> int:
+def _manager_runs_here() -> bool:
+    """True on the hub's own machine while the manager is switched on (the test `status` uses)."""
+    cfg = paths.load_config()
+    if not cfg.get("hub") or not cfg.get("token"):
+        return False
+    try:
+        saved = json.loads((paths.home() / "hub.json").read_text())
+    except (OSError, ValueError):
+        return False
+    if not paths.is_own_hub(cfg["hub"], saved):
+        return False
+    try:
+        got = http.request("GET", cfg["hub"].rstrip("/") + "/api/settings", cfg["token"])
+    except http.HubUnreachable:
+        return False
+    return (got is not None and got[0] == 200 and isinstance(got[1], dict)
+            and got[1].get("manager_state") not in (None, "off"))
+
+
+def _leave(args, isatty=None, ask=input) -> int:
     from kaptyorka import remove
 
+    if not getattr(args, "yes", False) and _manager_runs_here():
+        line = "this machine runs the hub's manager; leaving stops it until you join again."
+        if not (sys.stdin.isatty() if isatty is None else isatty):
+            print(f"{line} add --yes to leave anyway", file=sys.stderr)
+            return 1
+        try:
+            answer = ask(f"{line} Leave anyway? [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("nothing changed")
+            return 0
     return remove.leave()
 
 
@@ -839,8 +870,10 @@ def entry() -> None:
     j.add_argument("--only", action="append", help=hide)
     j.add_argument("--env-stdin", action="store_true", help=hide)
     j.set_defaults(run=_join)
-    sub.add_parser("leave", help="leave the hub: undo join on this machine, keep kaptyorka "
-                   "installed; join brings it back").set_defaults(run=_leave)
+    lv = sub.add_parser("leave", help="leave the hub: undo join on this machine, keep kaptyorka "
+                        "installed; join brings it back")
+    lv.add_argument("--yes", action="store_true", help="do not ask first")
+    lv.set_defaults(run=_leave)
     sub.add_parser("stop", help="stop the hub and the bridge on this machine "
                    "(start brings back the hub; join brings back the bridge)").set_defaults(run=_stop)
     sub.add_parser("update", help="update kaptyorka (pipx) to the latest version and restart "

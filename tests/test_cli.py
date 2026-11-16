@@ -38,7 +38,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.9.4" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.9.5" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
@@ -1058,3 +1058,63 @@ def test_start_after_stop_says_started(monkeypatch, home, capsys):
     _hub_json()
     assert entry_with_exit(["start"]) in (0, None)
     assert capsys.readouterr().out.startswith("hub started: http://10.0.0.1:8765")
+
+
+# --- leave on the hub machine ---
+
+def _leave_setup(monkeypatch, state, hub="http://10.0.0.1:8765"):
+    _joined(hub)
+    _hub_json()
+    monkeypatch.setattr(paths, "is_local_address", lambda h: h == "10.0.0.1")
+    monkeypatch.setattr(http, "request", lambda *a, **k: (200, {"manager_state": state}))
+    from kaptyorka import remove
+    calls = []
+    monkeypatch.setattr(remove, "leave", lambda: calls.append(1) or 0)
+    return calls
+
+
+def _ns(yes=False):
+    import argparse
+    return argparse.Namespace(yes=yes)
+
+
+WARN = "this machine runs the hub's manager; leaving stops it until you join again."
+
+
+def test_leave_hub_manager_on_tty_no_aborts(monkeypatch, home, capsys):
+    calls = _leave_setup(monkeypatch, "up")
+    asked = []
+    assert cli._leave(_ns(), isatty=True, ask=lambda q: asked.append(q) or "n") == 0
+    assert asked == [WARN + " Leave anyway? [y/N] "] and not calls
+    assert capsys.readouterr().out == "nothing changed\n"
+
+
+def test_leave_hub_manager_on_tty_yes_leaves(monkeypatch, home):
+    calls = _leave_setup(monkeypatch, "asleep")
+    assert cli._leave(_ns(), isatty=True, ask=lambda q: "y") == 0
+    assert calls == [1]
+
+
+def test_leave_hub_manager_on_without_tty_refuses(monkeypatch, home, capsys):
+    calls = _leave_setup(monkeypatch, "up")
+    assert cli._leave(_ns(), isatty=False) == 1
+    assert not calls
+    assert capsys.readouterr().err == WARN + " add --yes to leave anyway\n"
+
+
+def test_leave_yes_flag_skips_the_question(monkeypatch, home):
+    calls = _leave_setup(monkeypatch, "up")
+    assert cli._leave(_ns(yes=True), isatty=False) == 0
+    assert calls == [1]
+
+
+def test_leave_hub_manager_off_no_prompt(monkeypatch, home):
+    calls = _leave_setup(monkeypatch, "off")
+    assert cli._leave(_ns(), isatty=False) == 0
+    assert calls == [1]
+
+
+def test_leave_member_machine_no_prompt(monkeypatch, home):
+    calls = _leave_setup(monkeypatch, "up", hub="http://10.0.0.9:8765")
+    assert cli._leave(_ns(), isatty=False) == 0
+    assert calls == [1]

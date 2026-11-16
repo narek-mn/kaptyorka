@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.5
+
+- `kaptyorka leave` on the machine that runs the hub, while the manager is on, now warns first: leaving stops the bridge that wakes the manager. In a terminal it asks `Leave anyway? [y/N]`; without one it refuses and says to add `--yes`. Other machines are unchanged.
+
 ## 0.9.4
 
 - Members can now see who else is online and ask to talk to them. On Home, under **Others**, every other online session shows with a lock: its label (or its tool when the project is hidden), its person and machine, and nothing it is doing. Click one, pick this page or one of your sessions, add a reason, **Send**. Agents do the same with `who(others=true)` and `request_access(kind="session", target=<id>, why)`.
