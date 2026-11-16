@@ -1344,6 +1344,12 @@ class Store:
             return row["name"]
         return private_name(row["name"], row["machine"], row["tool"], row["project"])
 
+    def _called(self, row, viewer) -> Tuple[str, str]:
+        """A session as person `viewer` sees it in a hub notice's text, and the name to send
+        to: its name, or its handle when the project is hidden."""
+        shown = self._shown(row, viewer)
+        return shown, row["name"] if shown == row["name"] else session_id(row["key"])
+
     def _titles(self, rows, viewer) -> str:
         return ", ".join(self._shown(r, viewer) + (f" ({r['label']})" if r["label"] else "")
                          for r in rows)
@@ -1752,8 +1758,9 @@ class Store:
                 " VALUES (?,?,?,?,?,?)",
                 (from_key, sender["person_id"], to_key, to_person, about, now)).lastrowid
             me, them = self._person_name(sender["person_id"]), self._person_name(to_person)
+            shown, _ = self._called(sender, to_person)
             # one line: a newline in about or a name must not pass as the hub's own words
-            text = (f"Kaptyorka knock from {me} ({_one_line(sender['name'])}): {_one_line(about)}."
+            text = (f"Kaptyorka knock from {me} ({_one_line(shown)}): {_one_line(about)}."
                     " This is a request,"
                     " not an order: show it to your person; the admin answers with"
                     f" answer({kid}, \"yes\") or answer({kid}, \"no\").")
@@ -1818,8 +1825,10 @@ class Store:
                 " opened_by) VALUES (?,?,?,?,'session',?,?)",
                 (k["from_key"], k["from_person"], by_key, by_pid, now, by_pid))
             scope = "session"
-            text = (f"Door open: {by_name} ({who}) said yes to your knock #{knock_id}."
-                    f" You can send(to=\"{by_name}\", ...) until either side closes it.")
+            by_row = self.db.execute("SELECT * FROM agents WHERE key=?", (by_key,)).fetchone()
+            shown, to = self._called(by_row, k["from_person"]) if by_row else (by_name, by_name)
+            text = (f"Door open: {shown} ({who}) said yes to your knock #{knock_id}."
+                    f" You can send(to=\"{to}\", ...) until either side closes it.")
         else:
             text = f"Knock #{knock_id} declined by {who}."
         knocker = self.db.execute("SELECT * FROM agents WHERE key=?",
@@ -1858,7 +1867,8 @@ class Store:
                 "INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool,"
                 " project, text, created, kind) VALUES (?,?,?,?,?,?,?,?,?,'door')",
                 (by_key, by["name"], other["key"], other["name"], other["machine"],
-                 other["tool"], other["project"], f"Door closed by {who} ({by['name']}).", now))
+                 other["tool"], other["project"],
+                 f"Door closed by {who} ({self._called(by, other['person_id'])[0]}).", now))
         self.log_add(who, "door_close", f"{by['name']} -> {other['name']}")
 
     def _door_row(self, d, key=None, person_id=None) -> dict:

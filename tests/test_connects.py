@@ -279,3 +279,35 @@ def test_hidden_name_and_handle_address_a_session(team):
     t.store.send("b2", "box-1/codex/proj-a", "read me")
     [m] = tool(t, "alice", "inbox")
     assert (m["from"], m["reply_to"]) == ("box-2/codex/(private)", session_id("b2"))
+
+
+# hub notices name a session the way the receiver sees it
+
+
+def test_door_closed_notice_hides_the_closers_project(team):
+    t = team
+    cid = int(tool(t, "alice", "request_access", kind="session", target=b1(t)).split("#")[1].split(";")[0])
+    post(t, "admin", f"/api/connects/{cid}", {"approve": True})
+    t.store.inbox("b1")
+    tool(t, "alice", "door_close", to=b1(t))
+    [m] = tool(t, "bob", "inbox")
+    assert (m["from"], m["text"]) == ("box-1/codex/(private)", "Door closed by alice (box-1/codex/(private)).")
+
+
+def test_knock_notice_hides_the_admins_project(team):
+    t = team
+    t.store.knock("x1", "bob", "a word?")
+    [m] = t.store.inbox("b1")
+    assert m.text.startswith("Kaptyorka knock from admin (box-3/codex/(private)): a word?.")
+    assert "proj-x" not in m.text
+
+
+def test_knock_yes_notice_hides_the_admins_project(team):
+    t = team
+    from helpers import old_knock
+    kid = old_knock(t.store, "a1", t.ids["admin"], "a word?")
+    t.store.answer(kid, "x1", True)
+    [m] = t.store.inbox("a1")
+    assert m.text == (f"Door open: box-3/codex/(private) (admin) said yes to your knock #{kid}."
+                      f' You can send(to="{session_id("x1")}", ...) until either side closes it.')
+    assert tool(t, "alice", "send", to=session_id("x1"), text="thanks") == "sent to 1 session"

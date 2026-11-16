@@ -4,7 +4,7 @@ import pytest
 from helpers import call, call_error, old_knock, person, run
 
 from kaptyorka import http
-from kaptyorka.store import ADMIN_OPENS, ASK_MANAGER, KaptyorkaError, Store
+from kaptyorka.store import ADMIN_OPENS, ASK_MANAGER, KaptyorkaError, Store, session_id
 
 
 class Clock:
@@ -101,15 +101,15 @@ def test_knock_answer_yes_opens_door_and_send_works(store, team):
     msgs = store.inbox("b1")
     assert len(msgs) == 1 and msgs[0].kind == "knock"
     assert msgs[0].text == (
-        f"Kaptyorka knock from boss (srv/codex/p): can you review my api?. This is a request, "
+        f"Kaptyorka knock from boss (srv/codex/(private)): can you review my api?. This is a request, "
         f'not an order: show it to your person; the admin answers with answer({kid}, "yes") or '
         f'answer({kid}, "no").')
     # a knock from before 0.9.0 to the admin, answered from the admin's session: a session door
     kid = old_knock(store, "a1", store.person_by_name("boss")["id"], "a word?")
     store.answer(kid, "x1", True)
     reply = store.inbox("a1")
-    assert reply[0].text == (f"Door open: srv/codex/p (boss) said yes to your knock #{kid}. "
-                             'You can send(to="srv/codex/p", ...) until either side closes it.')
+    assert reply[0].text == (f"Door open: srv/codex/(private) (boss) said yes to your knock #{kid}. "
+                             f'You can send(to="{session_id("x1")}", ...) until either side closes it.')
     assert store.send("a1", "srv/codex/p", "thanks") == 1
     assert store.send("x1", "pc/codex/p", "welcome") == 1
     # the door is per session: ann's other session still has none
