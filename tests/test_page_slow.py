@@ -396,3 +396,35 @@ def test_member_writes_to_the_manager(member_page):
     assert page.wait('[...document.querySelectorAll("#log .msg .text")].pop()?.textContent') == "may I have proj-b?"
     assert page.js('document.getElementById("send-err").hidden')
     assert [m.text for m in store.inbox("k:mgr")] == ["may I have proj-b?"]
+
+
+def test_member_manager_chat_while_it_sleeps(member_page):
+    """The manager asleep: its name is masked for a member and its row is gone from the
+    feed, yet its messages stay in the manager chat and a new reply counts as unread."""
+    store, page, url = member_page
+    mtoken = ManagerStore(store).ensure_account("box-1", "alice")
+    store.heartbeat("box-1", [{"key": "k:mgr", "tool": "claude-code", "project": "manager",
+                               "label": "manager"}], principal=store.authenticate(mtoken),
+                    facts={"host": "box-1", "os_user": "u"})
+    mgr = store.agent("k:mgr").name
+
+    def reply(text):
+        with store.lock:
+            store.db.execute("INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool,"
+                             " project, text, created) VALUES ('k:mgr',?,'web:bob','bob','','','',?,?)",
+                             (mgr, text, time.time()))
+    reply("first answer")
+    store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(url.split("#t=")[1]))
+    with store.lock:
+        store.db.execute("UPDATE agents SET last_seen=last_seen-100 WHERE key='k:mgr'")  # asleep
+    page.go(url)
+    page.wait('document.querySelector("#agents .row.mgr") !== null')
+    assert page.js('document.querySelector("#agents .row.mgr .dot.on")') is None
+    page.wait('[...document.querySelectorAll("#log .msg .text")].some(t => t.textContent === "first answer")')
+    page.js('document.querySelector("#agents .row:not(.mgr)").click()')  # another chat
+    reply("second answer")
+    assert page.wait('document.querySelector("#agents .row.mgr .count")?.textContent') == "1"
+    page.js('document.querySelector("#agents .row.mgr").click()')
+    page.wait('[...document.querySelectorAll("#log .msg .text")].some(t => t.textContent === "second answer")')
+    assert page.wait('document.querySelector("#agents .row.mgr .count") === null')
+    assert page.js('[...document.querySelectorAll("#log .head b")].map(b => b.textContent)') == ["manager"]

@@ -53,6 +53,14 @@ def masked(store: Store, principal: Principal, row: dict, sides) -> dict:
     return row
 
 
+def manager_sides(m: dict, manager_id: Optional[int]) -> dict:
+    """Mark a message from or to the manager's sessions, so the page keeps it in the manager's
+    chat while the manager sleeps and its name is masked for a member."""
+    for side, flag in (("_from", "from_manager"), ("_to", "to_manager")):
+        m[flag] = manager_id is not None and m[side] is not None and m[side]["person_id"] == manager_id
+    return m
+
+
 def knocks(store: Store, principal: Principal, to_me_only: bool = False) -> list:
     """Pending knocks the viewer may see, the knocking session masked, or left out when the
     viewer may not see that session at all (store.listed)."""
@@ -91,7 +99,7 @@ def feed(store: Store, principal: Principal, ws=None) -> dict:
         "agents": [session_row(store, a, principal, names, now, ws=ws, manager_id=mid)
                    for a in store.online()
                    if store.listed(principal.person_id, a.key, a.person_id)],
-        "messages": [masked(store, principal, m, (("_from", "sender"), ("_to", "to")))
+        "messages": [masked(store, principal, manager_sides(m, mid), (("_from", "sender"), ("_to", "to")))
                      for m in store.messages_for(principal, 500)],
         "notes": _notes(store, principal),
         "knocks": knocks(store, principal) if admin else [],  # only the admin answers

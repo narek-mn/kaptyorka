@@ -1048,8 +1048,8 @@ tr.archived b { color: var(--muted); }
   /* who a message is between: "mgr", a session name, "@person", ME (this page) or HUB */
   function parties(m) {
     var mine = function (n) { return !!me && n === me.person; };
-    var out = [m.web ? (mine(m.sender) ? ME : "@" + m.sender) : m.sender === "hub" ? HUB : sessionKey(m.sender)];
-    m.to.forEach(function (t) { out.push(m.toWeb ? (mine(t) ? ME : "@" + t) : sessionKey(t)); });
+    var out = [m.fromMgr ? "mgr" : m.web ? (mine(m.sender) ? ME : "@" + m.sender) : m.sender === "hub" ? HUB : sessionKey(m.sender)];
+    m.to.forEach(function (t, i) { out.push(m.toMgr[i] ? "mgr" : m.toWeb ? (mine(t) ? ME : "@" + t) : sessionKey(t)); });
     return out;
   }
   /* a member's hub notices to this page sit in the manager's chat; the admin's in Activity */
@@ -1227,8 +1227,10 @@ tr.archived b { color: var(--muted); }
       var last = rows[rows.length - 1];
       if (last && last.sender === m.sender && last.text === m.text && Math.abs(m.created - last.created) <= 1) {
         last.to.push(m.to);
+        last.toMgr.push(!!m.to_manager);
       } else {
         rows.push({ id: m.id, sender: m.sender, web: !!m.from_web, toWeb: !!m.to_web, to: [m.to], text: m.text,
+                    fromMgr: !!m.from_manager, toMgr: [!!m.to_manager],
                     created: m.created, kind: m.kind || "message", file: m.file });
       }
     });
@@ -1242,7 +1244,7 @@ tr.archived b { color: var(--muted); }
   }
   function senderName(m) {
     if (m.web) return me && m.sender === me.person ? "you" : m.sender;
-    return sessionKey(m.sender) === "mgr" ? "manager" : labelOf(m.sender) || shortName(m.sender);
+    return m.fromMgr || sessionKey(m.sender) === "mgr" ? "manager" : labelOf(m.sender) || shortName(m.sender);
   }
 
   /* an <img> cannot send a header, so images take ?t=; any other file is fetched with the
@@ -1283,7 +1285,7 @@ tr.archived b { color: var(--muted); }
   function toName(m) {
     if (m.to.length > 1) return "all";
     if (m.toWeb) return me && m.to[0] === me.person ? "you" : m.to[0];
-    return sessionKey(m.to[0]) === "mgr" ? "manager" : labelOf(m.to[0]) || shortName(m.to[0]) || "—";
+    return m.toMgr[0] || sessionKey(m.to[0]) === "mgr" ? "manager" : labelOf(m.to[0]) || shortName(m.to[0]) || "—";
   }
   function renderChat() {
     var e = entryOf[conv] || { name: shortName(conv), sub: "" }, act = conv === "activity";

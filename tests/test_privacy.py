@@ -291,3 +291,19 @@ def test_shared_label_and_offline_name(team):
     with pytest.raises(KaptyorkaError) as unknown:
         s.send("k:alice2", "nobody", "x")
     assert str(offline.value) == str(unknown.value).replace("nobody", bob_name)
+
+
+def test_feed_marks_messages_from_and_to_the_manager(team):
+    """The page keeps a member's manager chat while the manager sleeps and its name is masked:
+    each message says whether it is from or to the manager's sessions."""
+    s = team.store
+    with s.lock:
+        for frm, frm_name, to, to_name in (("web:alice", "alice", "k:manager", team.names["manager"]),
+                                           ("k:manager", team.names["manager"], "web:alice", "alice"),
+                                           ("k:alice", team.names["alice"], "web:alice", "alice")):
+            s.db.execute("INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool,"
+                         " project, text, created) VALUES (?,?,?,?,'box-1','codex','proj-a','x',1)",
+                         (frm, frm_name, to, to_name))
+    for who in ("alice", "admin"):
+        got = [(m["from_manager"], m["to_manager"]) for m in feed(team, who)["messages"]]
+        assert got == [(False, True), (True, False), (False, False)], who
