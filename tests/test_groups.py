@@ -55,8 +55,9 @@ def test_send_within_group_ok(store, team):
     assert store.inbox("a2")[0].text == "hi"
 
 
-def test_send_across_groups_refused_names_knock(store, team):
-    with pytest.raises(KaptyorkaError, match=r"no door to box-2/codex/p: knock\(to, about\) first"):
+def test_send_across_groups_refused_points_to_manager(store, team):
+    with pytest.raises(KaptyorkaError, match="no session named box-2/codex/p that you can reach;"
+                                             " to reach someone else, message the manager"):
         store.send("a1", "box-2/codex/p", "hi")
     assert store.inbox("b1") == []
 
@@ -64,7 +65,7 @@ def test_send_across_groups_refused_names_knock(store, team):
 def test_admin_sends_anywhere(store, team):
     assert store.send("x1", "box-2/codex/p", "hi") == 1
     assert store.inbox("b1")[0].text == "hi"
-    with pytest.raises(KaptyorkaError, match="no door"):  # the rule is about the sender
+    with pytest.raises(KaptyorkaError, match="that you can reach"):  # the rule is about the sender
         store.send("b1", "srv/codex/p", "back")
 
 
@@ -83,11 +84,11 @@ def test_knock_answer_yes_opens_door_and_send_works(store, team):
     assert store.send("a1", "box-2/codex/p", "thanks") == 1
     assert store.send("b1", "pc/codex/p", "welcome") == 1
     # the door is per session: ann's other session still has none
-    with pytest.raises(KaptyorkaError, match="no door"):
+    with pytest.raises(KaptyorkaError, match="that you can reach"):
         store.send("a2", "box-2/codex/p", "me too")
     assert [d["with"] for d in store.doors_for("a1")] == ["box-2/codex/p"]
     store.door_close("b1", "pc/codex/p")
-    with pytest.raises(KaptyorkaError, match="no door"):
+    with pytest.raises(KaptyorkaError, match="that you can reach"):
         store.send("a1", "box-2/codex/p", "again")
     with pytest.raises(KaptyorkaError, match="no open door to pc/codex/p"):
         store.door_close("b1", "pc/codex/p")
@@ -102,7 +103,7 @@ def test_knock_answer_no(store, team):
     kid = store.knock("a1", "box-2/codex/p", "pair on tests?")
     store.answer(kid, "b1", False)
     assert store.inbox("a1")[-1].text == f"Knock #{kid} declined by ben."
-    with pytest.raises(KaptyorkaError, match="no door"):
+    with pytest.raises(KaptyorkaError, match="that you can reach"):
         store.send("a1", "box-2/codex/p", "hi")
     with pytest.raises(KaptyorkaError, match="already answered"):
         store.answer(kid, "b1", True)
@@ -143,7 +144,7 @@ def test_door_closes_when_session_offline(store, team, clock):
     store.online()
     assert store.doors_for("a1") == []
     session(store, team["tokens"]["ben"], "b1", "box-2")  # ben returns: the door stays shut
-    with pytest.raises(KaptyorkaError, match="no door"):
+    with pytest.raises(KaptyorkaError, match="that you can reach"):
         store.send("a1", "box-2/codex/p", "still there?")
 
 
@@ -160,7 +161,7 @@ def test_group_door_lets_people_message(store, team):
     assert store.send("a2", "box-2/codex/p", "hi") == 1
     assert store.send("b1", "all", "all of ann") == 2
     store.close_door(did, "boss")
-    with pytest.raises(KaptyorkaError, match="no door"):
+    with pytest.raises(KaptyorkaError, match="that you can reach"):
         store.send("a2", "box-2/codex/p", "hi")
 
 
@@ -188,7 +189,8 @@ def test_tools_knock_answer_door_close(hub):
     ann, ben = as_person(hub, ta), as_person(hub, tb)
     A, B = ident("a1", "pc"), ident("b1", "box-2")
     run(call(ben, B, "who"))
-    assert "no door to box-2/codex/p" in call_error(ann, A, "send", to="box-2/codex/p", text="hi")
+    assert "no session named box-2/codex/p that you can reach" in call_error(
+        ann, A, "send", to="box-2/codex/p", text="hi")
     out = run(call(ann, A, "knock", to="ben", about="review?"))
     kid = int(re.search(r"#(\d+)", out).group(1))
     assert out == f"knocked (#{kid}); waiting for an answer"
@@ -199,7 +201,7 @@ def test_tools_knock_answer_door_close(hub):
     mine = next(r for r in run(call(ann, A, "who")) if r["you"])
     assert mine["doors"] == ["box-2/codex/p"]
     run(call(ann, A, "door_close", to="box-2/codex/p"))
-    assert "no door" in call_error(ann, A, "send", to="box-2/codex/p", text="hi")
+    assert "that you can reach" in call_error(ann, A, "send", to="box-2/codex/p", text="hi")
 
 
 def test_door_and_knock_routes(hub):

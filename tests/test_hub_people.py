@@ -200,10 +200,12 @@ def rows_by_name(rows):
 
 
 def test_who_hides_private_project(hub):
-    _, ta = person(hub.store, "ann")
-    _, tb = person(hub.store, "ben")
+    pa, ta = person(hub.store, "ann")
+    pb, tb = person(hub.store, "ben")
     ann, ben = as_person(hub, ta), as_person(hub, tb)
     run(call(ann, ident("k:a", "shop", "pa"), "who"))
+    assert {r["person"] for r in run(call(ben, ident("k:b", "lab", "pb"), "who"))} == {"ben"}
+    hub.store.open_door_group(pa, pb, "root")  # now listed, the folder still masked
     rows = rows_by_name(run(call(ben, ident("k:b", "lab", "pb"), "who")))
     a, b = rows["pa/codex/(private)"], rows["pb/codex/lab"]
     assert a["project"] == "(private)" and a["person"] == "ann" and not a["mine"]
@@ -214,8 +216,9 @@ def test_who_hides_private_project(hub):
 
 
 def test_same_folder_name_two_people_not_merged(hub):
-    _, ta = person(hub.store, "ann")
-    _, tb = person(hub.store, "ben")
+    pa, ta = person(hub.store, "ann")
+    pb, tb = person(hub.store, "ben")
+    hub.store.open_door_group(pa, pb, "root")  # so each lists the other
     ann, ben = as_person(hub, ta), as_person(hub, tb)
     a_id, b_id = ident("k:a", "shop", "pa"), ident("k:b", "shop", "pb")
     run(call(ann, a_id, "who"))
@@ -338,8 +341,9 @@ def test_unregistered_folder_notes_not_merged(hub):
 
 
 def test_who_masks_name_of_private_session(hub):
-    _, ta = person(hub.store, "ann")
-    _, tb = person(hub.store, "ben")
+    pa, ta = person(hub.store, "ann")
+    pb, tb = person(hub.store, "ben")
+    hub.store.open_door_group(pa, pb, "root")  # so ben lists ann's sessions
     ann, ben = as_person(hub, ta), as_person(hub, tb)
     a1, a2 = ident("k:a1", "shop", "pa"), ident("k:a2", "shop", "pa")
     run(call(ann, a1, "who"))

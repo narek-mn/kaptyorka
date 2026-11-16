@@ -27,6 +27,8 @@ ROLES = ("admin", "member", "manager")
 PROJECT_ROLES = ("read", "write", "manage")
 PROJECT_NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 PRIVATE = "(private)"
+UNREACHABLE = ("no session named {to} that you can reach; to reach someone else,"
+               " message the manager")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -511,8 +513,9 @@ class Store:
                         or any(d["person_id"] == principal.person_id for d in devs)
                         or self._granted(m["host"], principal.person_id)):
                     continue
-                online = self.db.execute("SELECT COUNT(*) FROM agents WHERE host=? AND last_seen>?",
-                                         (m["host"], now - ONLINE_S)).fetchone()[0]
+                online = sum(1 for r in self.db.execute(
+                    "SELECT key, person_id FROM agents WHERE host=? AND last_seen>?",
+                    (m["host"], now - ONLINE_S)) if self._listed(principal.person_id, r))
                 for d in devs:
                     del d["person_id"]
                 out.append({"host": m["host"], "owner": m["owner"],
@@ -707,7 +710,8 @@ class Store:
                 out.append({"name": p["name"], "description": p["description"], "repo": p["repo"],
                             "role": "read" if archived else role,
                             **({"archived": True} if archived else {}),
-                            "working_now": [r["name"] for r in online if r["project"] == p["name"]]})
+                            "working_now": [r["name"] for r in online if r["project"] == p["name"]
+                                            and self._listed(principal.person_id, r)]})
             return out
 
     # access requests
@@ -1220,7 +1224,7 @@ class Store:
             if to == "all":
                 targets = [t for t in targets if self._may_message(sender, t)]
             elif not all(self._may_message(sender, self._as_target(t)) for t in targets):
-                raise KaptyorkaError(f"no door to {to}: knock(to, about) first")
+                raise KaptyorkaError(UNREACHABLE.format(to=to))
             n = self._insert(sender_key, sender["name"], targets, text, now, file_id)
             self._rate_hit(sender_key, now)
             return n
@@ -1253,7 +1257,7 @@ class Store:
                 if to == "all":
                     targets = [t for t in targets if self._may_message(me, self._as_target(t))]
                 elif not all(self._may_message(me, self._as_target(t)) for t in targets):
-                    raise KaptyorkaError(f"no door to {to}: knock(to, about) first")
+                    raise KaptyorkaError(UNREACHABLE.format(to=to))
                 if to != "all":  # so the session can reply to the page; a broadcast is one-way
                     opened = [t["name"] for t in targets if self._web_door(key, person_id, t, now)]
             n = self._insert(key, name, targets, text, now, file_id)
@@ -1285,6 +1289,28 @@ class Store:
             return True
         return False
 
+    def _listed(self, viewer, row) -> bool:
+        """Lock held. True when person `viewer` may see the session `row` (key, person_id) at
+        all: the admin and the manager see everyone; anyone else their own person's sessions,
+        the manager's, and those behind an open door with them. None (an internal caller)
+        sees everyone."""
+        pid = row["person_id"]
+        if viewer is None or pid == viewer or self._role_of(viewer) in ("admin", "manager"):
+            return True
+        if pid is not None and self._role_of(pid) == "manager":
+            return True
+        return self.db.execute(
+            "SELECT 1 FROM doors WHERE closed_at IS NULL AND ("
+            "(scope='session' AND ((a_key=? AND b_person=?) OR (b_key=? AND a_person=?))) OR"
+            " (scope='group' AND ((a_person=? AND b_person=?) OR (a_person=? AND b_person=?))))",
+            (row["key"], viewer, row["key"], viewer, pid, viewer, viewer, pid)
+        ).fetchone() is not None
+
+    def listed(self, viewer: Optional[int], key: str, person_id: Optional[int]) -> bool:
+        """Whether person `viewer` may see the session `key` of `person_id` (see `_listed`)."""
+        with self.lock:
+            return self._listed(viewer, {"key": key, "person_id": person_id})
+
     def _shown(self, row, viewer) -> str:
         """A session's name as person `viewer` may see it (the who() rule): the project is
         hidden unless the session is theirs or in a registered project they have a role in."""
@@ -1297,9 +1323,15 @@ class Store:
         return ", ".join(self._shown(r, viewer) + (f" ({r['label']})" if r["label"] else "")
                          for r in rows)
 
+    def _limited(self, viewer) -> bool:
+        """True when person `viewer` sees only the sessions `_listed` allows. Lock held."""
+        return viewer is not None and self._role_of(viewer) not in ("admin", "manager")
+
     def _targets(self, sender_key, to, now, viewer=None):
-        """`viewer` is the sender's person, for whom names in errors are masked."""
-        online = self._online_rows(now)
+        """`viewer` is the sender's person: names in errors are masked for them, and a member
+        matches only the sessions listed for them (`_listed`), so no error names anyone else."""
+        limited = self._limited(viewer)
+        online = [r for r in self._online_rows(now) if not limited or self._listed(viewer, r)]
         if to == "all":
             return [r for r in online if r["key"] != sender_key]
         match = [r for r in online if r["name"] == to]
@@ -1309,9 +1341,9 @@ class Store:
                 raise KaptyorkaError(f"several sessions are named {to}: "
                                      + ", ".join(self._shown(r, viewer) for r in labeled))
             match = labeled
-        match = match or self.db.execute(
-            "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1",
-            (to,)).fetchall()
+        match = match or [r for r in self.db.execute(
+            "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1", (to,)).fetchall()
+            if not limited or self._listed(viewer, r)]
         if match:
             return match[:1]
         people = self._people()
@@ -1327,6 +1359,8 @@ class Store:
             " ORDER BY a.last_seen DESC LIMIT 1", (to,)).fetchall()
         if match:
             return match
+        if limited:
+            raise KaptyorkaError(UNREACHABLE.format(to=to))
         names = self._titles(online, viewer) or "none"
         extra = f"; people: {', '.join(people)}" if people else ""
         raise KaptyorkaError(f"no session named {to}; online: {names}{extra}")
@@ -1615,7 +1649,8 @@ class Store:
     def _online_session(self, to, now, viewer=None):
         """An online session by name, or by label when that is unique; None when neither.
         `viewer` is the asking person, for whom names in errors are masked."""
-        online = self._online_rows(now)
+        online = [r for r in self._online_rows(now)
+                  if not self._limited(viewer) or self._listed(viewer, r)]
         match = [r for r in online if r["name"] == to]
         if not match:
             match = [r for r in online if r["label"] and r["label"].lower() == to.lower()]
@@ -1802,8 +1837,9 @@ class Store:
             return out
 
     def _side(self, key) -> Optional[dict]:
-        """A session's {person_id, machine, tool, project}, or None (no such session, a page)."""
-        r = self.db.execute("SELECT person_id, machine, tool, project FROM agents WHERE key=?",
+        """A session's {key, person_id, machine, tool, project}, or None (no such session, a
+        page)."""
+        r = self.db.execute("SELECT key, person_id, machine, tool, project FROM agents WHERE key=?",
                             (key,)).fetchone()
         return dict(r) if r else None
 

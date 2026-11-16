@@ -23,6 +23,13 @@ class Clock:
         return self.t
 
 
+def as_admin(s):
+    """Make the test's one person the admin: only the admin's (and the manager's) errors list
+    who is online; a member's name no one else."""
+    with s.lock:
+        s.db.execute("UPDATE people SET role='admin' WHERE name='me'")
+
+
 @pytest.fixture
 def clock():
     return Clock()
@@ -47,6 +54,7 @@ def test_offline_after_30s(store, clock):
 
 
 def test_send_unknown_name_lists_online(store):
+    as_admin(store)
     store.seen("k", "pc", "codex", "nav")
     with pytest.raises(KaptyorkaError, match="pc/codex/nav"): store.send("k", "box-2/codex/typo", "hi")
 
@@ -199,6 +207,7 @@ def test_same_label_refused_with_both_names(store):
 
 
 def test_unknown_name_lists_labels(store):
+    as_admin(store)
     beat(store, "a", "x", "nice")
     store.seen("c", "pc", "codex", "z")
     with pytest.raises(KaptyorkaError, match=r"pc/claude-code/x \(nice\)"):
@@ -289,7 +298,7 @@ def test_agent_replies_to_web_sender(store):
     store.seen("a", "pc", "codex", "nav")
     store.send_from_web("alice", "pc/codex/nav", "hi")
     store.inbox("a")
-    with pytest.raises(KaptyorkaError, match="no door to alice"):  # a page name of no person
+    with pytest.raises(KaptyorkaError, match="no session named alice that you can reach"):  # a page name of no person
         store.send("a", "alice", "hello back")
     store.send_from_web("me", "pc/codex/nav", "hi", person_id=store.person_by_name("me")["id"])
     store.inbox("a")
@@ -300,6 +309,7 @@ def test_agent_replies_to_web_sender(store):
 
 
 def test_unknown_name_lists_people(store):
+    as_admin(store)
     store.seen("a", "pc", "codex", "nav")
     store.send_from_web("alice", "pc/codex/nav", "hi")
     with pytest.raises(KaptyorkaError, match="online: pc/codex/nav; people: alice"):

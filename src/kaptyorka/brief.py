@@ -62,16 +62,15 @@ def _you(store, ws, agent: Agent, principal, unread: int) -> str:
     person = principal.person_name if principal is not None else ""
     line = f"You are `{_titled(agent)}`" + (f", {person}" if person else "") \
         + f", on {agent.host or agent.machine}. "
-    others = [a for a in store.online() if a.key != agent.key]
-    if others and principal is not None:
+    others = [a for a in store.online() if a.key != agent.key and principal is not None
+              and store.listed(principal.person_id, a.key, a.person_id)]
+    if others:
         now, people = store.clock(), {p["id"]: p["name"] for p in store.people()}
         # masked like who(): another person's private folder is not named
         names = ", ".join(_titled(a, session_row(store, a, principal, people, now)["name"])
                           + (f" ({a.activity})" if a.activity else "") for a in others)
         line += f"{_plural(len(others), 'other')} online: {names}. "
-    elif others:
-        line += f"{_plural(len(others), 'other')} online. "
-    else:
+    elif principal is not None:
         line += "No one else online. "
     line += f"{_plural(unread, 'unread message')}."
     if principal is not None:
@@ -84,7 +83,7 @@ def _you(store, ws, agent: Agent, principal, unread: int) -> str:
         line += f" Board topics: {', '.join(topics)}."
     if principal is None:
         return line
-    knocked = hub_knocks(store, principal, to_me_only=True)
+    knocked = hub_knocks(store, principal, to_me_only=True) if principal.is_admin() else []
     if knocked:
         line += " Knocks for you: " + "; ".join(
             k["from"] + (f" ({k['from_session']})" if k["from_session"] else "")
@@ -126,7 +125,7 @@ def _here(store, ws, ms, agent: Agent, principal) -> Tuple[str, str, str]:
     now = store.clock()
     lines = [f'- {g["person"]} on {g["branch"]}: "{g["subject"]}" ({_ago(now - g["time"])})'
              for g in ms.git_recent(project, days=7)]
-    branches = ms.branches_with_sessions(project, now)
+    branches = ms.branches_with_sessions(project, now, principal.person_id)
     git = "Recent git activity (7 days):\n" + "\n".join(lines) if lines else ""
     if branches:
         git += ("\n" if git else "") + "Branches with open sessions: " + ", ".join(

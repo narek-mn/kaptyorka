@@ -84,9 +84,13 @@ def test_feed_masks_private_sessions(app):
     rows = {a["person"]: a for a in get(app, "ann", "/api/feed")["agents"]}
     assert (rows["ann"]["name"], rows["ann"]["project"], rows["ann"]["mine"]) == \
         ("pc/codex/mine", "mine", True)
+    assert set(rows) == {"ann"}  # no door: ben and the admin are not listed at all
+    s.open_door_group(app.ids["ann"], app.ids["ben"], "boss")
+    rows = {a["person"]: a for a in get(app, "ann", "/api/feed")["agents"]}
+    assert set(rows) == {"ann", "ben"}
     assert (rows["ben"]["name"], rows["ben"]["project"], rows["ben"]["mine"]) == \
         ("box-2/codex/(private)", "(private)", False)
-    assert rows["ann"]["doors"] == [] and "doors" not in rows["ben"]
+    assert rows["ann"]["doors"] == ["ben"] and "doors" not in rows["ben"]
     msg = get(app, "ann", "/api/feed")["messages"][-1]
     assert (msg["sender"], msg["to"]) == ("box-1/codex/(private)", "pc/codex/mine")
     assert not any(k.startswith("_") for k in msg)
@@ -152,7 +156,8 @@ def test_web_send_follows_group_rule(app):
     online(app, "ann", "a1", "pc")
     b1 = online(app, "ben", "b1", "box-2")
     status, body = post(app, "ann", "/api/send", {"to": b1.name, "text": "hi"})
-    assert status == 400 and f"no door to {b1.name}" in body
+    assert status == 400 and body == (f"no session named {b1.name} that you can reach;"
+                                      " to reach someone else, message the manager")
     assert post(app, "ann", "/api/send", {"to": "all", "text": "hi"}) == (200, {"sent": 1})
     assert post(app, "boss", "/api/send", {"to": b1.name, "text": "hi"})[0] == 200
     s.open_door_group(app.ids["ann"], app.ids["ben"], "boss")
@@ -160,7 +165,7 @@ def test_web_send_follows_group_rule(app):
     status, body = post(app, "ben", "/api/send", {"to": "ann", "text": "to the page"})
     assert status == 200
     status, body = post(app, "ben", "/api/send", {"to": "boss", "text": "to the admin page"})
-    assert status == 400 and "no door to boss" in body
+    assert status == 400 and "no session named boss that you can reach" in body
 
 
 def test_web_notes_respects_project_access(app):
@@ -270,14 +275,15 @@ def test_agent_reply_to_page_needs_door(app):
     assert post(app, "boss", "/api/send", {"to": a1.name, "text": "please check"})[0] == 200
     assert s.send(a1.key, "boss", "done") == 1  # the admin's page wrote first: a door is open
     assert get(app, "boss", "/api/feed")["messages"][-1]["text"] == "done"
-    with pytest.raises(KaptyorkaError, match=r"no door to boss: knock\(to, about\) first"):
+    with pytest.raises(KaptyorkaError, match="no session named boss that you can reach; to"
+                                             " reach someone else, message the manager"):
         s.send(b1.key, "boss", "cold message")
     # the page's door is a session door: it closes when the session goes offline
     with s.lock:
         s.db.execute("UPDATE agents SET last_seen=last_seen-100 WHERE key='a1'")
     s.expire_doors(s.clock())
     online(app, "ann", "a1", "pc")
-    with pytest.raises(KaptyorkaError, match="no door to boss"):
+    with pytest.raises(KaptyorkaError, match="no session named boss that you can reach"):
         s.send(a1.key, "boss", "later")
 
 
@@ -305,20 +311,31 @@ def test_admin_actions_log_the_admin(app):
                    ("boss", "person", "zed created as member")]
 
 
+def old_knock(s, from_key, to_person_id, about):
+    """A knock a member sent before 0.9.0 (members cannot knock now); its id."""
+    with s.lock:
+        frm = s.db.execute("SELECT person_id FROM agents WHERE key=?", (from_key,)).fetchone()
+        return s.db.execute(
+            "INSERT INTO knocks (from_key, from_person, to_key, to_person, about, created)"
+            " VALUES (?,?,NULL,?,?,?)",
+            (from_key, frm["person_id"], to_person_id, about, s.clock())).lastrowid
+
+
 def test_knock_and_door_sessions_masked(app):
     s = app.store
-    a1 = online(app, "ann", "a1", "pc", "mine")
+    online(app, "ann", "a1", "pc", "mine")
     b1 = online(app, "ben", "b1", "box-2", "secret")
-    kid = s.knock(b1.key, "ann", "a question")
-    assert get(app, "ann", "/api/feed")["knocks"][0]["from_session"] == "box-2/codex/(private)"
-    assert get(app, "ann", "/api/knocks")[0]["from_session"] == "box-2/codex/(private)"
+    kid = old_knock(s, b1.key, app.ids["ann"], "a question")
+    # ben's session is not listed for ann: the knock names no session
+    assert get(app, "ann", "/api/feed")["knocks"][0]["from_session"] == ""
+    assert get(app, "ann", "/api/knocks")[0]["from_session"] == ""
     assert get(app, "boss", "/api/feed")["knocks"][0]["from_session"] == b1.name
-    s.answer(kid, a1.key, True)
+    assert post(app, "boss", f"/api/knocks/{kid}/answer", {"answer": "yes"}) == \
+        (200, {"door": "group"})
     door = get(app, "ann", "/api/feed")["doors"][0]
-    assert {door["a_session"], door["b_session"]} == {"box-2/codex/(private)", a1.name}
-    assert not any(k.startswith("_") for k in door)
-    door = get(app, "ben", "/api/feed")["doors"][0]
-    assert {door["a_session"], door["b_session"]} == {b1.name, "pc/codex/(private)"}
+    assert door["scope"] == "group" and not any(k.startswith("_") for k in door)
+    rows = {a["person"]: a for a in get(app, "ann", "/api/feed")["agents"]}
+    assert rows["ben"]["name"] == "box-2/codex/(private)"  # listed now, the folder masked
 
 
 def test_page_broadcast_opens_no_doors(app):
@@ -327,7 +344,7 @@ def test_page_broadcast_opens_no_doors(app):
     b1 = online(app, "ben", "b1", "box-2")
     assert post(app, "boss", "/api/send", {"to": "all", "text": "news"}) == (200, {"sent": 2})
     assert s.doors() == []  # a broadcast is one-way
-    with pytest.raises(KaptyorkaError, match="no door to boss"):
+    with pytest.raises(KaptyorkaError, match="no session named boss that you can reach"):
         s.send(b1.key, "boss", "reply to the news")
 
 

@@ -465,11 +465,11 @@ def test_manager_messages_anyone_and_is_answered_without_door(hub):
     assert run(call(bob, B, "send", to="laptop/codex/manager", text="fine")) \
         == "sent to 1 session"
     assert [m["text"] for m in run(call(mgr, me, "inbox"))] == ["fine"]
-    # a third person still needs a door to bob
+    # a third person cannot reach bob
     _, _, cat = plain(hub, "cat")
     C = ident("k:cat", project="proj-b", machine="pc-3")
     run(call(cat, C, "inbox"))
-    assert "no door" in call_error(cat, C, "send", to="pc-2/codex/proj-b", text="hi")
+    assert "that you can reach" in call_error(cat, C, "send", to="pc-2/codex/proj-b", text="hi")
 
 
 def test_manager_cannot_answer_others_knock(hub):
@@ -573,7 +573,7 @@ def test_page_answers_the_manager_without_a_door(hub):
     assert [m["text"] for m in run(call(mgr, me, "inbox"))] == ["here is my answer"]
     status, body = http.request("POST", hub.url + "/api/send", btok,
                                 {"to": "pc-1/codex/proj-b", "text": "hi"})
-    assert status == 400 and "no door" in body
+    assert status == 400 and "that you can reach" in body
 
 
 def test_page_sends_a_file_to_the_manager_without_a_door(hub):

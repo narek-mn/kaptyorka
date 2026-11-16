@@ -294,15 +294,19 @@ class MemoryStore:
                  "subject": r["subject"], "dirty": None if r["dirty"] is None else bool(r["dirty"]),
                  "time": r["time"]} for r in rows]
 
-    def branches_with_sessions(self, project: str, now: Optional[float] = None) -> Dict[str, List[str]]:
+    def branches_with_sessions(self, project: str, now: Optional[float] = None,
+                               viewer: Optional[int] = None) -> Dict[str, List[str]]:
+        """Branch -> names of the online sessions on it, only those person `viewer` may see
+        (store._listed; None: all)."""
         now = self.clock() if now is None else now
         out: Dict[str, List[str]] = {}
         with self.lock:
             rows = self.db.execute(
-                "SELECT a.name, (SELECT g.branch FROM git_facts g WHERE g.host=a.host AND"
+                "SELECT a.name, a.key, a.person_id, (SELECT g.branch FROM git_facts g WHERE g.host=a.host AND"
                 " g.os_user=a.os_user AND g.cwd=a.cwd ORDER BY g.id DESC LIMIT 1) AS branch"
                 " FROM agents a WHERE a.project=? AND a.last_seen>? ORDER BY a.name",
                 (project, now - ONLINE_S)).fetchall()
+            rows = [r for r in rows if self.store._listed(viewer, r)]
         for r in rows:
             if r["branch"] is not None:
                 out.setdefault(r["branch"], []).append(r["name"])

@@ -216,10 +216,16 @@ def test_brief_and_errors_mask_private_folders(tmp_path):
          "X-Kaptyorka-Tool": "codex", "X-Kaptyorka-Project": "q"}
     try:
         status, text = http.request("GET", url + "/api/brief?event=start", tb, headers=h)
+        assert status == 200 and "No one else online." in text  # alice is not listed for bob
+        assert "alice@pc" not in text
+        # behind a door alice is listed, her unregistered folder still masked
+        s.open_door_group(s.person_by_name("alice")["id"], s.person_by_name("bob")["id"], "x")
+        s.send("a1", "bob@pc/codex/q", "hi")  # a new unread message: the brief is built anew
+        status, text = http.request("GET", url + "/api/brief?event=start", tb, headers=h)
         assert status == 200 and "alice@pc/codex/(private)" in text
-        assert "secret-folder" not in text
+        assert "secret-folder" not in text.split("Unread messages:")[0]  # the sender's own name
     finally:
         stop()
     with pytest.raises(KaptyorkaError) as e:
         s.send("b1", "nobody", "hi")
-    assert "secret-folder" not in str(e.value) and "(private)" in str(e.value)
+    assert "secret-folder" not in str(e.value) and "alice@pc" not in str(e.value)

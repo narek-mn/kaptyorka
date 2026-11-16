@@ -2,7 +2,7 @@
 from dataclasses import asdict
 from typing import Optional
 
-from kaptyorka import admin_ops
+from kaptyorka import __version__, admin_ops
 from kaptyorka.manager import ManagerStore
 from kaptyorka.store import PRIVATE, Agent, Principal, Store, private_name
 
@@ -54,10 +54,18 @@ def masked(store: Store, principal: Principal, row: dict, sides) -> dict:
 
 
 def knocks(store: Store, principal: Principal, to_me_only: bool = False) -> list:
-    """Pending knocks the viewer may see, the knocking session masked."""
-    return [masked(store, principal, k, (("_from", "from_session"),))
-            for k in store.knocks(principal, sides=True)
-            if not to_me_only or principal.is_admin() or k["to"] == principal.person_name]
+    """Pending knocks the viewer may see, the knocking session masked, or left out when the
+    viewer may not see that session at all (store.listed)."""
+    out = []
+    for k in store.knocks(principal, sides=True):
+        if to_me_only and not principal.is_admin() and k["to"] != principal.person_name:
+            continue
+        side = k["_from"]
+        if side is not None and not store.listed(principal.person_id, side["key"],
+                                                 side["person_id"]):
+            k["from_session"], k["_from"] = "", None
+        out.append(masked(store, principal, k, (("_from", "from_session"),)))
+    return out
 
 
 def _notes(store: Store, principal: Principal) -> list:
@@ -81,13 +89,16 @@ def feed(store: Store, principal: Principal, ws=None) -> dict:
              for d in store.doors(sides=True) if admin or me in (d["a_person"], d["b_person"])]
     out = {
         "agents": [session_row(store, a, principal, names, now, ws=ws, manager_id=mid)
-                   for a in store.online()],
+                   for a in store.online()
+                   if store.listed(principal.person_id, a.key, a.person_id)],
         "messages": [masked(store, principal, m, (("_from", "sender"), ("_to", "to")))
                      for m in store.messages_for(principal, 500)],
         "notes": _notes(store, principal),
         "knocks": knocks(store, principal, to_me_only=True),
         "doors": doors,
     }
+    if not admin and ws is not None:  # only what blocks this person; the admin has /api/warnings
+        out["warnings"] = [w for w in ws.warnings(now, __version__) if w["person"] == me]
     if admin:
         members, grants = store.project_members(), store.machine_grants()
         out.update({

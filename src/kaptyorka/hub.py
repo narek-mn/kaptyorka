@@ -162,7 +162,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.tool()
     @_tool_errors
     def who(ctx: Context) -> List[dict]:
-        """Online sessions: name, label, person, machine, tool, project, status, activity, last
+        """Online sessions you may reach: your own, the manager's, and those behind a door
+        the admin opened. Name, label, person, machine, tool, project, status, activity, last
         seen. A project you may not see shows as (private), in the name too."""
         agent, principal = caller(ctx)
         now = store.clock()
@@ -172,6 +173,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         boss = ws.boss_key(mine["name"]) if mine else None  # a worker sees its boss marked
         rows, mid = [], mm.person_id()
         for a in store.online():
+            if not store.listed(principal.person_id, a.key, a.person_id):
+                continue
             row = {**session_row(store, a, principal, names, now, live, ws, mid),
                    "you": a.key == agent.key}
             if a.key == boss:
@@ -1456,7 +1459,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         state = store.notes_read("state", principal, project)
         return JSONResponse({"state": state.text if state else None,
                              "git": ms.git_recent(project, 7),
-                             "branches": ms.branches_with_sessions(project, store.clock())})
+                             "branches": ms.branches_with_sessions(project, store.clock(),
+                                                                  principal.person_id)})
 
     @server.custom_route("/api/requests", methods=["GET"])
     async def api_requests(request: Request) -> Response:

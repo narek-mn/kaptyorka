@@ -52,8 +52,7 @@ def team(store, ws, ms, clock):
     store.grant_project("proj-a", bob.person_id, "write", by="t")
     ws.facts_seen(alice.device_id, {"host": "box-1", "os_user": "u"}, {"proj-a": A})
     beat(store, alice, bob)
-    store.answer(store.knock("b:1", "alice", "talk"), "a:1", True)  # a door, so bob may send
-    store.inbox("a:1")
+    store.open_door_group(alice.person_id, bob.person_id, "t")  # so bob may send to alice
     return alice, bob
 
 
@@ -82,7 +81,7 @@ def test_brief_sections_in_order(store, ws, ms, clock, team):
     alice, bob = team
     rich(store, ms, clock, alice, bob)
     beat(store, alice, bob)
-    store.knock("b:1", "alice", "pair on the cart")
+    old_knock(store, "b:1", alice.person_id, "pair on the cart")
     text = build(store, ws, ms, alice, rules="Team rules:\nbe kind")
     me = store.agent("a:1").name
     heads = ["Team rules:", f"You are `{me}`, alice, on box-1.", "Projects you may read:",
@@ -90,13 +89,36 @@ def test_brief_sections_in_order(store, ws, ms, clock, team):
     at = [text.index(h) for h in heads]
     assert at == sorted(at), text
     assert "1 other online: box-2/codex/proj-a." in text
-    assert 'Knocks for you: bob (box-2/codex/proj-a) about "pair on the cart".' in text
+    assert "Knocks for you" not in text  # only the admin answers knocks
     assert f"- proj-a: the shop (working now: {me}, box-2/codex/proj-a)" in text
     assert "# Decisions\nSQLite." in text
     assert '- alice on main: "add cart" (2 hours ago)' in text
     assert f"Branches with open sessions: main ({me})" in text
     assert "hi alice" in text.split("Unread messages:")[1]
     assert len(text) <= brief.BUDGET
+
+
+def old_knock(store, from_key, to_person, about):
+    """A knock a member sent before 0.9.0 (only the admin knocks now)."""
+    with store.lock:
+        frm = store.db.execute("SELECT person_id FROM agents WHERE key=?", (from_key,)).fetchone()
+        store.db.execute("INSERT INTO knocks (from_key, from_person, to_key, to_person, about,"
+                         " created) VALUES (?,?,NULL,?,?,?)",
+                         (from_key, frm["person_id"], to_person, about, store.clock()))
+
+
+def test_knocks_line_for_the_admin_only(store, ws, ms, team):
+    alice, bob = team
+    old_knock(store, "b:1", alice.person_id, "pair on the cart")
+    boss = device(store, "boss", "box-9")
+    with store.lock:
+        store.db.execute("UPDATE people SET role='admin' WHERE name='boss'")
+    boss = replace(boss, role="admin")
+    store.heartbeat("box-9", [{"key": "x:1", "tool": "codex", "project": "ops"}], principal=boss,
+                    facts={"host": "box-9", "os_user": "u"})
+    assert 'Knocks for you: bob (box-2/codex/proj-a) about "pair on the cart".' in \
+        build(store, ws, ms, boss, key="x:1")
+    assert "Knocks for you" not in build(store, ws, ms, alice)
 
 
 def test_brief_minimal_session(store, ws, ms):
