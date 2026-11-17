@@ -6,7 +6,7 @@ import time
 from typing import Callable, Dict
 from urllib.parse import urlencode
 
-from kaptyorka import facts, http, paths
+from kaptyorka import facts, http, offhub, paths
 from kaptyorka.identity import Identity, identify
 
 TIMEOUT_S = 3
@@ -80,6 +80,13 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
             ident = identify(cfg.get("machine", ""), workspace=workspace)
         if ident is None:
             return ""
+        if tool == "claude-code":
+            sid = ident.key.split(":", 1)[1]
+            found = offhub.session(sid) if event == "start" else None
+            if found is not None:
+                offhub.started(sid, *found, os.environ)
+            if offhub.off(ident.key):
+                return ""  # kept off the hub: nothing is sent, nothing is shown
 
         deadline = time.monotonic() + TIMEOUT_S  # one budget for all calls of this hook
 

@@ -8,8 +8,9 @@ import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
 
+from kaptyorka import offhub
 from kaptyorka.adapters.base import (DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, login_output,
-                                     mentions_hook, merge_json)
+                                     mentions_hook, merge_json, write_atomic)
 
 CLAUDE_CODE_TESTED = "2.1.319"
 
@@ -22,6 +23,20 @@ def _newer(version: str) -> bool:
 
 
 HOOKS = (("SessionStart", "start"), ("UserPromptSubmit", "prompt"), ("Stop", "stop"))
+
+
+COMMAND_MARK = "<!-- written by kaptyorka; it rewrites this file -->"
+
+
+def command_text(kaptyorka: str) -> str:
+    """~/.claude/commands/hub.md: `/hub`, `/hub on`, `/hub off`. The `!` line runs before the
+    model sees anything; the model cannot run the command itself."""
+    exe = shlex.quote(kaptyorka)
+    return (f"---\ndescription: Show or switch whether this session is on the kaptyorka hub\n"
+            f"argument-hint: \"[on|off]\"\nallowed-tools: Bash({exe} hub:*)\n"
+            f"disable-model-invocation: true\n---\n{COMMAND_MARK}\n"
+            f"!`{exe} hub $ARGUMENTS`\n\n"
+            "Tell the user the line above, word for word, and nothing else.\n")
 
 
 def hook_entry(kaptyorka: str, name: str) -> dict:
@@ -58,6 +73,7 @@ class ClaudeAdapter:
         self.dir = self.home / ".claude" / "sessions"
         self.log = log
         self._warned = False
+        self.off_keys: set = set()  # sessions of the last sessions() kept off the hub
 
     def installed(self) -> bool:
         return shutil.which("claude") is not None
@@ -72,7 +88,9 @@ class ClaudeAdapter:
         return state if isinstance(state, bool) else None
 
     def sessions(self) -> List[Session]:
-        out = []
+        """Every live session, those kept off the hub too (in off_keys): the bridge reports
+        only the rest, but its own decisions (a busy folder) count them all."""
+        out, off = [], set()
         for f in sorted(self.dir.glob("*.json")):
             try:
                 pid = int(f.stem)
@@ -96,8 +114,11 @@ class ClaudeAdapter:
             name = data.get("name")
             label = name if isinstance(name, str) else ""
             # "kind" is undocumented: "bg" marks a background job; anything else is a normal one
+            if offhub.decide(session_id, pid, data):
+                off.add(f"claude:{session_id}")
             out.append(Session(f"claude:{session_id}", self.tool, os.path.basename(cwd.rstrip("/")),
                                data.get("status", ""), label, cwd, data.get("kind") == "bg"))
+        self.off_keys = off
         return out
 
     def _find(self, key: str):
@@ -113,6 +134,8 @@ class ClaudeAdapter:
         raise ValueError("no session file with that id")
 
     def deliver(self, key: str, text: str) -> None:
+        if key in self.off_keys:
+            raise DeliveryError(f"claude session {key}: that session is off the hub")
         try:
             pid, sock_path = self._find(key)
             if sock_path is None:
@@ -148,6 +171,24 @@ class ClaudeAdapter:
         except (OSError, ValueError, KeyError, TypeError):
             return False
         return isinstance(entry, dict) and entry.get("command") == kaptyorka and entry.get("args") == ["mcp"]
+
+    def install_command(self, kaptyorka: str) -> List[str]:
+        """Write the /hub command; a file someone else wrote at that path is left alone."""
+        f = self.home / ".claude" / "commands" / "hub.md"
+        want = command_text(kaptyorka)
+        try:
+            old = f.read_text() if f.exists() else None
+            if old == want:
+                return []
+            if old is not None and COMMAND_MARK not in old:
+                self.log(f"left alone, not written by kaptyorka: {f}")
+                return []
+            f.parent.mkdir(parents=True, exist_ok=True)
+            write_atomic(f, want)
+        except OSError as e:
+            self.log(f"could not write {f}: {e}")
+            return []
+        return [f"Claude Code: /hub command written to {f}"]
 
     def configure(self, kaptyorka: str) -> List[str]:
         lines = []
@@ -192,10 +233,17 @@ class ClaudeAdapter:
             self.log(f"left alone, not valid JSON: {settings}")
         elif result == "changed":
             lines.append(f"Claude Code: kaptyorka hooks added to {settings}")
-        return lines
+        return lines + self.install_command(kaptyorka)
 
     def unconfigure(self) -> List[str]:
         lines = []
+        command = self.home / ".claude" / "commands" / "hub.md"
+        try:
+            if COMMAND_MARK in command.read_text():
+                command.unlink()
+                lines.append(f"Claude Code: /hub command removed ({command})")
+        except OSError:
+            pass
         manual = "Claude Code: run `claude mcp remove --scope user kaptyorka` to remove the MCP server"
         if not self.installed():
             self.log(f"claude not found; {manual}")

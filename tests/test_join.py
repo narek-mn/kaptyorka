@@ -294,7 +294,8 @@ def test_join_skips_claude_mcp_when_already_registered(home, fake_claude_cli):  
     (home / ".claude.json").write_text(json.dumps(
         {"mcpServers": {"kaptyorka": {"type": "stdio", "command": "/k", "args": ["mcp"]}}}))
     a = ClaudeAdapter(home, run=fake_claude_cli.run)
-    assert a.configure("/k") == ["Claude Code: kaptyorka hooks added to " + str(home / ".claude/settings.json")]
+    assert a.configure("/k") == ["Claude Code: kaptyorka hooks added to " + str(home / ".claude/settings.json"),
+                                 "Claude Code: /hub command written to " + str(home / ".claude/commands/hub.md")]
     assert a.configure("/k") == []
     assert fake_claude_cli.calls == []  # no `claude mcp remove` / `add`
     (home / ".claude.json").write_text(json.dumps(

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.8
+
+- Keep a Claude Code session off the hub. Type `/hub off` in it and it disappears from the hub at once, for everyone, the admin and the manager too; `/hub on` brings it back and `/hub` says which it is. Or start it off with `KAPTYORKA_HUB=off claude`, and nothing about it ever reaches the hub. While off, the bridge does not report it, its hooks stay silent, its kaptyorka tools refuse with a line saying how to come back, and messages to it fail as to an unknown session. The choice lasts for that session, across bridge and hub restarts, and ends with it. Background sessions ignore the variable (use `/hub off` in them); workers and the manager cannot go off. Other tools are not covered yet.
+- The bridge writes the `/hub` command (`~/.claude/commands/hub.md`) when it starts, so machines get it with the update; `join` writes it too.
+
 ## 0.9.7
 
 - The admin's **Admin** tab is now **Team**: one screen with three things. **Waiting for you** (only when something waits; its count is on the tab) lists each request, connection request, knock and rule proposal as one line, "bob wants to work on proj-a", with **Yes** and **No**; Yes gives what was asked. **Team** lists the people: a dot when online, their projects (or "you", or "hasn't joined yet"), and **Copy invite link** before they join or **Remove** after. **Add person** takes a name and shows the link with **Copy**. Click a person to tick their projects; a tick gives write and saves at once.

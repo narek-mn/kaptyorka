@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import __version__, facts, http, identity, orders, paths, skills_sync
+from kaptyorka import __version__, facts, http, identity, offhub, orders, paths, skills_sync
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES, Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
@@ -44,6 +44,19 @@ def joined_adapters(cfg: dict, adapters: List[Adapter]) -> List[Adapter]:
     """The adapters for the tools join --only named; without --only, all of them."""
     tools = cfg.get("tools")
     return adapters if tools is None else [a for a in adapters if a.tool in tools]
+
+
+def install_commands(adapters: List[Adapter], exe: str, log: Callable[[str], None]) -> None:
+    """At bridge start: commands a newer kaptyorka adds (Claude Code's /hub), so a machine
+    that updated gets them without joining again."""
+    for a in adapters:
+        install = getattr(a, "install_command", None)
+        if install is not None:
+            try:
+                for line in install(exe):
+                    log(line)
+            except Exception as e:  # never stop the bridge over it
+                log(f"{a.tool}: could not write its commands: {e}")
 
 
 class Bridge:
@@ -99,26 +112,36 @@ class Bridge:
         return {**facts_, "git": git}
 
     def heartbeat(self) -> None:
-        sessions, tools, objs = [], [], []
+        offhub.clean()
+        # read before the sessions: one switched off in between is reported this once and
+        # dropped on the next heartbeat, never left showing as offline
+        gone = offhub.gone()
+        sessions, tools, objs, shown = [], [], [], []
         for a in self.adapters:
             try:
                 got = list(a.sessions())
-                found = [asdict(s) for s in got]
+                off = getattr(a, "off_keys", set())  # kept off the hub: never reported
+                found = [asdict(s) for s in got if s.key not in off]
                 problem = None
             except Exception as e:  # one broken adapter must not hide the others
                 found, problem = [], f"{a.tool} sessions failed: {e}"
             self._report("sessions:" + a.prefix, problem)
             sessions += found
             objs += got if problem is None else []
+            shown += [s for s in got if s.key not in off] if problem is None else []
             if problem is None and a.tool in COMPLETE:
                 tools.append(a.tool)  # this list is complete for it
         projects = self.hub.get("projects", [])
-        status, answer = http.request(
-            "POST", self.cfg["hub"] + "/bridge/heartbeat", self.cfg["token"],
-            {"machine": self.cfg["machine"], "sessions": sessions, "tools": tools,
-             "facts": self._sendable(self._machine_facts(objs)),
-             "folders": facts.folders(projects if isinstance(projects, list) else [], objs,
-                                      Path.home())})
+        body = {"machine": self.cfg["machine"], "sessions": sessions, "tools": tools,
+                "facts": self._sendable(self._machine_facts(shown)),
+                "folders": facts.folders(projects if isinstance(projects, list) else [], shown,
+                                         Path.home())}
+        if gone:
+            body["gone"] = gone
+        status, answer = http.request("POST", self.cfg["hub"] + "/bridge/heartbeat",
+                                      self.cfg["token"], body)
+        if gone and status in (200, 204):
+            offhub.told(gone)
         self.hub = answer if status == 200 and isinstance(answer, dict) else {}
         v = self.hub.get("skills_version")
         if isinstance(v, str) and v != self._skills_version:

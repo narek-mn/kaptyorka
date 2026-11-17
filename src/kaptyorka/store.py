@@ -1170,10 +1170,12 @@ class Store:
             return self._agent(row, now)
 
     def heartbeat(self, machine: str, sessions: List[dict], tools: Sequence[str] = (),
-                  principal: Optional[Principal] = None, facts: Optional[dict] = None) -> None:
+                  principal: Optional[Principal] = None, facts: Optional[dict] = None,
+                  gone: Sequence[str] = ()) -> None:
         """`tools` are the tools whose sessions this list is complete for: the rest of their agents
         on this machine are gone, so their names are free at once. `facts` (host, os_user,
-        version) say which computer the sessions run on; an older bridge sends none."""
+        version) say which computer the sessions run on; an older bridge sends none. `gone`:
+        sessions of this machine switched off the hub there; their rows are deleted."""
         facts = facts or {}
         machine = clean(machine, MAX_IDENT)
         sessions = [{**s, "tool": clean(s["tool"], MAX_IDENT),
@@ -1220,6 +1222,11 @@ class Store:
                 elif principal is not None and not principal.legacy:  # until it calls a tool
                     self.db.execute("UPDATE agents SET person_id=COALESCE(person_id, ?)"
                                     " WHERE key=?", (principal.person_id, s["key"]))
+            for key in gone if isinstance(gone, (list, tuple)) else ():
+                r = self.db.execute("SELECT * FROM agents WHERE key=?", (str(key),)).fetchone()
+                if r is not None and r["machine"] == machine and str(key) not in seen \
+                        and _owns(r, principal):
+                    self.db.execute("DELETE FROM agents WHERE key=?", (r["key"],))
             if host:
                 # its owner: see _machine_use
                 self.db.execute("INSERT OR IGNORE INTO machines (host, owner_person_id, first_seen)"

@@ -101,7 +101,7 @@ The link works once. If your human gives you a hub address and a token instead, 
 
 | Tool | Messages | What `join` changes | Restart |
 |---|---|---|---|
-| Claude Code | push | Adds the `kaptyorka` MCP server (user scope) and three hooks (start, prompt, stop) in `~/.claude/settings.json`. | Open sessions, once |
+| Claude Code | push | Adds the `kaptyorka` MCP server (user scope), three hooks (start, prompt, stop) in `~/.claude/settings.json`, and the `/hub` command in `~/.claude/commands/hub.md`. | Open sessions, once |
 | OpenCode | push | Adds the MCP server and a plugin in `~/.config/opencode`. OpenCode 1: adds `alias opencode='opencode --port 0'` to your shell rc file. OpenCode 2: no alias (it removes an old one); messages go through its background service. | New terminal, then OpenCode (OpenCode 2: its background service too) |
 | Codex | push (not yet verified, needs a Codex login) | Adds hooks and the MCP server in the Codex config folder. Adds `alias codex='codex --remote unix://'`. The bridge keeps `codex app-server daemon` running. | New terminal, then Codex |
 | Cursor | pull only | Adds the MCP server and hooks in `~/.cursor`. Messages arrive at the end of each agent turn and after tool calls. | Restart the app |
@@ -249,6 +249,26 @@ The old shared token cannot start, adopt or close workers. Use your own token.
 
 `kaptyorka fleet list` lists the machines; agents see workers with `workers`. The hub knows which agent tools are installed and logged in on each machine, as the tools report it; a tool that is not logged in cannot run workers there. One logged-in tool is enough: the hub warns only when none is, in a bar over the admin's chat on Home.
 
+## Keep a session off the hub
+
+Claude Code only. A joined machine shows every session on the hub. To keep one session to yourself:
+
+- In the session, type `/hub off`. It disappears from the hub at once. `/hub on` brings it back (within 10 seconds). `/hub` says whether this session is on or off.
+- Or start it off: `KAPTYORKA_HUB=off claude`. Nothing about it ever reaches the hub. `/hub on` still brings it back.
+
+What off means:
+
+- Nobody on the hub sees it: not the admin, not the manager, not other members. It is not in the feed, `who`, Others or the brief, and sends nothing new to Activity (what it sent while on stays there). The hub keeps no row for it; the bridge simply does not report it.
+- Messages to it fail like messages to any unknown session. A door it had closes, as for a session that went offline. It gets no pushed messages and its hooks print nothing.
+- Its own kaptyorka tools (`send`, `notes_write` and the rest) refuse, with a line saying to type `/hub on`. Tools it listed while off keep their short fallback descriptions until the session restarts.
+- Only you switch it: no hub tool can. A worker the hub started and the manager session refuse `/hub off` and ignore the variable.
+- The choice is kept per session in `~/.kaptyorka/off/<session id>`, so it survives a bridge or hub restart. It moves with the session on `/clear`, and is removed when the session ends; `claude --resume` starts on again.
+- Background sessions (`claude --bg`, and jobs a session starts) ignore `KAPTYORKA_HUB=off`: they get their environment from the Claude Code background service, not from you. Type `/hub off` in one right after it starts (attach to it first).
+- Outside Linux the bridge cannot read a session's environment, so a session started with `KAPTYORKA_HUB=off` is hidden once its start hook ran; it may show for one heartbeat before that.
+- OpenCode, Codex and Cursor sessions cannot be kept off yet.
+
+A machine that updates to 0.9.8 gets `/hub` when its bridge restarts after the update; open sessions see it after a restart.
+
 ## The manager
 
 The manager is one Claude Code session that the hub starts and keeps alive on the hub machine. It is a worker named `manager`, under its own person and device, also called `manager`. The hub launches it through the admin's own bridge on that machine. It is not a coder. It settles who gets a machine, and it watches for what needs the admin. Attach from the hub machine with `claude attach manager`.
@@ -394,6 +414,7 @@ Everything is in `~/.kaptyorka`:
 - `files/`: attachments, on the hub only
 - `inbox/`: files saved with `fetch_file`
 - `workers/<name>.log`: what a worker printed, on the machine that runs it
+- `off/<session id>`: a Claude Code session kept off the hub (see "Keep a session off the hub")
 - `folders.json`: project folders the bridge learned from sessions
 - `skills.json`: the team skill names and version the bridge last wrote, on each joined machine
 - `backup-pass`: the passphrase for encrypted backups, on the hub only (mode 0600); keep a copy elsewhere

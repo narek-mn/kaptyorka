@@ -728,7 +728,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             principal = store.authenticate(bearer(request.headers),
                                            machine=str(body["machine"])) or principal
         store.heartbeat(body["machine"], body["sessions"], body.get("tools", ()),
-                        principal=principal, facts=facts if isinstance(facts, dict) else None)
+                        principal=principal, facts=facts if isinstance(facts, dict) else None,
+                        gone=body.get("gone", ()))
         if principal is None:
             return Response(status_code=204)
         own = not principal.legacy

@@ -721,13 +721,16 @@ def _mcp(args) -> int:
 
 def _bridge(args) -> int:
     from kaptyorka.adapters import all_adapters
-    from kaptyorka.bridge import Bridge, joined_adapters, log
+    from kaptyorka.bridge import Bridge, install_commands, joined_adapters, log
 
     cfg = paths.load_config()
     if not cfg.get("hub") or not cfg.get("token") or not cfg.get("machine"):
         print(NOT_JOINED, file=sys.stderr)
         return 1
     adapters = [a for a in all_adapters(log) if a.installed()]
+    exe = Path(sys.argv[0])  # the path join installed the service with, as join picks it
+    install_commands(joined_adapters(cfg, adapters),
+                     str(exe if exe == Path.home() / ".local/bin/kaptyorka" else exe.resolve()), log)
     Bridge(cfg, joined_adapters(cfg, adapters), log).run()
     return 0
 
@@ -742,6 +745,14 @@ def _hook(args) -> int:
     except (OSError, ValueError):
         pass
     return hook.main(args.tool, args.event, stdin)
+
+
+def _hub(args) -> int:
+    from kaptyorka import offhub
+
+    code, line = offhub.command(args.words)
+    print(line)  # stdout either way: Claude Code shows what the `!` line printed
+    return code
 
 
 def _token_works(cfg: dict) -> bool:
@@ -1002,6 +1013,9 @@ def entry() -> None:
     m.add_argument("--workspace")
     m.set_defaults(run=_mcp)
     sub.add_parser("bridge").set_defaults(run=_bridge)
+    hb = sub.add_parser("hub")  # Claude Code's /hub command
+    hb.add_argument("words", nargs="*")
+    hb.set_defaults(run=_hub)
     h = sub.add_parser("hook")
     h.add_argument("tool")
     h.add_argument("event")

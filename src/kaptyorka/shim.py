@@ -14,7 +14,7 @@ from mcp.server.stdio import stdio_server
 
 from urllib.parse import quote
 
-from kaptyorka import http, identity, paths
+from kaptyorka import http, identity, offhub, paths
 from kaptyorka.store import MAX_FILE
 
 TIMEOUT_S = 4.5  # whole call, connection included: the agent hears back within 5 s
@@ -191,10 +191,15 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 if ident.tool == "cursor":
                     tg.start_soon(_heartbeat, cfg, ident)  # Cursor has no bridge to find its sessions
 
+        async def hidden() -> bool:
+            """Kept off the hub by its person (`/hub off`): nothing goes to the hub."""
+            ident = found["ident"]
+            return ident is not None and await anyio.to_thread.run_sync(offhub.off, ident.key)
+
         async def list_tools(ctx, params) -> types.ListToolsResult:
             r = None
             try:
-                if not found["off"]:
+                if not found["off"] and not await hidden():
                     r = await relay.use(lambda c: c.list_tools())
             except MCPError:
                 r = None
@@ -222,6 +227,8 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 use = relay
             if found["off"]:
                 return _error(NO_MANAGER_CONFIG)
+            if use is relay and await hidden():
+                return _error(f"kaptyorka: {offhub.COME_BACK}")
             args = dict(params.arguments or {})
             f = args.get("file")
             try:
