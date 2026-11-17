@@ -226,3 +226,11 @@ def test_brief_rules_only_line(store, ws, ms, team):
     ws.facts_seen(alice.device_id, {"harness": {"claude-code": {"rules": True, "hooks": True,
                                                                 "skills": None}}}, {})
     assert "Harness on this tool" not in build(store, ws, ms, alice)
+
+
+def test_message_text_names_attachment():
+    from kaptyorka.brief import message_text
+    from kaptyorka.store import Message
+    m = Message(1, "alice", "box-1", "hi", 0.0, True, True, file={"id": 7, "name": "a.png", "size": 5257})
+    assert message_text(m).endswith("hi\n[attached: a.png (5 KB) — get it with fetch_file(7)]")
+    assert "[attached" not in message_text(Message(2, "alice", "box-1", "hi", 0.0, True, True))

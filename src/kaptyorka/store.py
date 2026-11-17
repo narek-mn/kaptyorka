@@ -264,6 +264,16 @@ class Note:
     project: Optional[str] = None
 
 
+def attach_line(file: Optional[dict]) -> str:
+    """One plain line telling an agent a message carries a file ("" when it has none)."""
+    if not file:
+        return ""
+    n = file["size"]
+    size = f"{n} bytes" if n < 1024 else f"{n / 1024:.0f} KB" if n < 1024 * 1024 \
+        else f"{n / 1024 / 1024:.1f} MB"
+    return f"\n[attached: {file['name']} ({size}) \u2014 get it with fetch_file({file['id']})]"
+
+
 class Store:
     def __init__(self, path: Path, clock: Callable[[], float] = time.time,
                  legacy_token: Optional[str] = None):
@@ -1587,6 +1597,7 @@ class Store:
                     shown, reply = self._from_for(m, t["person_id"])
                     sender = f"{shown} (reply to {reply})" if reply else _sender(m)
                     text = (f"Kaptyorka message from {_one_line(sender)}:\n\n{m['text']}"
+                            f"{attach_line(self._file_info(m['file_id']))}"
                             if m["kind"] == "message" else m["text"])  # knocks and doors: as written
                     out.append({"kind": "message", "id": m["id"], "key": t["key"], "text": text})
             return out
@@ -1697,6 +1708,15 @@ class Store:
             if info is None or not self._file_visible(file_id, principal):
                 raise KaptyorkaError("no such file")
             return info
+
+    def file_for_message(self, msg_id: int, principal: Principal) -> Optional[int]:
+        """The file id of a message the caller may see, else None."""
+        with self.lock:
+            row = self.db.execute("SELECT file_id FROM messages WHERE id=?", (msg_id,)).fetchone()
+            if row is None or row["file_id"] is None \
+                    or not self._file_visible(row["file_id"], principal):
+                return None
+            return row["file_id"]
 
     def file_get(self, file_id: int, principal: Principal) -> Tuple[dict, bytes]:
         info = self.file_meta(file_id, principal)

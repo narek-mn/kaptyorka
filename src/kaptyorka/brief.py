@@ -6,7 +6,7 @@ from kaptyorka import __version__
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.hub_feed import session_row
 from kaptyorka.rules import HEADING as RULES_HEADING, TRAILER as RULES_TRAILER
-from kaptyorka.store import Agent, KaptyorkaError, Store
+from kaptyorka.store import Agent, KaptyorkaError, Store, attach_line
 
 BUDGET = 6000  # characters
 CACHE_S = 10
@@ -48,7 +48,7 @@ def _request_lines(store: Store, principal) -> str:
 def message_text(m) -> str:
     return m.text if m.kind != "message" else \
         f"Kaptyorka message from {m.sender}{' (web page)' if m.from_web else ''}" \
-        f"{f' (reply to {m.reply_to})' if m.reply_to else ''}:\n\n{m.text}"
+        f"{f' (reply to {m.reply_to})' if m.reply_to else ''}:\n\n{m.text}{attach_line(m.file)}"
 
 
 def _ago(s: float) -> str:

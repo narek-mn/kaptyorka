@@ -32,7 +32,7 @@ from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
 from kaptyorka.memory import MemoryStore, check_state
 from kaptyorka.secrets_check import check_secrets
-from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, clean
+from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, attach_line, clean
 from kaptyorka.workers import LIVE, MAX_FACT, WorkerStore, _git as clean_git, clean_facts, safe_name
 
 MAX_WAIT_S = 25
@@ -366,16 +366,23 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @_tool_errors
     def inbox(ctx: Context) -> List[dict]:
         """Your unread messages; reading marks them read."""
-        return [{"from": m.sender, "text": m.text, "time": m.created, "kind": m.kind,
+        return [{"from": m.sender, "text": m.text + attach_line(m.file), "time": m.created, "kind": m.kind,
                  "file": m.file, **({"reply_to": m.reply_to} if m.reply_to else {})}
                 for m in store.inbox(me(ctx).key)]
 
     @server.tool()
     @_tool_errors
     def fetch_file(id: int, ctx: Context) -> Dict[str, Union[int, str]]:
-        """Download a file attached to a message you sent or received (id from inbox)."""
+        """Download a file attached to a message you sent or received (file id or message
+        id, as shown in the message's [attached] line)."""
         _, principal = caller(ctx)
-        info = store.file_meta(id, principal)
+        try:
+            info = store.file_meta(id, principal)
+        except KaptyorkaError:
+            fid = store.file_for_message(id, principal)
+            if fid is None:
+                raise
+            info, id = store.file_meta(fid, principal), fid
         return {**info, "url": f"/api/files/{id}"}
 
     @server.tool()

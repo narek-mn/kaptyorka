@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.10
+
+- A message with a picture or file now says so to the session that gets it: one line after the text, `[attached: name (size) - get it with fetch_file(id)]`, in pushed messages, hook injections, the brief and `inbox`. `fetch_file` also accepts the message id, and its description says so.
+
 ## 0.9.9
 
 - Home chat: a message you send shows at once, faded with **Sending…**, then **Sent** (the hub has it) and **Delivered** (the session has it: pushed into it or read from its inbox). If it cannot be sent it says **Not sent** with **Retry** and **Edit** (back into the box). Only your last message carries this, and only until the other side answers.

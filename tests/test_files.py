@@ -161,3 +161,31 @@ def test_oversize_chunked_stops_at_limit(hub, home):
             body = b"file too large"
         assert b"file too large" in body
     assert hub.store.db.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
+
+
+def test_attachment_line_and_fetch_by_message_id(hub, home):
+    import json
+    ann, ann_t, ia, bob, bob_t, ib = setup(hub)
+    upload(hub, ann_t, "spare.png", b"x")  # takes file id 1, so file id != message id below
+    fid = json.loads(upload(hub, ann_t, "pic.png", b"p" * 2048)[1])["id"]
+    hub.token = ann_t
+    bname = hub.store.agent("claude:b").name
+    run(call(hub, ia, "send", to=bname, text="look", file=f"id:{fid}"))
+    line = f"[attached: pic.png (2 KB) — get it with fetch_file({fid})]"
+    [item] = [o for o in hub.store.offer("pc") if o["kind"] == "message"]
+    assert item["text"].endswith(f"look\n{line}")
+    hub.store.ack(item["id"], False)  # not read: still in the inbox
+    hub.token = bob_t
+    rows = run(call(hub, ib, "inbox"))
+    assert rows[0]["text"] == f"look\n{line}"
+    mid = hub.store.messages()[-1].id
+    assert mid != fid
+    info = run(call(hub, ib, "fetch_file", id=mid))
+    assert info["id"] == fid and info["url"] == f"/api/files/{fid}"
+    cat, cat_t = person(hub.store, "cat")
+    hub.token = cat_t
+    assert call_error(hub, ident("claude:c"), "fetch_file", id=mid).endswith("no such file")
+    hub.token = ADMIN
+    run(call(hub, ident("claude:adm"), "send", to=bname, text="plain"))
+    [item] = [o for o in hub.store.offer("pc") if o["kind"] == "message"]
+    assert "[attached" not in item["text"]
