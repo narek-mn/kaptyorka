@@ -589,7 +589,8 @@ def test_page_sends_a_file_to_the_manager_without_a_door(hub):
     assert (status, body) == (200, {"sent": 1})
     [m] = [m for m in hub.store.messages() if m.file]
     assert (m.text, m.file["id"]) == ("see this", fid)
-    assert [m["text"] for m in run(call(mgr, me, "inbox"))] == ["see this"]
+    assert [m["text"] for m in run(call(mgr, me, "inbox"))] == [
+        f"see this\n[attached: a.txt (5 bytes) \u2014 get it with fetch_file({fid})]"]
     status, text = http.request("POST", hub.url + "/api/send", btok,
                                 {"to": "laptop/codex/manager", "text": "again", "file_id": fid})
     assert (status, text) == (400, "that file is not yours to send")
