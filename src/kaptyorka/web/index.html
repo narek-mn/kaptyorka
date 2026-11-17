@@ -285,6 +285,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .err { flex: none; color: var(--danger); font-size: 12px; padding: 6px 2px 0; }
 .blank { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--muted); min-height: 200px; padding: 24px; text-align: center; }
 .list + .blank, .chat .blank { min-height: 120px; color: var(--faint); }
+.back { display: none; }
 
 /* Team: the admin's one screen. Waiting for you, then the people, in one centred column */
 #team { overflow-y: auto; }
@@ -386,6 +387,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   #home .side { flex: 1; border-right: 0; }
   #home.open .side, #home:not(.open) .chat { display: none; }
   #home .chat { flex: 1; }
+  .back { display: inline-flex; }
   #home.open .chat.enter { animation: slide-in 180ms cubic-bezier(.2, .7, .3, 1); }
   #home.open .chat.leave { animation: slide-out 160ms ease-in forwards; }
   .chat-head { gap: 9px; padding: 0 12px; }

@@ -535,6 +535,8 @@ def test_message_states_and_working_row(tmp_path):
                 page.wait('[...document.querySelectorAll("#agents .row")].some(r => r.querySelector(".name").textContent === "proj-a")')
                 page.js('[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name").textContent === "proj-a").click()')
                 assert page.wait('document.getElementById("text").placeholder') == "Message proj-a"
+                # Back to the list only on a phone
+                assert page.js('getComputedStyle(document.getElementById("chat-back")).display !== "none"') == (w < 720)
                 page.js(HOLD_SEND)
                 page.js(f'document.getElementById("text").value = "please run the tests {w}"')
                 page.js('document.querySelector("#compose button[type=submit]").click()')
