@@ -107,13 +107,26 @@ section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .list .subline { display: flex; gap: 8px; min-width: 0; font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; }
 .list .subline span { overflow: hidden; text-overflow: ellipsis; }
 .list .who { color: var(--muted); flex: none; }
-.list .subline .bg { flex: none; }
 .list .n { flex: none; font-size: 12px; color: var(--muted); }
 .list .count { flex: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
 .dot.on { background: var(--ok); }
 .bg-lead { display: flex; color: var(--faint); }
 .bg-lead.on { color: var(--ok); }
+/* Background: Claude Code background jobs, folded into one group under the chats */
+.list .bg-head { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; margin-top: 10px; padding: 10px 16px 8px 17px;
+  border-top: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--muted); text-align: left;
+  transition: color var(--ease), background-color var(--ease); }
+.list .bg-head:hover { color: var(--ink); background: var(--surface2); }
+.list .bg-head:active { background: var(--hover); }
+.list .bg-head:focus-visible { outline-offset: -2px; }
+.list .bg-head > svg { color: var(--faint); transition: transform var(--ease); }
+.list .bg-head[aria-expanded="true"] > svg { transform: rotate(90deg); }
+.list .bg-head small { font-weight: 400; color: var(--faint); }
+.list .bg-head .count { margin-left: auto; }
+.list .bg-rows.enter .row { animation: bg-in 150ms cubic-bezier(.2, .7, .3, 1); }
+.list .bg-head + .bg-rows + .others-head { margin-top: 0; }
+@keyframes bg-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
 .quiet-line { padding: 4px 16px 12px; font-size: 12px; color: var(--faint); }
 /* Others: everyone else online, locked until the admin connects you */
 .list .others-head { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 12px 16px 6px 17px;
@@ -261,6 +274,10 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .btn.primary:hover { background: #e27a5a; border-color: #e27a5a; }
 .btn.primary:active { background: #c45a3a; border-color: #c45a3a; }
 .btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+/* a row's destructive action: quiet red until hovered */
+.btn.quiet-danger { color: var(--danger); border-color: rgba(213, 149, 135, .32); }
+.btn.quiet-danger:hover { border-color: var(--danger); background: rgba(213, 149, 135, .1); }
+.btn.quiet-danger:active { background: rgba(213, 149, 135, .18); }
 .btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
 .btn.icon { width: 34px; padding: 0; }
 .btn.icon.small { width: 28px; }
@@ -367,9 +384,30 @@ th.seen { text-align: right; }
 .dev { display: flex; align-items: center; gap: 10px; min-height: 24px; }
 .dev span { color: var(--ink); }
 .dev small { color: var(--faint); font-size: 12px; }
-.dev.with-hint { flex-wrap: wrap; row-gap: 2px; }
-.dev .legacy-hint { flex-basis: 100%; }
-.dev.revoked span, .dev.revoked small { color: var(--faint); }
+/* a device line: name, machine, last seen and its action, on a grid so every action lines up */
+.dline { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 96px 120px; column-gap: 14px; align-items: center; min-height: 30px; }
+.dline > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dline .d-name { color: var(--ink); }
+.dline small { font-size: 12px; color: var(--faint); }
+.dline .d-seen { display: flex; align-items: center; gap: 6px; }
+.dline .d-seen .dot { width: 6px; height: 6px; }
+.dline .d-act { display: flex; justify-content: flex-end; overflow: visible; }
+.dline .d-act:has(.confirm) { grid-column: 1 / -1; padding: 2px 0 4px; }  /* the question takes its own line */
+.dline.revoked .d-name, .dline.revoked small { color: var(--faint); }
+.dline.share { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto; }
+.dline .d-act .confirm { display: flex; flex-wrap: nowrap; width: 100%; max-width: none; }
+.dline .d-act .confirm > span { flex: 1; }
+.dline .btn.quiet-danger { border-color: transparent; }  /* many in a column: the red word alone until hovered */
+.dline .btn.quiet-danger:hover { border-color: rgba(213, 149, 135, .6); }
+.p-acts { display: flex; justify-content: flex-end; align-items: center; gap: 6px; min-height: 30px; }
+/* a person's row: name, role, first device and actions on one centre line */
+#people-rows td { padding-top: 7px; padding-bottom: 7px; }
+#people-rows td:first-child { white-space: nowrap; }
+#people-rows td:first-child > b { display: block; line-height: 30px; }
+#people-rows td.c-plain { line-height: 30px; }
+#people-rows td:first-child > .hint { margin-top: -6px; }
+#people-rows td > select { margin-top: 3px; }
+#people td.c-act { padding-left: 28px; }
 .empty-row { padding: 14px; color: var(--faint); font-size: 13px; }
 .invite { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: rgba(218, 105, 71, .08); font-size: 12px; color: var(--muted); }
 .invite input { flex: 1; min-width: 0; height: 28px; padding: 0 8px; font: 12px var(--mono); }
@@ -469,6 +507,7 @@ tr.decided .prop b { color: var(--muted); }
 .sentence { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
 .sentence select, .sentence input { height: 28px; padding: 0 8px; font-size: 12px; }
 .sentence .hint { flex-basis: 100%; }
+#add-person #new-name { flex: 1 1 120px; min-width: 0; max-width: 240px; }
 #new-project input[name="description"] { flex: 1; min-width: 160px; max-width: 420px; }
 .invites { padding: 8px 14px; border-top: 1px solid var(--line); }
 .invites ul { list-style: none; margin: 6px 0 0; padding: 0; }
@@ -545,6 +584,25 @@ tr.archived b { color: var(--muted); }
   #people td.c-act .btn + .btn, #access td.c-act .btn + .btn, #access td.c-act select + .btn, #settings td.c-act .btn + .btn { margin-left: 0; }
   #access td.seen { text-align: left; }
   .dev { flex-wrap: wrap; row-gap: 4px; }
+  /* a device: name over machine and last seen, its action on the right */
+  .dline { grid-template-columns: minmax(0, 1fr) auto; row-gap: 1px; padding: 4px 0; }
+  .dline .d-name { grid-column: 1; }
+  .dline .d-host, .dline .d-seen { grid-column: 1; }
+  .dline .d-host:empty { display: none; }
+  .dline .d-act { grid-column: 2; grid-row: 1 / span 3; }
+  .dline .d-act:has(.confirm) { grid-column: 1 / -1; grid-row: auto; justify-content: flex-start; }
+  .dline .d-act .confirm { flex-wrap: wrap; }
+  #add-person { flex-wrap: nowrap; }
+  #add-person #new-name { flex-basis: 0; }
+  .dline.share { grid-template-columns: minmax(0, 1fr); }
+  .dline.share .d-act { grid-column: 1; grid-row: auto; justify-content: flex-start; margin-top: 4px; }
+  #people-rows td:first-child { white-space: normal; }
+  #people-rows td:first-child > b, #people-rows td.c-plain { line-height: 1.4; }
+  #people-rows td > select { margin-top: 0; }
+  #people .cell-list { gap: 2px; }
+  #people .cell-list .dline + .dline { border-top: 1px solid rgba(231, 228, 220, .06); }
+  #people td.c-act { padding-left: 0; }
+  .p-acts { justify-content: flex-start; }
   .confirm { max-width: 100%; justify-content: flex-start; }
   #audit tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; }
   /* the sentence names the person: the card is the sentence and its time */
@@ -612,6 +670,7 @@ tr.archived b { color: var(--muted); }
   <symbol id="i-machine" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></symbol>
   <symbol id="i-project" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></symbol>
   <symbol id="i-tool" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8 8-5 4 5 4M16 8l5 4-5 4"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
   <symbol id="i-status" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
   <symbol id="i-history" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3.5 4v4.5H8M12 8v4.5l3 1.5"/></symbol>
@@ -734,12 +793,14 @@ tr.archived b { color: var(--muted); }
         <section id="people" role="tabpanel" class="admin" hidden>
           <div class="panel">
             <div class="phead">People
-              <form class="inline" id="add-person" autocomplete="off">
-                <input id="new-name" placeholder="Name" aria-label="Name" maxlength="40" required>
-                <select id="new-role" aria-label="Role" title="member: works in the projects you give them. manager: can also decide work requests and message anyone."><option value="member">member</option><option value="manager">manager</option></select>
-                <button type="submit" class="btn small primary"><svg width="13" height="13"><use href="#i-plus"/></svg>Add person</button>
-              </form>
+              <div class="inline"><button type="button" class="btn small primary" id="add-person-btn" aria-expanded="false" aria-controls="add-person"><svg width="13" height="13"><use href="#i-plus"/></svg>Add person</button></div>
             </div>
+            <form class="sentence" id="add-person" autocomplete="off" hidden>
+              <input id="new-name" placeholder="Name" aria-label="Name" maxlength="40" required>
+              <select id="new-role" aria-label="Role" title="member: works in the projects you give them. manager: can also decide work requests and message anyone."><option value="member">member</option><option value="manager">manager</option></select>
+              <button type="submit" class="btn small primary">Add</button>
+              <button type="button" class="btn small" id="add-person-cancel">Cancel</button>
+            </form>
             <div class="invite" id="invite" hidden></div>
             <div class="err" id="people-err" hidden></div>
             <div class="ok" id="people-ok" hidden></div>
@@ -924,6 +985,8 @@ tr.archived b { color: var(--muted); }
   var fleet = { machines: [], workers: [], warnings: [] }, fleetAt = 0;
   var rules = null, rulesAt = 0, rulesUi = { edit: false, rejecting: null, history: false, hist: null, version: null };
   var holding = null, holdClose = null;  /* an open inline confirm or edit: refreshes leave its panel alone */
+  var bgOpen = store(function (s) { return s.getItem("kaptyorka.bg-open"); }) === "1";  /* this viewer's Background group, open or folded */
+  var bgFolded = null, bgEnter = false;  /* the open background chat the viewer folded away anyway; rows fade in once on opening */
   var peopleUi = { revoked: {}, invitesOpen: false }, invites = [], savedHost = null;
   var myAccess = null;
   var attached = null;  /* the file waiting in the compose bar {file, id} */
@@ -1206,19 +1269,36 @@ tr.archived b { color: var(--muted); }
     return list;
   }
   function renderSessions() {
-    if (!changed("team", [entries, conv, askOpen, phoneOpen || wide()])) return;
+    if (!changed("team", [entries, conv, askOpen, phoneOpen || wide(), bgOpen, bgFolded])) return;
     var box = $("agents");
     box.textContent = "";
     entryOf = {};
-    var head = false;
-    entries.forEach(function (e) {
-      entryOf[e.key] = e;
-      if (e.locked && !head) {
-        head = true;
-        box.appendChild(el("div", { "class": "others-head", title: "Everyone else online. Ask, and the admin may connect you." }, ["Others"]));
-      }
-      box.appendChild(sessionRow(e));
-    });
+    entries.forEach(function (e) { entryOf[e.key] = e; });
+    entries.filter(function (e) { return !e.bg && !e.locked; }).forEach(function (e) { box.appendChild(sessionRow(e)); });
+    var bgs = entries.filter(function (e) { return e.bg; });
+    if (bgs.length) {
+      var inBg = conv !== bgFolded && bgs.some(function (e) { return e.key === conv; });
+      var open = bgOpen || inBg;  /* the open chat stays in sight */
+      var unseen = bgs.reduce(function (n, e) { return n + e.unread; }, 0);
+      var head = el("button", { type: "button", "class": "bg-head", "aria-expanded": open ? "true" : "false", "aria-controls": "bg-rows",
+                                title: "Background jobs (claude --bg)" }, [
+        icon("i-chev", 12), "Background", el("small", { text: String(bgs.length) }),
+        unseen ? el("span", { "class": "count", title: unseen + " unread", text: String(unseen) }) : null]);
+      head.addEventListener("click", function () {
+        bgOpen = !open; bgEnter = bgOpen; bgFolded = bgOpen ? null : conv;
+        store(function (s) { s.setItem("kaptyorka.bg-open", bgOpen ? "1" : "0"); });
+        renderSessions();
+        $("agents").querySelector(".bg-head").focus();
+      });
+      box.appendChild(head);
+      var rows = el("div", { "class": "bg-rows" + (bgEnter ? " enter" : ""), id: "bg-rows", role: "group", "aria-label": "Background" }, open ? bgs.map(sessionRow) : []);
+      rows.hidden = !open;
+      bgEnter = false;
+      box.appendChild(rows);
+    }
+    var locked = entries.filter(function (e) { return e.locked; });
+    if (locked.length) box.appendChild(el("div", { "class": "others-head", title: "Everyone else online. Ask, and the admin may connect you." }, ["Others"]));
+    locked.forEach(function (e) { box.appendChild(sessionRow(e)); });
   }
   function lead(e) {
     if (e.locked) return el("span", { title: "Locked: ask to connect" }, [icon("i-lock", 14)]);
@@ -1233,8 +1313,7 @@ tr.archived b { color: var(--muted); }
                            title: e.tip || null, "aria-current": on ? "true" : null, "data-key": e.key }, [
       el("span", { "class": "lead" }, [lead(e)]),
       el("span", { "class": "meta" }, [el("span", { "class": "name", text: e.name }),
-        e.sub || e.who || e.bg ? el("small", { "class": "subline" }, [e.bg ? el("span", { "class": "bg", text: "background" }) : null,
-                                                          e.sub ? el("span", { text: e.sub }) : null,
+        e.sub || e.who ? el("small", { "class": "subline" }, [e.sub ? el("span", { text: e.sub }) : null,
                                                           e.who ? el("span", { "class": "who", text: e.who }) : null]) : null]),
       e.state ? el("span", { "class": "n", text: e.state }) : null,
       e.ask ? el("span", { "class": "ask-state " + e.ask, text: e.ask === "requested" ? "Requested" : "Denied" }) : null,
@@ -1864,6 +1943,12 @@ tr.archived b { color: var(--muted); }
   var LEGACY_TITLE = "The device the old shared token logs in as. Switch the shared token off in Access when every machine has its own token.";
   var MANAGER_HINT = "The team's manager session runs as this account";
   function isManagerAccount(p) { return p.name === "manager" && p.role === "manager"; }
+  /* the admin's own device "hub" (from kaptyorka start) and the manager's device break more than themselves */
+  function revokeText(p, d) {
+    if (p.role === "admin" && d.name === "hub") return "Revoke hub? The admin link and the hub machine's sessions stop working. Restart the hub for a new link.";
+    if (isManagerAccount(p) && d.name === "manager") return "Revoke manager? The manager session stops until it is restarted.";
+    return "Revoke " + d.name + "? It stops working at once.";
+  }
   function roleCell(p) {
     if (p.role === "admin" || isManagerAccount(p)) return el("td", { "class": "c-plain", text: p.role });
     var sel = el("select", { "class": "own", "aria-label": "Role of " + p.name });
@@ -1882,21 +1967,22 @@ tr.archived b { color: var(--muted); }
     body.textContent = "";
     feed.people.forEach(function (p) {
       function devRow(d) {
-        var gone = d.revoked_at != null;
+        var gone = d.revoked_at != null, now = Date.now() / 1000;
+        var online = !gone && d.last_used != null && now - d.last_used < 30;
+        var off = d.legacy && !gone && feed.legacy && !feed.legacy.enabled;
+        var name = d.legacy ? "Shared token (old machines)" : d.name;
         /* the shared token is switched off in Access, not revoked here */
-        var rv = gone || d.legacy ? null : button("Revoke", "danger", function () {
-          confirmInline(rv, "Revoke " + d.name + "? It stops working at once.", "Revoke", function () {
+        var rv = gone || d.legacy ? null : button("Revoke", "quiet-danger", function () {
+          confirmInline(rv, revokeText(p, d), "Revoke", function () {
             return act("people-err", "/api/devices/" + d.id + "/revoke");
           });
-        });
-        return el("div", { "class": "dev" + (gone ? " revoked" : "") + (d.legacy ? " with-hint" : "") }, [
-          d.legacy ? el("span", { title: LEGACY_TITLE, text: "Shared token (old machines)" }) : el("span", { text: d.name }),
-          d.host ? el("small", { text: d.host }) : null,
-          el("small", { title: d.last_used ? full(d.last_used) : null,
-                        text: gone ? "revoked" : d.last_used ? "seen " + ago(Date.now() / 1000 - d.last_used) : "never used" }),
-          rv,
-          d.legacy && !gone ? el("small", { "class": "legacy-hint" }, ["Its switch is in ",
-            button("Access", "", function () { show("access"); }, { "class": "link" }), "."]) : null
+        }, { "aria-label": "Revoke " + name });
+        return el("div", { "class": "dline" + (gone ? " revoked" : "") }, [
+          el("span", { "class": "d-name", title: d.legacy ? LEGACY_TITLE : name, text: name }),
+          el("small", { "class": "d-host", title: d.host || null, text: d.host || "" }),
+          el("small", { "class": "d-seen", title: d.last_used ? full(d.last_used) : null }, [online ? el("i", { "class": "dot on" }) : null,
+            gone ? "revoked" : off ? "off" : online ? "online" : d.last_used ? "seen " + ago(now - d.last_used) : "never used"]),
+          el("span", { "class": "d-act" }, [rv, d.legacy && !gone ? button("Manage in Access", "", function () { show("access"); }, { "class": "link" }) : null])
         ]);
       }
       var live = p.devices.filter(function (d) { return d.revoked_at == null; });
@@ -1915,7 +2001,7 @@ tr.archived b { color: var(--muted); }
       /* the manager account runs on the hub machine: an invite would hand someone its powers */
       var acts = isManagerAccount(p) ? [] : [button([icon("i-link", 13), "Invite"], "", function () { quiet(invite(p.name)); })];
       if (p.role !== "admin" && !isManagerAccount(p)) {
-        var rm = button("Remove", "danger", function () {
+        var rm = button("Remove", "quiet-danger", function () {
           confirmInline(rm, "Remove " + p.name + "? Their devices stop working at once; their messages and notes stay.", "Remove",
             function () {
               return act("people-err", apiPath("/api/people/", p.name), null, "DELETE")
@@ -1930,7 +2016,7 @@ tr.archived b { color: var(--muted); }
         el("td", null, [el("b", { text: p.name }), isManagerAccount(p) ? el("div", { "class": "hint", text: MANAGER_HINT }) : null]),
         roleCell(p),
         el("td", null, [devs]),
-        el("td", { "class": "c-act" }, acts)
+        el("td", { "class": "c-act" }, acts.length ? [el("div", { "class": "p-acts" }, acts)] : [])
       ]));
     });
   }
@@ -2098,8 +2184,8 @@ tr.archived b { color: var(--muted); }
         sw.addEventListener("click", function () {
           quiet(act("machine-err", "/api/devices/" + d.id + "/shared", { shared: !d.shared }));
         });
-        return el("div", { "class": "dev" }, [d.legacy ? el("span", { title: LEGACY_TITLE, text: "Shared token (old machines)" }) : el("span", { text: d.name }),
-                                              el("small", { text: d.person }), sw]);
+        return el("div", { "class": "dline share" }, [d.legacy ? el("span", { "class": "d-name", title: LEGACY_TITLE, text: "Shared token (old machines)" }) : el("span", { "class": "d-name", title: d.name, text: d.name }),
+                                                      el("small", { "class": "d-host", text: d.person }), el("span", { "class": "d-act" }, [sw])]);
       }));
       var tags = el("div", { "class": "cell-tags" }, m.grants.map(function (g) {
         var tag = el("span", { "class": "tag" }, [g]);
@@ -2734,11 +2820,25 @@ tr.archived b { color: var(--muted); }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
   });
   $("new-topic").addEventListener("click", newTopic);
+  /* Add person opens the form in place of the button; Cancel or Esc puts the button back */
+  function addPersonForm(open) {
+    $("add-person").hidden = !open;
+    $("add-person-btn").hidden = open;
+    $("add-person-btn").setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) { $("new-name").focus(); return; }
+    $("add-person").reset();
+    $("people-err").hidden = true;
+  }
+  $("add-person-btn").addEventListener("click", function () { addPersonForm(true); });
+  $("add-person-cancel").addEventListener("click", function () { addPersonForm(false); $("add-person-btn").focus(); });
+  $("add-person").addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { e.preventDefault(); addPersonForm(false); $("add-person-btn").focus(); }
+  });
   $("add-person").addEventListener("submit", function (e) {
     e.preventDefault();
     var name = $("new-name").value.trim();
     act("people-err", "/api/people", { name: name, role: $("new-role").value })
-      .then(function () { $("new-name").value = ""; $("new-name").blur(); return invite(name); })
+      .then(function () { addPersonForm(false); return invite(name); })
       .catch(function () {});
   });
   $("grant-role").addEventListener("change", grantHint);

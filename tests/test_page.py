@@ -151,6 +151,7 @@ def test_phone_layouts(hub):
     assert ".sub { flex: none; flex-direction: row; overflow-x: auto;" in phone
     assert "#people td.c-act, #access td.c-act, #settings td.c-act { display: flex; flex-wrap: wrap;" in phone
     assert "#audit td.l-what" in phone
+    assert ".dline .d-act { grid-column: 2; grid-row: 1 / span 3; }" in phone  # a device's action on its right
     assert ".stack td.nil { display: none; }" in phone and '"sw-label", text: "Auto-update"' in html
 
 
@@ -279,3 +280,16 @@ def test_machines_show_which_tools_are_logged_in(hub):
     for name, cmd in [("Claude Code", "claude auth login"), ("Codex", "codex login"),
                       ("OpenCode", "opencode auth login")]:
         assert f'["{name}", "{cmd}"]' in html
+
+
+def test_background_sessions_fold_into_one_group(hub):
+    """Background jobs leave the main list for one Background group, closed at first, kept per
+    viewer, open when the open chat is one; its header carries the unread count."""
+    html = page(hub)
+    code = html[html.index("function renderSessions()"):html.index("function lead(e)")]
+    assert '"class": "bg-head", "aria-expanded"' in code and '"Background"' in code
+    assert 's.setItem("kaptyorka.bg-open", bgOpen ? "1" : "0")' in code
+    assert "var open = bgOpen || inBg;" in code and "unseen ?" in code
+    assert 'store(function (s) { return s.getItem("kaptyorka.bg-open"); }) === "1"' in html
+    assert '.list .bg-head[aria-expanded="true"] > svg { transform: rotate(90deg); }' in html
+    assert '"class": "bg", text: "background"' not in html  # the clock says it in the row

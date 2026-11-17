@@ -446,9 +446,9 @@ def test_page_review_fixes():
     # Register again keeps the archived project's description
     assert '"/api/projects", { name: p.name, description: p.description || "" }' in html
     # the shared-token device is not shown by its internal name
-    assert html.count('d.legacy ? el("span", { title: LEGACY_TITLE, text: "Shared token (old machines)" })') == 2
+    assert 'var name = d.legacy ? "Shared token (old machines)" : d.name;' in html  # People
     access = html[html.index("function renderAccess"):html.index("function renderLog")]
-    assert 'd.legacy ? el("span", { title: LEGACY_TITLE' in access  # Who may use each machine
+    assert 'd.legacy ? el("span", { "class": "d-name", title: LEGACY_TITLE, text: "Shared token (old machines)" })' in access  # Machine use
 
 
 def test_page_remove_says_which_workers_may_still_run():
@@ -456,8 +456,9 @@ def test_page_remove_says_which_workers_may_still_run():
     assert 'id="people-ok"' in html and "removedLine(p.name, r)" in html
     assert '" may still run on " + w.host + "; close it on that machine."' in html
     assert "The device the old shared token logs in as. Switch the shared token off in Access when every machine has its own token." in html
-    # the shared-token device says where its switch is, with a link to Access
-    assert '["Its switch is in ",\n            button("Access", "", function () { show("access"); }' in html
+    # the shared-token device links to Access, where its switch is; no sentence about it
+    assert 'button("Manage in Access", "", function () { show("access"); }, { "class": "link" })' in html
+    assert "Its switch is in" not in html
 
 
 def test_register_again_keeps_description(app):
@@ -479,8 +480,25 @@ def test_page_push_review_fixes():
     # no invite for the manager account: whoever redeemed it would act as the manager
     assert 'var acts = isManagerAccount(p) ? [] : [button([icon("i-link", 13), "Invite"]' in html
     # the shared token has one control, the switch under Old machines; no Revoke on its row
-    assert 'var rv = gone || d.legacy ? null : button("Revoke", "danger"' in html
+    assert 'var rv = gone || d.legacy ? null : button("Revoke", "quiet-danger"' in html
     assert '"Switch shared token off"' in html or "Switch shared token off" in html
     # the ask field names what to type for the chosen kind
     assert 'id="ask-target" list="ask-names" placeholder="Project name"' in html
     assert '$("ask-target").placeholder = $("ask-kind").value === "machine" ? "Machine name" : "Project name";' in html
+
+
+def test_page_people_buttons():
+    """People: one primary Add person in the header opens the add form; device actions sit
+    in one right-aligned column; Invite then Remove, Remove and Revoke in the quiet red;
+    the hub's and the manager's own devices say what revoking them breaks."""
+    html = page_html()
+    assert 'id="add-person-btn" aria-expanded="false" aria-controls="add-person"' in html
+    assert '<form class="sentence" id="add-person" autocomplete="off" hidden>' in html
+    assert 'id="add-person-cancel"' in html and 'if (e.key === "Escape") { e.preventDefault(); addPersonForm(false);' in html
+    assert ".dline { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 96px 120px;" in html
+    assert ".dline .d-act { display: flex; justify-content: flex-end;" in html
+    assert 'button("Remove", "quiet-danger"' in html and ".btn.quiet-danger { color: var(--danger);" in html
+    code = html[html.index("function renderPeople()"):html.index("function loadAccess()")]
+    assert code.index('"Invite"') < code.index('"Remove"')  # secondary first, destructive last
+    assert "Revoke hub? The admin link and the hub machine's sessions stop working." in html
+    assert "Revoke manager? The manager session stops until it is restarted." in html

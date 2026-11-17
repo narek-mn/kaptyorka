@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.6
+
+- Home: Claude Code background jobs no longer fill the list like normal chats. They sit in one **Background** group under your chats and web-page people, before **Others**, folded at first, with how many there are and their unread count on the header. The page remembers open or folded for you, and opens it when the chat you have open is one of them.
+- Admin > People: **Add person** is one button in the header; it opens the form (name, role, **Add**, **Cancel**; Esc cancels). Each device is its own line with its machine and when it was last seen (a green dot when online), and every **Revoke** sits in one column on the right, in red. **Invite** and **Remove** sit together at the top right of each person. The shared token is one line with **Manage in Access**. Revoking the admin's `hub` device or the manager's device now says what stops working.
+- Admin > Access > Machine use: device lines use the same aligned layout.
+
 ## 0.9.5
 
 - `kaptyorka leave` on the machine that runs the hub, while the manager is on, now warns first: leaving stops the bridge that wakes the manager. In a terminal it asks `Leave anyway? [y/N]`; without one it refuses and says to add `--yes`. Other machines are unchanged.

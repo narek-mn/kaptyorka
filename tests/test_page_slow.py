@@ -99,6 +99,7 @@ def test_add_person_shows_link(admin_page):
     store, page, url = admin_page
     page.go(url)
     page.wait('document.querySelectorAll("#people-rows tr").length >= 1')
+    page.js('document.getElementById("add-person-btn").click()')
     page.js('document.getElementById("new-name").value = "bob"')
     page.js('document.querySelector("#add-person button[type=submit]").click()')
     assert page.wait('!document.getElementById("invite").hidden && document.getElementById("invite-text").textContent') \
@@ -110,6 +111,7 @@ def test_add_person_shows_link(admin_page):
     assert page.wait('document.getElementById("invites-toggle")?.textContent') == "Open invites (1)"
     page.js('document.getElementById("invites-toggle").click()')
     assert page.wait('document.querySelector("#invites-open li b")?.textContent') == "bob"
+    assert page.js('document.getElementById("add-person").hidden')  # the form closed on success
     page.js('document.querySelector("#invite button[title=Close]").click()')
     assert page.js('document.getElementById("invite").hidden')
 
@@ -432,9 +434,10 @@ def test_member_manager_chat_while_it_sleeps(member_page):
 
 
 def test_background_job_marked_and_empty_chat(tmp_path):
-    """A background job shows a clock and "background" in the list, "background job" in the
-    chat header and the empty-chat line that says it works on its own; the composer stays.
-    The manager, though it runs as a background job too, keeps its own look."""
+    """Background jobs fold into one Background group under the chats, closed at first; the
+    viewer's open or closed is kept through a reload. Inside, a job has a clock, and the chat
+    header says "background job" with the empty-chat line that says it works on its own; the
+    composer stays. The manager, though it runs as a background job too, keeps its own look."""
     import os
     shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
     store = Store(tmp_path / "hub.db")
@@ -457,14 +460,26 @@ def test_background_job_marked_and_empty_chat(tmp_path):
         for w, h, tag in ((1440, 900, "desktop"), (390, 844, "phone")):
             with chrome(w, h) as page:
                 page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
-                page.wait(f'!!({job})')
-                assert page.js(f'!!{job}.querySelector(".bg-lead.on use[href=\\"#i-clock\\"]")')
-                assert page.js(f'{job}.querySelector(".subline").textContent') == "backgroundbox-1"
+                head = 'document.querySelector("#agents .bg-head")'
+                page.wait(f'!!({term}) && !!{head}')
+                assert page.js(f'{head}.textContent') == "Background1"
+                assert page.js(f'{head}.getAttribute("aria-expanded")') == "false" and page.js(f'!({job})')
                 assert page.js(f'!!{term}.querySelector(".dot.on") && !{term}.querySelector(".bg-lead")')
+                assert page.js(f'!{term}.closest(".bg-rows")')
                 mgr = 'document.querySelector("#agents .row.mgr")'
                 assert page.js(f'!!{mgr}.querySelector(".dot.on") && !{mgr}.querySelector(".bg-lead")')
                 assert "background" not in page.js(f'{mgr}.textContent')
-                page.screenshot(shots / f"list-{tag}.png")
+                page.screenshot(shots / f"list-closed-{tag}.png")
+                page.js(f'{head}.click()')
+                page.wait(f'!!({job})')
+                assert page.js(f'{head}.getAttribute("aria-expanded")') == "true"
+                assert page.js(f'!!{job}.closest(".bg-rows")')
+                assert page.js(f'!!{job}.querySelector(".bg-lead.on use[href=\\"#i-clock\\"]")')
+                assert page.js(f'{job}.querySelector(".subline").textContent') == "box-1"
+                time.sleep(0.3)
+                page.screenshot(shots / f"list-open-{tag}.png")
+                page.js("window.before = 1; location.reload()")  # this viewer's choice holds
+                page.wait(f'!window.before && !!({job})')
                 page.js(f'{job}.click()')
                 assert page.wait('document.getElementById("text").placeholder') == "Message nightly-check"
                 assert page.wait('document.querySelector("#log .blank")?.textContent') == \
@@ -566,6 +581,71 @@ def test_member_requests_a_connection_and_admin_approves(tmp_path):
             store.send("k:c", "bob", "hi bob")
             page.wait('[...document.querySelectorAll("#log .msg .text")].some(t => t.textContent === "hi bob")')
             page.screenshot(shots / "approved-desktop.png")
+    finally:
+        stop()
+        store.close()
+
+
+def test_people_devices_line_up_and_add_form(tmp_path):
+    """Admin > People: one primary Add person in the header opens the add form (Esc closes it);
+    every device action sits in one right-aligned column; Invite then Remove at the row's top
+    right; the shared token links to Access; revoking the admin's hub device says what breaks.
+    Desktop and phone."""
+    import hashlib
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    store = Store(tmp_path / "hub.db")
+    mm = ManagerStore(store)
+    mm.set_enabled(False, "test")
+    stop = start_hub(store)
+    alice, token = person(store, "alice", "admin")
+    bob, _ = person(store, "bob")
+    person(store, "carol")
+    store.device_add(alice, "hub")
+    store.device_add(bob, "desk-2")
+    mm.ensure_account("box-1", "alice")
+    now = store.clock()
+    with store.lock:
+        store.db.execute("INSERT INTO devices (person_id, name, token_hash, created, legacy) VALUES (?, 'legacy', ?, ?, 1)",
+                         (alice, hashlib.sha256(b"old").hexdigest(), now))
+        for name, host, seen in (("hub", "box-1", now), ("alice-laptop", "box-2", now - 7200),
+                                 ("bob-laptop", "box-3", now - 300)):
+            store.db.execute("UPDATE devices SET host=?, last_used=? WHERE name=?", (host, seen, name))
+    acts = '[...document.querySelectorAll("#people-rows .dline .d-act")]'
+    try:
+        for w, h, tag in ((1440, 900, "desktop"), (390, 844, "phone")):
+            with chrome(w, h) as page:
+                page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=people")
+                page.wait('document.querySelectorAll("#people-rows tr").length >= 4')
+                # the form is behind the button; the button is the header's one primary action
+                assert page.js('document.getElementById("add-person").hidden')
+                assert page.js('document.querySelectorAll("#people .phead .btn.primary").length') == 1
+                # device actions share one right edge; person actions read Invite, Remove
+                rights = page.js(f'{acts}.map(a => Math.round(a.getBoundingClientRect().right))')
+                assert len(rights) >= 5 and len(set(rights)) == 1, rights
+                bob_acts = page.js('[...document.querySelectorAll("#people-rows tr")].find(tr => tr.querySelector("b").textContent === "bob")'
+                                   '.querySelectorAll(".p-acts .btn")')
+                assert page.js('[...[...document.querySelectorAll("#people-rows tr")].find(tr => tr.querySelector("b").textContent === "bob")'
+                               '.querySelectorAll(".p-acts .btn")].map(b => b.textContent + ":" + b.classList.contains("quiet-danger"))') \
+                    == ["Invite:false", "Remove:true"], bob_acts
+                assert page.js('[...document.querySelectorAll("#people-rows .d-act .link")].map(b => b.textContent)') == ["Manage in Access"]
+                assert "Its switch is in" not in page.js('document.getElementById("people-rows").textContent')
+                page.screenshot(shots / f"people-{tag}.png")
+                # the hub device's confirm names what breaks, on its own line
+                page.js('[...document.querySelectorAll("#people-rows .dline")].find(d => d.querySelector(".d-name").textContent === "hub")'
+                        '.querySelector(".d-act button").click()')
+                text = page.wait('document.querySelector("#people .dline .confirm")?.textContent')
+                assert text.startswith("Revoke hub? The admin link and the hub machine's sessions stop working.")
+                page.screenshot(shots / f"people-revoke-{tag}.png")
+                page.js('document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))')
+                page.wait('!document.querySelector("#people .confirm")')
+                # Add person: focus in the name, Esc puts the button back
+                page.js('document.getElementById("add-person-btn").click()')
+                assert page.js('document.activeElement.id') == "new-name"
+                assert page.js('document.getElementById("add-person-btn").hidden')
+                page.screenshot(shots / f"people-add-{tag}.png")
+                page.js('document.getElementById("new-name").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))')
+                assert page.js('document.getElementById("add-person").hidden && !document.getElementById("add-person-btn").hidden')
     finally:
         stop()
         store.close()
