@@ -26,6 +26,13 @@ NO_SECRET = "this machine has no signing secret; re-join with an invite"
 COMPLETE = {"claude-code"}  # the only tool whose session list is complete; the rest may miss live ones
 
 
+def _said(status, body) -> str:
+    """The hub's own sentence on a refused token (the shared token switched off), else ""."""
+    if status == 401 and isinstance(body, str) and body.strip() not in ("", "unauthorized"):
+        return ": " + body.strip()
+    return ""
+
+
 def log(line: str) -> None:
     """Append to ~/.kaptyorka/bridge.log and print to stderr."""
     with open(paths.home() / "bridge.log", "a") as f:
@@ -119,7 +126,7 @@ class Bridge:
             self._facts_at = None  # the next facts show the skills after this sync
         self._sessions = objs
         self._report("heartbeat", None if status in (200, 204)
-                     else f"hub answered {status} to heartbeat")
+                     else f"hub answered {status} to heartbeat" + _said(status, answer))
         self._sync_skills()
         self._check_pending(objs)
 
@@ -315,7 +322,7 @@ class Bridge:
         status, items = http.request("GET", f"{self.cfg['hub']}/bridge/poll?{query}",
                                      self.cfg["token"], timeout=wait + 5)
         if status != 200:
-            raise RuntimeError(f"hub answered {status} to poll")
+            raise RuntimeError(f"hub answered {status} to poll" + _said(status, items))
         by_prefix = {a.prefix: a for a in self.adapters}
         delivered = 0
         for m in items:

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.7
+
+- The admin's **Admin** tab is now **Team**: one screen with three things. **Waiting for you** (only when something waits; its count is on the tab) lists each request, connection request, knock and rule proposal as one line, "bob wants to work on proj-a", with **Yes** and **No**; Yes gives what was asked. **Team** lists the people: a dot when online, their projects (or "you", or "hasn't joined yet"), and **Copy invite link** before they join or **Remove** after. **Add person** takes a name and shows the link with **Copy**. Click a person to tick their projects; a tick gives write and saves at once.
+- Gone from the page, now decided by the hub or kept in the command line: devices and Revoke (`kaptyorka people revoke <person> <device>`), roles, machines and owners, doors, the shared token (`kaptyorka shared-token on|off`), rules, notes, the log, settings and workers.
+- The first person to join from a machine owns it and may use it, with no admin step. Someone else on the same machine name gets no use until the admin says Yes to "bob wants to use box-1"; a No is not asked again.
+- The old shared token switches itself off when no machine has used it for 7 days. A machine still on it is then told so, with the command to switch it back on or to join properly.
+- Rejecting a rule proposal no longer needs a reason.
+
 ## 0.9.6
 
 - Home: Claude Code background jobs no longer fill the list like normal chats. They sit in one **Background** group under your chats and web-page people, before **Others**, folded at first, with how many there are and their unread count on the header. The page remembers open or folded for you, and opens it when the chat you have open is one of them.

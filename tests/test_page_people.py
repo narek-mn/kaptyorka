@@ -130,14 +130,21 @@ def test_feed_admin_extras(app):
     assert len(get(app, "ann", "/api/feed")["doors"]) == 1
 
 
-def test_page_contains_admin_tabs_markup(app):
+def test_page_contains_team_markup(app):
     status, html = http.request("GET", app.url + "/", "")
     assert status == 200
-    for view in ("people", "access", "audit"):
-        assert f'data-view="{view}"' in html and f'id="{view}"' in html
+    assert 'data-view="team"' in html and 'id="team"' in html
     assert "Your name" not in html
     assert "/api/me" in html and "/api/knocks/" in html
-    assert "opens a door for all your sessions" in html
+    assert "Yes opens a door between them" in html
+
+
+def test_invites_carry_their_link(app):
+    status, made = post(app, "boss", "/api/invites", {"person": "ann"})
+    assert status == 200
+    rows = get(app, "boss", "/api/invites")
+    assert [(r["person"], r["url"]) for r in rows] == [("ann", made["url"])]
+    assert rows[0]["url"].endswith("/i/" + rows[0]["code"])
 
 
 def test_web_send_uses_principal(app):
@@ -374,45 +381,8 @@ def test_page_inline_confirm_holds_the_panel():
     html = page_html()
     assert "function confirmInline(anchor, text, yesLabel, onYes, opt)" in html
     assert 'e.key === "Escape"' in html and "holding.isConnected" in html
-    assert '!busy("machines") && changed("fleet"' in html  # close-worker confirm survives too
-    for text in ('"Revoke " + d.name + "? It stops working at once."',
-                 '"Machines still on the shared token stop working until they join again."',
-                 '"Close worker " + w.name + "? Its session stops."',
-                 '" a manager? A manager session can decide work requests and message anyone."',
-                 '"? Their devices stop working at once; their messages and notes stay."',
-                 '"? Its notes stay, visible to you under Archived; people lose their roles in it."',
-                 '"Take " + m.person + "\'s " + m.role + " access to " + p.name + "?"',
-                 '"Take " + g + "\'s use of " + m.host + "?"',
-                 '"Deny " + r.person + "\'s request?"', '"Reason (optional)"'):
-        assert text in html, text
-
-
-def test_page_people_admin_flows():
-    html = page_html()
-    assert '"Send this link to " + name + ". It works for 7 days."' in html
-    assert 'id="invites-open"' in html and '"Open invites (" + invites.length + ")"' in html
-    assert '"/api/invites"' in html and '"/api/invites/"' in html and '"DELETE"' in html
-    assert '"/api/people/", p.name, "/role"' in html and 'apiPath("/api/people/", p.name)' in html
-    assert 'gone.length + " revoked"' in html
-    assert 'id="legacy-panel"' in html and '$("legacy-panel").hidden = !lg.enabled && !lg.unassigned.length' in html
-    assert "The team's manager session runs as this account" in html
-
-
-def test_page_access_admin_flows():
-    html = page_html()
-    assert 'id="new-project"' in html and 'id="new-project-btn"' in html and '"No projects yet."' in html
-    assert re.search(r'Give <select id="grant-person"[^>]*></select>\s*<select id="grant-role"', html)
-    assert "access to <select id=\"grant-project\"" in html
-    for hint in ("read: see notes and sessions", "write: also edit notes and start workers",
-                 "manage: the same as write for now; only the admin gives access"):
-        assert hint in html
-    assert 'el("small", { text: "admin" })' in html
-    assert 'role: role ? role.value : "read"' in html and 'reason: why || ""' in html
-    assert 'id="dec-panel"' in html and ">Decided<" in html and "feed.decisions" in html
-    assert ">Machine use<" in html and '"Shared with others who use this machine"' in html
-    assert 'text: "Saved"' in html
-    assert "feed.archived_projects" in html and '"Archived"' in html and '"Register again"' in html
-    assert '"\\u00b7 archived, read-only"' in html and "archived(n.project) ? null : edit" in html
+    assert '$("people-rows").contains(holding)) return;' in html  # a Remove question survives the refresh
+    assert '"Remove " + v.name + "? They are signed out everywhere."' in html
 
 
 def test_page_login_and_sign_out():
@@ -431,9 +401,7 @@ def test_page_login_and_sign_out():
 
 def test_page_empty_states():
     html = page_html()
-    for text in (
-            ">No sessions online<", '"No messages yet."', '"No notes yet"', '"No machines yet"',
-            '"No workers"', '"No team rules yet. "', '"No skills"', '"No proposals"'):
+    for text in (">No sessions online<", '"No messages yet."', '"No projects yet"'):
         assert text in html, text
     # few words: the old explaining sentences are gone
     for text in ("Click a session on the Team tab", "Notes are shared documents",
@@ -441,24 +409,10 @@ def test_page_empty_states():
         assert text not in html, text
 
 
-def test_page_review_fixes():
-    html = page_html()
-    # Register again keeps the archived project's description
-    assert '"/api/projects", { name: p.name, description: p.description || "" }' in html
-    # the shared-token device is not shown by its internal name
-    assert 'var name = d.legacy ? "Shared token (old machines)" : d.name;' in html  # People
-    access = html[html.index("function renderAccess"):html.index("function renderLog")]
-    assert 'd.legacy ? el("span", { "class": "d-name", title: LEGACY_TITLE, text: "Shared token (old machines)" })' in access  # Machine use
-
-
 def test_page_remove_says_which_workers_may_still_run():
     html = page_html()
-    assert 'id="people-ok"' in html and "removedLine(p.name, r)" in html
+    assert 'id="team-ok"' in html and "removedLine(v.name, r)" in html
     assert '" may still run on " + w.host + "; close it on that machine."' in html
-    assert "The device the old shared token logs in as. Switch the shared token off in Access when every machine has its own token." in html
-    # the shared-token device links to Access, where its switch is; no sentence about it
-    assert 'button("Manage in Access", "", function () { show("access"); }, { "class": "link" })' in html
-    assert "Its switch is in" not in html
 
 
 def test_register_again_keeps_description(app):
@@ -477,28 +431,6 @@ def test_register_again_keeps_description(app):
 
 def test_page_push_review_fixes():
     html = page_html()
-    # no invite for the manager account: whoever redeemed it would act as the manager
-    assert 'var acts = isManagerAccount(p) ? [] : [button([icon("i-link", 13), "Invite"]' in html
-    # the shared token has one control, the switch under Old machines; no Revoke on its row
-    assert 'var rv = gone || d.legacy ? null : button("Revoke", "quiet-danger"' in html
-    assert '"Switch shared token off"' in html or "Switch shared token off" in html
     # the ask field names what to type for the chosen kind
     assert 'id="ask-target" list="ask-names" placeholder="Project name"' in html
     assert '$("ask-target").placeholder = $("ask-kind").value === "machine" ? "Machine name" : "Project name";' in html
-
-
-def test_page_people_buttons():
-    """People: one primary Add person in the header opens the add form; device actions sit
-    in one right-aligned column; Invite then Remove, Remove and Revoke in the quiet red;
-    the hub's and the manager's own devices say what revoking them breaks."""
-    html = page_html()
-    assert 'id="add-person-btn" aria-expanded="false" aria-controls="add-person"' in html
-    assert '<form class="sentence" id="add-person" autocomplete="off" hidden>' in html
-    assert 'id="add-person-cancel"' in html and 'if (e.key === "Escape") { e.preventDefault(); addPersonForm(false);' in html
-    assert ".dline { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 96px 120px;" in html
-    assert ".dline .d-act { display: flex; justify-content: flex-end;" in html
-    assert 'button("Remove", "quiet-danger"' in html and ".btn.quiet-danger { color: var(--danger);" in html
-    code = html[html.index("function renderPeople()"):html.index("function loadAccess()")]
-    assert code.index('"Invite"') < code.index('"Remove"')  # secondary first, destructive last
-    assert "Revoke hub? The admin link and the hub machine's sessions stop working." in html
-    assert "Revoke manager? The manager session stops until it is restarted." in html

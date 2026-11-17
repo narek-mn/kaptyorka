@@ -119,6 +119,15 @@ def test_reject_reason_is_capped_at_1000(hub):
     assert "r" * 1000 in text and "r" * 1001 not in text
 
 
+def test_reject_from_the_team_page_needs_no_reason(hub):
+    _, tok = person(hub.store, "alice")
+    run(call(as_token(hub, tok), S1, "propose_rule", text="x", evidence="e"))
+    assert http.request("POST", hub.url + "/api/proposals/1", ADMIN, {"accept": False, "reason": ""})[0] == 200
+    text = run(call(as_token(hub, tok), S1, "inbox"))[0]["text"]
+    import re
+    assert re.search(r"Your rule proposal 1 was rejected by \S+\.$", text), text
+
+
 def test_decide_accept_must_be_bool(hub):
     _, tok = person(hub.store, "alice")
     run(call(as_token(hub, tok), S1, "propose_rule", text="x", evidence="e"))

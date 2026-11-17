@@ -854,3 +854,14 @@ def test_heartbeat_sends_git_age_not_read_at(hub, home, monkeypatch):
     git = sent[0]["facts"]["git"]
     assert str(proj) in git
     assert 0 <= git[str(proj)]["age"] < 5 and "read_at" not in git[str(proj)]
+
+
+def test_switched_off_shared_token_says_what_to_do(hub, home):
+    from kaptyorka.auth import LEGACY_OFF
+    hub.store.set_legacy_enabled(False, "test")
+    lines = []
+    bridge = Bridge(cfg(hub), [], lines.append)
+    assert bridge._step() == bridge_mod.RETRY_S
+    assert lines == ["hub answered 401 to poll: " + LEGACY_OFF]
+    bridge.heartbeat()
+    assert lines[-1] == "hub answered 401 to heartbeat: " + LEGACY_OFF

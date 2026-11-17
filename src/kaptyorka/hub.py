@@ -314,6 +314,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             manager_tick(now)
         except Exception as e:  # the manager must never stop the workers' clock
             print(f"kaptyorka: manager tick failed: {e}", flush=True)
+        store.legacy_auto_off(now)
 
     @server.tool()
     @_tool_errors
@@ -1206,7 +1207,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             text = (f"Your rule proposal {pid} was accepted by {by}: team rules are now "
                     f"v{rs.current()['version']}.")
         else:
-            text = f"Your rule proposal {pid} was rejected by {by}: {reason}"
+            text = f"Your rule proposal {pid} was rejected by {by}" + (f": {reason}" if reason else ".")
         tell(row["session_key"], text)
         return JSONResponse({"status": row["status"]})
 
@@ -1265,7 +1266,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         denied = admin_only(request)
         if denied:
             return denied
-        return JSONResponse(admin_ops.invites_open(store))
+        base = hub_url(request)
+        return JSONResponse([{**v, "url": f"{base}/i/{v['code']}"}
+                             for v in admin_ops.invites_open(store)])
 
     @server.custom_route("/api/invites/{code}", methods=["DELETE"])
     async def api_invite_cancel(request: Request) -> Response:

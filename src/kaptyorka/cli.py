@@ -266,7 +266,8 @@ def _status(args) -> int:
     if own:  # it answered, so it runs, even in the foreground
         print("hub: running")
     if got[0] == 401:
-        print("hub: refused this machine's token (ask your admin for a new invite link, "
+        said = got[1] if isinstance(got[1], str) and got[1] != "unauthorized" else ""
+        print(f"hub: {said}" if said else "hub: refused this machine's token (ask your admin for a new invite link, "
               "then: kaptyorka join <link>)")
         return 1
     if got[0] == 200 and isinstance(got[1], dict):
@@ -290,6 +291,8 @@ def _problem(got) -> str:
         if text.startswith("<") or len(text) > 200:  # a web page or a stack trace, not a sentence
             text = ""
     if status == 401:
+        if isinstance(body, str) and body.startswith("the old shared sign-in"):
+            return body.strip()  # the shared token is off: the hub says what to do
         return "the hub does not accept this machine's token; run kaptyorka join again"
     if status == 403 and text in ("", "admin only", "use your own admin token"):
         return "only the admin can do that; this machine is not signed in as the admin"
@@ -536,6 +539,29 @@ def _people_remove(args) -> int:
 def _people_role(args) -> int:
     return _admin_do("POST", f"/api/people/{quote(args.name, safe='')}/role",
                      {"role": args.role}, f"{args.name} is now a {args.role}")
+
+
+def _people_revoke(args) -> int:
+    """Sign one lost device out; the person stays."""
+    rows = _admin_json("GET", "/api/people")
+    if rows is None:
+        return 1
+    p = next((p for p in rows if p["name"] == args.name), None)
+    if p is None:
+        print(f"no person named {args.name}", file=sys.stderr)
+        return 1
+    live = [d for d in p["devices"] if d.get("revoked_at") is None and not d.get("legacy")]
+    dev = next((d for d in live if d["name"] == args.device), None)
+    if dev is None:
+        names = ", ".join(d["name"] for d in live) or "none"
+        print(f"{args.name} has no device named {args.device} (devices: {names})", file=sys.stderr)
+        return 1
+    return _admin_do("POST", f"/api/devices/{dev['id']}/revoke", {},
+                     f"{args.device} of {args.name} is signed out")
+
+
+def _shared_token(args) -> int:
+    return _admin_do("POST", f"/api/legacy/{args.state}", {}, f"the shared token is {args.state}")
 
 
 def _invites(args) -> int:
@@ -897,6 +923,10 @@ def entry() -> None:
     pr.add_argument("name", help="the person's name")
     pr.add_argument("--yes", action="store_true", help="do not ask first")
     pr.set_defaults(run=_people_remove)
+    pv = ps.add_parser("revoke", help="sign out one device of a person (a lost laptop); the person stays")
+    pv.add_argument("name", help="the person's name")
+    pv.add_argument("device", help="the device's name")
+    pv.set_defaults(run=_people_revoke)
     pl = ps.add_parser("role", help="make a person a member or a manager")
     pl.add_argument("name", help="the person's name")
     pl.add_argument("role", choices=("member", "manager"), help="the new role")
@@ -928,6 +958,9 @@ def entry() -> None:
     px.add_argument("name", help="the project's name")
     px.add_argument("--yes", action="store_true", help="do not ask first")
     px.set_defaults(run=_project_remove)
+    st = sub.add_parser("shared-token", help="switch the old shared token (machines from before invites) on or off")
+    st.add_argument("state", choices=("on", "off"))
+    st.set_defaults(run=_shared_token)
     mc = sub.add_parser("machine", help="say who owns a machine").add_subparsers(
         dest="machine_cmd", required=True, metavar="{owner}")
     mo = mc.add_parser("owner", help="make a person the owner of a machine")

@@ -144,7 +144,7 @@ class ConnectStore:
                             f" ({self._side_name(from_key, mid)}) asks to reach {them}'s session"
                             f" {s._shown(t, mid)}" + (f" ({t['label']})" if t["label"] else "")
                             + (f". Why: {why}" if why else "") + ". Only the admin approves,"
-                            " on the page (Admin > Access > Requests); you may tell the admin"
+                            " on the Team page; you may tell the admin"
                             " and answer the member.")))
         s.log_add(principal.person_name, "connect_request", log)
         for key, text in tell:

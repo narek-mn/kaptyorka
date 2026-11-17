@@ -12,7 +12,7 @@ def page(hub) -> str:
 
 def test_page_served_without_token(hub):
     s, html = http.request("GET", hub.url + "/", "")
-    assert s == 200 and all(v in html for v in ['id="home"', 'id="admin"', 'id="messages"', 'id="notes"'])
+    assert s == 200 and all(v in html for v in ['id="home"', 'id="team"', 'id="messages"'])
 
 
 def test_page_has_no_external_urls(hub):
@@ -23,47 +23,11 @@ def test_page_is_packaged():
     assert (importlib.resources.files("kaptyorka") / "web/index.html").is_file()
 
 
-def test_notes_show_project_state_and_git_activity(hub):
-    html = page(hub)
-    assert '"/api/projects/"' in html and '"/activity"' in html
-    assert html.index('id="project-info"') < html.index('id="notes-grid"')  # above the topics
-    assert 'id="project-info"' in html and "hidden" in re.search(r'<div[^>]*id="project-info"[^>]*>', html).group(0)
-    assert '"State"' in html and '"Recent git activity"' in html
-    assert '"No recent activity"' in html and "No commits in the last" not in html
-    # the state note is text nodes only: headings in bold, no Markdown library, no innerHTML
-    assert "innerHTML" not in html and "marked" not in html
-    assert re.search(r'charAt\(0\) === "#"', html)
-    assert "\\u00b7" in html or "·" in html
-
-
-def test_activity_branch_lookup_is_own_property(hub):
-    # a branch named "constructor" or "toString" must not pick up Object.prototype
-    html = page(hub)
-    assert "Object.prototype.hasOwnProperty.call(d.branches, g.branch)" in html
-    assert "d.branches[g.branch]" in html.split("hasOwnProperty.call(d.branches, g.branch) ?")[1].split(";")[0]
-    assert html.count("d.branches[") == 1
-
-
-def test_page_has_rules_tab(hub):
-    html = page(hub)
-    assert 'data-view="rules"' in html and 'id="rules"' in html
-    # an Admin section: between Machines and Notes, and fetched only for the admin
-    assert re.search(r'ADMIN_VIEWS = \[[^\]]*"rules"', html)
-    assert html.index('data-view="machines"') < html.index('data-view="rules"') < html.index('data-view="notes"')
-    assert "if (!isAdmin() || (!force && view !== \"rules\"" in html
-    assert '"/api/rules"' in html and '"/api/proposals"' in html and '"/api/conflicts"' in html
-    assert '"/api/proposals/"' in html and 'id="n-rules"' in html
-    code = html[html.index("function loadRules("):html.index("function busy(")]
-    assert not re.search(r"\b(prompt|alert|confirm)\(", code)  # reject reason is an inline input
-    assert "innerHTML" not in code and 'placeholder: "Reason"' in code
-
-
 def test_page_shows_manager_badge(hub):
     html = page(hub)
     assert 'a.role === "manager"' in html and "the team's manager session" in html
     # the manager is the last line on Home, with its state word from the feed
     assert 'mgr ? "up" : feed.manager || "off"' in html
-    assert 'w.manager ? el("span", { text: "manager" }) : bossEl' in html
 
 
 def test_member_access_view_and_ask_form(hub):
@@ -113,7 +77,7 @@ def test_home_warns_only_what_blocks(hub):
 
 def test_member_page_makes_no_admin_fetch(hub):
     html = page(hub)
-    for fn in ("loadFleet", "loadRules", "loadSettings", "loadInvites", "loadKinds"):
+    for fn in ("loadWarnings", "loadProposals", "loadInvites"):
         body = html[html.index(f"function {fn}("):]
         assert "isAdmin()" in body[:body.index("\n  }")], fn
 
@@ -144,27 +108,11 @@ def test_feed_carries_the_manager_state(hub):
 def test_phone_layouts(hub):
     html = page(hub)
     phone = html[html.index("@media (max-width: 720px)"):]
-    assert "min-width: 560px" not in html  # admin tables are cards on a phone, not cut off
-    # Home stacks; the Admin sub-menu is one row that scrolls sideways
+    # Home stacks: the list, or one chat
     assert "#home { display: flex; flex-direction: column;" in phone
-    assert "#home.open .side, #home:not(.open) .chat { display: none; }" in phone  # the list, or one chat
-    assert ".sub { flex: none; flex-direction: row; overflow-x: auto;" in phone
-    assert "#people td.c-act, #access td.c-act, #settings td.c-act { display: flex; flex-wrap: wrap;" in phone
-    assert "#audit td.l-what" in phone
-    assert ".dline .d-act { grid-column: 2; grid-row: 1 / span 3; }" in phone  # a device's action on its right
-    assert ".stack td.nil { display: none; }" in phone and '"sw-label", text: "Auto-update"' in html
-
-
-def test_log_rows_are_sentences(hub):
-    html = page(hub)
-    code = html[html.index("function renderLog("):html.index("function loadLog(")]
-    assert "r.sentence" in code and "timeEl(r.time)" in code
-    assert "<th>When</th><th>Person</th><th>What</th></tr>" in html and "<th>Detail</th>" not in html
-
-
-def test_shared_token_revoke_uses_plain_label(hub):
-    html = page(hub)
-    assert '"Revoke " + d.name + "? It stops working at once."' in html
+    assert "#home.open .side, #home:not(.open) .chat { display: none; }" in phone
+    # Team: a waiting line puts Yes and No under its words
+    assert ".w-text { flex-basis: 100%;" in phone and ".team { padding: 18px 16px 32px; }" in phone
 
 
 def test_compose_attach_control(hub):
@@ -172,114 +120,16 @@ def test_compose_attach_control(hub):
     form = re.search(r'<form[^>]*id="compose".*?</form>', html, re.S).group(0)
     assert 'id="attach"' in form and 'aria-label="Attach"' in form and "#i-clip" in form
     assert '<input type="file" id="file-in" hidden>' in form and 'id="file-chip"' in form
-    code = html[html.index("function upload("):html.index("/* notes: the team board")]
+    start = html.index("function upload(")
+    code = html[start:html.index("\n  }\n", html.index("function send(", start))]
     assert '"X-File-Name": encodeURIComponent(' in code and 'fetch("/api/files"' in code
     assert "file_id: " in code
-
-
-def test_doors_close_open_and_hint(hub):
-    html = page(hub)
-    assert '"Close the door between " + d.a_person + " and " + d.b_person + "? Their sessions stop talking directly."' in html
-    assert '"/api/doors/" + d.id + "/close"' in html and '"/api/doors", { a_person:' in html
-    assert '"Open door"' in html and '"Open a door between"' in html
-    doors = html[html.index("function renderDoors("):html.index("function openDoor(")]
-    assert "box.hidden = !feed.doors.length" in doors and "isAdmin()" not in doors  # the admin's Access section only
-
-
-def test_notes_delete_undo_restore(hub):
-    html = page(hub)
-    assert '"Delete " + n.topic + "?' in html and '"/api/notes?topic="' in html
-    assert '"/api/notes/undo"' in html and '"Deleted " + ' in html and '"Undo"' in html
-    assert '"This note was deleted."' in html
-    assert html.count('"Restore this version"') == 2  # a note's old version, the rules' old version
-    # after Delete and after Restore the feed is fetched at once, not at the next poll
-    assert 'poll();  /* the topic list drops it now, not at the next tick */' in html
-    assert "note.version = 0; seen.notes = null; renderNotes(true); poll(); })" in html
-
-
-def test_rules_history_and_proposal_form(hub):
-    html = page(hub)
-    assert '"/api/rules/history"' in html and '"History " + ' in html
-    form = re.search(r'<form[^>]*id="propose".*?</form>', html, re.S).group(0)
-    assert 'aria-label="The rule"' in form and 'maxlength="2000"' in form
-    assert 'aria-label="Why (what happened)"' in form and 'maxlength="4000"' in form
-    assert ">Send<" in form and ">Cancel<" in form
-    assert "Propose a rule" in html and 'act("prop-err", "/api/proposals", { text:' in html
-    assert '"No proposals yet"' in html
-
-
-def test_machine_cards_name_missing_tools(hub):
-    assert '"No tools reported yet"' in page(hub)
 
 
 def test_page_never_uses_browser_dialogs(hub):
     script = page(hub).split("<script>", 1)[1]
     assert not re.search(r"(?<![\w.])(prompt|alert|confirm)\(", script)
     assert not re.search(r"window\.(prompt|alert|confirm)\b", script)
-
-
-def test_log_kind_filter_and_load_more(hub):
-    html = page(hub)
-    audit = re.search(r'<section id="audit".*?</section>', html, re.S).group(0)
-    assert 'id="log-person"' in audit and 'id="log-kind" aria-label="Kind"' in audit
-    assert 'id="log-more"' in audit and ">Load more<" in audit
-    assert 'id="retention"' not in audit and "Keep messages" not in audit
-    assert '"/api/log/kinds"' in html and '[["", "Everything"]]' in html
-    assert '"&kind=" + encodeURIComponent(logKind)' in html and '"&before=" + ' in html
-
-
-def test_settings_tab(hub):
-    html = page(hub)
-    assert '<symbol id="i-gear"' in html
-    sub = re.search(r'<nav class="sub".*?</nav>', html, re.S).group(0)
-    assert re.findall(r'data-view="(\w+)"', sub) == ["people", "access", "machines", "rules", "notes", "audit", "settings"]
-    top = re.search(r'<nav role="tablist">.*?</nav>', html, re.S).group(0)
-    assert re.findall(r'data-view="(\w+)"', top) == ["home", "admin"]
-    assert re.search(r'<button class="tab admin-only" role="tab" data-view="admin" id="tab-admin" hidden>', top)
-    sec = re.search(r'<section id="settings".*?</section>', html, re.S).group(0)
-    assert 'class="admin"' in sec
-    assert 'id="retention"' in sec and 'id="ret-days"' in sec
-    assert "Keep messages for" in sec and "<span>days</span>" in sec
-    assert 'title="Older messages and their files are deleted every night."' in sec
-    assert ">Manager<" in sec and 'id="legacy-panel"' not in sec
-    access = re.search(r'<section id="access".*?</section>', html, re.S).group(0)
-    assert 'id="legacy-panel"' in access and 'title="Machines that joined before personal tokens">Shared token' in access
-    assert "settings.manager_state" in html and "settings.manager_reason" in html
-    assert '"The manager session is starting."' in html and '"The manager session is running."' in html
-    assert '"The manager session is on but cannot start: " + why + "."' in html
-    assert '"The manager session is off."' in html
-    assert '"Last start failed: " + settings.manager_error' in html
-    assert "Turn it on with " in html and "kaptyorka start --manager" in html
-    assert "Switch it off with " in html and "kaptyorka start --no-manager" in html
-    assert ", or close the manager worker on Machines." in html
-    assert '"/api/settings"' in html and "manager_state" in html
-    people = re.search(r'<section id="people".*?</section>', html, re.S).group(0)
-    assert "legacy" not in people and "Old machines" not in people
-    assert 'ADMIN_VIEWS = ["people", "access", "machines", "rules", "notes", "audit", "settings"]' in html
-
-
-def test_proposal_fields_have_visible_labels(hub):
-    form = re.search(r'<form[^>]*id="propose".*?</form>', page(hub), re.S).group(0)
-    assert '<label for="prop-text">' in form and '<label for="prop-why">' in form
-
-
-def test_replacing_a_machine_owner_asks_first(hub):
-    html = page(hub)
-    assert '" the owner of " + m.host + " instead of " + m.owner + "?"' in html
-    assert '"Leave " + m.host + " without an owner?"' in html
-
-
-def test_machines_show_which_tools_are_logged_in(hub):
-    html = page(hub)
-    assert "logins = f.logins || {}" in html and "logins[t] === false" in html
-    assert '"not logged in"' in html and '"class": "login-off"' in html
-    assert "login-line" not in html  # the Warnings box says it; the red dot on the tool is enough
-    # one logged-in tool is enough: the others' dots go grey
-    assert 'return logins[t] === true;' in html and '(anyIn ? " quiet" : "")' in html
-    assert ".login-off.quiet" in html
-    for name, cmd in [("Claude Code", "claude auth login"), ("Codex", "codex login"),
-                      ("OpenCode", "opencode auth login")]:
-        assert f'["{name}", "{cmd}"]' in html
 
 
 def test_background_sessions_fold_into_one_group(hub):
@@ -293,3 +143,62 @@ def test_background_sessions_fold_into_one_group(hub):
     assert 'store(function (s) { return s.getItem("kaptyorka.bg-open"); }) === "1"' in html
     assert '.list .bg-head[aria-expanded="true"] > svg { transform: rotate(90deg); }' in html
     assert '"class": "bg", text: "background"' not in html  # the clock says it in the row
+
+
+def team_code(html):
+    return html[html.index("/* Team: the admin's one screen."):html.index("/* redraw only the parts whose data changed")]
+
+
+def test_team_is_one_screen(hub):
+    """The admin's tab is Team: no sub-tabs, no More; Waiting for you, then the people. What
+    left the page (devices, Revoke, roles, machines, doors, shared token, rules, notes, log,
+    settings, workers) has no markup or code here any more."""
+    html = page(hub)
+    top = re.search(r'<nav role="tablist">.*?</nav>', html, re.S).group(0)
+    assert re.findall(r'data-view="(\w+)"', top) == ["home", "team"]
+    assert '>Team<span class="count" id="n-team" hidden>0</span>' in top
+    assert 'ADMIN_VIEWS = ["team"]' in html and 'class="sub"' not in html
+    team = re.search(r'<section id="team".*?</section>', html, re.S).group(0)
+    assert team.index("Waiting for you") < team.index(">Team<") < team.index('id="people-rows"')
+    assert ">Add person<" in team and "<select" not in team  # no role picker
+    for gone in ('id="people"', 'id="access"', 'id="machines"', 'id="rules"', 'id="notes"', 'id="audit"',
+                 'id="settings"', 'id="legacy-panel"', 'id="doors"', '"Revoke"', '"/api/legacy', '"/api/doors',
+                 '"/api/log', '"/api/settings"', '"/api/workers', '"/auto_update"', '"/shared"', '"/owner"',
+                 '"/api/machines', '"/api/rules', '"/api/notes', "Decided", "Shared token", "Machine use"):
+        assert gone not in html, gone
+
+
+def test_team_waiting_lines_and_answers(hub):
+    code = team_code(page(hub))
+    # requests (projects, machines, connections), knocks and open rule proposals; nothing else
+    assert '(r.kind === "session" ? "/api/connects/" : "/api/requests/") + r.id' in code
+    assert '"/api/knocks/" + k.id + "/answer", { answer: "yes" }' in code
+    assert '"/api/proposals/" + p.id, { accept: true, reason: "" }' in code
+    assert "conflict" not in code and "warnings.filter" not in code
+    for words in ('"wants to talk to "', '"wants to use "', '"wants to work on "', '"wants to see "', '"suggests a rule"'):
+        assert words in code, words
+    # Yes gives what was asked, with no role picker and no reason box
+    assert 'yes: function () { return api(path, { approve: true, role: r.role === "write" ? "write" : "read" }); }' in code
+    assert 'no: function () { return api(path, { approve: false }); }' in code
+    assert 'button("Yes", "primary"' in code and 'button("No", ""' in code
+    assert '$("waiting").hidden = !items.length;' in code
+
+
+def test_team_people_rows(hub):
+    code = team_code(page(hub))
+    # one action at most: Copy invite link before they join, Remove after; none on yourself
+    assert '"hasn\'t joined yet"' in code and 'v.admin ? "you"' in code
+    assert '"Copy invite link"' in code and 'button("Remove", "quiet-danger"' in code
+    assert '"Remove " + v.name + "? They are signed out everywhere."' in code
+    assert "return !isManagerAccount(p);" in code  # the manager account is not listed
+    # a tick gives write; a project seen only on a session is registered on its first tick
+    assert 'on ? { person: v.name, role: "write" } : { person: v.name }' in code
+    assert 'api("/api/projects", { name: project })' in code
+    assert 'flash("saved:" + k)' in code and 'text: "Saved"' in code
+    # the page may run on plain http: the copy falls back to a hidden field
+    assert 'document.execCommand("copy")' in code and "window.isSecureContext" in code
+
+
+def test_old_admin_links_open_team(hub):
+    html = page(hub)
+    assert 'else if (params.get("view")) view = "team";' in html

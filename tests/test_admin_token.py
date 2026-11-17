@@ -87,6 +87,8 @@ def test_machine_owner_route(hub):
     ann, ann_t = person(store, "ann")
     store.heartbeat("ann@pc", [], principal=store.authenticate(ann_t),
                     facts={"host": "pc", "os_user": "ann", "version": "0.2.0"})
+    assert store.may_use("pc", ann)  # the first to join from pc owns it
+    assert http.request("POST", url + "/api/machines/pc/owner", own, {"person": ""})[0] == 204
     assert not store.may_use("pc", ann)
     assert http.request("POST", url + "/api/machines/pc/owner", ann_t, {"person": "ann"})[0] == 403
     assert http.request("POST", url + "/api/machines/pc/owner", own, {"person": "ann"})[0] == 204
@@ -98,6 +100,4 @@ def test_machine_owner_route(hub):
     assert http.request("POST", url + "/api/machines/pc/owner", own, {"person": ""})[0] == 204
     assert not store.may_use("pc", ann)
     assert [r["detail"] for r in store.log() if r["kind"] == "machine_owner"] == [
-        "pc -> nobody", "pc -> ann"]
-    page = http.request("GET", url + "/", "")[1]
-    assert 'apiPath("/api/machines/", m.host, "/owner"), { person: to }' in page
+        "pc -> nobody", "pc -> ann", "pc -> nobody"]

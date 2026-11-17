@@ -38,7 +38,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.9.6" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.9.7" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
@@ -48,7 +48,7 @@ def test_subcommands_listed(capsys):
     listed = out.split("positional arguments:")[1].split("options:")[0]
     names = [l.split()[0] for l in listed.splitlines()[2:] if l.startswith("    ") and l[4] != " "]
     assert names == ["start", "join", "leave", "stop", "update", "remove", "invite", "people", "invites", "grant",
-                     "revoke", "project", "machine", "who", "status", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
+                     "revoke", "project", "shared-token", "machine", "who", "status", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
     for hidden in ("serve", "mcp", "bridge", "hook"):
         assert hidden not in names
 
@@ -1118,3 +1118,19 @@ def test_leave_member_machine_no_prompt(monkeypatch, home):
     calls = _leave_setup(monkeypatch, "up", hub="http://10.0.0.9:8765")
     assert cli._leave(_ns(), isatty=False) == 0
     assert calls == [1]
+
+
+def test_cli_people_revoke_one_device(admin_hub, capsys):
+    admin_hub["answers"][("GET", "/api/people")] = (200, [{"name": "bob", "role": "member", "devices": [
+        {"id": 7, "name": "laptop", "revoked_at": None}, {"id": 8, "name": "desk", "revoked_at": None}]}])
+    assert entry_with_exit(["people", "revoke", "bob", "desk"]) == 0
+    assert admin_hub["calls"][-1] == ("POST", "/api/devices/8/revoke", {})
+    assert capsys.readouterr().out.strip() == "desk of bob is signed out"
+    assert entry_with_exit(["people", "revoke", "bob", "phone"]) == 1
+    assert capsys.readouterr().err.strip() == "bob has no device named phone (devices: laptop, desk)"
+
+
+def test_cli_shared_token_on_off(admin_hub, capsys):
+    assert entry_with_exit(["shared-token", "on"]) == 0
+    assert admin_hub["calls"][-1] == ("POST", "/api/legacy/on", {})
+    assert capsys.readouterr().out.strip() == "the shared token is on"

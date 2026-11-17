@@ -204,7 +204,7 @@ def test_legacy_routes(app, store):
     assert assign(app, machine="nowhere")[0] == 400
 
 
-READY = "All old machines have their own tokens; switch the shared token off on the page."
+READY = "All old machines have their own tokens; switch the shared token off: kaptyorka shared-token off."
 
 
 def start_brief(app, token, key="claude:7"):

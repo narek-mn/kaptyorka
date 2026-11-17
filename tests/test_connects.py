@@ -128,7 +128,7 @@ def test_agent_request_approve_door_and_both_talk(team):
     [mgr] = t.store.inbox("m1")
     assert f"Connection request #{cid}: alice (box-1/codex/(private))" in mgr.text
     assert "bob's session box-2/codex/(private) (api). Why: review my api." in mgr.text
-    assert "Only the admin approves" in mgr.text
+    assert "Only the admin approves, on the Team page;" in mgr.text and "Admin >" not in mgr.text
     assert next(r for r in others(t, "alice") if r["person"] == "bob")["request"] == \
         {"id": cid, "state": "requested"}
     [req] = [r for r in feed(t, "admin")["requests"] if r["kind"] == "session"]

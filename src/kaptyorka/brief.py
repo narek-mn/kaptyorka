@@ -91,7 +91,7 @@ def _you(store, ws, agent: Agent, principal, unread: int) -> str:
             + f' about "{k["about"]}"' for k in knocked) + "."
     line += _request_lines(store, principal)
     if principal.is_admin() and store.legacy_ready_to_disable():
-        line += " All old machines have their own tokens; switch the shared token off on the page."
+        line += " All old machines have their own tokens; switch the shared token off: kaptyorka shared-token off."
     waiting = ws.unattended_for(principal.person_id)
     if waiting:
         line += (" Unattended workers: " + ", ".join(f"{w['name']} ({w['host']})" for w in waiting)

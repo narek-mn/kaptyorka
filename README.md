@@ -31,7 +31,7 @@ flowchart LR
         B["Bridge<br/>(one per machine)"]
     end
     H[("Hub<br/>SQLite + MCP over HTTP")]
-    W["Live web page<br/>Home, and Admin for the admin"]
+    W["Live web page<br/>Home, and Team for the admin"]
     S1 -->|"MCP tools: who, send, inbox, notes"| H
     H -->|"new messages"| B
     B -->|"push into running sessions"| S1
@@ -79,7 +79,7 @@ Each machine gets a token of its own, tied to Alice, and a signing secret. Both 
 
 Opening the invite link in a browser shows the same `join` command, and a button that opens the page as Alice.
 
-Open the `page` link to watch the team live and act from it. It has two tabs. **Home** is for everyone and works like a chat app. On the left is the list: the manager first (with `asleep` or `off` when it is not running), then the sessions you may see. Each has a green dot when online, a grey one when not, its machine, and a count of unread replies; hover for the full name, folder and tool. Claude Code background jobs (`claude --bg`) sit in one **Background** group under your other chats, folded at first, with how many there are and their unread count; the page remembers whether you left it open. Inside, a job shows a small clock instead of the dot; its chat stays empty until it or you write, and you can write to it like any session. Click one to open its chat on the right: the messages in full, grouped by sender, with the box to write at the bottom (Enter sends, Shift+Enter makes a new line). The admin also gets **Activity** at the top: every message as "from → to", read only, with the hub's own notices behind a **Notices** toggle. If something stops you working (for example no agent tool logged in on your machine), one bar over the chat shows it with the command that fixes it and a copy button. On a phone you see the list first; a tap opens the chat and **Back** returns. Below them, under **Others**, members see everyone else online: a lock, the session's label (or its tool when the project is hidden), its person and machine, and nothing they are doing. Clicking one opens **Request connection**: pick this page or one of your sessions, add a reason if you like, **Send**. The row then says **Requested**; once the admin approves it becomes a normal chat. Members find **Ask for access** at the bottom of the list. **Admin**, for the admin only, holds People, Access, Machines, Rules, Notes, Log and Settings. Members see only Home: their own sessions and the manager. They keep notes, rules, machines and workers through their agents and the commands, not on the page.
+Open the `page` link to watch the team live and act from it. It has two tabs. **Home** is for everyone and works like a chat app. On the left is the list: the manager first (with `asleep` or `off` when it is not running), then the sessions you may see. Each has a green dot when online, a grey one when not, its machine, and a count of unread replies; hover for the full name, folder and tool. Claude Code background jobs (`claude --bg`) sit in one **Background** group under your other chats, folded at first, with how many there are and their unread count; the page remembers whether you left it open. Inside, a job shows a small clock instead of the dot; its chat stays empty until it or you write, and you can write to it like any session. Click one to open its chat on the right: the messages in full, grouped by sender, with the box to write at the bottom (Enter sends, Shift+Enter makes a new line). The admin also gets **Activity** at the top: every message as "from → to", read only, with the hub's own notices behind a **Notices** toggle. If something stops you working (for example no agent tool logged in on your machine), one bar over the chat shows it with the command that fixes it and a copy button. On a phone you see the list first; a tap opens the chat and **Back** returns. Below them, under **Others**, members see everyone else online: a lock, the session's label (or its tool when the project is hidden), its person and machine, and nothing they are doing. Clicking one opens **Request connection**: pick this page or one of your sessions, add a reason if you like, **Send**. The row then says **Requested**; once the admin approves it becomes a normal chat. Members find **Ask for access** at the bottom of the list. **Team**, for the admin only, holds what waits for a Yes or No and the people (see People and access). Members see only Home: their own sessions and the manager. They keep notes, rules, machines and workers through their agents and the commands, not on the page.
 
 The hub address uses the machine's IP. Use `--host` to set another one, and `--port` for another port. `kaptyorka start` again later starts the hub with the same settings. It also turns this machine's bridge back on when `kaptyorka stop` switched it off. On Linux, if the hub must survive logout, `start` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
 
@@ -174,7 +174,7 @@ The team's rules and skills are kept in a private folder on the admin's machine:
 kaptyorka rules push <dir>
 ```
 
-Only the admin's device can push. The admin can also change the rules on the page: the **Edit** button under Admin > Rules, and accepting a proposal, each save a new version on the hub only. A push replaces the rules text with `RULES.md` as a new version. So before it uploads, `rules push` reads the hub's current text; if a line there is not in `RULES.md`, it prints those lines and stops. Copy them into `RULES.md`, or run `kaptyorka rules push --force <dir>` to replace them anyway. The skill set is replaced as a whole, so a skill removed from the folder is removed from the team. Limits: rules up to 20,000 characters, each skill up to 20,000, at most 50 skills. A skill name uses lowercase letters, digits and single hyphens, 1 to 48 characters.
+Only the admin's device can push. Accepting a proposal (Yes on the Team page) also saves a new version, on the hub only. A push replaces the rules text with `RULES.md` as a new version. So before it uploads, `rules push` reads the hub's current text; if a line there is not in `RULES.md`, it prints those lines and stops. Copy them into `RULES.md`, or run `kaptyorka rules push --force <dir>` to replace them anyway. The skill set is replaced as a whole, so a skill removed from the folder is removed from the team. Limits: rules up to 20,000 characters, each skill up to 20,000, at most 50 skills. A skill name uses lowercase letters, digits and single hyphens, 1 to 48 characters.
 
 Every session sees the rules in its start brief, under this heading. The hub builds the brief from the current version, so a new version reaches a session's next brief within 10 seconds (the brief cache):
 
@@ -194,7 +194,7 @@ On Home, hovering a session shows the admin what its tool has loaded:
 
 Agents can suggest rules, and report clashes. The brief tells each agent when to do this:
 
-- When its person corrects it the same way twice, the agent calls `propose_rule(text, evidence)`. The admin accepts it, which appends it to the team rules as a new version, or rejects it with a reason. The reason is sent to the proposer's session. Admin > Rules lists open proposals.
+- When its person corrects it the same way twice, the agent calls `propose_rule(text, evidence)`. The admin accepts it, which appends it to the team rules as a new version, or rejects it. Open proposals wait on the Team page as one line each, with Yes and No; the answer is sent to the proposer's session.
 - When two rules clash and the agent must ask its person, it calls `conflict(rule_a, rule_b)`. This logs the clash for the admin to fix the text.
 
 If `~/.claude/skills` is a link into a git repo, add `team-*/` to that repo's `.gitignore`.
@@ -239,15 +239,15 @@ The project folder is the path the hub learned from sessions that ran this proje
 
 Permissions: nothing is bypassed. A worker runs with the account's own saved permission settings. Only Claude Code reports that a worker is waiting for a permission; the boss is told once per half hour, with the attach line. Codex and OpenCode do not report it, so attach and look.
 
-If the boss goes offline, the worker keeps going. After 2 minutes it is `unattended`, and after 24 hours `abandoned`. Nothing kills it. Its messages are held by the hub. Call `adopt(name)` from one of your own sessions (or press Adopt on the page) to take it over; the held messages come to you.
+If the boss goes offline, the worker keeps going. After 2 minutes it is `unattended`, and after 24 hours `abandoned`. Nothing kills it. Its messages are held by the hub. Call `adopt(name)` from one of your own sessions to take it over; the held messages come to you.
 
 A worker is closed as gone only when its machine's bridge reports and has not seen the worker's session for over 10 minutes. If the session shows up again, the worker is `up` again and the boss is told.
 
 The old shared token cannot start, adopt or close workers. Use your own token.
 
-"Shared" means an account that more than one person uses. The admin marks an account as shared with the **Shared** button on the page (Admin > Access). A worker started there runs as that OS account. It can read everything the account can read, including the account's kaptyorka token, git keys and ssh keys. So share only an account that was set up for this. The hub does not let a worker on a shared account start, adopt or close workers; it must ask its boss. This stops mistakes. It does not stop a hostile worker. A proper identity for each worker comes in a later version.
+"Shared" means an account that more than one person uses. Accounts marked shared before 0.9.7 stay shared; the page no longer has the switch. A worker started there runs as that OS account. It can read everything the account can read, including the account's kaptyorka token, git keys and ssh keys. So share only an account that was set up for this. The hub does not let a worker on a shared account start, adopt or close workers; it must ask its boss. This stops mistakes. It does not stop a hostile worker. A proper identity for each worker comes in a later version.
 
-Admin > **Machines** on the page shows each machine, its workers and warnings (for example an old version). It also has the auto-update switch for each account. It shows which agent tools are installed and logged in on each machine, as the tools report it; a tool that is not logged in cannot run workers there. One logged-in tool is enough: the hub warns only when none is.
+`kaptyorka fleet list` lists the machines; agents see workers with `workers`. The hub knows which agent tools are installed and logged in on each machine, as the tools report it; a tool that is not logged in cannot run workers there. One logged-in tool is enough: the hub warns only when none is, in a bar over the admin's chat on Home.
 
 ## The manager
 
@@ -266,11 +266,11 @@ What the hub tells it: a worker abandoned for a day, a shared machine whose brid
 
 What it cannot do: it cannot answer other people's knocks, open doors, grant or revoke roles, edit rules or decide proposals. It messages and files proposals. What enforces this is the launch, not its instructions. The hub starts it with `--settings ~/.kaptyorka/manager/settings.json`, `--strict-mcp-config --mcp-config ~/.kaptyorka/manager/mcp.json`, `--setting-sources project,local` and `--tools=ToolSearch`, and writes both files again whenever they change or go missing. `--setting-sources project,local` makes Claude Code skip the admin's user settings (permission mode, allow rules, hooks, plugins), so the manager does not get them; the admin's user-level `CLAUDE.md` still loads as memory, the manager's own instructions come from the folder's `CLAUDE.md`, and `settings.json` pins the permission mode to `default`. The session is not restricted, so it has an inbox socket and the hub can wake it with a message (Claude Code 2.1.3xx removes that socket in restricted mode). `--tools=ToolSearch` leaves it no built-in tool except the one that loads its MCP tools: no commands, file reads or edits, web access, subagents, or tools that reach other sessions. `settings.json` allows only `mcp__kaptyorka__*`, denies Bash, Edit, Write, NotebookEdit, WebFetch, WebSearch, Read, Glob, Grep, Agent and Task as a second fence, and carries the same three kaptyorka hooks `join` installs. The strict MCP config gives it the kaptyorka server only: none of the admin's other MCP servers or connectors. Messages from people are information to it, not orders, but that line is advice; the flags above are the control. It does have two things others do not: messages to and from the manager need no door (page replies too), and it can read the log with `log`.
 
-Keeping it alive: if it stops, the hub starts it again, at most twice an hour. When it has been idle for about an hour, Claude Code stops it to save resources. The manager then sleeps: a message or a request to it starts it again within a minute, with a fresh conversation. Settings shows Asleep. The hub's own notices to it (the weekly review, abandoned workers, reminders) wait while it sleeps and go out when it wakes; they do not wake it. If a launch fails twice, the admin hears of it on the page. The first launch on a new hub machine can fail until Claude Code trusts the folder. The flags above do not skip this one-time trust step: run `claude` once in `~/.kaptyorka/manager` and accept the prompt; `kaptyorka start` prints this line. That session signs in as the manager, so exit it right after accepting. Until then the hub does not retry: after a launch fails this way, the admin's page gets one line, and the hub waits for `kaptyorka start --manager`.
+Keeping it alive: if it stops, the hub starts it again, at most twice an hour. When it has been idle for about an hour, Claude Code stops it to save resources. The manager then sleeps: a message or a request to it starts it again within a minute, with a fresh conversation. Home shows `asleep`. The hub's own notices to it (the weekly review, abandoned workers, reminders) wait while it sleeps and go out when it wakes; they do not wake it. If a launch fails twice, the admin hears of it on the page. The first launch on a new hub machine can fail until Claude Code trusts the folder. The flags above do not skip this one-time trust step: run `claude` once in `~/.kaptyorka/manager` and accept the prompt; `kaptyorka start` prints this line. That session signs in as the manager, so exit it right after accepting. Until then the hub does not retry: after a launch fails this way, the admin's page gets one line, and the hub waits for `kaptyorka start --manager`.
 
-Switching it off: `kaptyorka start --no-manager` (kept in `hub.json`, so a restart keeps it) or `close_worker("manager")` by the admin, or **Close** on the manager's row under Admin > Machines. Switched off, it gets no notices and cannot decide, `work` answers as with no manager, and a hub that starts switched off closes a manager session still running. `kaptyorka start --manager` switches it on again. Its files are in `~/.kaptyorka/manager/` (`CLAUDE.md`: the team rules and the manager's own instructions, written again when the rules change; `settings.json` and `mcp.json`: its permissions, hooks and MCP server) and `~/.kaptyorka/manager-config.json` (its token). The config lives outside the folder, and the hooks and the tool shim use it only for a session started in that folder.
+Switching it off: `kaptyorka start --no-manager` (kept in `hub.json`, so a restart keeps it) or `close_worker("manager")` by the admin. Switched off, it gets no notices and cannot decide, `work` answers as with no manager, and a hub that starts switched off closes a manager session still running. `kaptyorka start --manager` switches it on again. Its files are in `~/.kaptyorka/manager/` (`CLAUDE.md`: the team rules and the manager's own instructions, written again when the rules change; `settings.json` and `mcp.json`: its permissions, hooks and MCP server) and `~/.kaptyorka/manager-config.json` (its token). The config lives outside the folder, and the hooks and the tool shim use it only for a session started in that folder.
 
-On the page, Home lists it last with its state (`up`, `asleep`, `off`), and Admin > Machines shows `manager` where a worker's boss would be. When it is not running, Admin > Settings says why (for example the admin's bridge on the hub machine is offline) and what its last start failed on.
+On the page, Home lists it with its state (`up`, `asleep`, `off`). When it is not running, `kaptyorka status` says why (for example the admin's bridge on the hub machine is offline).
 
 ## People and access
 
@@ -278,89 +278,61 @@ The hub has people, and each person has devices (one per machine). The admin is 
 
 | Level | Role | What it allows |
 |---|---|---|
-| Hub | admin | Everything: sees all sessions, projects and notes, messages anyone, uses all machines, and has the Admin tab |
+| Hub | admin | Everything: sees all sessions, projects and notes, messages anyone, uses all machines, and has the Team tab |
 | Hub | member | Own sessions and the manager, team notes, and what the admin grants |
 | Hub | manager | A member whose session may also decide work requests and message anyone |
 | Project | read | See the project's notes and sessions |
 | Project | write | Read and write the project's notes, and start workers in it |
 | Project | manage | Same as write today; only the admin gives or changes access |
-| Machine | use | Use that machine (its owner and the admin may always). Needed to start a worker on it |
+| Machine | use | Start workers on another person's shared account on that machine (its owner and the admin may always) |
 
-The steps below follow the Admin tab, top to bottom: **People**, then **Access**. Each has a command. Every command prints one plain sentence when it fails (not joined, hub not running, not the admin, no such person) and exits with 1. `kaptyorka <command> --help` explains each one.
+### The Team page
 
-From the page you can also: attach a file to a message, open or close a door, delete a note and undo, bring back an old note or rules version, propose a rule, filter and page the log; message keeping and the manager's state sit in Settings, the old shared token in Access.
+The admin's **Team** tab does three things:
 
-### 1. Add a person and send the link
+1. **Waiting for you** (only when something waits; the count is on the tab): one line per request, "bob wants to work on proj-a", with **Yes** and **No**. Yes gives what was asked. Requests, connection requests, knocks and rule proposals all land here.
+2. **Add person**: type a name, **Add**, then **Copy** the invite link and send it. It works once, for 7 days. Until they join, their row says "hasn't joined yet" and has **Copy invite link**.
+3. **Remove**: on a person's row, with a question first ("Remove bob? They are signed out everywhere.").
 
-Page: **People**, **Add person**, type a name, **Add** (Esc cancels). The invite link shows at once, with **Copy**: "Send this link to bob. It works for 7 days." The **Invite** button on a row makes a new link for someone already there. Below the table, **Open invites** lists the links nobody has used, each with **Cancel** (the link stops working).
+Click a person to see every project as a box to tick. A tick gives write and saves at once; a project seen only on a session is registered on its first tick.
 
-```bash
-kaptyorka invite bob          # adds bob if new, prints the link
-kaptyorka invites             # open links: person, hours left, code
-kaptyorka invites --cancel <code>
-```
+Bob joins with `kaptyorka join <link>` on each of his machines. A member clicks **Ask for access** under their sessions on Home to see what they may use and to **Ask for** read or write access to a project, or use of a machine; an agent asks with `request_access`, and asks to reach someone else's session with `request_access(kind="session", target=<id from who(others=true)>, why)`. The manager is told; only the admin decides. Approving a connection opens a door between just those two sessions.
 
-A link works once and for 7 days. If it ran out or was used, `join` says so; make a new one.
+What the hub decides by itself:
 
-### 2. They join
+- **Machines**: the first person to join from a machine owns it and may use it. Someone else on the same machine name gets no use until the admin says Yes to "carol wants to use box-1"; a No is not asked again. The name is what the machine reports, so it is not proof on its own.
+- **Old shared token**: it switches itself off once no machine has used it for 7 days. A machine still on it is told so, with the command to switch it back on (`kaptyorka shared-token on`) or to join properly.
+- **Doors**: a Yes opens a door; a session door closes by itself when either session goes offline.
 
-Bob runs `kaptyorka join <link>` on each of his machines (or hands the link to his agent). The machine appears under his name in **People** and in `kaptyorka people`. Until then his row shows "No devices yet".
+### Commands
 
-### 3. Give access
-
-A new member can see team notes and their own sessions, and nothing in a project. Page: **Access**, the sentence "Give bob write access to proj-a", with a hint under it for each role: read (see notes and sessions), write (also edit notes and start workers), manage (the same as write for now; only the admin gives access). Giving access again changes the role. A tag in the Projects table has an x to take it away, with a question first. The admin's own tag has no x.
+Everything else stays in the command line. Every command prints one plain sentence when it fails and exits with 1; `kaptyorka <command> --help` explains each one.
 
 ```bash
-kaptyorka grant bob proj-a:write       # read, write or manage
-kaptyorka grant bob machine:box-1      # let bob use a machine
-kaptyorka revoke bob proj-a
-kaptyorka revoke bob machine:box-1
-kaptyorka machine owner box-1 bob
-```
-
-A machine has no owner until the admin names one (`kaptyorka machine owner`, or the owner list under Admin > **Access**), since the host name a machine reports is not proof of whose it is. The **Shared with others who use this machine** switch on a device means that device's sessions may belong to anyone who can use the machine.
-
-### 4. They ask for more
-
-A member clicks **Ask for access** under their sessions on Home: it shows every project and machine they can use, with their role. Under it, **Ask for** read or write access to a project, or use of a machine, with an optional reason, then **Send**. An agent asks the same way with the tool `request_access`; it also tells the person which project to ask for when a note is refused. You cannot ask for what you already have or for a project that is not registered.
-
-A member can also ask to be connected to one session of someone else: on Home under **Others**, or an agent with `request_access(kind="session", target=<id from who(others=true)>, why)`. The manager is told; only the admin approves. The admin sees the request under **Requests** on **Access**, picks read or write (the person's wish is preselected), and presses **Approve**, or **Deny** with an optional reason. A reason is sent to the person's page and to their sessions. Approving a connection opens a door between just those two sessions (see Groups and doors). The last ten decisions stay in **Decided**. Pending and recently denied requests also show in the brief an agent gets at the start of a session. There is no command for requests; they are decided on the page.
-
-### 5. Change a role
-
-Page: **People**, the role list on a row (member or manager). Going up to manager asks first: "Make bob a manager? A manager session can decide work requests and message anyone." The admin row and the `manager` account (the hub's own manager session) have no list.
-
-```bash
+kaptyorka invite bob                   # adds bob if new, prints the link
+kaptyorka invites                      # open links; --cancel <code> stops one
+kaptyorka people                       # people, roles, devices, last use
+kaptyorka people revoke bob laptop     # sign out one lost device; bob stays
 kaptyorka people role bob manager      # or member
-```
-
-### 6. Remove a person
-
-Page: **People**, **Remove** on the row, then confirm ("Remove bob? Their devices stop working at once; their messages and notes stay."). The command asks the same question; `--yes` skips it.
-
-```bash
-kaptyorka people remove bob
-```
-
-Removal stops all of bob's devices, closes the workers he started, deletes his open invites, closes his doors, and drops his project and machine access, any request he made and his open work requests. Machines he owned have no owner afterwards. A worker whose machine cannot take the close order (bob's own machine, once its device stops) may still run there: the command and the page name it, so you can close it on that machine. It keeps his messages, his notes and the log, which show him as "bob (removed)". His name can be used again. It cannot be undone: to bring him back, add him again with a new link. It refuses to remove the admin, the `manager` account, or a person whose machine still uses the old shared token (switch the shared token off first).
-
-### 7. Projects: register, edit, remove
-
-Page: **Access**, **New project** (name and a few words about it), **Edit** for the description, **Remove** with a confirm.
-
-```bash
+kaptyorka people remove bob            # asks first; --yes skips it
+kaptyorka grant bob proj-a:read        # read, write or manage; or machine:box-1
+kaptyorka revoke bob proj-a            # or machine:box-1
+kaptyorka machine owner box-1 bob
+kaptyorka shared-token off             # or on
 kaptyorka project add proj-a --repo <url> --desc "what it is"
 kaptyorka project edit proj-a --description "new words"
 kaptyorka project remove proj-a        # asks first; --yes skips it
 ```
 
-Removing a project archives it. Everyone loses their role in it and open requests for it are dropped, but its notes are kept: only the admin can read them, under **Archived** (read-only). Nobody can write to an archived project. **Register again** (or `kaptyorka project add proj-a`) brings it back with its notes and its old description; nobody has a role in it until the admin grants one.
+Removing bob signs out all his devices, closes the workers he started, deletes his open invites, closes his doors, and drops his access, his requests and his open work requests. Machines he owned have no owner afterwards. A worker whose machine cannot take the close order may still run there: the command and the page name it. His messages, notes and the log stay and show him as "bob (removed)". His name can be used again. It refuses to remove the admin, the `manager` account, or a person whose machine still uses the old shared token.
+
+Removing a project archives it: everyone loses their role in it, and only the admin can read its notes, under **Archived**, read-only. **Register again** with `kaptyorka project add proj-a`: it comes back with its notes and its old description, and nobody has a role in it until the admin grants one.
 
 ### What is open without a project
 
 A folder that is not registered as a project shows to other people as `(private)`, and notes on it are refused until the admin registers it. Notes with no project are team notes, open to everyone. A project's notes need read to read and write to write; the MCP tools take `project=""` for team notes. Messages, notes and text attachments are checked for secrets (private keys, and OpenAI, Anthropic, GitHub, GitLab, AWS and Slack tokens) and refused when one is found. The `kaptyorka` tool also refuses to attach any file from `~/.kaptyorka` or `~/.ssh`.
 
-Admin > **Log** shows who did what, in plain sentences ("alice made an invite link for bob"); choose a person or a kind (People, Access, Projects, Machines, Messages, Rules, Workers, Sign-ins, Other) and **Load more** for older rows. Messages and files are deleted after 180 days; the admin can change that under Admin > **Settings**. Notes (until someone deletes one) and the log are kept for ever.
+The `log` tool (admin and manager) shows who did what, in plain sentences ("alice made an invite link for bob"). Messages and files are deleted after 180 days. Notes (until someone deletes one) and the log are kept for ever.
 
 ## Groups and doors
 
@@ -369,11 +341,11 @@ A person's sessions are a group. A member sees and messages only their own sessi
 - To reach someone else, ask for a connection: `who(others=true)` (or **Others** on Home) lists every other online session with its person, machine and an `id`, and no messages, status or activity; the project shows only under the rule above. `request_access(kind="session", target=<id>, why)` (or **Request connection** on the page) asks the admin. The manager is told so it can talk with you and the admin; it cannot approve. You cannot ask for your own session, the manager (always reachable), a session you can already reach, or the same thing twice while it waits.
 - Approving opens a door between exactly the asking session (or page) and that session, never between the two people. Both are told; it closes like any session door (when either goes offline, with `door_close`, by the admin, or when a person is removed). If a session went offline before the admin approves, no door opens and the asker is told.
 - A session whose project you may not see goes by its `id` (for example `#3fa2c19b`) or its hidden name when that is unique. A message from one says which `id` to reply to, and the project stays hidden in `inbox`, pushed messages and the brief.
-- Only the admin opens a door: on the page (Admin > Access, Doors), or by answering a knock. Members cannot knock or answer.
+- Only the admin opens a door: by saying Yes to a knock or a connection request on the Team page. Members cannot knock or answer.
 - While a door is open, the two people see and message each other's sessions; `door_close(to)` or the admin closes it.
 - `send("all")` reaches every session you may message: your own, and those behind a door.
 
-The page follows the same rules. A message from the page to a session opens a door, so the session can reply. Doors opened before 0.9.0, when members could open them, stay open (group doors do not expire): after updating, the admin looks at Admin > Access and closes the ones not wanted. A direct message from the admin's session to another person's session works the same way: it opens a door between just those two sessions, so the session can reply. No one else gains anything, and it closes like any session door (when either session goes offline, or with `door_close`). A message to `all`, or to the manager, opens no door.
+The page follows the same rules. A message from the page to a session opens a door, so the session can reply. Doors opened before 0.9.0, when members could open them, stay open (group doors do not expire): after updating, the admin closes the ones not wanted with `door_close`. A direct message from the admin's session to another person's session works the same way: it opens a door between just those two sessions, so the session can reply. No one else gains anything, and it closes like any session door (when either session goes offline, or with `door_close`). A message to `all`, or to the manager, opens no door.
 
 ## Attachments
 
@@ -395,7 +367,7 @@ kaptyorka fleet list
 
 `kaptyorka login-copy alice@box-1` copies your Claude Code login from this machine to the same user on that machine, over ssh, so Claude Code there is logged in as you without a browser. The login goes straight from this machine to that one, never through the hub, and is saved there readable only by that user. It refuses when Claude Code is not logged in here, is not installed there, or is already logged in there (`--force` replaces that login). Use it only for machines and accounts that are yours. Claude Code only for now, and both machines must be Linux: a Mac keeps the Claude login in its keychain, so it cannot be copied from one, and a file copied to one would not be used.
 
-Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by default for members' machines and off for the admin's. Switch it per account under Admin > **Machines**.
+Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by default for members' machines and off for the admin's. The page no longer has a switch for it.
 
 ## Backup
 
@@ -409,7 +381,7 @@ Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by def
 
 Nothing to do on teammates' machines. The old shared token keeps working as a "legacy" device, and every session already on the hub is the admin's. Run `kaptyorka start` on the hub once: it gives the admin a token of their own and prints the page link with it. From then on admin work (the People, Access, Log and Settings tabs, invites, grants) needs that token; the shared token is refused there.
 
-While the shared token is on, every holder of it acts as the admin for any machine name not yet assigned to a person: it can read what the admin reads and message whom the admin may. The way out: invite everyone (or assign each old machine to a person under Admin > **Access**, **Shared token**; a machine that runs 0.2 then gets its own token by itself), then switch the shared token off. Switch it off from the page opened with your own admin token; the shared token cannot switch itself off. Switching it off deletes token hand-overs not yet fetched: a machine that had not fetched its token must join again with an invite.
+While the shared token is on, every holder of it acts as the admin for any machine name not yet assigned to a person: it can read what the admin reads and message whom the admin may. The way out: invite everyone, then switch the shared token off with `kaptyorka shared-token off` on a machine signed in with your own admin token; the shared token cannot switch itself off that way. It also switches itself off once no machine has used it for 7 days; a machine still on it is then told so, with `kaptyorka shared-token on` to switch it back. Switching it off deletes token hand-overs not yet fetched: a machine that had not fetched its token must join again with an invite.
 
 Notes from 0.1 whose topic equals a project folder become that project's notes. After the admin registers the project, read them with `notes_read(topic, project="<name>")`. Until it is registered, other people see the folder as `(private)`.
 
@@ -441,6 +413,8 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka people` | Admin: list people, roles, device counts and last use |
 | `kaptyorka people role <person> member\|manager` | Admin: change a person's role |
 | `kaptyorka people remove <person>` | Admin: take a person off the team (asks first; `--yes` skips it) |
+| `kaptyorka people revoke <person> <device>` | Admin: sign out one lost device; the person stays |
+| `kaptyorka shared-token on\|off` | Admin: switch the old shared token (machines from before invites) on or off |
 | `kaptyorka project add <name>` | Admin: register a project (`--repo`, `--desc`); also brings back a removed one |
 | `kaptyorka project edit <name> --description <text>` | Admin: change a project's description |
 | `kaptyorka project remove <name>` | Admin: archive a project, notes kept (asks first; `--yes` skips it) |

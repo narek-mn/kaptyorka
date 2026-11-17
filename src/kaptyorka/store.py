@@ -14,6 +14,7 @@ from kaptyorka import paths
 from kaptyorka.secrets_check import TEXT_TYPES, check_secrets
 
 ONLINE_S = 30
+MANAGER_ACCOUNT = "manager"  # manager.PERSON; that module imports this one
 LEASE_S = 60
 MAX_TEXT = 32_000
 MAX_ABOUT = 500
@@ -23,6 +24,7 @@ FILE_TYPES = ("png", "jpg", "jpeg", "gif", "webp", "svg", "txt", "md", "log", "j
 RATE = (30, 60)
 SCHEMA_VERSION = 2
 INVITE_TTL_S = 7 * 86400
+LEGACY_IDLE_S = 7 * 86400  # the shared token switches itself off after this long unused
 ROLES = ("admin", "member", "manager")
 PROJECT_ROLES = ("read", "write", "manage")
 PROJECT_NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -926,6 +928,30 @@ class Store:
                 self.db.execute("DELETE FROM rekeys")
         self.log_add(by, "legacy_toggle", "on" if on else "off")
 
+    def legacy_auto_off(self, now: float) -> bool:
+        """Switch the shared token off once nothing has used it for LEGACY_IDLE_S (counted from
+        when it was made, if never). True when it was switched off now."""
+        with self.lock:
+            if not self._legacy_enabled():
+                return False
+            dev = self.db.execute("SELECT MAX(COALESCE(last_used, created)) AS t FROM devices"
+                                  " WHERE legacy=1 AND revoked_at IS NULL").fetchone()
+            if dev is None or dev["t"] is None or dev["t"] > now - LEGACY_IDLE_S:
+                return False
+            self.db.execute("INSERT INTO settings (key, value) VALUES ('legacy_enabled', '0')"
+                            " ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+            self.db.execute("DELETE FROM rekeys")  # as set_legacy_enabled: fetched with that token
+        self.log_add("system", "legacy_auto_off", f"{LEGACY_IDLE_S // 86400} days")
+        return True
+
+    def legacy_switched_off(self, token: str) -> bool:
+        """True when `token` is the shared token and it is switched off."""
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with self.lock:
+            return not self._legacy_enabled() and self.db.execute(
+                "SELECT 1 FROM devices WHERE token_hash=? AND legacy=1 AND revoked_at IS NULL",
+                (digest,)).fetchone() is not None
+
     def assign_legacy(self, machine: str, person_id: int, by: str) -> None:
         """Give a legacy machine to a person: the shared token now speaks for them there, and
         a device of their own waits in `rekeys` for the machine's bridge to pick up."""
@@ -1159,6 +1185,7 @@ class Store:
                                   else clean(s["activity"], MAX_ACTIVITY))}
                     for s in sessions]
         host, os_user, version = (clean(facts.get(k), 80) for k in ("host", "os_user", "version"))
+        logs: List[tuple] = []
         with self.lock:
             now = self.clock()
             # a legacy bridge on an assigned machine: its sessions and facts go to that person
@@ -1194,7 +1221,7 @@ class Store:
                     self.db.execute("UPDATE agents SET person_id=COALESCE(person_id, ?)"
                                     " WHERE key=?", (principal.person_id, s["key"]))
             if host:
-                # no owner on first sight: the host name is self-reported; the admin sets one
+                # its owner: see _machine_use
                 self.db.execute("INSERT OR IGNORE INTO machines (host, owner_person_id, first_seen)"
                                 " VALUES (?,NULL,?)", (host, now))
                 device_id = (assigned["id"] if assigned is not None else
@@ -1203,6 +1230,41 @@ class Store:
                 if device_id is not None:
                     self.db.execute("UPDATE devices SET host=?, os_user=?, version=? WHERE id=?",
                                     (host, os_user, version, device_id))
+                    logs = self._machine_use(host, principal.person_id, now)
+        for kind, person, detail in logs:
+            self.log_add(person, kind, detail)
+
+    def _machine_use(self, host: str, person_id: int, now: float) -> List[tuple]:
+        """Lock held. The first person to join from a host name owns it, so they may use it
+        with no admin step. The name is self-reported, so anyone after that gets no use: their
+        ask waits for the admin's Yes, once. The manager account never owns or asks. Returns
+        the log rows to write once the lock is let go."""
+        who = self.db.execute("SELECT name, role FROM people WHERE id=?", (person_id,)).fetchone()
+        if who is None or (who["name"], who["role"]) == (MANAGER_ACCOUNT, "manager"):
+            return []
+        m = self.db.execute("SELECT owner_person_id FROM machines WHERE host=?", (host,)).fetchone()
+        if m is None:
+            return []
+        if m["owner_person_id"] is None:
+            others = self.db.execute(
+                "SELECT 1 FROM devices d JOIN people p ON p.id=d.person_id WHERE d.host=?"
+                " AND d.person_id!=? AND d.revoked_at IS NULL AND d.legacy=0"
+                " AND NOT (p.name=? AND p.role='manager') LIMIT 1",
+                (host, person_id, MANAGER_ACCOUNT)).fetchone()
+            if others is not None:  # two people already: who came first is unknown
+                return []
+            self.db.execute("UPDATE machines SET owner_person_id=? WHERE host=?"
+                            " AND owner_person_id IS NULL", (person_id, host))
+            return [("machine_owner_auto", who["name"], host)]
+        if m["owner_person_id"] == person_id or who["role"] == "admin" \
+                or self._granted(host, person_id):
+            return []
+        if self.db.execute("SELECT 1 FROM requests WHERE person_id=? AND kind='machine'"
+                           " AND target=? LIMIT 1", (person_id, host)).fetchone():
+            return []  # asked once already: a No stays a No
+        self.db.execute("INSERT INTO requests (person_id, kind, target, role, why, created)"
+                        " VALUES (?,?,?,?,?,?)", (person_id, "machine", host, "read", "", now))
+        return [("request", who["name"], f"machine:{host}")]
 
     def online(self) -> List[Agent]:
         with self.lock:

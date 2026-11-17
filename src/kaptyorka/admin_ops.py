@@ -450,6 +450,8 @@ SENTENCES = {
     "auto_update": _auto_update,
     "settings": _match(r"retention_days=(\d+)", "{0} set message keeping to {1} days"),
     "machine_owner": _match(r"(.+) -> (.+)", "{0} made {2} the owner of {1}"),
+    "machine_owner_auto": _match(r"(.+)", "{0} owns {1}: the first to join from it"),
+    "legacy_auto_off": _match(r"(\d+) days", "The shared token switched itself off: no machine used it for {1} days"),
 }
 
 KNOWN_KINDS = tuple(SENTENCES)
@@ -462,7 +464,7 @@ LOG_GROUPS = [
                 "connect_decided"]),
     ("projects", ["project_register", "project_updated", "project_removed"]),
     ("notes", ["note_delete", "note_undo"]),
-    ("machines", ["machine_owner", "legacy_toggle", "legacy_assign", "legacy_used", "rekeyed",
+    ("machines", ["machine_owner", "machine_owner_auto", "legacy_auto_off", "legacy_toggle", "legacy_assign", "legacy_used", "rekeyed",
                   "backup", "auto_update"]),
     ("messages", ["settings", "retention", "door_open", "door_close", "knock", "knock_answer"]),
     ("rules", ["rules", "skills", "propose", "proposal", "conflict"]),

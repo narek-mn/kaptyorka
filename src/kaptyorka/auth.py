@@ -7,6 +7,11 @@ from urllib.parse import parse_qs, unquote
 from starlette.responses import PlainTextResponse
 from starlette.websockets import WebSocketClose
 
+# what a machine still on the old shared token is told once that token is off
+LEGACY_OFF = ("the old shared sign-in is switched off (no machine used it for 7 days); to switch it"
+              " back on, run on the hub machine: kaptyorka shared-token on. Better: join this"
+              " machine with an invite link: kaptyorka join <link>")
+
 
 class RateLimiter:
     """Counts failures per key (client address and token hash) over a sliding window."""
@@ -90,7 +95,8 @@ class Auth:
                         if scope["type"] == "http" else WebSocketClose(1008))
             else:
                 self.limiter.hit(key)
-                deny = (PlainTextResponse("unauthorized", status_code=401)
+                deny = (PlainTextResponse(LEGACY_OFF if self.store.legacy_switched_off(token)
+                                          else "unauthorized", status_code=401)
                         if scope["type"] == "http" else WebSocketClose(1008))
             await deny(scope, receive, send)
             return
