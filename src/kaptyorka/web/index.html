@@ -198,6 +198,26 @@ section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .msg.sys { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; font-size: 12px; }
 .msg.sys > svg { align-self: center; color: var(--faint); }
 .msg.sys .text { color: var(--muted); min-width: 0; }
+/* my message on its way, and where it is: quiet, under the last one only */
+.msg.out.sending .text, .msg.out.sending .att-out { opacity: .55; }
+.msg.out.failed .text { color: var(--muted); }
+.att-out { display: inline-flex; align-items: center; gap: 5px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.tick { display: flex; align-items: center; gap: 5px; margin-top: 3px; font-size: 11.5px; color: var(--faint); }
+.tick.delivered { color: var(--muted); }
+.tick.failed { color: var(--danger); }
+.tick button { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--accent); cursor: pointer; }
+.tick button:hover { text-decoration: underline; }
+.tick .spin { width: 9px; height: 9px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+/* the session is working on my message: three dots, its name, what it says it does */
+.working { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 12px 0 2px; font-size: 12.5px; color: var(--muted); animation: rise 180ms cubic-bezier(.2, .7, .3, 1); }
+.working b { font-weight: 600; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.working .what { flex: none; }
+.working .more-act { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
+.working .dots { flex: none; display: inline-flex; gap: 3px; }
+.working .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: dot 1.2s ease-in-out infinite; }
+.working .dots i:nth-child(2) { animation-delay: .15s; }
+.working .dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes dot { 0%, 60%, 100% { opacity: .25; transform: none; } 30% { opacity: 1; transform: translateY(-2px); } }
 .chat .blank { color: var(--faint); }
 #log > .blank:only-child { height: 100%; min-height: 0; font-size: 13px; text-wrap: balance; }
 .access-pane { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; }
@@ -409,6 +429,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  /* no moving dots: the words say it */
+  .working .dots, .tick .spin { display: none; }
+  .working.busy .what::after { content: "\2026"; }
 }
 </style>
 </head>
@@ -909,10 +932,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         last.to.push(m.to);
         last.toMgr.push(!!m.to_manager);
         last.toId.push(m.to_id || "");
+        last.read = last.read && !!m.read;
       } else {
         rows.push({ id: m.id, sender: m.sender, web: !!m.from_web, toWeb: !!m.to_web, to: [m.to], text: m.text,
                     fromMgr: !!m.from_manager, toMgr: [!!m.to_manager], fromId: m.sender_id || "", toId: [m.to_id || ""],
-                    created: m.created, kind: m.kind || "message", file: m.file });
+                    created: m.created, kind: m.kind || "message", file: m.file, read: !!m.read });
       }
     });
     return rows;
@@ -1035,7 +1059,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     var all = fold(feed.messages).filter(function (m) { return inConv(m, conv); });
     var notices = all.filter(notice).length;
     var shown = all.filter(function (m) { return !act || showNotices || !notice(m); });
-    var day = null, last = null, group = null;
+    var day = null, last = null, group = null, mineLast = null;
     /* what this chat showed last time: newer messages come in with a short rise */
     var before = shownTo[conv] == null ? Infinity : shownTo[conv];
     shownTo[conv] = shown.reduce(function (n, m) { return Math.max(n, m.id); }, 0);
@@ -1062,17 +1086,79 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
                     [text, m.file ? attachment(m.file) : null]);
       group.appendChild(body);
       if (m.text.length > 900 || m.text.split("\n").length > 12) fold12(m, text, body);
+      mineLast = p[0] === ME ? { m: m, body: body } : null;
     });
+    /* my messages the feed does not have yet: Sending, Sent, or Not sent with Retry */
+    var outs = act ? [] : outbox.filter(function (o) { return o.conv === conv; });
+    outs.forEach(function (o) {
+      var d = new Date(o.created * 1000).toDateString(), k = (me ? me.person : "") + "\n";
+      if (d !== day) { log.appendChild(el("div", { "class": "day" }, [el("span", { text: dayLabel(o.created) })])); day = d; last = null; }
+      if (!last || last.k !== k || o.created - last.t > 300) {
+        group = el("div", { "class": "group mine" }, [el("div", { "class": "head" }, [el("b", { "class": "mine", text: "you" }), hm(o.created)])]);
+        log.appendChild(group);
+      }
+      last = { k: k, t: o.created };
+      group.appendChild(el("div", { "class": "msg out " + o.state, "data-out": String(o.lid) }, [el("div", { "class": "text", text: o.text }),
+        o.sent ? el("span", { "class": "att-out" }, [icon("i-clip", 12), el("span", { text: o.sent.file.name })]) : null, tick(o)]));
+    });
+    /* only my last message, while nothing came after it: Sent, then Delivered once the session has it */
+    if (!act && !outs.length && mineLast) mineLast.body.appendChild(tick({ state: mineLast.m.read ? "delivered" : "sent" }));
     var bg = (entryOf[conv] || {}).bg;
-    if (!shown.length) log.appendChild(el("div", { "class": "blank", text: bg ? BG_EMPTY : "No messages yet." }));
+    if (!shown.length && !outs.length) log.appendChild(el("div", { "class": "blank", text: bg ? BG_EMPTY : "No messages yet." }));
     var t = $("notices-toggle");
     t.hidden = !act || !notices;
     t.textContent = "";
     [icon("i-status", 13), showNotices ? "Hide notices" : "Notices", el("small", { text: String(notices) })].forEach(function (n) { t.appendChild(typeof n === "string" ? document.createTextNode(n) : n); });
     t.title = (showNotices ? "hide notices" : "show notices") + " (" + notices + ")";
     t.setAttribute("aria-pressed", showNotices ? "true" : "false");
+    workEl = null;
+    renderWorking(all);
     if (stick) toBottom(); else log.scrollTop = top;
     markRead(all);
+  }
+  /* under my message: where it is, quietly */
+  var TICKS = { sending: ["Sending\u2026", "On its way to the hub"], sent: ["Sent", "The hub has it; the session has not picked it up yet"],
+                delivered: ["Delivered", "The session has it"], failed: ["Not sent", ""] };
+  function tick(o) {
+    var t = TICKS[o.state], kids = [o.state === "sending" ? el("span", { "class": "spin", "aria-hidden": "true" }) : icon(o.state === "failed" ? "i-warn" : "i-check", 11), t[0]];
+    if (o.state === "failed") {
+      var retry = el("button", { type: "button", title: "Send it again", text: "Retry" }), edit = el("button", { type: "button", title: "Put it back in the box below", text: "Edit" });
+      retry.addEventListener("click", function () { sendErr(""); deliver(o); renderMessages(); });
+      edit.addEventListener("click", function () { unsend(o); });
+      kids.push(" \u00b7 ", retry, " \u00b7 ", edit);
+    }
+    return el("div", { "class": "tick " + o.state, title: o.err || t[1], role: o.state === "failed" ? "alert" : null }, kids);
+  }
+  /* at the bottom of a chat whose last word is mine: the session is working on it (busy in its
+     session file), or the manager is being woken. Only the busy word and the session's own
+     status line are known: what it thinks stays on its machine. */
+  var workEl = null;
+  var WAITING = { permission_prompt: "is waiting for a permission", needs_input: "is waiting for an answer" };
+  function working(all) {
+    if (conv === "activity" || askOpen || conv.charAt(0) === "@" || conv.indexOf("req:") === 0) return null;
+    var said = all.filter(function (m) { return !notice(m); }).pop();
+    var mineOut = outbox.some(function (o) { return o.conv === conv && o.state !== "failed"; });
+    if (!mineOut && (!said || parties(said)[0] !== ME)) return null;
+    var e = entryOf[conv] || {};
+    var a = feed.agents.filter(function (x) { return conv === "mgr" ? x.role === "manager" : x.role !== "manager" && (hidden(x) ? x.id : x.name) === conv; })[0];
+    if (conv === "mgr" && !a && ["asleep", "starting", "up"].indexOf(feed.manager) >= 0) return { what: "waking the manager\u2026", cls: "waking" };
+    if (!a || !a.activity || a.activity === "idle") return null;
+    if (WAITING[a.activity]) return { who: e.name || "manager", what: WAITING[a.activity], cls: "waiting" };
+    return { who: e.name || "manager", what: a.activity === "busy" ? "is working" : a.activity, more: a.status || "", cls: "busy" };
+  }
+  function renderWorking(all) {
+    var log = $("log"), w = working(all || fold(feed.messages).filter(function (m) { return inConv(m, conv); }));
+    if (!changed("working", [w, conv]) && (workEl ? workEl.parentNode === log : !w)) return;
+    if (workEl) workEl.remove();
+    workEl = null;
+    if (!w) return;
+    var near = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+    workEl = el("div", { "class": "working " + w.cls, role: "status" }, [
+      w.cls === "waiting" ? null : el("span", { "class": "dots", "aria-hidden": "true" }, [el("i"), el("i"), el("i")]),
+      w.who ? el("b", { text: w.who }) : null, el("span", { "class": "what", text: w.what }),
+      w.more ? el("span", { "class": "more-act", title: w.more, text: "\u00b7 " + w.more }) : null]);
+    log.appendChild(workEl);
+    if (near) toBottom();
   }
   /* a very long message shows 12 lines and Show more */
   function fold12(m, text, body) {
@@ -1114,10 +1200,12 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     entryOf = {};
     entries.forEach(function (e) { entryOf[e.key] = e; });
     renderChat();
-    if (changed("messages", [feed.messages, feed.agents.map(function (a) { return [a.name, a.mine, a.label, a.background]; }), showNotices, me && me.person, conv]) || jump) {
+    pruneOutbox();
+    if (changed("messages", [feed.messages, feed.agents.map(function (a) { return [a.name, a.mine, a.label, a.background]; }), showNotices, me && me.person, conv,
+                             outbox.map(function (o) { return [o.lid, o.state]; })]) || jump) {
       renderMessages(jump);
       entries = buildEntries(msgs);  /* the open chat is read now */
-    }
+    } else renderWorking();
     renderSessions();
     renderWarns();
   }
@@ -1152,29 +1240,50 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     chip.appendChild(x);
   }
   /* upload once; a failed send keeps the uploaded id for the next try */
-  function upload() {
-    if (!attached || attached.id) return Promise.resolve(attached && attached.id);
-    var a = attached;
+  function upload(a) {
+    if (!a || a.id) return Promise.resolve(a && a.id);
     return fetch("/api/files", { method: "POST", cache: "no-store", body: a.file,
                                  headers: { Authorization: "Bearer " + token, "X-File-Name": encodeURIComponent(a.file.name) } })
       .then(checked).then(function (r) { return r.json(); })
       .then(function (r) { a.id = r.id; return r.id; });
   }
+  /* the message shows at once as Sending; the box is free for the next one */
+  var outbox = [], outN = 0;
   function send() {
     var text = $("text").value;
     if (!text.trim() && !attached) return;
     var e = entryOf[conv], to = e && e.to ? e.to : "manager";  /* the manager by its label: a member may write to it, and it wakes it */
-    var sent = attached, btn = $("compose").querySelector("button[type=submit]");
-    if (btn.getAttribute("aria-busy") === "true") return;
-    btn.setAttribute("aria-busy", "true");  /* the Send button shows it is sending */
-    upload()
-      .then(function (fid) { return api("/api/send", fid ? { to: to, text: text, file_id: fid } : { to: to, text: text }); })
-      .then(function () {
-        $("text").value = ""; grow(); sendErr(""); $("text").focus(); seen.messages = null;
-        if (attached === sent) { attached = null; $("file-in").value = ""; renderAttached(); }
-      })
-      .catch(function (e) { sendErr(e.message); })
-      .then(function () { btn.removeAttribute("aria-busy"); });
+    var after = feed.messages.reduce(function (n, m) { return Math.max(n, m.id); }, 0);
+    var o = { lid: ++outN, conv: conv, to: to, text: text, sent: attached, created: Date.now() / 1000, after: after };
+    outbox.push(o);
+    $("text").value = ""; grow(); sendErr(""); $("text").focus();
+    attached = null; $("file-in").value = ""; renderAttached();
+    deliver(o);
+    renderMessages(true);
+  }
+  function deliver(o) {
+    o.state = "sending"; o.err = "";
+    upload(o.sent)
+      .then(function (fid) { return api("/api/send", fid ? { to: o.to, text: o.text, file_id: fid } : { to: o.to, text: o.text }); })
+      .then(function () { o.state = "sent"; seen.messages = null; poll(); })
+      .catch(function (err) { o.state = "failed"; o.err = err.message; if (o.conv === conv) sendErr(err.message); })
+      .then(function () { if (feed) renderMessages(); });
+  }
+  /* a failed message back into the box, to change it */
+  function unsend(o) {
+    outbox = outbox.filter(function (x) { return x !== o; });
+    if (!$("text").value) { $("text").value = o.text; grow(); }
+    if (o.sent && !attached) { attached = o.sent; renderAttached(); }
+    sendErr(""); renderMessages(); $("text").focus();
+  }
+  /* a sent one leaves the outbox once the feed has it (or after a minute, whatever happened) */
+  function pruneOutbox() {
+    var now = Date.now() / 1000;
+    outbox = outbox.filter(function (o) {
+      if (o.state !== "sent") return true;
+      return now - o.created < 60 && !feed.messages.some(function (m) {
+        return m.id > o.after && m.from_web && me && m.sender === me.person && m.text === o.text; });
+    });
   }
 
   /* member: what I may use, what I asked for, and the form to ask for more */

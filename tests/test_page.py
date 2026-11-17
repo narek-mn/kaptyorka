@@ -121,7 +121,7 @@ def test_compose_attach_control(hub):
     assert 'id="attach"' in form and 'aria-label="Attach"' in form and "#i-clip" in form
     assert '<input type="file" id="file-in" hidden>' in form and 'id="file-chip"' in form
     start = html.index("function upload(")
-    code = html[start:html.index("\n  }\n", html.index("function send(", start))]
+    code = html[start:html.index("\n  }\n", html.index("function deliver(", start))]
     assert '"X-File-Name": encodeURIComponent(' in code and 'fetch("/api/files"' in code
     assert "file_id: " in code
 
@@ -202,3 +202,21 @@ def test_team_people_rows(hub):
 def test_old_admin_links_open_team(hub):
     html = page(hub)
     assert 'else if (params.get("view")) view = "team";' in html
+
+
+def test_chat_shows_sending_sent_delivered_and_working(hub):
+    """My message shows at once as Sending, then Sent, Delivered once the session has it (the
+    message's read flag), or Not sent with Retry and Edit. Under it, while the session is busy
+    (its activity) and has not answered, a working row; the manager being woken first.
+    Thoughts are never shown: only the busy word and the session's own status text."""
+    html = page(hub)
+    assert 'outbox.push(o);' in html and 'o.state = "sending"' in html
+    assert 'o.state = "sent"' in html and 'o.state = "failed"' in html
+    assert '"Sending\\u2026"' in html and '"Delivered"' in html and '"Not sent"' in html
+    assert 'text: "Retry"' in html and 'text: "Edit"' in html
+    assert 'read: !!m.read' in html and 'mineLast.m.read ? "delivered" : "sent"' in html
+    assert 'a.activity === "busy" ? "is working"' in html and 'more: a.status' in html
+    assert '"waking the manager\\u2026"' in html
+    # no moving dots for those who asked for less motion
+    reduced = html[html.index("@media (prefers-reduced-motion: reduce)"):]
+    assert ".working .dots, .tick .spin { display: none; }" in reduced[:400]

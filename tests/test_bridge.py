@@ -865,3 +865,19 @@ def test_switched_off_shared_token_says_what_to_do(hub, home):
     assert lines == ["hub answered 401 to poll: " + LEGACY_OFF]
     bridge.heartbeat()
     assert lines[-1] == "hub answered 401 to heartbeat: " + LEGACY_OFF
+
+
+def test_claude_busy_and_idle_reach_the_feed_as_activity(hub, home):
+    """Claude Code writes busy/idle as `status` in its session file; the bridge sends it as the
+    session's `activity` (the page's working row reads it). The agent's own `status` is the text
+    of the status() tool, empty until the session calls it."""
+    from helpers import write_session_file
+    from kaptyorka.adapters.claude import ClaudeAdapter
+    write_session_file(home, pid=os.getpid(), status="busy")
+    bridge = Bridge(cfg(hub), [ClaudeAdapter(home)], bridge_mod.log)
+    bridge.heartbeat()
+    a = hub.store.agent(f"claude:sid-{os.getpid()}")
+    assert (a.activity, a.status) == ("busy", "")
+    write_session_file(home, pid=os.getpid(), status="idle")
+    bridge.heartbeat()
+    assert hub.store.agent(f"claude:sid-{os.getpid()}").activity == "idle"

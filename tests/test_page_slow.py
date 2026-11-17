@@ -212,7 +212,7 @@ def test_member_writes_to_the_manager(member_page):
     assert page.js('document.getElementById("text").placeholder') == "Message manager"
     page.js('document.getElementById("text").value = "may I have proj-b?"')
     page.js('document.querySelector("#compose button[type=submit]").click()')
-    assert page.wait('[...document.querySelectorAll("#log .msg .text")].pop()?.textContent') == "may I have proj-b?"
+    assert page.wait('[...document.querySelectorAll("#log .msg:not(.out) .text")].pop()?.textContent') == "may I have proj-b?"
     assert page.js('document.getElementById("send-err").hidden')
     assert [m.text for m in store.inbox("k:mgr")] == ["may I have proj-b?"]
 
@@ -391,7 +391,7 @@ def test_member_requests_a_connection_and_admin_approves(tmp_path):
             assert page.js('document.getElementById("text").placeholder') == "Message billing"
             page.js('document.getElementById("text").value = "hello carol"')
             page.js('document.querySelector("#compose button[type=submit]").click()')
-            page.wait('[...document.querySelectorAll("#log .msg .text")].some(t => t.textContent === "hello carol")')
+            page.wait('[...document.querySelectorAll("#log .msg:not(.out) .text")].some(t => t.textContent === "hello carol")')
             assert page.js('document.getElementById("send-err").hidden')
             assert [m.text for m in store.inbox("k:c")][-1] == "hello carol"
             store.send("k:c", "bob", "hi bob")
@@ -500,6 +500,123 @@ def test_team_answers_yes_and_no_on_a_phone(tmp_path):
             assert page.js('document.getElementById("n-team").hidden')
             assert [p["status"] for p in RulesStore(store).proposals()] == ["rejected"]
             assert page.js(wide)
+    finally:
+        stop()
+        store.close()
+
+
+HOLD_SEND = """(() => { const f = window.fetch; window._mode = "hold";
+  window._hold = new Promise(r => { window._release = r; });
+  window.fetch = (u, o) => !String(u).includes("/api/send") || window._mode === "pass" ? f(u, o)
+    : window._mode === "fail" ? Promise.reject(new Error("hub unreachable")) : window._hold.then(() => f(u, o)); })()"""
+LAST_TICK = '[...document.querySelectorAll("#log .tick")].pop()?.textContent'
+
+
+def test_message_states_and_working_row(tmp_path):
+    """Send: Sending while the hub has not answered, Sent, Delivered once the session has it;
+    the working row while the session is busy, with its status text, gone on its reply. A
+    failed send says Not sent with Retry. On a phone too; screenshots to KAPTYORKA_SHOTS."""
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    _, token = person(store, "alice", "admin")
+    me = store.authenticate(token)
+
+    def beat(activity):
+        store.heartbeat("box-1", [{"key": "k1", "tool": "claude-code", "project": "proj-a",
+                                   "activity": activity}], tools=("claude-code",), principal=me)
+    try:
+        for w, h in ((1440, 900), (390, 844)):
+            beat("idle")
+            with chrome(w, h) as page:
+                page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+                page.wait('[...document.querySelectorAll("#agents .row")].some(r => r.querySelector(".name").textContent === "proj-a")')
+                page.js('[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name").textContent === "proj-a").click()')
+                assert page.wait('document.getElementById("text").placeholder') == "Message proj-a"
+                page.js(HOLD_SEND)
+                page.js(f'document.getElementById("text").value = "please run the tests {w}"')
+                page.js('document.querySelector("#compose button[type=submit]").click()')
+                assert page.wait('document.querySelector("#log .msg.out.sending .tick")?.textContent') == "Sending…"
+                assert page.js('document.getElementById("text").value') == ""  # free for the next one
+                page.screenshot(shots / f"sending-{w}.png")
+                page.js("window._release()")
+                page.wait('!!document.querySelector("#log .msg:not(.out) .tick")')
+                assert page.js(LAST_TICK) == "Sent"
+                assert page.js('document.querySelectorAll("#log .msg.out").length') == 0
+                assert [m.text for m in store.inbox("k1")] == [f"please run the tests {w}"]  # it has it
+                assert page.wait(LAST_TICK + ' === "Delivered"')
+                page.screenshot(shots / f"delivered-{w}.png")
+                assert page.js('document.querySelector("#log .working")') is None  # idle: no row
+                beat("busy")
+                store.set_status("k1", "running the tests")
+                row = page.wait('document.querySelector("#log .working")?.textContent')
+                assert row == "proj-ais working· running the tests"
+                page.screenshot(shots / f"working-{w}.png")
+                store.send("k1", "alice", "all green")
+                page.wait('[...document.querySelectorAll("#log .msg .text")].some(t => t.textContent === "all green")')
+                assert page.wait('document.querySelector("#log .working") === null')
+                assert page.js('document.querySelectorAll("#log .tick").length') == 0  # nothing after a reply
+                # the hub cannot be reached: Not sent, Retry sends it
+                page.js('window._mode = "fail"')
+                page.js('document.getElementById("text").value = "one more"')
+                page.js('document.querySelector("#compose button[type=submit]").click()')
+                assert page.wait('document.querySelector("#log .msg.out.failed .tick")?.textContent') == \
+                    "Not sent · Retry · Edit"
+                assert page.js('document.getElementById("send-err").textContent') == "hub unreachable"
+                page.js('window._mode = "pass"')
+                page.js('[...document.querySelectorAll("#log .tick button")].find(b => b.textContent === "Retry").click()')
+                page.wait('[...document.querySelectorAll("#log .msg:not(.out) .text")].some(t => t.textContent === "one more")')
+                assert page.js('document.getElementById("send-err").hidden')
+                assert page.js("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+                store.inbox("k1")
+                store.send("k1", "alice", "ok")
+    finally:
+        stop()
+        store.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_manager_waking_row(tmp_path, monkeypatch, w, h):
+    """A message to the manager while it sleeps: "waking the manager…" under it."""
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "kh"))
+    store = Store(tmp_path / "hub.db")
+    alice, token = person(store, "alice", "admin")
+    mtoken = ManagerStore(store).ensure_account("box-1", "alice")
+    store.heartbeat("box-1", [{"key": "k:mgr", "tool": "claude-code", "project": "manager",
+                               "label": "manager"}], principal=store.authenticate(mtoken),
+                    facts={"host": "box-1", "os_user": "u"})
+    with store.lock:  # its session stopped after an idle hour: asleep
+        store.db.execute("UPDATE agents SET last_seen=last_seen-100 WHERE key='k:mgr'")
+        store.db.execute(
+            "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+            " tool, folder, state, created, closed_at, error, manager) VALUES ('manager',"
+            " 'manager', 'the team''s manager', 'web:alice', ?, 0, 'box-1', 'claude-code',"
+            " '/home/u/.kaptyorka/manager', 'closed', ?, ?, 'session gone', 1)",
+            (alice, time.time() - 4000, time.time() - 60))
+    stop = start_hub(store)
+    host = ManagerStore(store)._host_of_account()  # the hub machine, as the hub set it up
+    with store.lock:  # the admin's bridge there is up, so a message may wake the manager
+        store.db.execute("INSERT INTO devices (person_id, name, token_hash, secret_hash, created,"
+                         " host, last_used) VALUES (?, 'hub-box', 'h', 's', ?, ?, ?)",
+                         (alice, time.time(), host, time.time()))
+    try:
+        with chrome(w, h) as page:
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+            assert page.wait('document.querySelector("#agents .mgr .n")?.textContent') == "asleep"
+            if w < 720:
+                page.js('document.querySelector("#agents .row.mgr").click()')
+            page.js('document.getElementById("text").value = "are you there?"')
+            page.js('document.querySelector("#compose button[type=submit]").click()')
+            page.wait('!!document.querySelector("#log .msg:not(.out) .tick")')
+            assert page.js(LAST_TICK) == "Sent"  # the manager has not read it yet
+            assert page.wait('document.querySelector("#log .working")?.textContent') == "waking the manager\u2026"
+            time.sleep(2.5)  # a poll later it still says so
+            assert page.js('document.querySelector("#log .working")?.textContent') == "waking the manager\u2026"
+            page.screenshot(shots / f"waking-{w}.png")
     finally:
         stop()
         store.close()

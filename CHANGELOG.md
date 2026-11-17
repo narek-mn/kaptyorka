@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.9
+
+- Home chat: a message you send shows at once, faded with **Sending…**, then **Sent** (the hub has it) and **Delivered** (the session has it: pushed into it or read from its inbox). If it cannot be sent it says **Not sent** with **Retry** and **Edit** (back into the box). Only your last message carries this, and only until the other side answers.
+- While the session you wrote to is working on it, the bottom of the chat shows three moving dots, its name and "is working", plus the line it set with its `status` tool, if any. It goes when the reply comes or the session goes idle. A message to a sleeping manager shows "waking the manager…" first. With reduced motion the dots stay still and the words say it.
+- What a session thinks is not shown, on purpose: only Claude Code's busy or idle (from its session file, reported by the bridge as `activity`) and the session's own `status` line reach the hub. The agents' `status` field was empty because it is that self-set line, not busy/idle.
+
 ## 0.9.8
 
 - Keep a Claude Code session off the hub. Type `/hub off` in it and it disappears from the hub at once, for everyone, the admin and the manager too; `/hub on` brings it back and `/hub` says which it is. Or start it off with `KAPTYORKA_HUB=off claude`, and nothing about it ever reaches the hub. While off, the bridge does not report it, its hooks stay silent, its kaptyorka tools refuse with a line saying how to come back, and messages to it fail as to an unknown session. The choice lasts for that session, across bridge and hub restarts, and ends with it. Background sessions ignore the variable (use `/hub off` in them); workers and the manager cannot go off. Other tools are not covered yet.
