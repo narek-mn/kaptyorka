@@ -82,7 +82,7 @@ Each machine gets a token of its own, tied to Alice, and a signing secret. Both 
 
 Opening the invite link in a browser shows the same `join` command, and **Sign in with GitLab** when it is set up; without it, a button that opens the page as Alice (that one uses the link up).
 
-Open the `page` link to watch the team live and act from it. It has two tabs. **Home** is for everyone and works like a chat app. On the left is the list: the manager first (with `asleep` or `off` when it is not running), then the sessions you may see. Each has a green dot when online, a grey one when not, its machine, and a count of unread replies; hover for the full name, folder and tool. Claude Code background jobs (`claude --bg`) sit in one **Background** group under your other chats, folded at first, with how many there are and their unread count; the page remembers whether you left it open. Inside, a job shows a small clock instead of the dot; its chat stays empty until it or you write, and you can write to it like any session. Click one to open its chat on the right: the messages in full, grouped by sender, with the box to write at the bottom (Enter sends, Shift+Enter makes a new line). Your last message says **Sending…**, **Sent** or **Delivered** (the session has it), or **Not sent** with **Retry**; while the session works on it, three dots and "is working" show under it ("waking the manager…" when the manager was asleep). What a session thinks is never sent to the hub. The admin also gets **Activity** at the top: every message as "from → to", read only, with the hub's own notices behind a **Notices** toggle. If something stops you working (for example no agent tool logged in on your machine), one bar over the chat shows it with the command that fixes it and a copy button. On a phone you see the list first; a tap opens the chat and **Back** returns. Members never see other people's sessions; to reach one, they write to the manager, and once the admin opens a door that session shows as a normal chat. Members find **Ask for access** at the bottom of the list. **Team**, for the admin only, holds what waits for a Yes or No and the people (see People and access). Members see only Home: their own sessions and the manager. They keep notes, rules, machines and workers through their agents and the commands, not on the page.
+Open the `page` link to watch the team live and act from it. The top bar has **Home** and, on the right, your name, which opens a menu: **Account settings**, **Team settings** (admins only) and **Sign out**. **Home** is for everyone and works like a chat app. On the left is the list: the manager first (with `asleep` or `off` when it is not running), then the sessions you may see. Each has a green dot when online, a grey one when not, its machine, and a count of unread replies; hover for the full name, folder and tool. Claude Code background jobs (`claude --bg`) sit in one **Background** group under your other chats, folded at first, with how many there are and their unread count; the page remembers whether you left it open. Inside, a job shows a small clock instead of the dot; its chat stays empty until it or you write, and you can write to it like any session. Click one to open its chat on the right: the messages in full, grouped by sender, with the box to write at the bottom (Enter sends, Shift+Enter makes a new line). Your last message says **Sending…**, **Sent** or **Delivered** (the session has it), or **Not sent** with **Retry**; while the session works on it, three dots and "is working" show under it ("waking the manager…" when the manager was asleep). What a session thinks is never sent to the hub. The admin also gets **Activity** at the top: every message as "from → to", read only, with the hub's own notices behind a **Notices** toggle. If something stops you working (for example no agent tool logged in on your machine), one bar over the chat shows it with the command that fixes it and a copy button. On a phone you see the list first; a tap opens the chat and **Back** returns. Members never see other people's sessions; to reach one, they write to the manager, and once the admin opens a door that session shows as a normal chat. Members find **Ask for access** at the bottom of the list. **Settings** is one area with a sidebar: **Your account** (Profile, Machines, Signed-in browsers) for everyone, and **Team** (People, Projects, All machines) for admins; each section has its own address, such as `#settings/team/people`, so Back and links work. On a phone the sidebar is a row of tabs at the top. Members see Home and their own account: their sessions and the manager. They keep notes, rules, machines and workers through their agents and the commands, not on the page.
 
 The hub address uses the machine's IP. Use `--host` to set another one, and `--port` for another port. `kaptyorka start` again later starts the hub with the same settings. It also turns this machine's bridge back on when `kaptyorka stop` switched it off. On Linux, if the hub must survive logout, `start` prints one command to run once (`sudo loginctl enable-linger <user>`) when it could not do it itself.
 
@@ -188,7 +188,7 @@ The team's rules and skills are kept in a private folder on the admin's machine:
 kaptyorka rules push <dir>
 ```
 
-Only the admin's device can push. Accepting a proposal (Yes on the Team page) also saves a new version, on the hub only. A push replaces the rules text with `RULES.md` as a new version. So before it uploads, `rules push` reads the hub's current text; if a line there is not in `RULES.md`, it prints those lines and stops. Copy them into `RULES.md`, or run `kaptyorka rules push --force <dir>` to replace them anyway. The skill set is replaced as a whole, so a skill removed from the folder is removed from the team. Limits: rules up to 20,000 characters, each skill up to 20,000, at most 50 skills. A skill name uses lowercase letters, digits and single hyphens, 1 to 48 characters.
+Only the admin's device can push. Accepting a proposal (Yes in Team settings) also saves a new version, on the hub only. A push replaces the rules text with `RULES.md` as a new version. So before it uploads, `rules push` reads the hub's current text; if a line there is not in `RULES.md`, it prints those lines and stops. Copy them into `RULES.md`, or run `kaptyorka rules push --force <dir>` to replace them anyway. The skill set is replaced as a whole, so a skill removed from the folder is removed from the team. Limits: rules up to 20,000 characters, each skill up to 20,000, at most 50 skills. A skill name uses lowercase letters, digits and single hyphens, 1 to 48 characters.
 
 Every session sees the rules in its start brief, under this heading. The hub builds the brief from the current version, so a new version reaches a session's next brief within 10 seconds (the brief cache):
 
@@ -208,7 +208,7 @@ On Home, hovering a session shows the admin what its tool has loaded:
 
 Agents can suggest rules, and report clashes. The brief tells each agent when to do this:
 
-- When its person corrects it the same way twice, the agent calls `propose_rule(text, evidence)`. The admin accepts it, which appends it to the team rules as a new version, or rejects it. Open proposals wait on the Team page as one line each, with Yes and No; the answer is sent to the proposer's session.
+- When its person corrects it the same way twice, the agent calls `propose_rule(text, evidence)`. The admin accepts it, which appends it to the team rules as a new version, or rejects it. Open proposals wait in Team settings as one line each, with Yes and No; the answer is sent to the proposer's session.
 - When two rules clash and the agent must ask its person, it calls `conflict(rule_a, rule_b)`. This logs the clash for the admin to fix the text.
 
 If `~/.claude/skills` is a link into a git repo, add `team-*/` to that repo's `.gitignore`.
@@ -346,7 +346,7 @@ The hub has people, and each person has devices (one per machine). The first adm
 
 | Level | Role | What it allows |
 |---|---|---|
-| Hub | admin | Everything: sees all sessions, projects and notes, messages anyone, uses all machines, and has the Team tab |
+| Hub | admin | Everything: sees all sessions, projects and notes, messages anyone, uses all machines, and has Team settings |
 | Hub | member | Own sessions and the manager, team notes, and what the admin grants |
 | Hub | manager | A member whose session may also decide work requests and message anyone |
 | Project | read | See the project's notes and sessions |
@@ -354,18 +354,22 @@ The hub has people, and each person has devices (one per machine). The first adm
 | Project | manage | Same as write today; only the admin gives or changes access |
 | Machine | use | Start workers on another person's shared account on that machine (its owner and the admin may always) |
 
-### The Team page
+### Team settings
 
-The admin's **Team** tab does four things:
+An admin's **Team settings** (the account menu) has three sections. Rows show their actions when you point at them or move to them with the keyboard (always on a touch screen); every question is asked in place on the row; a row added or removed slides in or out.
 
-1. **Waiting for you** (only when something waits; the count is on the tab): one line per request, "bob wants to work on proj-a", with **Yes** and **No**. Yes gives what was asked. Requests, connection requests, knocks and rule proposals all land here.
+**People**:
+
+1. **Waiting for you** (only when something waits; the count is on People, on your name in the top bar and in the menu): one line per request, "bob wants to work on proj-a", with **Yes** and **No**. Yes gives what was asked. Requests, connection requests, knocks and rule proposals all land here.
 2. **Add person**: type a name, **Add**, then **Copy** the invite link and send it. It joins one machine, within 7 days; with sign-in with GitLab, the person links their own GitLab from it. Once linked, their row shows `@username`. Until they join, their row says "hasn't joined yet". **New invite link** on any person's row, at any time, makes a fresh link and copies it; their older links stop working, so a lost or expired link is never a problem.
 3. **Remove**: on a person's row, with a question first ("Remove bob? They are signed out everywhere."). **Make admin** and **Remove admin** on a row change the admin role, each with a question first; admin rows carry an **Admin** pill. See "Admins".
-4. **Projects**: every project of the team's GitLab group and every project on the hub, one row each, with its description, who has access, and **On hub** or **Not on hub**. **Add to hub** registers a GitLab project with its GitLab description and repo address. A project on the hub has **Edit** (its description) and **Remove**, which asks first: its sessions leave the hub and their chats are deleted; its notes are kept. **Add project** takes a folder name and an optional description, for a project that is not in GitLab.
+**Projects**: every project of the team's GitLab group and every project on the hub, one row each, with its description, who has access, and **On hub** or **Not on hub**. **Add to hub** registers a GitLab project with its GitLab description and repo address. A project on the hub has **Edit** (its description) and **Remove**, which asks first: its sessions leave the hub and their chats are deleted; its notes are kept. **Add project** takes a folder name and an optional description, for a project that is not in GitLab.
 
 Click a person to see every project on the hub as a box to tick. A tick gives write and saves at once; a project seen only on a session is registered on its first tick.
 
-Bob joins with `kaptyorka join <link>` on each of his machines. Your name, top right, opens your **Account** page: your profile (name, role, GitLab user; only the admin changes these), **Machines** (each with the OS user it runs as, and online or when last seen; **Rename** changes the name shown, **Remove** turns that machine off until it joins again), **Signed-in browsers** (your GitLab sign-ins, with **Sign out everywhere else**), your projects with your role, and **Sign out**. **Add a machine** there shows the exact `kaptyorka join` command with a fresh link for yourself, with **Copy**: it works once, for 24 hours, and you can hold 3 unused at a time. Only the admin makes links for other people. A member clicks **Ask for access** under their sessions on Home to see what they may use and to **Ask for** read or write access to a project, or use of a machine; an agent asks with `request_access`. To reach someone else's session, a member (or their agent) messages the manager with whom and why; the manager tells the admin, and only the admin opens a door.
+**All machines**: see "Machines and team machines" below.
+
+Bob joins with `kaptyorka join <link>` on each of his machines. **Account settings** (your name, top right) has **Profile** (name, role, GitLab user, and your projects with your role; only an admin changes these), **Machines** (each with the OS user it runs as, and online or when last seen; **Rename** changes the name shown, **Remove** turns that machine off until it joins again), **Signed-in browsers** (your GitLab sign-ins, with **Sign out everywhere else**; shown once you sign in with GitLab). **Sign out** is in the menu. **Add a machine** there shows the exact `kaptyorka join` command with a fresh link for yourself, with **Copy**: it works once, for 24 hours, and you can hold 3 unused at a time. Only the admin makes links for other people. A member clicks **Ask for access** under their sessions on Home to see what they may use and to **Ask for** read or write access to a project, or use of a machine; an agent asks with `request_access`. To reach someone else's session, a member (or their agent) messages the manager with whom and why; the manager tells the admin, and only the admin opens a door.
 
 #### Projects from GitLab
 
@@ -383,7 +387,7 @@ People can open the page with their GitLab account instead of a private link: no
 
 1. In GitLab, make an application (in the Admin area under Applications, or in a group's settings): scope `read_user`, confidential. Its redirect URI is the hub address people open plus `/auth/gitlab/callback`, for example `http://<hub>:8765/auth/gitlab/callback`. `kaptyorka gitlab status` prints it. If people open the hub under more than one address, put each on its own line.
 2. On the hub machine, put the application id on line 1 and the secret on line 2 of `~/.kaptyorka/gitlab-oauth`, then `chmod 600 ~/.kaptyorka/gitlab-oauth`. The hub refuses a file other users can open, and says so. The secret is never logged, shown or sent anywhere but GitLab.
-3. Link yourself: on the Team page, click **GitLab name** on your row, or run `kaptyorka people gitlab alice alice-gl`. `kaptyorka gitlab status` then says `sign-in: on`.
+3. Link yourself: in Team settings > People, click **GitLab name** on your row, or run `kaptyorka people gitlab alice alice-gl`. `kaptyorka gitlab status` then says `sign-in: on`.
 
 Everyone else links themselves: **Sign in with GitLab** on their invite link page, or, for someone who joined before, **Sign in with GitLab** on the page that their `kaptyorka page` link opens (it links them through that link). Only a person's own invite link or device token can link them, only while they are not linked yet, and the first link wins. A GitLab account already linked to someone else, a person already linked to another account, and the `manager` account are refused. The admin can still set, change or clear anyone's link with **GitLab name** or `kaptyorka people gitlab bob bob-gl`. A leaked invite link that was already used can link someone's GitLab only until they link theirs or the link expires (7 days); `kaptyorka invites` lists it as `used` until then, and `kaptyorka invites --cancel <code>` closes it. The invite page says whose invite it is ("This invite is for bob") above the button.
 
@@ -411,7 +415,7 @@ To hand the hub over: make the new person an admin, let them sign in, then they 
 
 ### Machines and team machines
 
-The Team page's **Machines** list has one row per machine: who uses it (people, or **Team machine**), a green dot when a bridge there is online, and a short use line such as `GPU 90% · CPU 38% · memory 31%` (the busiest GPU, and the share of CPU and memory in use). Only the admin sees it.
+**All machines** in Team settings has one row per machine: who uses it (people, or **Team machine**), a green dot when a bridge there is online, and a short use line such as `GPU 90% · CPU 38% · memory 31%` (the busiest GPU, and the share of CPU and memory in use). Only the admin sees it.
 
 **Move** on a row gives a joined machine to another person without joining again: pick the person (and the machine, when several joined from that host), then **Move**. Its token keeps working and now speaks for them; its sessions move with it, their doors close, and the old person's ownership of the host follows when it was their last machine there. `kaptyorka machine move laptop-1 carol` does the same (a name or the id `kaptyorka people` shows). The log says "alice moved the machine laptop-1 from bob to carol".
 
@@ -438,7 +442,7 @@ kaptyorka shared-token off             # or on
 kaptyorka project add proj-a --repo <url> --desc "what it is"
 kaptyorka project edit proj-a --description "new words"
 kaptyorka project remove proj-a        # asks first; --yes skips it
-kaptyorka gitlab set https://gitlab.example team   # list the GitLab group's projects on the Team page
+kaptyorka gitlab set https://gitlab.example team   # list the GitLab group's projects in Team settings
 kaptyorka gitlab status                # address, group, token file, how many projects
 kaptyorka gitlab off                   # stop listing; projects on the hub stay
 ```
@@ -457,10 +461,10 @@ The `log` tool (admin and manager) shows who did what, in plain sentences ("alic
 
 A person's sessions are a group. A member sees and messages only their own sessions and the manager; everyone else is left out of `who`, the page, the chats and every error: no person, machine or label. The admin and the manager see and message everyone.
 
-- To reach someone else, message the manager: say whom and why. The manager tells the admin; it cannot open a door. Only the admin does, on the Team page. `request_access(kind="session")` and the old page request say to ask the manager.
-- A connection request made before 0.9.11 still waits on the Team page. Approving it opens a door between exactly the asking session (or page) and that session, never between the two people. Both are told; it closes like any session door (when either goes offline, with `door_close`, by the admin, or when a person is removed). If a session went offline before the admin approves, no door opens and the asker is told.
+- To reach someone else, message the manager: say whom and why. The manager tells the admin; it cannot open a door. Only the admin does, in Team settings. `request_access(kind="session")` and the old page request say to ask the manager.
+- A connection request made before 0.9.11 still waits in Team settings. Approving it opens a door between exactly the asking session (or page) and that session, never between the two people. Both are told; it closes like any session door (when either goes offline, with `door_close`, by the admin, or when a person is removed). If a session went offline before the admin approves, no door opens and the asker is told.
 - A session whose project you may not see goes by its `id` (for example `#3fa2c19b`) or its hidden name when that is unique. A message from one says which `id` to reply to, and the project stays hidden in `inbox`, pushed messages and the brief.
-- Only the admin opens a door: by saying Yes to a knock or a connection request on the Team page. Members cannot knock or answer.
+- Only the admin opens a door: by saying Yes to a knock or a connection request in Team settings. Members cannot knock or answer.
 - While a door is open, the two people see and message each other's sessions; `door_close(to)` or the admin closes it.
 - `send("all")` reaches every session you may message: your own, and those behind a door.
 
@@ -538,7 +542,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka project add <name>` | Admin: register a project (`--repo`, `--desc`); also brings back a removed one |
 | `kaptyorka project edit <name> --description <text>` | Admin: change a project's description |
 | `kaptyorka project remove <name>` | Admin: archive a project, notes kept (asks first; `--yes` skips it) |
-| `kaptyorka gitlab set <url> <group>` | Admin: list the GitLab group's projects on the Team page (token in `~/.kaptyorka/gitlab-token` on the hub machine, `chmod 600`) |
+| `kaptyorka gitlab set <url> <group>` | Admin: list the GitLab group's projects in Team settings (token in `~/.kaptyorka/gitlab-token` on the hub machine, `chmod 600`) |
 | `kaptyorka gitlab status` | Admin: show the GitLab address, group, token file state and project count; exit 1 if GitLab cannot be asked |
 | `kaptyorka gitlab off` | Admin: stop listing GitLab projects; projects on the hub stay |
 | `kaptyorka grant <person> <project>:<role>` | Admin: give a project role; or `machine:<host>` to allow a machine |

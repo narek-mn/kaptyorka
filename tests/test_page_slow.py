@@ -84,7 +84,7 @@ def test_member_asks_for_access(tmp_path):
             assert [(r["person"], r["target"], r["role"], r["why"]) for r in store.requests()] == \
                 [("bob", "proj-a", "write", "to review")]
             # the admin-only parts stay away
-            assert page.js('document.getElementById("tab-team").hidden')
+            assert page.js('document.querySelector("[data-go=\\"team/people\\"]").hidden')
     finally:
         stop()
         store.close()
@@ -125,7 +125,7 @@ def test_member_sees_only_home(member_page):
     store.seen("b1", "box-1", "codex", "proj-a", principal=bob)
     page.go(url + "&view=notes")
     page.wait('document.querySelectorAll("#agents .row").length === 2')
-    assert page.js('document.getElementById("tab-team").hidden') and page.js('document.getElementById("team").hidden')
+    assert page.js('document.querySelector("[data-go=\\"team/people\\"]").hidden') and page.js('document.getElementById("settings").hidden')
     assert page.js('[...document.querySelectorAll("#agents .row .name")].map(n => n.textContent)') == ["manager", "proj-a"]
     assert page.js('document.querySelector("#agents .mgr .n").textContent') == "off"
     assert page.js('document.getElementById("text").placeholder') == "Message manager"
@@ -611,7 +611,7 @@ def test_team_projects_from_gitlab(tmp_path, w, h):
     wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
     try:
         with chrome(w, h) as page:
-            page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=team")
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=projects")
             page.wait(f'!!{row("proj-c")}')
             names = page.js('[...document.querySelectorAll("#project-rows .pj-name")].map(n => n.textContent)')
             assert names == ["proj-a", "proj-x", "proj-b", "proj-c"]  # on the hub first
@@ -622,7 +622,6 @@ def test_team_projects_from_gitlab(tmp_path, w, h):
             assert page.js(f'{row("proj-a")}.querySelector(".pj-acts").textContent') == "EditRemove"
             assert page.js('document.getElementById("pj-note").hidden')
             assert page.js(wide)
-            page.js('document.getElementById("projects").scrollIntoView()')
             page.screenshot(shots / f"projects-{tag}.png")
             # Add to hub: registered with GitLab's description and repo, nobody has access yet
             click(page, '#project-rows [data-project="proj-b"]', "Add to hub")
@@ -668,7 +667,7 @@ def test_team_projects_from_gitlab(tmp_path, w, h):
             page.go(f"http://127.0.0.1:{stop.port}/#t={bob_t}&view=team")
             page.wait('document.getElementById("viewer-name").textContent === "bob"')
             time.sleep(1)
-            assert page.js('document.getElementById("tab-team").hidden && !document.querySelector("#project-rows .pj-row")')
+            assert page.js('document.querySelector("[data-go=\\"team/people\\"]").hidden && !document.querySelector("#project-rows .pj-row")')
     finally:
         stop()
         store.close()
@@ -702,7 +701,6 @@ def test_team_projects_gitlab_refuses(tmp_path, monkeypatch):
             assert note == ("GitLab refused the token (401): it is wrong or expired;"
                             " put a new one in ~/.kaptyorka/gitlab-token")
             assert page.js('[...document.querySelectorAll("#project-rows .pj-name")].map(n => n.textContent)') == ["proj-a"]
-            page.js('document.getElementById("projects").scrollIntoView()')
             page.screenshot(shots / "projects-error-phone.png")
     finally:
         stop()
@@ -762,7 +760,7 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
             assert "t=" not in page.js("location.href")
             assert page.js('localStorage.getItem("kaptyorka.token")')
             # Team: each row has the GitLab username, or a quiet way to add one
-            page.js('document.getElementById("tab-team").click()')
+            page.js('document.querySelector("[data-go=\\"team/people\\"]").click()')
             page.wait(f'!!{gl("bob")}')
             carol_row = 'document.querySelector("#people-rows [data-person=carol]")'
             assert page.js(f'{carol_row}.querySelector(".p-sum").textContent') == "hasn't joined yet"
@@ -863,9 +861,9 @@ def test_people_link_their_own_gitlab(tmp_path, w, h):
             page.wait('document.getElementById("viewer-name")?.textContent === "dave"')
             assert [p["gitlab_user"] for p in store.people() if p["name"] == "dave"] == ["dave-gl"]
             assert store.invite_valid(code)  # join still works on his machine
-            page.js('document.getElementById("viewer-name").click()')
+            page.js('document.querySelector("[data-go=\\"account/profile\\"]").click()')
             page.wait('document.getElementById("a-profile").textContent.includes("@dave-gl")')
-            assert "Connect GitLab" not in page.js('document.getElementById("account").innerText')
+            assert "Connect GitLab" not in page.js('document.getElementById("settings").innerText')
         with chrome(w, h) as page:
             page.go(f"{base}/#t={erin_t}")
             page.wait('!document.getElementById("lock-note").hidden')
@@ -877,9 +875,9 @@ def test_people_link_their_own_gitlab(tmp_path, w, h):
             page.wait('document.getElementById("viewer-name")?.textContent === "erin"'
                       ' && localStorage.getItem("kaptyorka.token") !== null')
             assert [p["gitlab_user"] for p in store.people() if p["name"] == "erin"] == ["erin-gl"]
-            page.js('document.getElementById("viewer-name").click()')
+            page.js('document.querySelector("[data-go=\\"account/profile\\"]").click()')
             page.wait('document.getElementById("a-profile").textContent.includes("@erin-gl")')
-            assert "Connect GitLab" not in page.js('document.getElementById("account").innerText')
+            assert "Connect GitLab" not in page.js('document.getElementById("settings").innerText')
             page.screenshot(shots / f"connected-{tag}.png")
     finally:
         stop()
@@ -1030,7 +1028,7 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
     old = store.invite_create(bob, by="alice")
     base = f"http://127.0.0.1:{stop.port}"
     wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
-    acct = 'document.getElementById("account")'
+    acct = 'document.getElementById("settings")'
     try:
         with chrome(w, h) as page:
             lab.who = "bob-gl"
@@ -1038,29 +1036,50 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             page.wait('document.getElementById("lock").dataset.mode === "gitlab"')
             page.js('document.getElementById("gitlab-signin").click()')
             page.wait('document.getElementById("viewer-name")?.textContent === "bob"')
-            # the name opens the Account page in the main area, with its own address
+            # the name opens a menu; Account settings opens Profile, with its own address
+            assert page.js('document.querySelector("[data-go=\\"team/people\\"]").hidden')  # a member
             page.js('document.getElementById("viewer-name").click()')
-            page.wait('document.querySelectorAll("#a-machines .a-row").length === 2')
-            assert page.js("location.hash") == "#view=account"
-            assert page.js('document.getElementById("home").hidden')
-            assert page.js('document.getElementById("viewer-name").getAttribute("aria-selected")') == "true"
+            page.wait('!document.getElementById("acct-menu").hidden')
+            assert page.js('document.getElementById("acct-menu").innerText').split("\n")[:2] == ["bob", "Member \u00b7 gitlab-web"]
+            page.js('document.body.click()')  # a click outside closes it
+            page.wait('document.getElementById("acct-menu").hidden')
+            page.js('document.getElementById("viewer-name").click()')
+            page.js('document.querySelector("[data-go=\\"account/profile\\"]").click()')
+            page.wait('!document.getElementById("pane-account-profile").hidden && document.querySelectorAll("#a-projects .a-row").length === 2')
+            assert page.js("location.hash") == "#settings/account/profile"
+            assert page.js('document.getElementById("home").hidden && document.getElementById("acct-menu").hidden')
             text = page.js(f"{acct}.innerText")
-            for want in ("Profile", "bob", "Member", "@bob-gl", "The admin can change these.", "Machines",
-                         "bob@box-1", "as bob", "online", "bob@box-2", "3h ago", "Rename", "Remove",
-                         "Signed-in browsers", "This browser", "Projects", "proj-a", "Write", "proj-b", "Read",
-                         "Add a machine", "Sign out"):
+            for want in ("Profile", "bob", "Member", "@bob-gl", "Only an admin changes your role.", "proj-a", "Write",
+                         "proj-b", "Read", "Machines", "Signed-in browsers"):
                 assert want in text, want
-            assert "alice" not in text and "gitlab-web" not in text
-            assert "Sign out everywhere else" not in text  # one browser: nothing else to sign out
+            assert "alice" not in text and "gitlab-web" not in text and "All machines" not in text
             assert page.js(wide)
-            page.screenshot(shots / f"account-{tag}.png")
-            # Back returns Home; Forward and a reload come back to Account
+            page.screenshot(shots / f"settings-profile-{tag}.png")
+            page.js('document.querySelector("#set-nav [data-sec=\\"account/browsers\\"]").click()')
+            page.wait('!document.getElementById("pane-account-browsers").hidden')
+            text = page.js('document.getElementById("pane-account-browsers").innerText')
+            assert "This browser" in text and "Sign out everywhere else" not in text  # one browser
+            page.screenshot(shots / f"settings-browsers-{tag}.png")
+            page.js('document.querySelector("#set-nav [data-sec=\\"account/machines\\"]").click()')
+            page.wait('document.querySelectorAll("#a-machines .a-row").length === 2')
+            assert page.js("location.hash") == "#settings/account/machines"
+            text = page.js('document.getElementById("pane-account-machines").innerText')
+            for want in ("bob@box-1", "as bob", "online", "bob@box-2", "3h ago", "Rename", "Remove", "Add a machine"):
+                assert want in text, want
+            page.screenshot(shots / f"settings-machines-{tag}.png")
+            # Back walks the sections back to Home; Forward and a reload come back
             page.js("history.back()")
-            page.wait('!document.getElementById("home").hidden && document.getElementById("account").hidden')
-            page.js("history.forward()")
-            page.wait('!document.getElementById("account").hidden')
+            page.wait('!document.getElementById("pane-account-browsers").hidden')
+            page.js("history.back()")
+            page.wait('!document.getElementById("pane-account-profile").hidden')
+            page.js("history.back()")
+            page.wait('!document.getElementById("home").hidden && document.getElementById("settings").hidden')
+            for _ in range(3):
+                page.js("history.forward()")
+                time.sleep(0.2)
+            page.wait('!document.getElementById("pane-account-machines").hidden')
             page.js("location.reload()")
-            page.wait('!document.getElementById("account").hidden && document.querySelectorAll("#a-machines .a-row").length === 2')
+            page.wait('!document.getElementById("pane-account-machines").hidden && document.querySelectorAll("#a-machines .a-row").length === 2')
             # rename a machine inline
             box2 = 'document.querySelector("#a-machines [data-machine]:nth-child(2)")'
             click(page, "#a-machines [data-machine]:nth-child(2)", "Rename")
@@ -1090,7 +1109,8 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             page.js('document.getElementById("add-machine").click()')
             page.js('document.getElementById("add-machine").click()')
             assert page.js('document.getElementById("join-cmd").textContent') == cmd
-            # Sign out, at the bottom of the page
+            # Sign out, the menu's last item
+            page.js('document.getElementById("viewer-name").click()')
             page.js('document.getElementById("signout").click()')
             page.wait('!document.getElementById("lock").hidden')
         with chrome(w, h) as page:
@@ -1099,7 +1119,7 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             page.wait('document.getElementById("lock").dataset.mode === "gitlab"')
             page.js('document.getElementById("gitlab-signin").click()')
             page.wait('document.getElementById("viewer-name")?.textContent === "alice"')
-            page.js('document.getElementById("tab-team").click()')
+            page.js('document.querySelector("[data-go=\\"team/people\\"]").click()')
             page.wait('!!document.querySelector("#people-rows [data-person=bob] .new-link")')
             page.wait('document.getElementById("live").className === "live"')
             row = 'document.querySelector("#people-rows [data-person=bob]")'
@@ -1196,9 +1216,9 @@ def test_team_machines_add_list_move(tmp_path, w, h):
     wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
     try:
         with chrome(w, h) as page:
-            page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=team")
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=machines")
             page.wait(f'!!{row("gpu-1")}')
-            assert page.js(f'{row("gpu-1")}.querySelector(".pj-desc").textContent') == "bob"
+            assert page.js(f'{row("gpu-1")}.querySelector(".m-who").textContent') == "bob"
             assert page.js(f'{row("gpu-1")}.querySelector(".m-use").textContent') == \
                 "GPU 90% · CPU 38% · memory 31%"
             # Add team machine: a name, then the command to run on its shared account
@@ -1209,7 +1229,6 @@ def test_team_machines_add_list_move(tmp_path, w, h):
             cmd = page.js('document.querySelector("#add-team-link input").value')
             assert cmd.startswith("kaptyorka join http://127.0.0.1:")
             assert page.js(wide)
-            page.js('document.getElementById("machines-sec").scrollIntoView()')
             page.screenshot(shots / f"team-machine-added-{tag}.png")
             code = cmd.rsplit("/", 1)[1]
             t, _ = store.invite_redeem(code, "jet-1", host="jet-1", os_user="nvidia")
@@ -1217,10 +1236,9 @@ def test_team_machines_add_list_move(tmp_path, w, h):
                             facts={"host": "jet-1", "os_user": "nvidia"})
             page.js('[...document.querySelectorAll("#add-team-link button")].find(b => b.textContent === "Done").click()')
             page.wait(f'!!{row("jet-1")}')
-            assert page.js(f'{row("jet-1")}.querySelector(".pj-desc").textContent') == "Team machine"
+            assert page.js(f'{row("jet-1")}.querySelector(".m-who").textContent') == "Team machine"
             assert page.js(f'{row("jet-1")}.querySelector(".chip").textContent') == "Team"
             assert "jet-1" not in page.js('document.getElementById("people-rows").textContent')
-            page.js('document.getElementById("machines-sec").scrollIntoView()')
             page.screenshot(shots / f"machines-{tag}.png")
             # Move bob's machine to carol, asked in place
             click(page, '#team-machine-rows [data-host="gpu-1"]', "Move")
@@ -1229,9 +1247,84 @@ def test_team_machines_add_list_move(tmp_path, w, h):
             assert page.js(wide)
             page.screenshot(shots / f"machine-move-{tag}.png")
             click(page, '#team-machine-rows [data-host="gpu-1"] .confirm', "Move")
-            page.wait(f'{row("gpu-1")} && {row("gpu-1")}.querySelector(".pj-desc").textContent === "carol"')
+            page.wait(f'{row("gpu-1")} && {row("gpu-1")}.querySelector(".m-who").textContent === "carol"')
             assert store.db.execute("SELECT person_id FROM devices WHERE id=?",
                                     (b.device_id,)).fetchone()[0] == store.person_by_name("carol")["id"]
+    finally:
+        stop()
+        store.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_settings_sections_and_account_menu(tmp_path, w, h):
+    """The account menu opens with the mouse and the keyboard and closes on Esc; each Settings
+    section opens from the sidebar at its own address, with the waiting count on People and
+    on the account button. Screenshots of each to KAPTYORKA_SHOTS."""
+    import json as _json
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    alice, token = person(store, "alice", "admin")
+    bob, bob_t = person(store, "bob")
+    person(store, "carol", "admin")
+    store.project_register("proj-a", "the web shop", by="alice")
+    store.project_register("proj-b", "billing", by="alice")
+    store.grant_project("proj-a", bob, "write", "alice")
+    store.request_access(bob, "project", "proj-b", "to fix invoices")
+    a = store.authenticate(token)
+    store.heartbeat("box-1", [], principal=a, facts={"host": "box-1", "os_user": "alice"})
+    b = store.authenticate(bob_t)
+    store.heartbeat("gpu-1", [], principal=b, facts={"host": "gpu-1", "os_user": "bob"})
+    with store.lock:
+        store.db.execute("INSERT INTO device_facts (device_id, facts, updated) VALUES (?,?,?)",
+                         (b.device_id, _json.dumps({"use": {
+                             "age": 0, "cpus": 16, "mem_mb": 64000,
+                             "gpus": [{"index": 0, "util": 90.0, "mem": 0, "total": 0}],
+                             "users": {"bob": {"cpu": 6.0, "mem": 20000}}}}), store.clock()))
+    _, code = store.team_machine_add("jet-1", "alice")
+    t, _ = store.invite_redeem(code, "jet-1", host="jet-1", os_user="nvidia")
+    store.heartbeat("jet-1", [], principal=store.authenticate(t), facts={"host": "jet-1", "os_user": "nvidia"})
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    base = f"http://127.0.0.1:{stop.port}"
+    try:
+        with chrome(w, h) as page:
+            page.go(f"{base}/#t={token}")
+            page.wait('document.getElementById("n-acct").textContent === "1"')  # one request waits
+            # the menu, by keyboard: ArrowDown opens it on the first item; Esc closes it
+            page.js('document.getElementById("viewer-name").focus()')
+            page.js('document.getElementById("viewer-name").dispatchEvent(new KeyboardEvent("keydown", {key: "ArrowDown", bubbles: true}))')
+            page.wait('!document.getElementById("acct-menu").hidden')
+            assert page.js('document.activeElement.textContent') == "Account settings"
+            page.js('document.activeElement.dispatchEvent(new KeyboardEvent("keydown", {key: "ArrowDown", bubbles: true}))')
+            assert page.js('document.activeElement.textContent') == "Team settings1"
+            assert page.js(wide)
+            time.sleep(0.3)  # the menu's fade-in has ended
+            page.screenshot(shots / f"menu-open-{tag}.png")
+            page.js('document.activeElement.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}))')
+            page.wait('document.getElementById("acct-menu").hidden')
+            assert page.js('document.activeElement.id') == "viewer-name"
+            page.js('document.querySelector("[data-go=\\"team/people\\"]").click()')
+            for sec, ready in [("team/people", '#people-rows [data-person="bob"]'),
+                               ("team/projects", '#project-rows [data-project="proj-b"]'),
+                               ("team/machines", '#team-machine-rows [data-host="jet-1"]'),
+                               ("account/profile", '#a-profile dd'),
+                               ("account/machines", '#a-machines .a-row')]:
+                page.js(f'document.querySelector("#set-nav [data-sec=\\"{sec}\\"]").click()')
+                page.wait(f'!document.getElementById("pane-{sec.replace("/", "-")}").hidden'
+                          f' && !!document.querySelector({_json.dumps(ready)})')
+                assert page.js("location.hash") == f"#settings/{sec}"
+                assert page.js(f'document.querySelector("#set-nav [data-sec=\\"{sec}\\"]").getAttribute("aria-current")') == "page"
+                assert page.js(wide), sec
+                time.sleep(0.4)  # the section's rise has ended
+                page.screenshot(shots / f"settings-{sec.replace('/', '-')}-{tag}.png")
+            assert page.js('document.getElementById("n-team").textContent') == "1"
+            # a deep link opens its section after a reload
+            page.go(f"{base}/#settings/team/machines")
+            page.wait('!document.getElementById("pane-team-machines").hidden')
     finally:
         stop()
         store.close()

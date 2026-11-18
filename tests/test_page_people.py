@@ -134,7 +134,7 @@ def test_feed_admin_extras(app):
 def test_page_contains_team_markup(app):
     status, html = http.request("GET", app.url + "/", "")
     assert status == 200
-    assert 'data-view="team"' in html and 'id="team"' in html
+    assert 'href="#settings/team/people"' in html and 'id="pane-team-people"' in html
     assert "Your name" not in html
     assert "/api/me" in html and "/api/knocks/" in html
     assert "Yes opens a door between them" in html
@@ -393,11 +393,9 @@ def test_page_login_and_sign_out():
     unlock = html[html.index('$("unlock").addEventListener'):html.index('$("signout")')]
     assert "location.reload" not in unlock and 'get("/api/me")' in unlock
     assert 'id="signout"' in html and ">Sign out</button>" in html and "lock(false)" in html
-    # Sign out sits at the bottom of the Account page, which the person's name opens as a view
-    # with its own address (no popover)
-    assert 'id="viewer-name" data-view="account"' in html and 'var VIEWS = ["home", "account"]' in html
-    assert html.index('id="a-projects"') < html.index('id="signout"') < html.index('<section id="team"')
-    assert "vmenu" not in html and "accountOpen" not in html
+    # Sign out is the last item of the account menu that the person's name opens
+    assert 'id="viewer-name" aria-haspopup="menu"' in html
+    assert html.index('id="viewer-name"') < html.index('id="signout"') < html.index('<section id="settings"')
 
 
 def test_page_empty_states():

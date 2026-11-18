@@ -12,7 +12,7 @@ def page(hub) -> str:
 
 def test_page_served_without_token(hub):
     s, html = http.request("GET", hub.url + "/", "")
-    assert s == 200 and all(v in html for v in ['id="home"', 'id="team"', 'id="messages"'])
+    assert s == 200 and all(v in html for v in ['id="home"', 'id="settings"', 'id="messages"'])
 
 
 def test_page_has_no_external_urls(hub):
@@ -122,7 +122,7 @@ def test_phone_layouts(hub):
     assert "#home { display: flex; flex-direction: column;" in phone
     assert "#home.open .side, #home:not(.open) .chat { display: none; }" in phone
     # Team: a waiting line puts Yes and No under its words
-    assert ".w-text { flex-basis: 100%;" in phone and ".team { padding: 18px 16px 32px; }" in phone
+    assert ".w-text { flex-basis: 100%;" in phone and ".set { grid-template-columns: minmax(0, 1fr);" in phone
 
 
 def test_compose_attach_control(hub):
@@ -159,22 +159,35 @@ def team_code(html):
     return html[html.index("/* Team: the admin's one screen."):html.index("/* redraw only the parts whose data changed")]
 
 
-def test_team_is_one_screen(hub):
-    """The admin's tab is Team: no sub-tabs, no More; Waiting for you, then the people. What
-    left the page (devices, Revoke, roles, machines, doors, shared token, rules, notes, log,
-    settings, workers) has no markup or code here any more."""
+def test_settings_split_account_and_team(hub):
+    """The top bar keeps Home; the account button opens a menu (Account settings, Team settings
+    for an admin, Sign out). Settings is one area with a sidebar: Your account (Profile,
+    Machines, Signed-in browsers) and Team (People with the waiting count, Projects, All
+    machines), each at its own address. What left the page long ago stays gone."""
     html = page(hub)
     top = re.search(r'<nav role="tablist">.*?</nav>', html, re.S).group(0)
-    assert re.findall(r'data-view="(\w+)"', top) == ["home", "team"]
-    assert '>Team<span class="count" id="n-team" hidden>0</span>' in top
-    assert 'ADMIN_VIEWS = ["team"]' in html and 'class="sub"' not in html
-    team = re.search(r'<section id="team".*?</section>', html, re.S).group(0)
-    assert team.index("Waiting for you") < team.index(">Team<") < team.index('id="people-rows"')
-    assert ">Add person<" in team and "<select" not in team  # no role picker
-    for gone in ('id="people"', 'id="access"', 'id="machines"', 'id="rules"', 'id="notes"', 'id="audit"',
-                 'id="settings"', 'id="legacy-panel"', 'id="doors"', '"Revoke"', '"/api/legacy', '"/api/doors',
+    assert re.findall(r'data-view="(\w+)"', top) == ["home"]
+    menu = re.search(r'<div class="menu" id="acct-menu".*?id="signout"[^\n]*', html, re.S).group(0)
+    assert 'role="menu"' in menu and 'aria-haspopup="menu"' in html
+    assert re.findall(r'data-go="([a-z/]+)"', menu) == ["account/profile", "team/people"]
+    assert ">Account settings<" in menu and ">Team settings<" in menu and 'id="signout"' in menu
+    nav = re.search(r'<nav class="set-nav".*?</nav>', html, re.S).group(0)
+    assert re.findall(r'href="#settings/([a-z/]+)"', nav) == [
+        "account/profile", "account/machines", "account/browsers",
+        "team/people", "team/projects", "team/machines"]
+    assert 'id="n-team"' in nav and 'id="n-acct"' in html  # the waiting count, twice in sight
+    people = re.search(r'id="pane-team-people".*?id="team-err"', html, re.S).group(0)
+    assert people.index("Waiting for you") < people.index('id="people-rows"')
+    assert ">Add person<" in people and "<select" not in people  # no role picker
+    assert 'return ["settings", "team/people"];' in html  # an old #view=team link
+    assert 'if (v === "account") return ["settings", "account/profile"];' in html
+    # the menu: arrows, Esc and a click outside
+    assert 'e.key === "ArrowDown"' in html and 'e.key === "Escape"' in html
+    assert '!$("acct-menu").contains(e.target)' in html
+    for gone in ('id="people"', 'id="access"', 'id="rules"', 'id="notes"', 'id="audit"',
+                 'id="legacy-panel"', 'id="doors"', '"Revoke"', '"/api/legacy', '"/api/doors',
                  '"/api/log', '"/api/settings"', '"/api/workers', '"/auto_update"', '"/shared"', '"/owner"',
-                 '"/api/machines', '"/api/rules', '"/api/notes', "Decided", "Shared token", "Machine use"):
+                 '"/api/rules', '"/api/notes', "Decided", "Shared token", "Machine use"):
         assert gone not in html, gone
 
 
@@ -211,7 +224,7 @@ def test_team_people_rows(hub):
 
 def test_old_admin_links_open_team(hub):
     html = page(hub)
-    assert 'else if (params.get("view")) view = "team";' in html
+    assert 'return ["settings", "team/people"];' in html
 
 
 def test_chat_shows_sending_sent_delivered_and_working(hub):
