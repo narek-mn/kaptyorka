@@ -143,4 +143,5 @@ class FakeGitLab:
 
 def gitlab_project(path: str, description: str = "", group: str = "team") -> dict:
     return {"path": path, "description": description, "path_with_namespace": f"{group}/{path}",
+            "ssh_url_to_repo": f"ssh://git@gitlab.example:2222/{group}/{path}.git",
             "http_url_to_repo": f"https://gitlab.example/{group}/{path}.git"}

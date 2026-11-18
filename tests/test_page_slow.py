@@ -627,7 +627,7 @@ def test_team_projects_from_gitlab(tmp_path, w, h):
             page.wait(f'{row("proj-b")}.querySelector(".pj-tag").textContent === "On hub"')
             p = next(x for x in store.projects_for(store.authenticate(token)) if x["name"] == "proj-b")
             assert (p["description"], p["repo"]) == ("billing service that sends the monthly invoices",
-                                                     "https://gitlab.example/team/proj-b.git")
+                                                     "ssh://git@gitlab.example:2222/team/proj-b.git")
             # the person ticks list it now
             page.js('document.querySelector("#people-rows [data-person=bob] .p-main").click()')
             page.wait('[...document.querySelectorAll("#people-rows .proj")].map(l => l.textContent).join() === "proj-a,proj-b,proj-x"')

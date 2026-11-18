@@ -128,7 +128,7 @@ def fetch(base: str, group: str, token: str, timeout: float = TIMEOUT_S) -> List
                 continue
             out.append({"name": str(r["path"]),
                         "description": str(r.get("description") or "").strip()[:MAX_ABOUT],
-                        "repo": str(r.get("http_url_to_repo") or r.get("web_url") or ""),
+                        "repo": str(r.get("ssh_url_to_repo") or r.get("http_url_to_repo") or ""),
                         "path": str(r.get("path_with_namespace") or r["path"])})
         page = (page or "").strip()
         if not page:

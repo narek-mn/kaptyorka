@@ -36,7 +36,7 @@ def put_token(text=TOKEN, mode=0o600):
 def test_fetch_follows_pages_and_sends_the_token(fake):
     got = gitlab.fetch(fake.url, "team", TOKEN)
     assert len(got) == 150 and got[0] == {"name": "proj-000", "description": "project 0",
-                                          "repo": "https://gitlab.example/team/proj-000.git",
+                                          "repo": "ssh://git@gitlab.example:2222/team/proj-000.git",
                                           "path": "team/proj-000"}
     assert [p.split("?")[0] for p, _ in fake.seen] == ["/api/v4/groups/team/projects"] * 2
     assert "include_subgroups=true" in fake.seen[0][0] and "per_page=100" in fake.seen[0][0]
@@ -162,7 +162,7 @@ def test_page_api_lists_gitlab_projects_for_the_admin_only(app, fake, caplog):
     assert call(app, "alice", "POST", "/api/projects", {"name": p["name"], "description": p["description"],
                                                          "repo": p["repo"]})[0] == 204
     assert [(x["name"], x["description"], x["repo"]) for x in call(app, "alice", "GET", "/api/projects")[1]] == \
-        [("proj-001", "project 1", "https://gitlab.example/team/proj-001.git")]
+        [("proj-001", "project 1", "ssh://git@gitlab.example:2222/team/proj-001.git")]
     # members get nothing of it
     for method, path, body in (("GET", "/api/gitlab", None), ("GET", "/api/gitlab/projects", None),
                                ("POST", "/api/gitlab", {"url": fake.url, "group": "x"}),
