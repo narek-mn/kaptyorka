@@ -83,26 +83,32 @@ def machine_route(method: str, path: str) -> bool:
 _INVITE_STYLE = (
     '@font-face { font-family: "Archivo"; font-style: normal; font-weight: 100 900; font-display: swap;'
     ' src: url(/fonts/archivo-latin.woff2) format("woff2"); }'
-    ":root { --bg: #1b1a16; --surface: #211f1a; --ink: #e7e4dc; --muted: #aaa498;"
-    " --line: rgba(231, 228, 220, 0.18); --accent: #da6947; --ease: 150ms cubic-bezier(.2, .7, .3, 1);"
+    ":root { --bg: #1b1a16; --surface: #211f1a; --surface2: #2a2822; --ink: #e7e4dc; --muted: #aaa498; --faint: #878377;"
+    " --line: rgba(231, 228, 220, 0.18); --accent: #da6947; --accent-hover: #e27a5a; --accent-press: #c45a3a;"
+    " --dur: 160ms; --ease-out: cubic-bezier(.2, .7, .3, 1);"
     ' --sans: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;'
     ' --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace; }'
     "* { box-sizing: border-box; }"
-    "body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased;"
-    " max-width: 40rem; margin: 4rem auto; padding: 0 16px; }"
-    ".brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 18px; margin-bottom: 28px; }"
-    "h1 { font-size: 26px; font-weight: 650; margin: 0 0 20px; }"
-    "pre { font: 13px var(--mono); background: var(--surface); border: 1px solid var(--line); padding: 14px 16px;"
-    " overflow-x: auto; }"
+    "html { background: var(--bg); }"
+    "body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); -webkit-font-smoothing: antialiased;"
+    " max-width: 40rem; margin: 4rem auto; padding: 0 16px; animation: fade-in 220ms var(--ease-out); }"
+    "@keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }"
+    ".brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 18px; margin-bottom: 32px; }"
+    "h1 { font-size: 26px; font-weight: 650; letter-spacing: -.01em; margin: 0 0 20px; }"
+    "p { margin: 0 0 16px; color: var(--muted); }"
+    "pre { margin: 0 0 16px; font: 13px/1.5 var(--mono); color: var(--ink); background: var(--surface);"
+    " border: 1px solid var(--line); border-left: 2px solid var(--accent); padding: 14px 16px;"
+    " white-space: pre-wrap; word-break: break-all; }"
     "a { color: var(--accent); }"
-    "form { margin: 0 0 20px; }"
+    "form { margin: 24px 0; }"
     ".btn { height: 40px; padding: 0 22px; display: inline-flex; align-items: center; justify-content: center;"
     " font: 600 14px var(--sans); color: var(--bg); background: var(--accent); border: 1px solid var(--accent);"
-    " cursor: pointer; transition: background-color var(--ease), border-color var(--ease); }"
-    ".btn:hover { background: #e27a5a; border-color: #e27a5a; }"
-    ".btn:active { background: #c45a3a; border-color: #c45a3a; }"
+    " cursor: pointer; transition: background-color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out); }"
+    ".btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }"
+    ".btn:active { background: var(--accent-press); border-color: var(--accent-press); }"
     ".btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }"
-    "@media (prefers-reduced-motion: reduce) { .btn { transition: none; } }")
+    "@media (max-width: 480px) { body { margin-top: 2rem; } .btn { width: 100%; } }"
+    "@media (prefers-reduced-motion: reduce) { body { animation: none; } .btn { transition: none; } }")
 _MARK = ('<svg width="28" height="28" viewBox="0 0 512 512" aria-hidden="true">'
          '<rect width="512" height="512" rx="112" fill="#111217"/>'
          '<g stroke="#3a3f4a" stroke-width="14" stroke-linecap="round">'

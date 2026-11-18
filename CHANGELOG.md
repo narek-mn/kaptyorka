@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.18
+
+- **A calmer, more finished page, same layout and colours.** One set of sizes for spacing, text, control heights and motion, used everywhere. Buttons come in four kinds (filled, outlined, quiet, red for the yes of a removal) with hover, press, keyboard focus and disabled states, and are at least 32 px tall (40 px on a touch screen). One icon set with one line weight: Home and Team in the top bar, Edit, Rename and Add to hub, the picture viewer's Download, and the empty chat, project and machine lists.
+- Quick, quiet motion: a view fades in, new messages and requests rise in, panels, edits and questions open smoothly, and grey placeholder rows stand where the lists will be until the first data arrives. All of it stops for people who ask their system for less motion.
+- Small readability fixes: the grey text is a little lighter (4.5:1 contrast), roles read "Write", "Read", "Manage", the chat header separates its facts with a thin line, and the GitLab hint shows its command as a command. The invite page uses the same look and wraps the join command on a phone.
+
 ## 0.9.17
 
 **Upgrade note: with sign-in with GitLab on, the page now needs a GitLab sign-in.** Before you update the hub, link yourself (the admin) to your GitLab account: **GitLab name** on your Team row, or `kaptyorka people gitlab <you> <username>`. If you did not, or GitLab is down, use the emergency link: `kaptyorka page` on the hub machine prints it. Members who never linked their GitLab: **New invite link** on their row gives them a link whose page has **Sign in with GitLab**, or their own `kaptyorka page` link does it. Hubs without sign-in with GitLab change nothing.

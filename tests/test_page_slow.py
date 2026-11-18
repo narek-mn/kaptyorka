@@ -1047,7 +1047,7 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             text = page.js(f"{acct}.innerText")
             for want in ("Profile", "bob", "Member", "@bob-gl", "The admin can change these.", "Machines",
                          "bob@box-1", "as bob", "online", "bob@box-2", "3h ago", "Rename", "Remove",
-                         "Signed-in browsers", "This browser", "Projects", "proj-a", "write", "proj-b", "read",
+                         "Signed-in browsers", "This browser", "Projects", "proj-a", "Write", "proj-b", "Read",
                          "Add a machine", "Sign out"):
                 assert want in text, want
             assert "alice" not in text and "gitlab-web" not in text
