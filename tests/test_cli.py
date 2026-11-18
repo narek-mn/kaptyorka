@@ -1221,5 +1221,5 @@ def test_join_invite_same_hub_says_rejoined(monkeypatch, home, capsys):
 
 def test_cli_people_role_help_says_how_to_recover(capsys):
     assert entry_with_exit(["people", "role", "-h"]) == 0
-    assert ("Lost every admin? On the hub machine run `kaptyorka people role <you> admin`."
+    assert ("Lost every admin? On the hub machine run `kaptyorka people role <you> admin --hub-key`."
             in capsys.readouterr().out)

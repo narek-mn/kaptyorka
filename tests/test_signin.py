@@ -921,25 +921,54 @@ def test_the_last_gitlab_admin_stays(hub):
     assert admin_ops.admins(hub.store) == ["bob"]
 
 
-def test_cli_people_role_on_the_hub_machine_after_demotion(hub, capsys):
-    from kaptyorka import cli
+def own_hub(hub):
+    """This machine runs the test hub: its hub.json, as kaptyorka start writes it."""
+    (paths.home() / "hub.json").write_text(json.dumps({"port": urlparse(hub.url).port}))
 
-    key = hub_key(hub, hub.ids["alice"])
+
+def test_cli_people_role_with_the_hub_key_after_demotion(hub, capsys, monkeypatch):
+    hub_key(hub, hub.ids["alice"])
+    own_hub(hub)
     with hub.store.lock:
         hub.store.db.execute("UPDATE people SET role='member'")
-    paths.save_config({"hub": hub.url, "token": key})
-    assert cli._people_role(SimpleNamespace(name="alice", role="admin")) == 0
+    # not joined at all: the hub's own saved settings give its address
+    assert not paths.config_path().exists()
+    assert run("people", "role", "alice", "admin", "--hub-key") == 0
     assert "alice is now an admin" in capsys.readouterr().out
-    # the hub machine joined again with a member's invite: the hub key is tried after a 403
+    assert hub.store.person_by_name("alice")["role"] == "admin"
+    # joined with a member's token: no flag, no retry with the key
     with hub.store.lock:
         hub.store.db.execute("UPDATE people SET role='member'")
     paths.save_config({"hub": hub.url, "token": hub.tokens["bob"]})
-    assert cli._people_role(SimpleNamespace(name="alice", role="admin")) == 0
-    assert hub.store.person_by_name("alice")["role"] == "admin"
-    # no key file: a member's 403 stays
-    (paths.home() / "admin-token").unlink()
-    assert cli._people_role(SimpleNamespace(name="bob", role="admin")) == 1
+    sent = []
+    real = khttp.request
+    monkeypatch.setattr(khttp, "request", lambda m, u, t, *a, **k: sent.append(t) or real(m, u, t, *a, **k))
+    assert run("people", "role", "alice", "admin") == 1
     assert "only the admin can do that" in capsys.readouterr().err
+    assert sent == [hub.tokens["bob"]]
+    assert run("people", "role", "alice", "admin", "--hub-key") == 0
+    assert hub.store.person_by_name("alice")["role"] == "admin"
+
+
+def test_the_hub_key_is_never_sent_to_another_hub(hub, capsys, monkeypatch):
+    key = hub_key(hub, hub.ids["alice"])
+    own_hub(hub)
+    sent = []
+    monkeypatch.setattr(khttp, "request", lambda *a, **k: sent.append(a) or (200, {}))
+    paths.save_config({"hub": "http://other.example:8765", "token": hub.tokens["bob"]})
+    assert run("people", "role", "alice", "admin", "--hub-key") == 1
+    assert "joined to http://other.example:8765, not to the hub it runs" in capsys.readouterr().err
+    assert sent == []
+    # no hub here at all, or no key file: refused too
+    (paths.home() / "hub.json").unlink()
+    paths.save_config({"hub": hub.url, "token": hub.tokens["bob"]})
+    monkeypatch.setattr("kaptyorka.cli._installed_hub_port", lambda: {})
+    assert run("people", "role", "alice", "admin", "--hub-key") == 1
+    own_hub(hub)
+    (paths.home() / "admin-token").unlink()
+    assert run("people", "role", "alice", "admin", "--hub-key") == 1
+    assert "no hub key" in capsys.readouterr().err
+    assert sent == [] and key
 
 
 def test_the_manager_runs_through_the_hub_keys_bridge(hub):

@@ -118,7 +118,8 @@ def _serve(args) -> int:
     return 0
 
 
-RECOVER = "Lost every admin? On the hub machine run `kaptyorka people role <you> admin`."
+RECOVER = ("Lost every admin? On the hub machine run"
+           " `kaptyorka people role <you> admin --hub-key`.")
 
 
 def _admin_device(legacy_token: str) -> str:
@@ -382,24 +383,50 @@ def _problem(got) -> str:
     return f"the hub answered {status} and gave no reason; look at the hub's log"
 
 
-def _admin_call(method: str, path: str, body=None):
-    """Call the hub with the saved config; (status, body), or None after printing why not."""
-    cfg = paths.load_config()
-    if not cfg.get("hub") or not cfg.get("token"):
-        print(NOT_JOINED, file=sys.stderr)
-        return None
+_USE_HUB_KEY = {"on": False}  # set by --hub-key on an admin command (entry)
+
+
+def _hub_key_target() -> "tuple[str, str] | None":
+    """(this machine's own hub, the hub key from ~/.kaptyorka/admin-token) for --hub-key, or
+    None after printing why not. Never sends the key to a hub this machine does not run."""
     try:
-        got = http.request(method, cfg["hub"] + path, cfg["token"], body)
-        if got and got[0] == 403:  # on the hub machine the hub key may do what this token can't
-            try:
-                key = (paths.home() / "admin-token").read_text().strip()
-            except (OSError, UnicodeDecodeError):
-                key = ""
-            if key and key != cfg["token"]:
-                got = http.request(method, cfg["hub"] + path, key, body)
-        return got
+        saved = json.loads((paths.home() / "hub.json").read_text())
+    except (OSError, ValueError):
+        saved = _installed_hub_port()
+    try:
+        key = (paths.home() / "admin-token").read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        key = ""
+    if not saved or not key:
+        print("--hub-key works only on the hub machine: this machine has no hub key"
+              " (~/.kaptyorka/admin-token)", file=sys.stderr)
+        return None
+    hub = paths.load_config().get("hub") or f"http://127.0.0.1:{saved.get('port', 8765)}"
+    if not paths.is_own_hub(hub, saved):
+        print(f"this machine is joined to {hub}, not to the hub it runs; --hub-key is used only"
+              " with this machine's own hub, so nothing was sent", file=sys.stderr)
+        return None
+    return hub.rstrip("/"), key
+
+
+def _admin_call(method: str, path: str, body=None):
+    """Call the hub with the saved config, or with --hub-key this machine's own hub with the hub
+    key; (status, body), or None after printing why not."""
+    if _USE_HUB_KEY["on"]:
+        target = _hub_key_target()
+        if target is None:
+            return None
+        hub, token = target
+    else:
+        cfg = paths.load_config()
+        if not cfg.get("hub") or not cfg.get("token"):
+            print(NOT_JOINED, file=sys.stderr)
+            return None
+        hub, token = cfg["hub"], cfg["token"]
+    try:
+        return http.request(method, hub + path, token, body)
     except http.HubUnreachable:
-        print(http.unreachable(cfg["hub"]), file=sys.stderr)
+        print(http.unreachable(hub), file=sys.stderr)
         return None
 
 
@@ -1151,7 +1178,7 @@ def entry() -> None:
     pv.add_argument("device", help="the device's name")
     pv.set_defaults(run=_people_revoke)
     pl = ps.add_parser("role", help="make a person an admin, a member or a manager",
-                       epilog=RECOVER)
+                       epilog=RECOVER, formatter_class=argparse.RawDescriptionHelpFormatter)
     pl.add_argument("name", help="the person's name")
     pl.add_argument("role", choices=("admin", "member", "manager"), help="the new role")
     pl.set_defaults(run=_people_role)
@@ -1163,12 +1190,14 @@ def entry() -> None:
     iv = sub.add_parser("invites", help="list the invite links nobody has used yet; --cancel stops one")
     iv.add_argument("--cancel", metavar="code", help="cancel the invite with this code (see the CODE column)")
     iv.set_defaults(run=_invites)
+    grants = []
     for name, run, what, shape in (
             ("grant", _grant, "give a person a role in a project (read, write or manage), or use of a machine",
              "<project>:<role> (read, write or manage) or machine:<host>"),
             ("revoke", _revoke, "take a person's access to a project or a machine away",
              "<project> or machine:<host>")):
         g = sub.add_parser(name, help=what)
+        grants.append(g)
         g.add_argument("person", help="the person's name")
         g.add_argument("target", help=shape)
         g.set_defaults(run=run)
@@ -1195,10 +1224,11 @@ def entry() -> None:
     gs.add_argument("url", help="the GitLab address, like https://gitlab.example")
     gs.add_argument("group", help="the group's path, like team or team/sub")
     gs.set_defaults(run=_gitlab_set)
-    gl.add_parser("off", help="stop listing GitLab projects; projects on the hub stay"
-                  ).set_defaults(run=_gitlab_off)
-    gl.add_parser("status", help="show the GitLab address, group, token file and project count"
-                  ).set_defaults(run=_gitlab_status)
+    gl_rest = [gl.add_parser("off", help="stop listing GitLab projects; projects on the hub stay"),
+               gl.add_parser("status", help="show the GitLab address, group, token file and"
+                             " project count")]
+    gl_rest[0].set_defaults(run=_gitlab_off)
+    gl_rest[1].set_defaults(run=_gitlab_status)
     st = sub.add_parser("shared-token", help="switch the old shared token (machines from before invites) on or off")
     st.add_argument("state", choices=("on", "off"))
     st.set_defaults(run=_shared_token)
@@ -1272,5 +1302,10 @@ def entry() -> None:
     h.add_argument("tool")
     h.add_argument("event")
     h.set_defaults(run=_hook)
+    for admin in (i, pp, pr, pv, pl, pg, iv, *grants, pa, pe, px, gs, *gl_rest, st, mo, mt, mv):
+        admin.add_argument("--hub-key", action="store_true", default=argparse.SUPPRESS,
+                           help="on the hub machine: use the hub key (~/.kaptyorka/admin-token),"
+                                " which has every admin right; only with this machine's own hub")
     args = p.parse_args()
+    _USE_HUB_KEY["on"] = bool(getattr(args, "hub_key", False))
     sys.exit(args.run(args))
