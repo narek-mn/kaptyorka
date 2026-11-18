@@ -249,9 +249,19 @@ The old shared token cannot start, adopt or close workers. Use your own token.
 
 `kaptyorka fleet list` lists the machines; agents see workers with `workers`. The hub knows which agent tools are installed and logged in on each machine, as the tools report it; a tool that is not logged in cannot run workers there. One logged-in tool is enough: the hub warns only when none is, in a bar over the admin's chat on Home.
 
+## Only team projects reach the hub
+
+A session shows on the hub only when its folder is a team project: one the admin registered (a `<folder>--N` worktree counts as its project). Every other folder is personal and stays on your machine, as if it were switched off with `/hub off`: no presence, no folder name, no status, no git activity, no notes, no messages and no files. Its kaptyorka tools refuse with one line saying the folder is not a team project, and its hooks print nothing. So nobody on the hub can message it either.
+
+- When the admin registers a project, sessions in its folder appear within about 10 seconds. When the admin removes it, they disappear again.
+- The bridge decides from the list of team projects the hub sends with each heartbeat. Before it has a list (just started, or an older hub that sends none) it reports nothing, and tools refuse.
+- The hub checks again and drops anything a bridge or tool still sends from a personal folder.
+- Two sessions are always on the hub: the manager session, and workers the hub started.
+- At start, and when a project is removed, the hub deletes what it kept from sessions in personal folders: their session rows, the messages to and from them with their files, their knocks, doors, connection requests and done checks, and the git activity, finished workers and work requests of folders that are no project at all. Notes stay: a project's notes need a registered project, and a team-board note does not say which folder wrote it.
+
 ## Keep a session off the hub
 
-Claude Code only. A joined machine shows every session on the hub. To keep one session to yourself:
+Claude Code only. A joined machine shows every session of a team project on the hub. To keep one session to yourself:
 
 - In the session, type `/hub off`. It disappears from the hub at once. `/hub on` brings it back (within 10 seconds). `/hub` says whether this session is on or off.
 - Or start it off: `KAPTYORKA_HUB=off claude`. Nothing about it ever reaches the hub. `/hub on` still brings it back.

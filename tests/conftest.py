@@ -43,6 +43,33 @@ def fence_real_commands(request, monkeypatch):
     monkeypatch.setattr(subprocess.Popen, "__init__", guarded)
 
 
+class _Every:
+    """Holds every project name; lists none."""
+
+    def __contains__(self, name):
+        return True
+
+    def __iter__(self):
+        return iter(())
+
+
+@pytest.fixture(autouse=True)
+def every_folder_is_a_team_project(request, monkeypatch):
+    """Tests written before the team-project gate use any folder name. They keep working as if
+    each were a registered team project; tests marked `team_only` get the real gate."""
+    if request.node.get_closest_marker("team_only"):
+        return
+    from kaptyorka import offhub
+    from kaptyorka.bridge import Bridge
+    from kaptyorka.store import Store
+
+    monkeypatch.setattr(Store, "team_project", lambda self, project: True)
+    real = Bridge._team
+    monkeypatch.setattr(Bridge, "_team", lambda self: (_Every(), real(self)[1]))
+    monkeypatch.setattr(offhub, "personal", lambda *a, **k: False)
+    monkeypatch.setattr(offhub, "save_team", lambda *a, **k: None)  # a shim runs as its own process
+
+
 @pytest.fixture(autouse=True)
 def hub_home(tmp_path, monkeypatch):
     """A hub's tick writes the manager's files under KAPTYORKA_HOME: never the real one."""

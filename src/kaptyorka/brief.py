@@ -73,7 +73,7 @@ def _you(store, ws, agent: Agent, principal, unread: int) -> str:
         line += f"{_plural(len(others), 'other')} online: {names}. "
     elif principal is not None:
         line += "No one else online. "
-    line += f"{_plural(unread, 'unread message')}."
+    line += f"{_plural(unread, 'unread message')}. Only sessions in team project folders reach the hub."
     if principal is not None:
         mine = ws.facts(principal.device_id).get("harness", {}).get(agent.tool)
         if mine and (mine["hooks"] is False or mine["skills"] is False):

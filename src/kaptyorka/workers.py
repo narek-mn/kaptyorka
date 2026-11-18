@@ -528,6 +528,13 @@ class WorkerStore:
                 "SELECT key, name FROM workers WHERE key IS NOT NULL AND state IN"
                 f" ({','.join('?' * len(LIVE))})", LIVE)}
 
+    def live_keys_on(self, device_id: int) -> List[str]:
+        """Session keys of the live workers (the manager too) this device's bridge started."""
+        with self.lock:
+            return [r["key"] for r in self.db.execute(
+                "SELECT key FROM workers WHERE key IS NOT NULL AND device_id=? AND state IN"
+                f" ({','.join('?' * len(LIVE))})", (device_id, *LIVE))]
+
     def first_message(self, name: str) -> str:
         """The worker's first message, when its start brief must carry it; "" otherwise."""
         with self.lock:

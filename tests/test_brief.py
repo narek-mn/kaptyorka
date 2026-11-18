@@ -118,7 +118,7 @@ def test_brief_minimal_session(store, ws, ms):
                     principal=carol, facts={"host": "box-3", "os_user": "u"})
     text = build(store, ws, ms, carol, key="c:1")
     assert text == "You are `box-3/codex/proj-z`, carol, on box-3. No one else online." \
-                   " 0 unread messages."
+                   " 0 unread messages. Only sessions in team project folders reach the hub."
     assert len(text) < 400
     for head in ("Projects", "State of", "Recent git", "Branches", "Unread messages:"):
         assert head not in text

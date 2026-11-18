@@ -72,7 +72,9 @@ INSTRUCTIONS = (
     "(five headings: What it is, Where it stands, Decisions, Open problems, How to run and test); "
     "decide(project, text) records one decision. "
     "rules() reads the team rules; propose_rule(text, evidence) suggests one after your person "
-    "corrected you twice; conflict(rule_a, rule_b) reports two rules that clash."
+    "corrected you twice; conflict(rule_a, rule_b) reports two rules that clash. "
+    "Only sessions in a team project's folder use the hub: in any other folder every tool "
+    "refuses, and nothing from it reaches the hub."
 )
 
 
@@ -143,13 +145,26 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             raise KaptyorkaError("unauthorized")
         return principal
 
+    def on_hub(project: str, key: str, principal: Optional[Principal] = None) -> bool:
+        """Only sessions in a registered project's folder reach the hub, besides the manager
+        (its account, or a session row already its own) and the workers the hub started."""
+        manager_id = mm.person_id()
+        if principal is not None and manager_id is not None and principal.person_id == manager_id:
+            return True
+        if store.team_project(project) or key in ws.live_keys():
+            return True
+        return manager_id is not None and ws.session_person(key) == manager_id
+
     def identify(h, principal: "Principal | None" = None) -> Agent:
         # values are percent-encoded by Identity.headers(), since headers must be ASCII
         ident = [unquote(h.get(f"x-kaptyorka-{k}") or "") for k in ("key", "machine", "tool", "project")]
         ident[1:] = [clean(v, MAX_IDENT) for v in ident[1:]]  # one line: names and push texts
         if not all(ident):
             raise KaptyorkaError("no kaptyorka identity; run kaptyorka join")
-        return store.seen(*ident, principal=principal or principal_of(h))
+        principal = principal or principal_of(h)
+        if not on_hub(ident[3], ident[0], principal):
+            raise KaptyorkaError(paths.NOT_TEAM)  # checked before anything about it is stored
+        return store.seen(*ident, principal=principal)
 
     def session_project(agent: Agent, principal: Optional[Principal]) -> str:
         """The session's project from its folder, the same lookup the brief uses."""
@@ -734,6 +749,18 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             # the machine is only in the body, which Auth does not read: map it to its person
             principal = store.authenticate(bearer(request.headers),
                                            machine=str(body["machine"])) or principal
+        # an older or changed bridge may still report sessions of personal folders: dropped
+        body["sessions"] = [s for s in body["sessions"]
+                            if on_hub(str(s.get("project") or ""), str(s.get("key") or ""))]
+        kept = {s.get("cwd") for s in body["sessions"] if s.get("cwd")}
+        if isinstance(body.get("folders"), dict):
+            body["folders"] = {p: f for p, f in body["folders"].items()
+                               if isinstance(p, str) and isinstance(f, str)
+                               and store.team_project(p)}
+            kept |= set(body["folders"].values())
+        if isinstance(facts, dict) and isinstance(facts.get("git"), dict):
+            facts = {**facts, "git": {c: g for c, g in facts["git"].items() if c in kept or (
+                isinstance(c, str) and store.team_project(c.rstrip("/").rsplit("/", 1)[-1]))}}
         store.heartbeat(body["machine"], body["sessions"], body.get("tools", ()),
                         principal=principal, facts=facts if isinstance(facts, dict) else None,
                         gone=body.get("gone", ()))
@@ -752,6 +779,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                              "auto_update": own and ws.auto_update(principal.device_id),
                              "projects": [] if principal.legacy else
                              [p["name"] for p in store.projects_for(principal)],
+                             "team": store.team_projects(),  # the bridge reports only these
+                             "keep": ws.live_keys_on(principal.device_id) if own else [],
                              "you": principal.person_name, "shared": principal.shared,
                              "skills_version": rs.skills_version()})
 
@@ -905,6 +934,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.custom_route("/api/files", methods=["POST"])
     async def api_file_upload(request: Request) -> Response:
         principal = request.scope["state"]["principal"]
+        if request.headers.get("x-kaptyorka-key"):  # from a session's tool, not the page
+            try:
+                identify(request.headers, principal)
+            except KaptyorkaError as e:
+                return PlainTextResponse(str(e), status_code=403)
         name = unquote(request.headers.get("x-file-name") or "") or "file"
         def mb(n):  # as the page writes sizes
             return f"{n / 1_000_000:.1f} MB"
@@ -1625,6 +1659,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                             request.scope["state"]["principal"])
         except KaptyorkaError as e:
             return admin_error(e)
+        done["personal"] = admin_ops.purge_personal(store)  # its sessions are personal now
+        brief_cache.clear()
+        wake_bridges()
         return JSONResponse(done)
 
     async def project_grant(request: Request, grant: bool) -> Response:

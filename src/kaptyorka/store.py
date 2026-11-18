@@ -694,6 +694,17 @@ class Store:
         return self.db.execute("SELECT 1 FROM projects WHERE name=? AND archived_at IS NULL",
                                (project,)).fetchone() is not None
 
+    def team_projects(self) -> List[str]:
+        """The registered (not removed) projects: only sessions in their folders reach the hub."""
+        with self.lock:
+            return [r["name"] for r in self.db.execute(
+                "SELECT name FROM projects WHERE archived_at IS NULL ORDER BY name")]
+
+    def team_project(self, project: str) -> bool:
+        """A session folder of a registered project (or a `--N` worktree of one)."""
+        with self.lock:
+            return self._registered(paths.team_name(project))
+
     def _archived(self, project) -> bool:
         return self.db.execute("SELECT 1 FROM projects WHERE name=? AND archived_at IS NOT NULL",
                                (project,)).fetchone() is not None

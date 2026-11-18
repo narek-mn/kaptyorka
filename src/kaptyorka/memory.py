@@ -4,6 +4,7 @@ import os
 import re
 from typing import Dict, List, Optional
 
+from kaptyorka import paths
 from kaptyorka.store import ONLINE_S, Principal, Store
 
 GIT_KEEP_S = 30 * 86400  # git history older than this is pruned
@@ -44,7 +45,7 @@ def check_state(text: str) -> Optional[str]:
         return None
     return "the state note needs these headings in order: " + ", ".join(STATE_HEADINGS)
 
-_WORKTREE = re.compile(r"--\d+$")
+_WORKTREE = paths.WORKTREE
 _DONE = re.compile(r"\bdone\b", re.I)
 
 

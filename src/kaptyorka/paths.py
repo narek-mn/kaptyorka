@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import socket
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,14 @@ MANAGER_DIR = "manager"  # the manager session's folder under home()
 MANAGER_CONFIG = "manager-config.json"  # its config, under home(): outside its working folder
 MANAGER_SETTINGS = "settings.json"  # in its folder, passed with --settings
 MANAGER_MCP = "mcp.json"  # in its folder, passed with --mcp-config
+WORKTREE = re.compile(r"--\d+$")  # a `<folder>--N` worktree belongs to its base folder's project
+NOT_TEAM = ("this folder is not a team project, so nothing from it goes to the hub."
+            " Ask the admin to add it as a team project.")
+
+
+def team_name(project: str) -> str:
+    """The project a session folder's name belongs to: proj-a--2 is a worktree of proj-a."""
+    return WORKTREE.sub("", project or "")
 
 
 def home() -> Path:

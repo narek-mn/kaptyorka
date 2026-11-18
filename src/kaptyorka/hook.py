@@ -75,11 +75,13 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
             # the tool names the session itself: no session-file lookup needed
             cwd = data.get("cwd") or os.getcwd()
             ident = Identity(f"{prefix}:{data['session_id']}", cfg.get("machine", ""), tool,
-                             os.path.basename(cwd.rstrip("/")))
+                             os.path.basename(cwd.rstrip("/")), cwd)
         else:
             ident = identify(cfg.get("machine", ""), workspace=workspace)
         if ident is None:
             return ""
+        if offhub.personal(ident.project, ident.cwd, ident.key):
+            return ""  # not a team project's folder: nothing is sent, nothing is shown
         if tool == "claude-code":
             sid = ident.key.split(":", 1)[1]
             found = offhub.session(sid) if event == "start" else None

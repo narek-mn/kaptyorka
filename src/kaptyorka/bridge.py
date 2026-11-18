@@ -99,11 +99,14 @@ class Bridge:
         return self._facts
 
     @staticmethod
-    def _sendable(facts_: dict) -> dict:
+    def _sendable(facts_: dict, cwds: set) -> dict:
         """The cached facts with each git read's `read_at` swapped for its `age` now, so the
-        hub never compares this machine's clock with its own."""
+        hub never compares this machine's clock with its own; git only for the folders of
+        sessions reported now."""
         git = {}
         for cwd, info in facts_.get("git", {}).items():
+            if cwd not in cwds:
+                continue
             info = dict(info)
             read_at = info.pop("read_at", None)
             if read_at is not None:
@@ -111,16 +114,32 @@ class Bridge:
             git[cwd] = info
         return {**facts_, "git": git}
 
-    def heartbeat(self) -> None:
+    def _team(self):
+        """(team project names or None when unknown, worker keys to report anyway)."""
+        team, keep = self.hub.get("team"), self.hub.get("keep")
+        return ({t for t in team if isinstance(t, str)} if isinstance(team, list) else None,
+                {k for k in keep if isinstance(k, str)} if isinstance(keep, list) else set())
+
+    def heartbeat(self, again: bool = True) -> None:
         offhub.clean()
         # read before the sessions: one switched off in between is reported this once and
         # dropped on the next heartbeat, never left showing as offline
         gone = offhub.gone()
-        sessions, tools, objs, shown = [], [], [], []
+        team, keep = self._team()
+
+        def personal(s) -> bool:
+            """Outside the team projects: never reported, like a session switched off. With
+            no list from the hub yet, only the manager and the hub's workers are reported."""
+            return not (paths.in_manager_folder(s.cwd) or s.key in keep
+                        or (team is not None and paths.team_name(s.project) in team))
+        sessions, tools, objs, shown, held = [], [], [], [], False
         for a in self.adapters:
             try:
                 got = list(a.sessions())
-                off = getattr(a, "off_keys", set())  # kept off the hub: never reported
+                off = set(getattr(a, "off_keys", set()))  # kept off the hub: never reported
+                mine = {s.key for s in got if personal(s)}
+                held = held or bool(mine - off)
+                off |= mine
                 found = [asdict(s) for s in got if s.key not in off]
                 problem = None
             except Exception as e:  # one broken adapter must not hide the others
@@ -132,10 +151,11 @@ class Bridge:
             if problem is None and a.tool in COMPLETE:
                 tools.append(a.tool)  # this list is complete for it
         projects = self.hub.get("projects", [])
+        folders = facts.folders(projects if isinstance(projects, list) else [], shown, Path.home())
         body = {"machine": self.cfg["machine"], "sessions": sessions, "tools": tools,
-                "facts": self._sendable(self._machine_facts(shown)),
-                "folders": facts.folders(projects if isinstance(projects, list) else [], shown,
-                                         Path.home())}
+                "facts": self._sendable(self._machine_facts(shown), {s.cwd for s in shown}),
+                "folders": {p: f for p, f in folders.items()
+                            if team is not None and paths.team_name(p) in team}}
         if gone:
             body["gone"] = gone
         status, answer = http.request("POST", self.cfg["hub"] + "/bridge/heartbeat",
@@ -143,6 +163,7 @@ class Bridge:
         if gone and status in (200, 204):
             offhub.told(gone)
         self.hub = answer if status == 200 and isinstance(answer, dict) else {}
+        offhub.save_team(*self._team())  # for this machine's shims and hooks
         v = self.hub.get("skills_version")
         if isinstance(v, str) and v != self._skills_version:
             self._skills_version = v
@@ -152,6 +173,8 @@ class Bridge:
                      else f"hub answered {status} to heartbeat" + _said(status, answer))
         self._sync_skills()
         self._check_pending(objs)
+        if again and team is None and held and self._team()[0] is not None:
+            self.heartbeat(again=False)  # the list came just now: report its sessions at once
 
     def _sync_skills(self) -> None:
         """Fetch the team skills when the hub's version differs from the one written here."""

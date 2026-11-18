@@ -187,6 +187,106 @@ def project_update(store, name: str, description: str, by: Principal) -> None:
     store.log_add(by.person_name, "project_updated", name)
 
 
+def purge_personal(store) -> Dict[str, int]:
+    """Delete what the hub holds from sessions outside the team projects: their rows in agents,
+    the messages to or from them with their files, their knocks, doors, connection requests and
+    done checks, and the history of folders that are no project at all (git facts, state writes,
+    conflicts, finished workers, work requests, learned folders). Run at hub start and
+    when a project is removed. The manager and the hub's live workers stay; the notes of a
+    registered or removed project are never touched."""
+    from kaptyorka import paths
+
+    db, deleted = store.db, {}
+    with store.lock:
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        team = {r["name"] for r in db.execute("SELECT name FROM projects WHERE archived_at IS NULL")}
+        known = {r["name"] for r in db.execute("SELECT name FROM projects")}  # archived too
+        mid = db.execute("SELECT id FROM people WHERE name=? AND role='manager'",
+                         (MANAGER,)).fetchone()
+        mid = mid["id"] if mid else None
+        marks = ",".join("?" * len(LIVE))
+        keep = {r["key"] for r in db.execute(
+            f"SELECT key FROM workers WHERE key IS NOT NULL AND state IN ({marks})", LIVE)} \
+            if "workers" in tables else set()
+
+        def no_project(p) -> bool:  # neither a team project nor a removed one: a personal folder
+            return p is not None and p != MANAGER and paths.team_name(p) not in known
+
+        keys = [r["key"] for r in db.execute("SELECT key, project, person_id FROM agents")
+                if paths.team_name(r["project"]) not in team and r["key"] not in keep
+                and (mid is None or r["person_id"] != mid)]
+
+        def by_keys(table: str, *cols: str) -> int:
+            n = 0
+            for i in range(0, len(keys), 400):
+                chunk = keys[i:i + 400]
+                q = ",".join("?" * len(chunk))
+                n += db.execute(f"DELETE FROM {table} WHERE " + " OR ".join(
+                    f"{c} IN ({q})" for c in cols), chunk * len(cols)).rowcount
+            return n
+
+        def by_project(table: str, extra: str = "") -> int:
+            n = 0
+            for r in db.execute(f"SELECT DISTINCT project FROM {table} WHERE project IS NOT NULL"
+                                + extra).fetchall():
+                if no_project(r["project"]):
+                    n += db.execute(f"DELETE FROM {table} WHERE project=?" + extra,
+                                    (r["project"],)).rowcount
+            return n
+
+        # messages: to or from such a session, or to a session of a folder that is no project
+        ids = set()
+        for i in range(0, len(keys), 400):
+            chunk = keys[i:i + 400]
+            q = ",".join("?" * len(chunk))
+            ids |= {r["id"] for r in db.execute(
+                f"SELECT id FROM messages WHERE sender_key IN ({q}) OR to_key IN ({q})", chunk * 2)}
+        ids |= {r["id"] for r in db.execute(
+            "SELECT id, project FROM messages WHERE to_key NOT LIKE 'web:%'"
+            " AND to_key NOT LIKE 'hub:%'") if no_project(r["project"])}
+        files = set()
+        for fid in ids:
+            files |= {r["id"] for r in db.execute("SELECT id FROM files WHERE message_id=?", (fid,))}
+            db.execute("DELETE FROM messages WHERE id=?", (fid,))
+        for fid in files:
+            db.execute("DELETE FROM files WHERE id=?", (fid,))
+            try:
+                (paths.files_dir() / str(fid)).unlink()
+            except FileNotFoundError:
+                pass
+        deleted.update(messages=len(ids), files=len(files))
+        deleted["knocks"] = by_keys("knocks", "from_key", "to_key")
+        deleted["doors"] = by_keys("doors", "a_key", "b_key")
+        if "connects" in tables:
+            deleted["connects"] = by_keys("connects", "from_key", "to_key")
+        if "done_checks" in tables:
+            deleted["done_checks"] = by_keys("done_checks", "key") + by_project("done_checks")
+        for table in ("git_facts", "state_writes", "conflicts", "work_requests"):
+            if table in tables:
+                deleted[table] = by_project(table)
+        if "workers" in tables:
+            deleted["workers"] = by_project("workers", " AND manager=0"
+                                                       " AND state IN ('closed','failed')")
+        deleted["agents"] = by_keys("agents", "key")
+        if "device_facts" in tables:
+            n = 0
+            for r in db.execute("SELECT device_id, facts, folders FROM device_facts").fetchall():
+                folders = json.loads(r["folders"] or "{}")
+                facts = json.loads(r["facts"] or "{}")
+                kept = {p: f for p, f in folders.items() if paths.team_name(p) in team}
+                git = facts.get("git") if isinstance(facts.get("git"), dict) else {}
+                git_kept = {c: g for c, g in git.items() if c in kept.values()
+                            or paths.team_name(c.rstrip("/").rsplit("/", 1)[-1]) in team}
+                if kept != folders or git_kept != git:
+                    if "git" in facts:
+                        facts["git"] = git_kept
+                    db.execute("UPDATE device_facts SET facts=?, folders=? WHERE device_id=?",
+                               (json.dumps(facts), json.dumps(kept), r["device_id"]))
+                    n += 1
+            deleted["device_facts"] = n
+    return deleted
+
+
 def project_remove(store, name: str, by: Principal) -> dict:
     """Archive a project: its grants, pending requests and the folder each machine learned for
     it go. Its notes stay, readable by the admin alone; registering the name again restores it."""

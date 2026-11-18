@@ -87,6 +87,9 @@ async def _heartbeat(cfg: dict, ident: identity.Identity) -> None:
             "sessions": [{"key": ident.key, "tool": ident.tool, "project": ident.project}],
             "facts": identity.facts()}
     while True:
+        if await anyio.to_thread.run_sync(offhub.personal, ident.project, ident.cwd, ident.key):
+            await anyio.sleep(HEARTBEAT_S)  # not a team project's folder: never reported
+            continue
         try:
             await anyio.to_thread.run_sync(lambda: http.request(
                 "POST", cfg["hub"] + "/bridge/heartbeat", cfg["token"], body, timeout=TIMEOUT_S))
@@ -196,17 +199,24 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
             ident = found["ident"]
             return ident is not None and await anyio.to_thread.run_sync(offhub.off, ident.key)
 
+        async def personal(ident: Optional[identity.Identity]) -> bool:
+            """Not in a team project's folder: nothing goes to the hub."""
+            return ident is not None and await anyio.to_thread.run_sync(
+                offhub.personal, ident.project, ident.cwd, ident.key)
+
         async def list_tools(ctx, params) -> types.ListToolsResult:
             r = None
+            mine = await personal(found["ident"])
             try:
-                if not found["off"] and not await hidden():
+                if not found["off"] and not mine and not await hidden():
                     r = await relay.use(lambda c: c.list_tools())
             except MCPError:
                 r = None
             if r is not None:
                 return types.ListToolsResult(tools=r.tools)
             return types.ListToolsResult(tools=[
-                types.Tool(name=n, description=unreachable, input_schema={"type": "object"})
+                types.Tool(name=n, description=paths.NOT_TEAM if mine else unreachable,
+                           input_schema={"type": "object"})
                 for n in FALLBACK_TOOLS])
 
         per_session: Dict[str, Relay] = {}  # OpenCode V2: one shim serves every session in a folder
@@ -222,11 +232,15 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
             sid = (params.meta or {}).get(OPENCODE_META)
             if sid and isinstance(sid, str):
                 use = session_relay(sid)
+                who = identity.Identity(f"opencode:{sid}", "", "opencode",
+                                        os.path.basename(os.getcwd().rstrip("/")), os.getcwd())
             else:
                 await identify()
-                use = relay
+                use, who = relay, found["ident"]
             if found["off"]:
                 return _error(NO_MANAGER_CONFIG)
+            if await personal(who):
+                return _error(f"kaptyorka: {paths.NOT_TEAM}")
             if use is relay and await hidden():
                 return _error(f"kaptyorka: {offhub.COME_BACK}")
             args = dict(params.arguments or {})

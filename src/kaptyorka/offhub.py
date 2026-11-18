@@ -19,6 +19,7 @@ from typing import List, Mapping, Optional, Tuple
 from kaptyorka import paths
 
 ENV = "KAPTYORKA_HUB"
+TEAM = "team.json"  # the team projects the hub last named, saved by the bridge
 COME_BACK = "this session is off the hub; type /hub on to come back"
 
 
@@ -188,6 +189,34 @@ def clean() -> None:
                 f.unlink()
             except OSError:
                 pass
+
+
+def save_team(team: Optional[set], keep: set) -> None:
+    """The bridge saves the hub's list of team projects (None: the hub sent none) and the keys
+    of the workers it started, for the shims and hooks of this machine."""
+    body = {"team": None if team is None else sorted(team), "keep": sorted(keep)}
+    try:
+        tmp = paths.home() / f".{TEAM}.tmp"
+        tmp.write_text(json.dumps(body))
+        tmp.replace(paths.home() / TEAM)
+    except OSError:
+        pass  # the hub refuses a personal folder's calls anyway
+
+
+def personal(project: str, cwd: str = "", key: str = "") -> bool:
+    """A session outside the team projects, so its shim and hooks send nothing: automatically
+    off the hub. Decided from the bridge's last list; with no list saved yet the hub decides
+    (it refuses such a session too). The manager and the hub's workers are never personal."""
+    if paths.in_manager_folder(cwd):
+        return False
+    try:
+        st = json.loads((paths.home() / TEAM).read_text())
+    except (OSError, ValueError):
+        return False
+    if not isinstance(st, dict) or key in (st.get("keep") or []):
+        return False
+    team = st.get("team")
+    return not (isinstance(team, list) and paths.team_name(project) in team)
 
 
 def _tell_now(data: dict) -> None:

@@ -49,6 +49,16 @@ def _apply_manager(store, args) -> None:
         mm.unblock()  # the admin has made Claude Code trust the folder
 
 
+def _purge_personal(store) -> None:
+    """At hub start: drop what an older hub kept from sessions outside the team projects."""
+    from kaptyorka import admin_ops
+
+    done = {k: n for k, n in admin_ops.purge_personal(store).items() if n}
+    if done:
+        print("kaptyorka: removed data of sessions outside the team projects: "
+              + ", ".join(f"{n} {k}" for k, n in done.items()), file=sys.stderr, flush=True)
+
+
 def _serve(args) -> int:
     token = _token()
     if args.foreground:
@@ -62,9 +72,10 @@ def _serve(args) -> int:
         _apply_manager(store, args)
         stop = threading.Event()
         threading.Thread(target=prune_loop, args=(store, stop), daemon=True).start()
-        uvicorn.run(build_app(store, manager_url=getattr(args, "manager_url", None)
-                                  or f"http://127.0.0.1:{args.port}"),
-                    host="0.0.0.0", port=args.port, log_level="warning",
+        app = build_app(store, manager_url=getattr(args, "manager_url", None)
+                        or f"http://127.0.0.1:{args.port}")
+        _purge_personal(store)
+        uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning",
                     timeout_graceful_shutdown=3)  # open agent streams must not hold up a stop
         return 0
     was_running = service.is_active("kaptyorka-hub") is True
@@ -597,7 +608,7 @@ def _project_remove(args) -> int:
     if done is None:
         return 1
     print(f"removed the project {args.name}: {done['grants']} grants dropped;"
-          " its notes stay under Archived")
+          " its notes stay under Archived; its sessions leave the hub")
     return 0
 
 

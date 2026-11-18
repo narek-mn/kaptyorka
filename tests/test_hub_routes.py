@@ -162,18 +162,18 @@ def test_brief_start_summary_exact(hub):
     hub_send(hub, BOX2, "pc/claude-code/proj-a", "ping")
     assert brief(hub, PC, "start") == (
         f"You are `pc/claude-code/proj-a`, {ADMIN_NAME}, on pc. 1 other online:"
-        " box-2/claude-code/proj-b (idle). 1 unread message. Board topics: proj-a-api.\n\n"
+        " box-2/claude-code/proj-b (idle). 1 unread message. Only sessions in team project folders reach the hub. Board topics: proj-a-api.\n\n"
         "Unread messages:\n\nKaptyorka message from box-2/claude-code/proj-b:\n\nping")
     # again within the cache's 10 s: the delivered message is not repeated as unread
     assert brief(hub, PC, "start") == (
         f"You are `pc/claude-code/proj-a`, {ADMIN_NAME}, on pc. 1 other online:"
-        " box-2/claude-code/proj-b (idle). 0 unread messages. Board topics: proj-a-api.")
+        " box-2/claude-code/proj-b (idle). 0 unread messages. Only sessions in team project folders reach the hub. Board topics: proj-a-api.")
 
 
 def test_brief_start_alone_plural_no_topics(hub):
     assert brief(hub, PC, "start") == \
         f"You are `pc/claude-code/proj-a`, {ADMIN_NAME}, on pc. No one else online." \
-        " 0 unread messages."
+        " 0 unread messages. Only sessions in team project folders reach the hub."
     box2_online(hub, activity="")
     heartbeat(hub, "box-1", [{"key": "oc:1", "tool": "opencode", "project": "nav",
                                "activity": "busy"}])
@@ -184,7 +184,7 @@ def test_brief_start_alone_plural_no_topics(hub):
     assert brief(hub, PC, "start") == (  # a new message breaks the 10 s cache
         f"You are `pc/claude-code/proj-a`, {ADMIN_NAME}, on pc. 2 others online:"
         " box-2/claude-code/proj-b, box-1/opencode/nav (busy). 2 unread messages."
-        " Board topics: b, a.\n\nUnread messages:\n\n"
+        " Only sessions in team project folders reach the hub. Board topics: b, a.\n\nUnread messages:\n\n"
         "Kaptyorka message from box-2/claude-code/proj-b:\n\none\n\n"
         "Kaptyorka message from box-2/claude-code/proj-b:\n\ntwo")
 

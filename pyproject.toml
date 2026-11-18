@@ -28,5 +28,6 @@ where = ["src"]
 kaptyorka = ["web/*.html", "web/fonts/*"]
 
 [tool.pytest.ini_options]
-markers = ["slow: tests that call real agent tools"]
+markers = ["slow: tests that call real agent tools",
+           "team_only: keep the real team-project gate (other tests treat every folder as a team project)"]
 addopts = "-m 'not slow'"
