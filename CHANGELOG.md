@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.20 (unreleased)
+
+- **The hub key.** The device token in `~/.kaptyorka/admin-token` on the hub machine has every admin right whatever its person's role: the emergency link opens the page, and the admin commands on the hub machine work, even after its person is demoted or when nobody is an admin. Lost every admin? On the hub machine run `kaptyorka people role <you> admin`. `kaptyorka start` keeps the key while its device is live (it no longer makes a new one for the oldest admin), writes it 0600, and fixes the mode of an existing one. A copied token stops working once its device is revoked, and the key still cannot be removed from the page. The manager also runs through the hub key's bridge whatever its person's role.
+- The hub machine's person can be demoted like anyone else. While sign-in with GitLab is on, the hub refuses to demote the last admin linked to GitLab ("bob is the last admin who signs in with GitLab; make someone with GitLab an admin first"), so the page stays usable.
+- An admin command on the hub machine that this machine's own token may not do is tried once more with the hub key.
+- **The hub's own account can be a team machine.** The person the hub made at install for its OS account is no human: `kaptyorka machine team --from <person>` turns a person into a team machine. Their machines keep working as the team's, their sessions follow the team-machine rule, their admin role and host ownership go, and the hub key keeps its rights. Refused for someone with a GitLab link or browsers signed in with GitLab, and while the old shared token speaks for them (`kaptyorka shared-token off` first). The last-admin guard counts only people, never team machines. The log says "alice made svc a team machine".
+
 ## 0.9.19
 
 - **Several admins.** **Make admin** and **Remove admin** on each Team row (asked first), an **Admin** pill on admin rows, and `kaptyorka people role <name> admin|member|manager`. The hub refuses to remove or demote the last admin ("bob is the last admin; make someone else an admin first"), so you can demote yourself only while another admin exists. The hub's own `manager` account never becomes an admin, nor does a person the old shared token still speaks for. Remove someone's admin role before removing them. The log says "alice made bob an admin" and "alice removed bob's admin role". To hand the hub over: make the new person an admin, then remove your own role.

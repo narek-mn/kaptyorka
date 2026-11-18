@@ -123,7 +123,7 @@ def test_start_replaces_a_revoked_admin_device(home, capsys, monkeypatch):
     assert second != first and f"/#t={second}" in capsys.readouterr().out
 
 
-def test_start_reissues_the_admin_token_when_its_admin_is_demoted(home, capsys, monkeypatch):
+def test_start_keeps_the_hub_key_when_its_person_is_demoted(home, capsys, monkeypatch):
     from kaptyorka.store import Store
 
     monkeypatch.setattr(service, "install", lambda *a, **k: [])
@@ -137,13 +137,15 @@ def test_start_reissues_the_admin_token_when_its_admin_is_demoted(home, capsys, 
         store.db.execute("UPDATE people SET role='admin' WHERE id=?", (bob,))
         store.db.execute("UPDATE people SET role='member' WHERE id=?", (old.person_id,))
     store.close()
+    os.chmod(paths.home() / "admin-token", 0o644)  # an older version or a hand edit
     with pytest.raises(SystemExit):
         run_cli(["start"])
     second = (paths.home() / "admin-token").read_text().strip()
+    assert (paths.home() / "admin-token").stat().st_mode & 0o777 == 0o600
     store = Store(paths.home() / "hub.db")
     p = store.authenticate(second)
-    assert second != first and p.person_name == "bob" and p.is_admin()
-    assert store.authenticate(first).role == "member"  # the old one stays the old person's
+    # the hub key stays: a machine, not a person, so its person's role does not matter
+    assert second == first and p.role == "member" and p.hub_key and p.is_admin()
     store.close()
 
 

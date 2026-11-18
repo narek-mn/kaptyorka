@@ -396,7 +396,7 @@ How it works:
 - A sign-in lasts 7 days, then the page asks again. Every 15 minutes the hub asks GitLab whether the person may still come in: a blocked or deactivated account, a refused grant or a changed link signs them out within about 15 minutes. While GitLab cannot be reached, sign-ins keep working until their 7 days end.
 - **Sign out** on the page ends a GitLab sign-in on the hub too. Changing or clearing a person's GitLab name ends their GitLab sign-ins. Removing a person ends everything.
 - Once sign-in is on, the page opens only with a GitLab sign-in. Device tokens keep working for everything machines and the command line do (the bridge, the agents' tools, the hooks, `doctor`, `join`, the admin commands), but not for the page's own screens. `kaptyorka page` on a member's machine says `open <hub> and sign in with GitLab`.
-- **The emergency door:** the admin token in `~/.kaptyorka/admin-token` on the hub machine still opens the page, so the admin can get in when GitLab is down. `kaptyorka page` on the hub machine prints its link. No other device token does.
+- **The emergency door:** the hub key, the device token in `~/.kaptyorka/admin-token` on the hub machine, still opens the page, so you can get in when GitLab is down. `kaptyorka page` on the hub machine prints its link. No other device token does.
 - Without sign-in with GitLab set up, nothing of this applies: every `#t=` link opens the page.
 
 What the hub decides by itself:
@@ -409,7 +409,13 @@ What the hub decides by itself:
 
 Several people can be admins; each one has every admin right. To add one: **Make admin** on their Team row, or `kaptyorka people role bob admin`. To take it away: **Remove admin**, or `kaptyorka people role bob member`. The hub refuses to remove or demote the last admin ("bob is the last admin; make someone else an admin first"), so you can demote yourself only while another admin exists. The hub's own `manager` account never becomes an admin, and a person the old shared token still speaks for cannot become one until the shared token is off. Remove someone's admin role before removing them from the team. The log says "alice made bob an admin" and "alice removed bob's admin role".
 
-To hand the hub over: make the new person an admin, let them sign in, then they (or you) remove your admin role. The emergency link (`~/.kaptyorka/admin-token` on the hub machine) stays with the admin it was made for; once that person is no longer an admin, it stops opening the page, and the next `kaptyorka start` on the hub machine makes a new one for the oldest admin and prints its link. The manager runs through an admin's bridge on the hub machine, so keep the person whose machine that is an admin while the hub stays there. Notices for the admin go to every admin: the manager names each one, and its failures reach every admin's page.
+Lost every admin? On the hub machine run `kaptyorka people role <you> admin`. This works even when the hub's own account is a team machine.
+
+The hub key is the device token in `~/.kaptyorka/admin-token` on the hub machine (0600, the hub user's own). It has every admin right whatever its person's role, on the page (the emergency link) and for the admin commands on the hub machine, even when nobody is an admin any more. The hub machine is a machine, not a person, so its person does not need to stay an admin. The key cannot be removed from the page; a copied token stops working once its device is revoked. While sign-in with GitLab is on, the hub also refuses to demote the last admin linked to GitLab ("bob is the last admin who signs in with GitLab; make someone with GitLab an admin first"), so the page stays usable.
+
+The person the hub made at install for its own OS account is a machine, not a human. `kaptyorka machine team --from <name>` turns it (or any person) into a team machine: it leaves People, shows as Team under Machines, its machines keep working as the team's and its sessions follow the team-machine rule below. Its admin role and host ownership go; the hub key keeps its rights. It is refused for someone with a GitLab link or browsers signed in with GitLab, and while the old shared token still speaks for them: run `kaptyorka shared-token off` first. The last-admin guard counts only people, never team machines.
+
+To hand the hub over: make the new person an admin, let them sign in, then they (or you) remove your admin role. The manager runs through the hub key's bridge on the hub machine, or another admin's bridge there. Notices for the admin go to every admin: the manager names each one, and its failures reach every admin's page.
 
 ### Machines and team machines
 
@@ -435,6 +441,7 @@ kaptyorka grant bob proj-a:read        # read, write or manage; or machine:box-1
 kaptyorka revoke bob proj-a            # or machine:box-1
 kaptyorka machine owner box-1 bob
 kaptyorka machine team jetson-1        # a team machine; prints the join command for its shared account
+kaptyorka machine team --from svc      # turn an existing person (the hub's own account) into a team machine
 kaptyorka machine move laptop-1 carol  # give a joined machine to another person
 kaptyorka shared-token off             # or on
 kaptyorka project add proj-a --repo <url> --desc "what it is"

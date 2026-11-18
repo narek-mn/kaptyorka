@@ -219,3 +219,68 @@ def test_account_lists_the_team_machines_you_can_use(store, team):
     assert admin_ops.account(store, team[1])["team_machines"] == []  # not itself
     store.grant_project("proj-b", who(store, "carol").person_id, "read", "alice")
     assert tm("carol") == [("jet-1", "nvidia", ["proj-b"])]
+
+
+def test_a_person_becomes_a_team_machine(store, tmp_path, monkeypatch):
+    """The person the hub made at install for its own OS account is no human: it becomes a team
+    machine, its machine keeps working, and the hub key in admin-token keeps its admin rights."""
+    from kaptyorka import paths
+
+    monkeypatch.setattr(paths, "home", lambda: tmp_path)
+    person(store, "alice", "admin")
+    svc = store.person_create("svc")
+    with store.lock:
+        store.db.execute("UPDATE people SET role='admin' WHERE id=?", (svc,))
+    key, _ = store.invite_redeem(store.invite_create(svc), "svc@box-1", host="box-1",
+                                 os_user="svc")
+    (tmp_path / "admin-token").write_text(key + "\n")
+    assert store.authenticate(key).hub_key
+    done = admin_ops.make_team_machine(store, "svc", who(store, "alice"))
+    assert done["name"] == "svc" and done["was"] == "admin"
+    row = next(x for x in store.people() if x["name"] == "svc")
+    assert row["team"] and row["role"] == "member" and admin_ops.admins(store) == ["alice"]
+    assert admin_ops.log_sentence(store.log(1)[0]) == "alice made svc a team machine"
+    # it leaves People (the page lists people without team rows) and shows as Team in Machines
+    assert [p["name"] for p in store.people() if not p["team"]] == ["alice"]
+    box = next(m for m in WorkerStore(store).overview() if m["host"] == "box-1")
+    assert box["team"] == ["svc"] and box["people"] == [] and box["devices"][0]["team"]
+    # the hub key still does admin work, even with nobody an admin
+    hub_key = store.authenticate(key)
+    assert hub_key.is_admin() and store.is_team(hub_key.person_id)
+    with store.lock:
+        store.db.execute("UPDATE people SET role='member' WHERE id<>?", (svc,))
+    admin_ops.set_role(store, "alice", "admin", store.authenticate(key))
+    assert admin_ops.admins(store) == ["alice"]
+    with pytest.raises(KaptyorkaError, match="svc is already a team machine"):
+        admin_ops.make_team_machine(store, "svc", who(store, "alice"))
+
+
+def test_only_a_person_without_gitlab_or_the_shared_token_becomes_a_team_machine(tmp_path):
+    store = Store(tmp_path / "hub.db", legacy_token="old-shared")
+    first = next(p for p in store.people() if p["role"] == "admin")  # the shared token's person
+    alice = who(store, first["name"])
+    bob, _ = person(store, "bob")
+    with store.lock:
+        store.db.execute("UPDATE people SET gitlab_user='bob-gl' WHERE id=?", (bob,))
+    with pytest.raises(KaptyorkaError, match="bob signs in with GitLab, so is a person"):
+        admin_ops.make_team_machine(store, "bob", alice)
+    carol, _ = person(store, "carol")
+    dev = store.authenticate(store.device_add(carol, "gitlab-web")).device_id
+    with store.lock:
+        store.db.execute("INSERT INTO gitlab_sessions (device_id, person_id, gitlab_id, refresh,"
+                         " checked) VALUES (?, ?, 3, 'r', 0)", (dev, carol))
+    with pytest.raises(KaptyorkaError, match="carol has browsers signed in with GitLab"):
+        admin_ops.make_team_machine(store, "carol", alice)
+    person(store, "dan", "admin")
+    with pytest.raises(KaptyorkaError, match="the old shared token still speaks for"
+                                             f" {first['name']}; turn it off first:"
+                                             " kaptyorka shared-token off"):
+        admin_ops.make_team_machine(store, first["name"], who(store, "dan"))
+    store.set_legacy_enabled(False, "dan")
+    admin_ops.make_team_machine(store, first["name"], who(store, "dan"))
+    # the last admin person stays one; team machines never count
+    with pytest.raises(KaptyorkaError, match="you are the last admin"):
+        admin_ops.make_team_machine(store, "dan", who(store, "dan"))
+    with pytest.raises(KaptyorkaError, match="you are the last admin"):
+        admin_ops.set_role(store, "dan", "member", who(store, "dan"))
+    store.close()

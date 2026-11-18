@@ -591,9 +591,10 @@ def test_only_the_admin_token_file_opens_the_page_with_a_device_token(hub):
     (paths.home() / "admin-token").write_text(admin + "\n")
     assert call(hub, "GET", "/api/log", admin)[0] == 200
     assert call(hub, "GET", "/api/log", hub.tokens["alice"])[0] == 403  # the admin's other device
-    # the file holding a member's token makes no member an emergency admin
+    # the hub key is whichever live device the file names, whatever its person's role
     (paths.home() / "admin-token").write_text(hub.tokens["bob"] + "\n")
-    assert call(hub, "GET", "/api/me/account", hub.tokens["bob"])[0] == 403
+    assert call(hub, "GET", "/api/me/account", hub.tokens["bob"])[0] == 200
+    assert call(hub, "GET", "/api/log", admin)[0] == 403  # no longer the file's
 
 
 def test_machine_routes_keep_device_tokens(hub):
@@ -856,3 +857,133 @@ def test_cli_page_on_a_member_machine_says_sign_in_with_gitlab(hub, capsys, monk
     paths.save_config({"hub": hub.url, "token": hub.tokens["bob"]})
     cli._page(None)
     assert f"{hub.url}/#t={hub.tokens['bob']}" in capsys.readouterr().out
+
+
+def hub_key(hub, pid):
+    """A hub key for person `pid`: its token in ~/.kaptyorka/admin-token, 0600."""
+    key = hub.store.device_add(pid, "hub")
+    p = paths.home() / "admin-token"
+    p.write_text(key + "\n")
+    os.chmod(p, 0o600)
+    return key
+
+
+def test_the_hub_key_keeps_admin_rights_after_its_person_is_demoted(hub):
+    key = hub_key(hub, hub.ids["alice"])
+    assert call(hub, "POST", "/api/people/bob/role", key, {"role": "admin"})[0] == 200
+    assert call(hub, "POST", "/api/people/alice/role", hub.tokens["bob"], {"role": "member"}) == \
+        (200, {"role": "member", "note": ""})
+    assert hub.store.person_by_name("alice")["role"] == "member"
+    # the emergency link still opens the page, with the admin views
+    status, m = me(hub, key)
+    assert status == 200 and m["page"] is True and m["role"] == "admin"
+    for path in ("/api/me/account", "/api/log", "/api/people", "/api/invites"):
+        assert call(hub, "GET", path, key)[0] == 200, path
+    # her other device is a member's now
+    assert call(hub, "GET", "/api/people", hub.tokens["alice"]) == (403, "admin only")
+    assert me(hub, hub.tokens["alice"])[1]["role"] == "member"
+    # and the key gives her role back
+    assert call(hub, "POST", "/api/people/alice/role", key, {"role": "admin"})[0] == 200
+    assert hub.store.person_by_name("alice")["role"] == "admin"
+
+
+def test_the_hub_key_works_with_no_admin_at_all(hub):
+    key = hub_key(hub, hub.ids["alice"])
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE people SET role='member'")
+    assert call(hub, "GET", "/api/people", hub.tokens["bob"]) == (403, "admin only")
+    assert me(hub, key)[1]["page"] is True
+    assert call(hub, "GET", "/api/people", key)[0] == 200
+    assert call(hub, "POST", "/api/people/bob/role", key, {"role": "admin"})[0] == 200
+    assert call(hub, "GET", "/api/people", hub.tokens["bob"])[0] == 200
+
+
+def test_a_copied_hub_key_of_a_revoked_device_gets_nothing(hub):
+    key = hub_key(hub, hub.ids["alice"])
+    hub.store.device_revoke(hub.store.authenticate(key).device_id)
+    for method, path in (("GET", "/api/me"), ("GET", "/api/people"), ("GET", "/api/log")):
+        assert call(hub, method, path, key)[0] == 401, path
+
+
+def test_the_last_gitlab_admin_stays(hub):
+    from kaptyorka import admin_ops
+
+    _, carol = person(hub.store, "carol")  # no GitLab link
+    alice = hub.tokens["alice"]
+    assert call(hub, "POST", "/api/people/carol/role", alice, {"role": "admin"})[0] == 200
+    assert call(hub, "POST", "/api/people/alice/role", carol, {"role": "member"}) == \
+        (400, "alice is the last admin who signs in with GitLab; make someone with GitLab an"
+              " admin first")
+    assert call(hub, "POST", "/api/people/carol/role", alice, {"role": "member"})[0] == 200
+    # bob is linked: now alice may go
+    assert call(hub, "POST", "/api/people/bob/role", alice, {"role": "admin"})[0] == 200
+    assert call(hub, "POST", "/api/people/alice/role", alice, {"role": "member"})[0] == 200
+    assert admin_ops.admins(hub.store) == ["bob"]
+
+
+def test_cli_people_role_on_the_hub_machine_after_demotion(hub, capsys):
+    from kaptyorka import cli
+
+    key = hub_key(hub, hub.ids["alice"])
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE people SET role='member'")
+    paths.save_config({"hub": hub.url, "token": key})
+    assert cli._people_role(SimpleNamespace(name="alice", role="admin")) == 0
+    assert "alice is now an admin" in capsys.readouterr().out
+    # the hub machine joined again with a member's invite: the hub key is tried after a 403
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE people SET role='member'")
+    paths.save_config({"hub": hub.url, "token": hub.tokens["bob"]})
+    assert cli._people_role(SimpleNamespace(name="alice", role="admin")) == 0
+    assert hub.store.person_by_name("alice")["role"] == "admin"
+    # no key file: a member's 403 stays
+    (paths.home() / "admin-token").unlink()
+    assert cli._people_role(SimpleNamespace(name="bob", role="admin")) == 1
+    assert "only the admin can do that" in capsys.readouterr().err
+
+
+def test_the_manager_runs_through_the_hub_keys_bridge(hub):
+    key = hub_key(hub, hub.ids["alice"])
+    dev = hub.store.authenticate(key).device_id
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE devices SET host='box-1', secret_hash='x' WHERE id=?", (dev,))
+        hub.store.db.execute("UPDATE people SET role='member' WHERE id=?", (hub.ids["alice"],))
+    mm = ManagerStore(hub.store)
+    assert mm.admin_device("box-1")["id"] == dev
+    (paths.home() / "admin-token").unlink()
+    assert mm.admin_device("box-1") is None
+
+
+def run(*args):
+    from unittest import mock
+
+    from kaptyorka import cli
+
+    with mock.patch.object(cli.sys, "argv", ["kaptyorka", *args]):
+        try:
+            cli.entry()
+        except SystemExit as e:
+            return e.code
+
+
+def test_the_hub_key_works_once_its_person_is_a_team_machine(hub, capsys):
+    svc = hub.store.person_create("svc")
+    key, _ = hub.store.invite_redeem(hub.store.invite_create(svc), "svc@box-1", host="box-1",
+                                     os_user="svc")
+    p = paths.home() / "admin-token"
+    p.write_text(key + "\n")
+    os.chmod(p, 0o600)
+    paths.save_config({"hub": hub.url, "token": hub.tokens["alice"]})  # from another machine
+    assert run("machine", "team", "--from", "bob") == 1  # bob signs in with GitLab
+    assert "bob signs in with GitLab, so is a person" in capsys.readouterr().err
+    paths.save_config({"hub": hub.url, "token": key})
+    assert run("machine", "team", "--from", "svc") == 0
+    assert "svc is now a team machine" in capsys.readouterr().out
+    assert hub.store.is_team(svc)
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE people SET role='member'")
+    status, m = me(hub, key)
+    assert status == 200 and m["page"] is True and m["role"] == "admin"
+    assert call(hub, "GET", "/api/team/machines", key)[0] == 200
+    assert run("people", "role", "alice", "admin") == 0
+    assert hub.store.person_by_name("alice")["role"] == "admin"

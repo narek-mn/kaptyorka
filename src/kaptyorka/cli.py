@@ -118,11 +118,14 @@ def _serve(args) -> int:
     return 0
 
 
+RECOVER = "Lost every admin? On the hub machine run `kaptyorka people role <you> admin`."
+
+
 def _admin_device(legacy_token: str) -> str:
-    """The admin's own device token (device `hub`), made on the first start and kept in
-    ~/.kaptyorka/admin-token, so the admin never depends on the shared token. It stays with the
-    admin it was made for; once that person is no longer an admin, a new one is made for the
-    oldest admin."""
+    """The hub key: a device token (device `hub`) made on the first start for the admin and kept
+    in ~/.kaptyorka/admin-token (0600), so the admin never depends on the shared token. It has
+    admin rights whatever its person's role, so it is kept while its device is live; a new one
+    is made for the oldest admin only when it is gone."""
     from kaptyorka.store import Store
 
     p = paths.home() / "admin-token"
@@ -130,13 +133,15 @@ def _admin_device(legacy_token: str) -> str:
     try:
         saved = p.read_text().strip() if p.exists() else ""
         got = store.authenticate(saved) if saved else None
-        if got is not None and got.is_admin() and not got.legacy:
+        if got is not None and not got.legacy:
+            os.chmod(p, 0o600)  # one written by hand or by an older version
             return saved
         admin = next(x for x in store.people() if x["role"] == "admin")
         token = store.device_add(admin["id"], "hub")
     finally:
         store.close()
     fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)  # O_CREAT's mode applies only to a new file
     with os.fdopen(fd, "w") as f:
         f.write(token + "\n")
     return token
@@ -384,7 +389,15 @@ def _admin_call(method: str, path: str, body=None):
         print(NOT_JOINED, file=sys.stderr)
         return None
     try:
-        return http.request(method, cfg["hub"] + path, cfg["token"], body)
+        got = http.request(method, cfg["hub"] + path, cfg["token"], body)
+        if got and got[0] == 403:  # on the hub machine the hub key may do what this token can't
+            try:
+                key = (paths.home() / "admin-token").read_text().strip()
+            except (OSError, UnicodeDecodeError):
+                key = ""
+            if key and key != cfg["token"]:
+                got = http.request(method, cfg["hub"] + path, key, body)
+        return got
     except http.HubUnreachable:
         print(http.unreachable(cfg["hub"]), file=sys.stderr)
         return None
@@ -577,6 +590,15 @@ def _machine_owner(args) -> int:
 
 
 def _machine_team(args) -> int:
+    if bool(args.name) == bool(args.person):
+        print("give a new team machine's name, or --from <person>", file=sys.stderr)
+        return 1
+    if args.person:
+        done = _admin_json("POST", f"/api/people/{quote(args.person, safe='')}/team")
+        if done is None:
+            return 1
+        print(f"{done['name']} is now a team machine; its machines keep working")
+        return 0
     got = _admin_call("POST", "/api/team-machines", {"name": args.name})
     if got is None:
         return 1
@@ -1128,7 +1150,8 @@ def entry() -> None:
     pv.add_argument("name", help="the person's name")
     pv.add_argument("device", help="the device's name")
     pv.set_defaults(run=_people_revoke)
-    pl = ps.add_parser("role", help="make a person an admin, a member or a manager")
+    pl = ps.add_parser("role", help="make a person an admin, a member or a manager",
+                       epilog=RECOVER)
     pl.add_argument("name", help="the person's name")
     pl.add_argument("role", choices=("admin", "member", "manager"), help="the new role")
     pl.set_defaults(run=_people_role)
@@ -1187,7 +1210,10 @@ def entry() -> None:
     mo.set_defaults(run=_machine_owner)
     mt = mc.add_parser("team", help="add a team machine (one shared account everyone logs into);"
                                     " prints the join command to run there")
-    mt.add_argument("name", help="a name for it, for example jetson-1")
+    mt.add_argument("name", nargs="?", help="a name for it, for example jetson-1")
+    mt.add_argument("--from", dest="person", metavar="PERSON",
+                    help="turn this existing person into a team machine instead, such as the"
+                         " one the hub made for its own OS account; their machines stay")
     mt.set_defaults(run=_machine_team)
     mv = mc.add_parser("move", help="give a joined machine to another person, without joining again")
     mv.add_argument("device", help="the machine's name or id (kaptyorka people lists them)")

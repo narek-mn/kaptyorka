@@ -244,9 +244,12 @@ class Principal:
     device_name: str
     shared: bool
     legacy: bool
+    hub_key: bool = False  # the device in ~/.kaptyorka/admin-token on the hub machine
 
     def is_admin(self) -> bool:
-        return self.role == "admin"
+        """An admin person, or the hub key: whoever is logged in on the hub machine can always
+        get back in, even when every admin was demoted."""
+        return self.role == "admin" or self.hub_key
 
 
 @dataclass
@@ -385,6 +388,7 @@ class Store:
         shared token (the legacy device) maps a machine to a person through `legacy:<machine>`
         in settings, and to the device's own person otherwise."""
         digest = hashlib.sha256(token.encode()).hexdigest()
+        hub_key = digest == paths.hub_key_digest()
         machine = clean(machine, MAX_IDENT) or None
         used, confirmed = False, False
         with self.lock:
@@ -421,7 +425,8 @@ class Store:
                 return None
             self.db.execute("UPDATE devices SET last_used=? WHERE id=?", (self.clock(), dev["id"]))
             principal = Principal(person_id, who["name"], who["role"], dev["id"], device_name,
-                                  bool(dev["shared"]), bool(dev["legacy"]))
+                                  bool(dev["shared"]), bool(dev["legacy"]),
+                                  hub_key and not dev["legacy"])
         if used:
             self.log_add("system", "legacy_used", machine)
         if confirmed:

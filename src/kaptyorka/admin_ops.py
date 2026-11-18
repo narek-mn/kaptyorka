@@ -1,6 +1,5 @@
 """The admin's changes to people, projects and invites; a member's own access; the log read
 as plain sentences."""
-import hashlib
 import json
 import re
 from typing import Dict, List, Optional, Tuple
@@ -138,13 +137,16 @@ def admins(store) -> List[str]:
 
 
 def set_role(store, name: str, role: str, by: Principal) -> dict:
-    """Give a person a role. Several admins may be; the last one cannot go, and the hub's own
-    manager account keeps its role. Returns {"role", "note"}: the note says what the change
-    stops on the hub machine ("" when nothing)."""
+    """Give a person a role. Several admins may be; the last one cannot go, nor, while sign-in
+    with GitLab is on, the last one linked to GitLab, so the page stays usable. The hub's own
+    manager account keeps its role. The hub key keeps its rights whatever its person's role.
+    Returns {"role", "note"}; the note is "" (kept for the command line)."""
     _admin(by)
     if role not in ROLE_CHOICES:
         raise KaptyorkaError("role must be admin, member or manager")
-    emergency = emergency_device(store)
+    from kaptyorka import signin  # signin imports the store too; only needed here
+
+    gitlab_on = signin.status(store) is None
     with store.lock:
         db = store.db
         row = _live_person(db, name)
@@ -164,13 +166,15 @@ def set_role(store, name: str, role: str, by: Principal) -> dict:
                 raise KaptyorkaError(f"{name} still uses the old shared token on"
                                      f" {mapped['key'][len('legacy:'):]}; turn the shared token"
                                      " off first")
-        if old == "admin" and db.execute(
-                "SELECT 1 FROM people WHERE role='admin' AND removed_at IS NULL AND id<>?",
-                (row["id"],)).fetchone() is None:
+        if old == "admin" and _last_admin(db, row["id"]):
             raise KaptyorkaError(("you are" if row["id"] == by.person_id else f"{name} is")
                                  + " the last admin; make someone else an admin first")
-        mine = emergency is not None and db.execute(
-            "SELECT 1 FROM devices WHERE id=? AND person_id=?", (emergency, row["id"])).fetchone()
+        if old == "admin" and gitlab_on and row["gitlab_user"] and db.execute(
+                "SELECT 1 FROM people WHERE role='admin' AND removed_at IS NULL AND id<>?"
+                " AND gitlab_user IS NOT NULL AND gitlab_user<>''", (row["id"],)).fetchone() is None:
+            raise KaptyorkaError(("you are" if row["id"] == by.person_id else f"{name} is")
+                                 + " the last admin who signs in with GitLab; make someone with"
+                                 " GitLab an admin first")
         db.execute("UPDATE people SET role=? WHERE id=?", (role, row["id"]))
     if role == "admin":
         store.log_add(by.person_name, "admin_given", name)
@@ -178,11 +182,52 @@ def set_role(store, name: str, role: str, by: Principal) -> dict:
         store.log_add(by.person_name, "admin_taken", name)
     if role != "admin" and old != "admin" or role == "manager":
         store.log_add(by.person_name, "role", f"{name} -> {role}")
-    note = ""
-    if old == "admin" and mine:
-        note = ("The hub machine's emergency page link was theirs; run kaptyorka start on the"
-                " hub machine for a new one.")
-    return {"role": role, "note": note}
+    return {"role": role, "note": ""}
+
+
+def _last_admin(db, pid) -> bool:
+    """Lock held. True when no other admin person (team machines never count) is left."""
+    return db.execute("SELECT 1 FROM people WHERE role='admin' AND removed_at IS NULL AND team=0"
+                      " AND id<>?", (pid,)).fetchone() is None
+
+
+def make_team_machine(store, name: str, by: Principal) -> dict:
+    """Turn a person into a team machine, such as the person the hub made at install for its own
+    OS account: not a human. Their devices stay and now speak for the team machine (the hub key
+    keeps its rights); their admin role goes, and so does their ownership of hosts. Refused for
+    someone who signs in with GitLab, and while the old shared token speaks for them."""
+    _admin(by)
+    with store.lock:
+        db = store.db
+        row = _live_person(db, name)
+        pid, name = row["id"], row["name"]
+        if row["team"]:
+            raise KaptyorkaError(f"{name} is already a team machine")
+        if name == MANAGER and row["role"] == "manager":
+            raise KaptyorkaError("the hub's manager account stays as it is")
+        if row["gitlab_user"]:
+            raise KaptyorkaError(f"{name} signs in with GitLab, so is a person; unlink their"
+                                 " GitLab name first")
+        if db.execute("SELECT 1 FROM gitlab_sessions g JOIN devices d ON d.id=g.device_id"
+                      " WHERE g.person_id=? AND d.revoked_at IS NULL", (pid,)).fetchone():
+            raise KaptyorkaError(f"{name} has browsers signed in with GitLab, so is a person")
+        on = db.execute("SELECT value FROM settings WHERE key='legacy_enabled'").fetchone()
+        if (on is None or on["value"] != "0") and (db.execute(
+                "SELECT 1 FROM devices WHERE person_id=? AND legacy=1 AND revoked_at IS NULL",
+                (pid,)).fetchone() or db.execute(
+                "SELECT 1 FROM settings WHERE key LIKE 'legacy:%' AND value=?",
+                (str(pid),)).fetchone()):
+            raise KaptyorkaError(f"the old shared token still speaks for {name}; turn it off"
+                                 " first: kaptyorka shared-token off")
+        if row["role"] == "admin" and _last_admin(db, pid):
+            raise KaptyorkaError(("you are" if pid == by.person_id else f"{name} is")
+                                 + " the last admin; make someone else an admin first")
+        owned = [r["host"] for r in db.execute("SELECT host FROM machines WHERE"
+                                               " owner_person_id=? ORDER BY host", (pid,))]
+        db.execute("UPDATE machines SET owner_person_id=NULL WHERE owner_person_id=?", (pid,))
+        db.execute("UPDATE people SET team=1, role='member' WHERE id=?", (pid,))
+    store.log_add(by.person_name, "team_machine_from", name)
+    return {"name": name, "was": row["role"], "machines_unowned": owned}
 
 
 # invites
@@ -249,20 +294,15 @@ def invite_self(store, principal: Principal) -> str:
 
 
 def emergency_device(store) -> Optional[int]:
-    """The hub's own device: the admin's token in ~/.kaptyorka/admin-token on this (the hub)
-    machine, the one device token that still opens the page while GitLab is down. Its id while it
-    is live and its person is the admin, else None."""
-    try:
-        saved = (paths.home() / "admin-token").read_text().strip()
-    except (OSError, UnicodeDecodeError):
-        return None
-    if not saved:
+    """The hub key: the device whose token is in ~/.kaptyorka/admin-token on this (the hub)
+    machine. It has admin rights whatever its person's role and still opens the page while GitLab
+    is down. Its id while it is live, else None."""
+    digest = paths.hub_key_digest()
+    if digest is None:
         return None
     with store.lock:
-        row = store.db.execute(
-            "SELECT d.id FROM devices d JOIN people p ON p.id=d.person_id WHERE d.token_hash=?"
-            " AND d.revoked_at IS NULL AND d.legacy=0 AND p.role='admin'",
-            (hashlib.sha256(saved.encode()).hexdigest(),)).fetchone()
+        row = store.db.execute("SELECT id FROM devices WHERE token_hash=? AND revoked_at IS NULL"
+                               " AND legacy=0", (digest,)).fetchone()
     return row["id"] if row else None
 
 
@@ -743,6 +783,7 @@ SENTENCES = {
     "admin_given": _match(r"(.+)", "{0} made {1} an admin"),
     "admin_taken": _match(r"(.+)", "{0} removed {1}'s admin role"),
     "team_machine": _match(r"(.+)", "{0} added the team machine {1}"),
+    "team_machine_from": _match(r"(.+)", "{0} made {1} a team machine"),
     "machine_move": _match(r"(.+): (.+) -> (.+)", "{0} moved the machine {1} from {2} to {3}"),
     "page_login": _match(r"(.*)", "{0} opened the page ({1})"),
     "request": _match(r"(\w+):(.+)", "{0} asked for access to the {1} {2}"),
@@ -782,7 +823,7 @@ KNOWN_KINDS = tuple(SENTENCES)
 
 # the plain groups of the log page, in order, and the raw kinds each covers
 LOG_GROUPS = [
-    ("people", ["person", "person_removed", "role", "admin_given", "admin_taken", "team_machine", "invite", "invite_new", "invite_self",
+    ("people", ["person", "person_removed", "role", "admin_given", "admin_taken", "team_machine", "team_machine_from", "invite", "invite_new", "invite_self",
                 "machine_label", "browsers_out",
                 "invite_cancel", "device",
                 "device_shared", "join", "gitlab_user", "gitlab_link"]),

@@ -231,12 +231,16 @@ class ManagerStore:
         return None if row is None else row["id"]
 
     def admin_device(self, host: str) -> Optional[dict]:
+        """The bridge on the hub machine the manager runs through: an admin's, or the hub key's
+        whatever its person's role."""
+        hub_key = paths.hub_key_digest() or ""
         with self.lock:
             row = self.db.execute(
                 "SELECT d.* FROM devices d JOIN people p ON p.id=d.person_id"
-                " WHERE p.role='admin' AND d.host=? AND d.legacy=0 AND d.revoked_at IS NULL"
-                " AND d.secret_hash!='' ORDER BY d.last_used IS NULL, d.last_used DESC LIMIT 1",
-                (host,)).fetchone()
+                " WHERE (p.role='admin' OR d.token_hash=?) AND d.host=? AND d.legacy=0"
+                " AND d.revoked_at IS NULL AND d.secret_hash!=''"
+                " ORDER BY d.last_used IS NULL, d.last_used DESC LIMIT 1",
+                (hub_key, host)).fetchone()
             now = self.clock()
         if row is None:
             return None

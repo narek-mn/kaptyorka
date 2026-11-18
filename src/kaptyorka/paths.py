@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -26,6 +27,17 @@ def home() -> Path:
     p = Path(os.environ.get("KAPTYORKA_HOME") or Path.home() / ".kaptyorka")
     p.mkdir(mode=0o700, parents=True, exist_ok=True)
     return p
+
+
+def hub_key_digest() -> Optional[str]:
+    """The sha256 of the token in ~/.kaptyorka/admin-token on this (the hub) machine: the hub
+    key, which has admin rights whatever its person's role. None when the file is missing,
+    unreadable or empty."""
+    try:
+        saved = (home() / "admin-token").read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return hashlib.sha256(saved.encode()).hexdigest() if saved else None
 
 
 def config_path() -> Path:

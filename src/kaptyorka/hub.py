@@ -61,7 +61,7 @@ MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
     ("GET", r"/api/(brief|done-check|me|feed|settings|people|invites|rules|machines|team/machines|gitlab)"),
     ("GET", r"/api/files/\d+"),
     ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab|team-machines)"),
-    ("POST", r"/api/people/[^/]+/(gitlab|role)"),
+    ("POST", r"/api/people/[^/]+/(gitlab|role|team)"),
     ("POST", r"/api/machines/[^/]+/(grant|owner|revoke)"),
     ("POST", r"/api/projects/[^/]+(/grant|/revoke)?"),
     ("POST", r"/api/devices/\d+/(revoke|move)"),
@@ -220,16 +220,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             raise KaptyorkaError("unauthorized")
         return principal
 
-    def admin_token(p: Principal) -> bool:
-        """The admin's own token from ~/.kaptyorka/admin-token on this (the hub) machine: the
-        one device token that still opens the page while GitLab is down."""
-        return p.is_admin() and not p.legacy and admin_ops.emergency_device(store) == p.device_id
-
     def page_ok(p: Principal) -> bool:
         """May this principal use the page? Always while sign-in with GitLab is off; once on,
-        only a GitLab sign-in or the admin token."""
+        only a GitLab sign-in or the hub key (~/.kaptyorka/admin-token on the hub machine)."""
         return signin.is_session(store, p.device_id) or signin.status(store) is not None \
-            or admin_token(p)
+            or p.hub_key
 
     def page_gate(scope, p: Principal) -> Optional[str]:
         if machine_route(scope.get("method", ""), scope["path"]) or page_ok(p):
@@ -635,7 +630,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     def own_workers(principal: Principal, other: Optional[int] = None) -> List[dict]:
         if other is not None:  # a session of another person on a shared device: theirs only
-            return ws.list(replace(principal, person_id=other, role="member"))
+            return ws.list(replace(principal, person_id=other, role="member", hub_key=False))
         # the shared token is no admin here: anyone may hold it
         return ws.list(replace(principal, role="member") if principal.legacy else principal)
 
@@ -779,7 +774,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         row = next((p for p in store.people() if p["id"] == r["person_id"]), None)
         boss = store.agent(r["boss_key"])
         who = replace(principal, person_id=r["person_id"], person_name=row["name"] if row else "",
-                      role=row["role"] if row else "member")  # the asker's rights, not the manager's
+                      role=row["role"] if row else "member", hub_key=False)  # the asker's rights, not the manager's
         if ws.archived(project):
             mm.request_decide(request_id, "refused", reason)
             note = REMOVED.format(project=project)
@@ -866,7 +861,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     def log(ctx: Context, limit: int = 200) -> List[dict]:
         """The team's activity log, newest first (admin and manager only)."""
         _, principal = caller(ctx)
-        if principal.role not in ("admin", "manager"):
+        if not (principal.is_admin() or principal.role == "manager"):
             raise KaptyorkaError("the log is for the admin and the manager")
         return store.log(max(1, min(limit, 1000)))
 
@@ -1063,7 +1058,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         ok = page_ok(p)  # false: a device token on a hub where the page needs a GitLab sign-in
         if ok:
             store.page_seen(p)  # only the page asks who it is
-        return JSONResponse({"person": p.person_name, "role": p.role, "device": p.device_name,
+        return JSONResponse({"person": p.person_name, "role": "admin" if p.is_admin() else p.role,
+                             "device": p.device_name,
                              "person_id": p.person_id, "gitlab_connect": signin.can_connect(store, p),
                              "page": ok})
 
@@ -1605,6 +1601,20 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                       request.scope["state"]["principal"])
         except KaptyorkaError as e:
             return admin_error(e)
+        return JSONResponse(done)
+
+    @server.custom_route("/api/people/{name}/team", methods=["POST"])
+    async def api_person_team(request: Request) -> Response:
+        """Turn a person into a team machine (admin_ops.make_team_machine)."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        try:
+            done = admin_ops.make_team_machine(store, request.path_params["name"],
+                                               request.scope["state"]["principal"])
+        except KaptyorkaError as e:
+            return admin_error(e)
+        wake_bridges()
         return JSONResponse(done)
 
     @server.custom_route("/api/me/access", methods=["GET"])

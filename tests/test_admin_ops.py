@@ -247,7 +247,7 @@ def test_shared_token_person_cannot_become_admin(store, ids):
         admin_ops.set_role(store, "bob", "admin", who(store, "alice"))
 
 
-def test_demoting_the_emergency_admin_says_so(store, ids, tmp_path, monkeypatch):
+def test_the_hub_key_outlives_its_persons_admin_role(store, ids, tmp_path, monkeypatch):
     from kaptyorka import paths
     monkeypatch.setattr(paths, "home", lambda: tmp_path)
     token = store.device_add(ids["alice"], "hub")
@@ -255,9 +255,23 @@ def test_demoting_the_emergency_admin_says_so(store, ids, tmp_path, monkeypatch)
     dev = store.authenticate(token).device_id
     assert admin_ops.emergency_device(store) == dev
     admin_ops.set_role(store, "bob", "admin", who(store, "alice"))
-    done = admin_ops.set_role(store, "alice", "member", who(store, "bob"))
-    assert "emergency page link was theirs; run kaptyorka start" in done["note"]
-    assert admin_ops.emergency_device(store) is None  # tied to alice, who is no admin now
+    assert admin_ops.set_role(store, "alice", "member", who(store, "bob")) == {"role": "member",
+                                                                             "note": ""}
+    assert admin_ops.emergency_device(store) == dev
+    key = store.authenticate(token)
+    assert key.role == "member" and key.hub_key and key.is_admin()
+    with store.lock:  # nobody is an admin any more: the hub key still gives the role back
+        store.db.execute("UPDATE people SET role='member'")
+    admin_ops.set_role(store, "alice", "admin", store.authenticate(token))
+    assert admin_ops.admins(store) == ["alice"]
+    store.device_revoke(dev)
+    assert admin_ops.emergency_device(store) is None and store.authenticate(token) is None
+    # an empty or missing file: no hub key
+    (tmp_path / "admin-token").write_text("\n")
+    assert admin_ops.emergency_device(store) is None
+    (tmp_path / "admin-token").unlink()
+    assert admin_ops.emergency_device(store) is None
+    assert not store.authenticate(store.device_add(ids["bob"], "pc")).hub_key
 
 
 def test_invites_list_and_cancel(store, ws, ids, clock):
