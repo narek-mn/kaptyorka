@@ -72,6 +72,9 @@ class Bridge:
         self._problems: Dict[str, Optional[str]] = {}
         self.pending_confirm = False  # a new token is saved but the hub has not confirmed it
         self.hub: dict = {}  # the hub's last JSON answer to a heartbeat; {} before one or on 204
+        # the team projects and worker keys the hub last named; kept when a beat fails, so
+        # one lost answer never hides sessions. None: no list (a hub older than 0.9.11)
+        self._list = offhub.load_team()
         self._facts: dict = {}
         self._facts_at: Optional[float] = None  # monotonic time of the last build; None forces one
         self._skills_version: Optional[str] = None  # the hub's last skills_version; None until one comes
@@ -116,9 +119,19 @@ class Bridge:
 
     def _team(self):
         """(team project names or None when unknown, worker keys to report anyway)."""
-        team, keep = self.hub.get("team"), self.hub.get("keep")
-        return ({t for t in team if isinstance(t, str)} if isinstance(team, list) else None,
-                {k for k in keep if isinstance(k, str)} if isinstance(keep, list) else set())
+        return self._list
+
+    def _learn_team(self, status, answer) -> None:
+        """Take the list from a 200 answer; one without `team` is an older hub: no list.
+        Any other answer keeps the last list."""
+        if status != 200 or not isinstance(answer, dict):
+            return
+        team, keep = answer.get("team"), answer.get("keep")
+        new = ({t for t in team if isinstance(t, str)} if isinstance(team, list) else None,
+               {k for k in keep if isinstance(k, str)} if isinstance(keep, list) else set())
+        if new != self._list or not (paths.home() / offhub.TEAM).exists():
+            self._list = new
+            offhub.save_team(*new)  # for this machine's shims and hooks
 
     def heartbeat(self, again: bool = True) -> None:
         offhub.clean()
@@ -148,8 +161,8 @@ class Bridge:
             sessions += found
             objs += got if problem is None else []
             shown += [s for s in got if s.key not in off] if problem is None else []
-            if problem is None and a.tool in COMPLETE:
-                tools.append(a.tool)  # this list is complete for it
+            if problem is None and a.tool in COMPLETE and team is not None:
+                tools.append(a.tool)  # complete for it; with no list some are held back
         projects = self.hub.get("projects", [])
         folders = facts.folders(projects if isinstance(projects, list) else [], shown, Path.home())
         body = {"machine": self.cfg["machine"], "sessions": sessions, "tools": tools,
@@ -163,7 +176,7 @@ class Bridge:
         if gone and status in (200, 204):
             offhub.told(gone)
         self.hub = answer if status == 200 and isinstance(answer, dict) else {}
-        offhub.save_team(*self._team())  # for this machine's shims and hooks
+        self._learn_team(status, answer)
         v = self.hub.get("skills_version")
         if isinstance(v, str) and v != self._skills_version:
             self._skills_version = v

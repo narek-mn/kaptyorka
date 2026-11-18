@@ -13,6 +13,8 @@ MANAGER_MCP = "mcp.json"  # in its folder, passed with --mcp-config
 WORKTREE = re.compile(r"--\d+$")  # a `<folder>--N` worktree belongs to its base folder's project
 NOT_TEAM = ("this folder is not a team project, so nothing from it goes to the hub."
             " Ask the admin to add it as a team project.")
+NO_TEAM_LIST = ("the hub has not sent its team project list yet, so nothing goes to it;"
+                " if this lasts, the hub needs updating.")
 
 
 def team_name(project: str) -> str:

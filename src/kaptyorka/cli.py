@@ -639,7 +639,8 @@ def _project_remove(args) -> int:
     if done is None:
         return 1
     print(f"removed the project {args.name}: {done['grants']} grants dropped;"
-          " its notes stay under Archived; its sessions leave the hub")
+          " its notes stay under Archived; its sessions leave the hub"
+          " and their messages are deleted")
     return 0
 
 
@@ -932,7 +933,7 @@ def entry() -> None:
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents: run the hub, invite people, give them access to projects.")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove,invite,people,"
-                            "invites,project,grant,revoke,machine,who,status,doctor,fleet,login-copy,rules,backup,restore}")
+                            "invites,project,grant,revoke,machine,who,status,page,doctor,fleet,login-copy,rules,backup,restore}")
     hide = argparse.SUPPRESS  # subparsers are hidden by giving them no help text
     s = sub.add_parser("start", help="run the hub on this machine (again, with the same settings)")
     s.add_argument("--port", type=int, help="hub port (default 8765)")

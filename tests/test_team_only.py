@@ -152,13 +152,13 @@ def test_purge_removes_what_personal_sessions_left(team):  # noqa: F811
 class Answers:
     """Stands in for the hub: records each heartbeat body, answers with `reply`."""
 
-    def __init__(self, monkeypatch, reply):
-        self.bodies, self.reply = [], reply
+    def __init__(self, monkeypatch, reply, status=200):
+        self.bodies, self.reply, self.status = [], reply, status
 
         def request(method, url, token, body=None, **kw):
             if url.endswith("/bridge/heartbeat"):
                 self.bodies.append(body)
-                return 200, self.reply
+                return self.status, self.reply
             return 404, ""
         monkeypatch.setattr(http, "request", request)
 
@@ -191,7 +191,7 @@ def test_bridge_reports_nothing_personal_without_a_list(home, quiet, monkeypatch
            bridge_mod.log).heartbeat()
     assert len(hub.bodies) == 1 and reported(hub.bodies[0]) == ["codex:m"]  # only the manager
     assert hub.bodies[0]["folders"] == {} and "diary" not in json.dumps(hub.bodies[0])
-    assert offhub.personal("proj-a", "/w/proj-a")  # shims and hooks refuse too
+    assert offhub.personal("proj-a", "/w/proj-a") == paths.NO_TEAM_LIST  # shims, hooks too
 
 
 def test_bridge_reports_team_folders_workers_and_the_manager(home, quiet, monkeypatch):
@@ -205,6 +205,56 @@ def test_bridge_reports_team_folders_workers_and_the_manager(home, quiet, monkey
     assert not offhub.personal("proj-a--2", "/w/proj-a--2")
     assert offhub.personal("diary", "/w/diary")
     assert not offhub.personal("scratch", "/w/scratch", "codex:w")
+
+
+def claude_sessions():
+    return FakeAdapter("claude-code", "claude", [
+        Session("claude:a", "claude-code", "proj-a", cwd="/w/proj-a"),
+        Session("claude:d", "claude-code", "diary", cwd="/w/diary")])
+
+
+def test_with_no_list_the_bridge_marks_nothing_gone(home, quiet, monkeypatch):
+    """A fresh bridge holds sessions back, so its list is not complete: claude-code is not
+    named in tools and the hub marks none of its sessions offline."""
+    hub = Answers(monkeypatch, {"team": ["proj-a"], "keep": []})
+    Bridge({"hub": "http://h", "token": "t", "machine": "box-1"}, [claude_sessions()],
+           bridge_mod.log).heartbeat()
+    first, second = hub.bodies
+    assert first["sessions"] == [] and first["tools"] == []
+    assert [s["key"] for s in second["sessions"]] == ["claude:a"]
+    assert second["tools"] == ["claude-code"]
+
+
+def test_a_failed_beat_keeps_the_list_and_a_restart_loads_it(home, quiet, monkeypatch):
+    hub = Answers(monkeypatch, {"team": ["proj-a"], "keep": []})
+    cfg = {"hub": "http://h", "token": "t", "machine": "box-1"}
+    b = Bridge(cfg, [claude_sessions()], bridge_mod.log)
+    b.heartbeat()
+    hub.status, hub.reply = 500, "boom"
+    b.heartbeat()
+    assert offhub.personal("proj-a", "/w/proj-a") == ""  # shims and hooks still work
+    assert offhub.personal("diary", "/w/diary") == NOT_TEAM
+    hub.status, hub.reply = 200, {"team": ["proj-a"], "keep": []}
+    b.heartbeat()
+    assert [s["key"] for s in hub.bodies[-1]["sessions"]] == ["claude:a"]
+    assert hub.bodies[-1]["tools"] == ["claude-code"]
+    # a restarted bridge starts from the saved list: its first beat is complete
+    n = len(hub.bodies)
+    Bridge(cfg, [claude_sessions()], bridge_mod.log).heartbeat()
+    assert len(hub.bodies) == n + 1
+    assert [s["key"] for s in hub.bodies[-1]["sessions"]] == ["claude:a"]
+    assert hub.bodies[-1]["tools"] == ["claude-code"]
+
+
+def test_an_older_hub_gives_the_no_list_text(home, quiet, monkeypatch):
+    Answers(monkeypatch, {"team": ["proj-a"], "keep": []})
+    b = Bridge({"hub": "http://h", "token": "t", "machine": "box-1"}, [claude_sessions()],
+               bridge_mod.log)
+    b.heartbeat()
+    Answers(monkeypatch, {"version": "0.9.10"})  # a 200 answer without a list
+    b.heartbeat()
+    assert offhub.personal("proj-a", "/w/proj-a") == paths.NO_TEAM_LIST
+    assert offhub.personal("proj-a", "/w/proj-a", "") != NOT_TEAM
 
 
 def test_bridge_against_a_hub(team, home, quiet):  # noqa: F811

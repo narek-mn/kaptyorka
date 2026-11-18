@@ -199,9 +199,10 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
             ident = found["ident"]
             return ident is not None and await anyio.to_thread.run_sync(offhub.off, ident.key)
 
-        async def personal(ident: Optional[identity.Identity]) -> bool:
-            """Not in a team project's folder: nothing goes to the hub."""
-            return ident is not None and await anyio.to_thread.run_sync(
+        async def personal(ident: Optional[identity.Identity]) -> str:
+            """Why nothing goes to the hub ("" when it may): not a team project's folder, or
+            no team project list yet."""
+            return "" if ident is None else await anyio.to_thread.run_sync(
                 offhub.personal, ident.project, ident.cwd, ident.key)
 
         async def list_tools(ctx, params) -> types.ListToolsResult:
@@ -215,7 +216,7 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
             if r is not None:
                 return types.ListToolsResult(tools=r.tools)
             return types.ListToolsResult(tools=[
-                types.Tool(name=n, description=paths.NOT_TEAM if mine else unreachable,
+                types.Tool(name=n, description=mine or unreachable,
                            input_schema={"type": "object"})
                 for n in FALLBACK_TOOLS])
 
@@ -239,8 +240,9 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 use, who = relay, found["ident"]
             if found["off"]:
                 return _error(NO_MANAGER_CONFIG)
-            if await personal(who):
-                return _error(f"kaptyorka: {paths.NOT_TEAM}")
+            why = await personal(who)
+            if why:
+                return _error(f"kaptyorka: {why}")
             if use is relay and await hidden():
                 return _error(f"kaptyorka: {offhub.COME_BACK}")
             args = dict(params.arguments or {})

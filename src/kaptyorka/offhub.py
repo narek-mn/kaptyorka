@@ -203,20 +203,35 @@ def save_team(team: Optional[set], keep: set) -> None:
         pass  # the hub refuses a personal folder's calls anyway
 
 
-def personal(project: str, cwd: str = "", key: str = "") -> bool:
-    """A session outside the team projects, so its shim and hooks send nothing: automatically
-    off the hub. Decided from the bridge's last list; with no list saved yet the hub decides
-    (it refuses such a session too). The manager and the hub's workers are never personal."""
-    if paths.in_manager_folder(cwd):
-        return False
+def load_team() -> Tuple[Optional[set], set]:
+    """The list the bridge saved last: (team project names, or None for no list; worker keys).
+    No file: None, as before the hub's first answer."""
     try:
         st = json.loads((paths.home() / TEAM).read_text())
     except (OSError, ValueError):
-        return False
-    if not isinstance(st, dict) or key in (st.get("keep") or []):
-        return False
-    team = st.get("team")
-    return not (isinstance(team, list) and paths.team_name(project) in team)
+        return None, set()
+    if not isinstance(st, dict):
+        return None, set()
+    team, keep = st.get("team"), st.get("keep")
+    return ({t for t in team if isinstance(t, str)} if isinstance(team, list) else None,
+            {k for k in keep if isinstance(k, str)} if isinstance(keep, list) else set())
+
+
+def personal(project: str, cwd: str = "", key: str = "") -> str:
+    """Why this session's shim and hooks send nothing ("" when they may): outside the team
+    projects (automatically off the hub), or the hub named no team projects yet (an older
+    hub). Decided from the bridge's last list; with no file saved yet the hub decides (it
+    refuses such a session too). The manager and the hub's workers are never personal."""
+    if paths.in_manager_folder(cwd):
+        return ""
+    if not (paths.home() / TEAM).exists():
+        return ""
+    team, keep = load_team()
+    if key in keep:
+        return ""
+    if team is None:
+        return paths.NO_TEAM_LIST
+    return "" if paths.team_name(project) in team else paths.NOT_TEAM
 
 
 def _tell_now(data: dict) -> None:

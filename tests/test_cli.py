@@ -210,7 +210,7 @@ def test_cli_machine_owner(monkeypatch, home, capsys):
 def test_metavar_lists_user_commands(capsys):
     with pytest.raises(SystemExit):
         entry_with(["--help"])
-    assert ("{start,join,leave,stop,update,remove,invite,people,invites,project,grant,revoke,machine,who,status,doctor,fleet,login-copy,rules,backup,restore}"
+    assert ("{start,join,leave,stop,update,remove,invite,people,invites,project,grant,revoke,machine,who,status,page,doctor,fleet,login-copy,rules,backup,restore}"
             in capsys.readouterr().out)
 
 
