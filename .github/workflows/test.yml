@@ -17,4 +17,5 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e . pytest
-      - run: python -m pytest tests -q
+      - run: python -m pytest tests -q -o faulthandler_timeout=90
+        timeout-minutes: 12
