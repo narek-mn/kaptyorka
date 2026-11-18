@@ -157,7 +157,9 @@ def test_fast_even_when_the_hub_hangs(joined, silent_hub):
                        capture_output=True, text=True, env=env, timeout=10)
     took = time.perf_counter() - t0
     assert r.returncode == 0 and r.stdout == "on\n", r.stderr
-    assert took < 0.5, took  # about 60 ms on a laptop; generous for slow CI machines
+    # This bound only guards against waiting on the hanging hub, which would take the
+    # 5 s+ socket wait. A cold Python start on CI runners can take about 1 s alone.
+    assert took < 2.0, took
 
 
 # the status line wrapper
