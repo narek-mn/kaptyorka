@@ -23,7 +23,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from kaptyorka import __version__, admin_ops, brief, identity, manager, paths, signin
+from kaptyorka import __version__, admin_ops, brief, identity, manager, paths, signin, usage
 from kaptyorka.gitlab import GitLabError, GitLabSource
 from kaptyorka import rules as rules_mod
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
@@ -35,10 +35,11 @@ from kaptyorka.manager import ManagerStore
 from kaptyorka.memory import MemoryStore, check_state
 from kaptyorka.secrets_check import check_secrets
 from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, attach_line, clean
-from kaptyorka.workers import LIVE, MAX_FACT, WorkerStore, _git as clean_git, clean_facts, safe_name
+from kaptyorka.workers import LIVE, MAX_FACT, STARTUP_S, WorkerStore, _git as clean_git, clean_facts, safe_name
 
 MAX_WAIT_S = 25
 TICK_S = 15
+ARRIVAL_GAP_S = 600  # no own session on a host this long: the next one is an arrival
 OWN_TOKEN = ("use your own device token: run kaptyorka join with an invite, or ask the admin to"
              " assign this machine")
 REMOVED = "{project} was removed; ask the admin to register it again"
@@ -282,6 +283,30 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             close_if_off()
         keep_manager(now)
         manager_pushes(now)
+        arrivals(now)
+
+    def arrivals(now: float) -> None:
+        """A person's first own session on a host (none there for ARRIVAL_GAP_S) while someone
+        else uses it heavily: the manager warns them and tells the admin. Never held."""
+        if not mm.enabled():
+            return
+        warn = now >= ws.started + STARTUP_S  # just started: bridges have not all reported
+        done = set()
+        for s in ws.direct_sessions(now):
+            pair = (s["host"], s["person_id"])
+            if pair in done:
+                continue
+            done.add(pair)
+            if not mm.arrived(f"arrive:{s['host']}:{s['person_id']}", now, ARRIVAL_GAP_S) \
+                    or not warn:
+                continue
+            here = ws.host_use(s["host"], now)
+            lines = usage.others(here[1], here[0], s["person"]) if here is not None else []
+            key = manager_to_wake() if lines else None
+            if key is not None:
+                tell(key, manager.text_arrival(s["person"], s["session"], s["host"], lines))
+                store.log_add("hub", "machine_in_use",
+                              f"{s['person']} on {s['host']}: {'; '.join(lines)}"[:500])
 
     def close_if_off() -> None:
         """A hub started with the manager switched off closes a manager still running."""
@@ -542,6 +567,34 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         return f"no machine can take {project}: " + ("; ".join(reasons)
                                                      or "no machine you may use is joined")
 
+    def manager_to_wake() -> Optional[str]:
+        """The manager's session for a notice; asleep: its last one (the notice wakes it)."""
+        if not mm.enabled():
+            return None
+        return mm.session_key(store.clock()) or (mm.last_key() if mm.retired() else None)
+
+    def in_use(host: str, me: str) -> "tuple[List[str], List[str]]":
+        """(the other people working on host or using much of it, one line of use each for the
+        manager). The manager account is nobody; `me`'s own accounts never count."""
+        now = store.clock()
+        here = ws.host_use(host, now)
+        use, by_person = here if here is not None else ({}, {})
+        present = [n for n in ws.host_people(host, now) if n != me]
+        heavy = [n for n, p in by_person.items()
+                 if me not in p["people"] and usage.heavy(p, use)]
+        who = present + [n for n in heavy if n not in present]
+        if not who:
+            return [], []
+        if here is None:
+            return who, ["no fresh use report from this machine"]
+        named = {n for n in who if n in by_person}
+        for n, p in by_person.items():  # a shared account's label holds the person's name
+            if n not in named and any(x in p["people"] for x in present):
+                named.add(n)
+        lines = [usage.describe(n, by_person[n], use) for n in sorted(
+            named, key=lambda n: (-len(usage.held(by_person[n])), -by_person[n]["cpu"], n))]
+        return who, lines or ["no notable use by them"]
+
     @server.tool()
     @_tool_errors
     async def work(project: str, task: str, ctx: Context, machine: str = "",
@@ -565,26 +618,33 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         chosen = ws.choose(usable, project, tool, store.clock(), principal.person_id)
         if chosen is None:
             return no_machine(project, machine or None, tool, usable, reasons)
+        who, load = in_use(chosen["host"], principal.person_name)
         if chosen["occupied"]:
             others = [n for n in ws.folder_people(chosen["host"], chosen["os_user"],
                                                   chosen["folder"], store.clock())
                       if n and n != principal.person_name]
-            manager_key = None
-            if others and mm.enabled():  # asleep: its last session; the notice wakes it
-                manager_key = mm.session_key(store.clock()) or (
-                    mm.last_key() if mm.retired() else None)
+            manager_key = manager_to_wake() if others else None
             if manager_key is not None:
                 rid = mm.request_add(principal.person_id, agent.key, project, task, tool,
                                      resume or None, chosen["host"], others[0],
                                      chosen["folder"])
                 tell(manager_key, manager.text_busy(principal.person_name, project,
                                                     chosen["host"], others[0],
-                                                    chosen["folder"], rid))
+                                                    chosen["folder"], rid, load))
                 return (f"busy: {chosen['host']} has {others[0]}'s session in that folder; the"
                         f" manager is asking them (request {rid}); you will hear back here")
             if others:  # no manager online: the asker picks again
                 return (f"busy: {chosen['host']} has {others[0]}'s session in that folder;"
                         " ask again later or name another machine")
+        if who:  # someone else works there, or uses much of it: the manager decides
+            manager_key = manager_to_wake()
+            if manager_key is not None:  # without a manager it starts, as before
+                rid = mm.request_add(principal.person_id, agent.key, project, task, tool,
+                                     resume or None, chosen["host"], who[0], chosen["folder"])
+                tell(manager_key, manager.text_in_use(principal.person_name, project,
+                                                      chosen["host"], who, load, rid))
+                return (f"busy: {chosen['host']} is in use by {who[0]}; the manager is deciding"
+                        f" (request {rid}); you will hear back here")
         w = ws.create(principal, project, task, chosen, tool, agent.key, resume or None,
                       chosen["occupied"])
         wake_bridges()

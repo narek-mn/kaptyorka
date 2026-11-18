@@ -308,6 +308,12 @@ What it decides: when you call `work` for a machine that holds another person's 
 - A free folder, or a worktree on branch `work/<worker-name>`.
 - Your session must still be online; if it is gone, you are told on the page.
 
+The same holds for a machine in use by someone else in any folder: another person has an online session there, or their use of it is heavy. The manager's notice then carries the use of each other person (GPUs held, CPU cores, memory) and the rule of thumb below; it decides whether both can work normally there now, and tells both why. Without a manager, work in another folder starts as before.
+
+Shared machines: every bridge reports, once a minute, what each OS user on its machine uses: CPU cores (the average over that minute), memory, and, where `nvidia-smi` is installed, each GPU's busy % and memory and which OS user holds GPU memory. Only numbers per OS user leave the machine, never process names or command lines; reading them takes about 10 ms, and `nvidia-smi` gets 5 seconds before it is left out for 10 minutes. The hub adds an OS user's numbers to the person whose device runs as it (one person in two OS users adds up; an account nobody joined from shows as `account <name>`), ignores a report older than 3 minutes, and never counts the manager. A person holds a GPU when their processes use 1 GB or more of it. Their use is **heavy** when they hold half the GPUs or more, a GPU they hold is 80% busy or full, or they use half the CPU cores or the memory. The thresholds are in `usage.py`; there is no setting. Only the admin (on `/api/machines`) and the manager see the numbers.
+
+A session someone opens straight on a machine cannot be held. When a person's first session on a machine (none there for 10 minutes before) arrives while another person's use there is heavy, the hub tells the manager once. The manager sends that session one line on who uses what and tells the admin; it never refuses. Only team-project sessions reach the hub, so a personal session is never noticed.
+
 Every decision carries a reason, is written to the log, and is told to the asker. A request nobody decides expires after an hour, and the asker is told to ask again. If no manager is online, `work` answers as before and the asker picks another machine.
 
 What the hub tells it: a worker abandoned for a day, a shared machine whose bridge is offline, a person whose workers failed to start twice, a proposal or an access request waiting a day, and once a week a prompt to read `log(500)` and file `propose_rule` for repeated clashes. It passes these on to the admin. An abandoned worker is sent once; an offline bridge and a day-old proposal or request are sent once a day; the failed-twice note at most once an hour; the review once a week.
@@ -532,6 +538,7 @@ src/kaptyorka/
   store.py      SQLite storage: people, devices, agents, messages, notes
   bridge.py     per-machine bridge: reports sessions, pushes messages, starts workers
   workers.py    hub side of workers: states, linking, adopt, close
+  usage.py      machine use per OS user (CPU, memory, GPU) and the "heavy" rule
   connects.py   connection requests made before 0.9.11: the admin decides
   memory.py     state notes, git activity and the done check
   rules.py      team rules, skills, proposals and conflicts in the hub

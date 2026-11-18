@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 # Commands that touch the real machine: services, the pipx install, agent tools.
-FENCED = {"systemctl", "launchctl", "loginctl", "systemd-run", "pipx",
+FENCED = {"nvidia-smi", "systemctl", "launchctl", "loginctl", "systemd-run", "pipx",
           "claude", "codex", "opencode", "cursor"}
 
 
@@ -68,6 +68,14 @@ def every_folder_is_a_team_project(request, monkeypatch):
     monkeypatch.setattr(Bridge, "_team", lambda self: (_Every(), real(self)[1]))
     monkeypatch.setattr(offhub, "personal", lambda *a, **k: False)
     monkeypatch.setattr(offhub, "save_team", lambda *a, **k: None)  # a shim runs as its own process
+
+
+@pytest.fixture(autouse=True)
+def no_real_gpu(monkeypatch):
+    """The bridge's use reading never finds the real nvidia-smi; tests give a fake one."""
+    from kaptyorka import usage
+
+    monkeypatch.setattr(usage, "_nvidia_smi", lambda: None)
 
 
 @pytest.fixture(autouse=True)

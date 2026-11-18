@@ -7,6 +7,7 @@ import shlex
 import time
 from typing import List, Optional, Tuple
 
+from kaptyorka import usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES
 from kaptyorka.orders import sign
 from kaptyorka.secrets_check import check_secrets
@@ -117,6 +118,43 @@ def _harness(raw: dict) -> dict:
     return out
 
 
+def _n(value, top: float) -> Optional[float]:
+    """A finite number from 0 to `top`, or None."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) \
+            and 0 <= value <= top:
+        return float(value)
+    return None
+
+
+def clean_use(use) -> Optional[dict]:
+    """The bridge's use numbers (usage.Sampler.read): numbers per OS user only, at most 64 GPUs
+    and 200 users."""
+    if not isinstance(use, dict):
+        return None
+    out: dict = {"age": _n(use.get("age"), 1e9) or 0.0, "cpus": int(_n(use.get("cpus"), 1e6) or 0),
+                 "mem_mb": int(_n(use.get("mem_mb"), 1e12) or 0)}
+    if isinstance(use.get("gpus"), list):
+        out["gpus"] = []
+        for g in use["gpus"][:64]:
+            if isinstance(g, dict) and isinstance(g.get("index"), int) \
+                    and not isinstance(g["index"], bool):
+                out["gpus"].append({"index": g["index"], "util": _n(g.get("util"), 100),
+                                    "mem": _n(g.get("mem"), 1e9), "total": _n(g.get("total"), 1e9)})
+    users = {}
+    for name, u in list((use.get("users") or {}).items())[:200] \
+            if isinstance(use.get("users"), dict) else ():
+        if not (safe_name(name) and isinstance(u, dict)):
+            continue
+        row = {"mem": int(_n(u.get("mem"), 1e12) or 0),
+               "gpus": {i[:8]: int(_n(mb, 1e9) or 0) for i, mb in (u.get("gpus") or {}).items()
+                        if isinstance(i, str)} if isinstance(u.get("gpus"), dict) else {}}
+        if _n(u.get("cpu"), 1e6) is not None:
+            row["cpu"] = _n(u["cpu"], 1e6)
+        users[name[:MAX_FACT]] = row
+    out["users"] = users
+    return out
+
+
 def clean_facts(facts: dict) -> dict:
     """Only the known keys, with the right types; strings cut to 200."""
     facts = facts if isinstance(facts, dict) else {}
@@ -141,6 +179,9 @@ def clean_facts(facts: dict) -> dict:
     if isinstance(facts.get("logins"), dict):
         out["logins"] = {t: v for t, v in facts["logins"].items()
                          if t in TOOL_NAMES and (v is None or isinstance(v, bool))}
+    use = clean_use(facts.get("use"))
+    if use is not None:
+        out["use"] = use
     return out
 
 
@@ -205,6 +246,8 @@ class WorkerStore:
                         # someone else's account: their project names and commits are theirs
                         d["folders"] = {}
                         d["facts"].pop("git", None)
+                    if not (principal.is_admin() and not principal.legacy):
+                        d["facts"].pop("use", None)  # other people's numbers: admin and manager
                     d["auto_update"] = (bool(s["auto_update"]) if s["auto_update"] is not None
                                         else s["role"] != "admin")
         return rows
@@ -544,6 +587,55 @@ class WorkerStore:
             row = self.db.execute("SELECT body FROM launches WHERE worker=? AND kind='launch'"
                                   " ORDER BY id DESC", (name,)).fetchone()
             return json.loads(row["body"]).get("first_message", "") if row else ""
+
+    def host_use(self, host: str, now: float) -> Optional[Tuple[dict, dict]]:
+        """(the freshest use reported for host, {person: their numbers}); None when no bridge
+        there reported within usage.STALE_S. The manager account is nobody."""
+        best = None
+        with self.lock:
+            for r in self.db.execute(
+                    "SELECT f.facts, f.updated FROM device_facts f JOIN devices d ON d.id=f.device_id"
+                    " WHERE d.host=? AND d.revoked_at IS NULL", (host,)):
+                use = json.loads(r["facts"]).get("use")
+                if not isinstance(use, dict):
+                    continue
+                age = (use.get("age") or 0.0) + max(now - r["updated"], 0.0)
+                if age <= usage.STALE_S and (best is None or age < best[0]):
+                    best = (age, use)
+            owners: dict = {}
+            for d in self.db.execute(
+                    "SELECT DISTINCT d.os_user, p.name FROM devices d JOIN people p"
+                    " ON p.id=d.person_id WHERE d.host=? AND d.revoked_at IS NULL AND d.legacy=0"
+                    " AND p.role!='manager' AND d.os_user!=''", (host,)):
+                owners.setdefault(d["os_user"], []).append(d["name"])
+        if best is None:
+            return None
+        return best[1], usage.people_use(best[1], owners)
+
+    def host_people(self, host: str, now: float) -> dict:
+        """{person name: the name of one of their online sessions} on host; the manager account
+        and sessions of no known person are left out."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT p.name AS person, a.name FROM agents a JOIN people p ON p.id=a.person_id"
+                " WHERE a.host=? AND a.last_seen>? AND p.role!='manager'"
+                " ORDER BY a.last_seen DESC", (host, now - ONLINE_S)).fetchall()
+        out: dict = {}
+        for r in rows:
+            out.setdefault(r["person"], r["name"])
+        return out
+
+    def direct_sessions(self, now: float) -> List[dict]:
+        """Online sessions a person opened themselves (not hub workers, not the manager's),
+        on a known host: host, person_id, person, session name; oldest first."""
+        live = self.live_keys()
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT a.key, a.name, a.host, a.person_id, p.name AS person FROM agents a"
+                " JOIN people p ON p.id=a.person_id WHERE a.host!='' AND a.last_seen>?"
+                " AND p.role!='manager' ORDER BY a.started, a.key", (now - ONLINE_S,)).fetchall()
+        return [{"host": r["host"], "person_id": r["person_id"], "person": r["person"],
+                 "session": r["name"]} for r in rows if r["key"] not in live]
 
     def folder_people(self, host: str, os_user: str, folder: str, now: float) -> List[str]:
         """Names of the people with an online session in that folder ("" for none known)."""

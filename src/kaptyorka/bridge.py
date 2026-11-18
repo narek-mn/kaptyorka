@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import __version__, facts, http, identity, offhub, orders, paths, skills_sync
+from kaptyorka import __version__, facts, http, identity, offhub, orders, paths, skills_sync, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES, Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
@@ -77,6 +77,7 @@ class Bridge:
         self._list = offhub.load_team()
         self._facts: dict = {}
         self._facts_at: Optional[float] = None  # monotonic time of the last build; None forces one
+        self._usage = usage.Sampler()
         self._skills_version: Optional[str] = None  # the hub's last skills_version; None until one comes
         self._updated_to = ""  # the hub version an update was last run for
         self._update_retry_at = 0.0
@@ -98,6 +99,10 @@ class Bridge:
             current = None if self._skills_version is None else \
                 skills_sync.applied_version(paths.home()) == self._skills_version
             self._facts = {**identity.facts(), **facts.machine(self.adapters, self.runner, skills_current=current), "git": repos}
+            try:  # use per OS user: numbers only; never stops the heartbeat
+                self._facts["use"] = self._usage.read(self.runner)
+            except Exception as e:
+                self._report("use", f"reading machine use failed: {e}")
             self._facts_at = time.monotonic()
         return self._facts
 
@@ -115,7 +120,13 @@ class Bridge:
             if read_at is not None:
                 info["age"] = round(max(0.0, time.time() - read_at), 1)
             git[cwd] = info
-        return {**facts_, "git": git}
+        out = {**facts_, "git": git}
+        if isinstance(facts_.get("use"), dict):
+            use = dict(facts_["use"])
+            read_at = use.pop("read_at", None)
+            use["age"] = round(max(0.0, time.time() - read_at), 1) if read_at is not None else 0.0
+            out["use"] = use
+        return out
 
     def _team(self):
         """(team project names or None when unknown, worker keys to report anyway)."""

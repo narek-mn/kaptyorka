@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from kaptyorka import paths, rules
+from kaptyorka import paths, rules, usage
 from kaptyorka.adapters import claude as claude_adapter
 from kaptyorka.adapters.base import write_atomic
 from kaptyorka.store import ONLINE_S, Store
@@ -44,6 +44,12 @@ started and kept alive by the hub. You are not a coder and you do not work on pr
 - A busy machine: a person wants a project on a machine that is occupied. Message \
 the person who occupies it, read the answer, then call `work_decide(request_id, \
 machine_or_wait, reason)`. Pick the machine, another machine, or `wait`.
+- A machine in use: a person wants work on a machine where someone else works or uses much of \
+it. The notice gives the use (GPUs, CPU cores, memory) and the rule of thumb for heavy. Judge \
+whether both can work normally now; decide with `work_decide` (the machine, another machine, \
+or `wait`) and tell both people why in one line each.
+- Someone opened a session on a machine another person uses heavily: it cannot be held. Send \
+that session one line on who uses what, and tell the admin in one line. Never refuse it.
 - An abandoned worker, a shared-machine bridge that is offline, or a launch that failed \
 twice: tell the admin's online session in one line with `send`.
 - A proposal or an access request that has waited a day: remind the admin in one line.
@@ -121,12 +127,33 @@ def request_line(rid: int, machine: str) -> str:
             " \"wait\", reason).")
 
 
+def _load(lines: List[str]) -> str:
+    return (f"Use now: {'; '.join(lines)}. Rule of thumb: {usage.RULE}. ") if lines else ""
+
+
 def text_busy(person: str, project: str, machine: str, other: str, folder: str,
-              rid: int) -> str:
+              rid: int, load: Optional[List[str]] = None) -> str:
     """The knock text for a busy machine. Plain f-strings: braces in any value stay as they
     are."""
     return (f"{person} wants {project} on {machine}, occupied by {other} in {folder}. "
-            "Ask them, or pick another machine. " + request_line(rid, machine))
+            "Ask them, or pick another machine. " + _load(load or [])
+            + request_line(rid, machine))
+
+
+def text_in_use(person: str, project: str, machine: str, who: List[str], load: List[str],
+                rid: int) -> str:
+    """Another person works on the machine (any folder) or uses much of it."""
+    return (f"{person} wants {project} on {machine}, which {', '.join(who)} is using right now. "
+            + _load(load) + "Decide whether both can work normally there now: start it, wait,"
+            " or another machine, and tell both why. " + request_line(rid, machine))
+
+
+def text_arrival(person: str, session: str, machine: str, load: List[str]) -> str:
+    """A session opened directly on a machine someone else uses heavily: a warning only."""
+    return (f"{person} opened session {session} on {machine}, where {'; '.join(load)} right"
+            f" now. It cannot be held: send that session one line on who uses what, so they"
+            " know they may slow each other down, and tell the admin in one line."
+            " Do not refuse anything.")
 
 
 class ManagerStore:
@@ -417,6 +444,15 @@ class ManagerStore:
                 self.db.execute("UPDATE work_requests SET decided_at=?, decision='expired'"
                                 " WHERE id=?", (now, r["id"]))
         return [{**dict(r), "decided_at": now, "decision": "expired"} for r in rows]
+
+    def arrived(self, key: str, now: float, gap_s: float) -> bool:
+        """True when `key` was not seen within gap_s (an arrival); it is seen now either way."""
+        with self.lock:
+            row = self.db.execute("SELECT time FROM manager_pushes WHERE key=?",
+                                  (key,)).fetchone()
+            self.db.execute("INSERT INTO manager_pushes (key, time) VALUES (?, ?)"
+                            " ON CONFLICT(key) DO UPDATE SET time=excluded.time", (key, now))
+        return row is None or now - row["time"] > gap_s
 
     # deduped pushes
 

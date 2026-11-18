@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.14
+
+- **The hub knows who uses a shared machine, and how much.** Each bridge reports, once a minute, CPU cores, memory and (with `nvidia-smi`) GPU busy %, GPU memory and GPU holders per OS user. Numbers only: no process names or command lines. The hub maps each OS user to its person and ignores reports older than 3 minutes. Only the admin and the manager see them.
+- **The manager decides when a second person wants a machine in use.** `work` on a machine where another person has a session in any folder, or uses it heavily, is now held for the manager, with each person's use and the rule of thumb in the notice; before, only the same folder was. The manager starts it, says wait, or picks another machine, and tells both why. Without a manager, a different folder starts as before.
+- **A session opened straight on a heavily used machine is warned, never refused.** Once per arrival (no session of that person there for 10 minutes before), the manager sends it one line on who uses what and tells the admin.
+- Heavy: holding half the GPUs or more (1 GB or more on a GPU holds it), a held GPU 80% busy or full, or half the CPU cores or memory. In `usage.py`, no setting.
+
 ## 0.9.13
 
 **Upgrade note: sign-in with GitLab needs two steps from the admin.** Nothing changes for anyone until they are done, and private `#t=` links keep working after. (1) Make a GitLab application with the `read_user` scope whose redirect URI is the hub address plus `/auth/gitlab/callback` (`kaptyorka gitlab status` prints it), and put its id and secret, one per line, in `~/.kaptyorka/gitlab-oauth` on the hub machine, then `chmod 600 ~/.kaptyorka/gitlab-oauth`. (2) Link each person to their GitLab username, yourself included: **GitLab name** on their Team row, or `kaptyorka people gitlab <person> <username>`. Until a person is linked, signing in with GitLab tells them to ask the admin.

@@ -21,6 +21,7 @@ from kaptyorka.workers import GONE_S, WorkerStore
 
 HOST = "box-1"
 URL = "http://127.0.0.1:9999"
+NO_REPORT = ["no fresh use report from this machine"]
 
 
 @pytest.fixture
@@ -330,7 +331,7 @@ def test_busy_goes_to_manager_when_online(hub):
     b, _, bob = busy_setup(hub)
     assert ask(hub, bob) == ("busy: box-1 has alice's session in that folder; the manager is"
                              " asking them (request 1); you will hear back here")
-    assert inbox(mgr, me) == [manager.text_busy("bob", "proj-a", "box-1", "alice", "/w/proj-a", 1)]
+    assert inbox(mgr, me) == [manager.text_busy("bob", "proj-a", "box-1", "alice", "/w/proj-a", 1, NO_REPORT)]
     assert hub.mm.request(1)["boss_key"] == "k:boss" and poll(hub, b) == []
 
 
@@ -881,7 +882,7 @@ def test_busy_work_while_the_manager_sleeps_wakes_it(hub, clock):
     assert ask(hub, bob).startswith("busy: box-1 has alice's session in that folder; the"
                                     " manager is asking them (request 1)")
     texts = woken(hub, b)
-    busy = manager.text_busy("bob", "proj-a", "box-1", "alice", "/w/proj-a", 1)
+    busy = manager.text_busy("bob", "proj-a", "box-1", "alice", "/w/proj-a", 1, NO_REPORT)
     assert any(t.endswith(busy) for t in texts)
 
 
@@ -922,3 +923,184 @@ def test_manager_row_never_marked_background(hub):
     assert rows["manager:manager"]["role"] == "manager"
     assert rows["manager:manager"]["background"] is False
     assert rows["root:proj-a"]["background"] is True
+
+
+# a machine in use by another person (any folder), and sessions opened directly there
+
+HEAVY = {"age": 5, "cpus": 32, "mem_mb": 65536,
+         "gpus": [{"index": i, "util": 90, "mem": 30000, "total": 32000} for i in range(4)],
+         "users": {"u": {"cpu": 4.0, "mem": 8192, "gpus": {"0": 29000, "1": 29000, "2": 29000}}}}
+ALICE_LINE = "alice is using 3 of 4 GPUs (90% busy at most), 4.0 of 32 CPU cores and 8 of 64 GB memory"
+
+
+def device(hub, pid, os_user):
+    code = hub.store.invite_create(pid)
+    token, _ = hub.store.invite_redeem(code, HOST, host=HOST, os_user=os_user)
+    return SimpleNamespace(token=token, host=HOST, os_user=os_user,
+                           device_id=hub.store.authenticate(token).device_id)
+
+
+def use_beat(hub, d, use=None, sessions=()):
+    facts = {"host": HOST, "os_user": d.os_user, "version": kaptyorka.__version__,
+             "tmux": True, "load": 0.1, "cpus": 4}
+    if use is not None:
+        facts["use"] = use
+    body = {"machine": HOST, "sessions": list(sessions), "tools": [], "facts": facts,
+            "folders": {"proj-a": "/w/proj-a"}}
+    assert http.request("POST", hub.url + "/bridge/heartbeat", d.token, body)[0] == 200
+
+
+def in_use_setup(hub, sessions=(), use=None):
+    """alice's shared account on box-1 (os user u) with `sessions` and `use`; bob may use it."""
+    hub.store.project_register("proj-a", by="test")
+    a_id, _ = member(hub, "alice")
+    b = device(hub, a_id, "u")
+    use_beat(hub, b, use, sessions)
+    hub.store.device_set_shared(b.device_id, True)
+    bob_id, bob = member(hub, "bob")
+    hub.store.grant_machine(HOST, bob_id, by="test")
+    run(call(bob, BOSS, "inbox"))
+    return b, bob_id, bob
+
+
+OTHER_FOLDER = [{"key": "claude:a1", "tool": "claude-code", "project": "proj-b",
+                 "cwd": "/w/proj-b"}]
+
+
+def test_other_folder_in_use_goes_to_manager(hub):
+    mgr, me = manager_online(hub)
+    b, _, bob = in_use_setup(hub, OTHER_FOLDER)
+    assert ask(hub, bob) == ("busy: box-1 is in use by alice; the manager is deciding"
+                             " (request 1); you will hear back here")
+    assert inbox(mgr, me) == [manager.text_in_use("bob", "proj-a", HOST, ["alice"], NO_REPORT, 1)]
+    assert poll(hub, b) == []
+    out = run(call(mgr, me, "work_decide", request_id=1, machine=HOST, reason="light use"))
+    assert "proj-a-w1" in out and not hub.ws.by_name("proj-a-w1")["worktree"]
+
+
+def test_heavy_use_holds_with_numbers(hub):
+    mgr, me = manager_online(hub)
+    _, _, bob = in_use_setup(hub, use=HEAVY)
+    assert ask(hub, bob).startswith("busy: box-1 is in use by alice;")
+    text = inbox(mgr, me)[0]
+    assert text == manager.text_in_use("bob", "proj-a", HOST, ["alice"], [ALICE_LINE], 1)
+    assert "Rule of thumb: heavy means" in text
+
+
+def test_light_use_without_a_session_starts(hub):
+    manager_online(hub)
+    light = {**HEAVY, "users": {"u": {"cpu": 0.2, "mem": 500, "gpus": {}}}}
+    _, _, bob = in_use_setup(hub, use=light)
+    assert ask(hub, bob).startswith("starting `proj-a-w1`")
+
+
+def test_stale_heavy_use_is_ignored(hub):
+    manager_online(hub)
+    _, _, bob = in_use_setup(hub, use={**HEAVY, "age": 400})
+    assert ask(hub, bob).startswith("starting `proj-a-w1`")
+
+
+def test_in_use_without_manager_starts_as_before(hub):
+    _, _, bob = in_use_setup(hub, OTHER_FOLDER, HEAVY)
+    assert ask(hub, bob).startswith("starting `proj-a-w1`") and hub.mm.request(1) is None
+
+
+def test_own_use_never_holds_own_work(hub):
+    manager_online(hub)
+    hub.store.project_register("proj-a", by="test")
+    bob_id, bob = member(hub, "bob")
+    d = device(hub, bob_id, "u")
+    d2 = device(hub, bob_id, "u2")  # the same person in a second OS user
+    use_beat(hub, d2, {**HEAVY, "users": {"u2": HEAVY["users"]["u"]}},
+             [{"key": "claude:b1", "tool": "claude-code", "project": "proj-b", "cwd": "/w/b"}])
+    use_beat(hub, d)
+    run(call(bob, BOSS, "inbox"))
+    assert ask(hub, bob).startswith("starting `proj-a-w1`")
+
+
+def test_the_manager_is_nobody_on_a_machine(hub):
+    mgr, me = manager_online(hub)
+    _, _, bob = in_use_setup(hub)
+    with hub.store.lock:  # the manager's own session runs on box-1
+        hub.store.db.execute("UPDATE agents SET host=? WHERE key='k:mgr'", (HOST,))
+    assert ask(hub, bob).startswith("starting `proj-a-w1`")
+
+
+def arrival_setup(hub, clock, use=HEAVY):
+    clock[0] += 200  # past the hub's start-up grace
+    mgr, me = manager_online(hub)
+    hub.store.project_register("proj-a", by="test")
+    a_id, _ = member(hub, "alice")
+    a = device(hub, a_id, "u")
+    use_beat(hub, a, use)
+    bob_id, _ = member(hub, "bob")
+    d = device(hub, bob_id, "bob")
+    return mgr, me, a, d
+
+
+BOB_SESSION = [{"key": "claude:b1", "tool": "claude-code", "project": "proj-a", "cwd": "/w/proj-a"}]
+
+
+def arrival_texts(mgr, me):
+    return [t for t in inbox(mgr, me) if "opened session" in t]
+
+
+def test_direct_session_on_heavy_machine_warned_once(hub, clock):
+    mgr, me, a, d = arrival_setup(hub, clock)
+    use_beat(hub, d, sessions=BOB_SESSION)
+    hub.tick()
+    name = hub.store.agent("claude:b1").name
+    assert arrival_texts(mgr, me) == [manager.text_arrival("bob", name, HOST, [ALICE_LINE])]
+    for _ in range(3):  # every heartbeat and tick after: no second warning
+        clock[0] += 15
+        use_beat(hub, a, HEAVY)
+        use_beat(hub, d, sessions=BOB_SESSION)
+        hub.tick()
+    assert arrival_texts(mgr, me) == []
+    with hub.store.lock:
+        kinds = [r["kind"] for r in hub.store.db.execute("SELECT kind FROM log")]
+    assert kinds.count("machine_in_use") == 1
+    clock[0] += 900  # bob was gone over 10 minutes: coming back is a new arrival
+    run(call(mgr, me, "inbox"))
+    use_beat(hub, a, HEAVY)
+    use_beat(hub, d, sessions=BOB_SESSION)
+    hub.tick()
+    assert len(arrival_texts(mgr, me)) == 1
+
+
+def test_direct_session_on_quiet_machine_not_warned(hub, clock):
+    mgr, me, a, d = arrival_setup(hub, clock, use={**HEAVY, "users": {}})
+    use_beat(hub, d, sessions=BOB_SESSION)
+    hub.tick()
+    assert arrival_texts(mgr, me) == []
+
+
+def test_hub_worker_session_never_warned(hub, clock):
+    mgr, me, a, d = arrival_setup(hub, clock)
+    with hub.store.lock:
+        hub.store.db.execute(
+            "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+            " tool, key, state, created) VALUES ('proj-a-w1','proj-a','t','k:boss',1,?,?,"
+            "'claude-code','claude:b1','up',?)", (d.device_id, HOST, clock[0]))
+    use_beat(hub, d, sessions=BOB_SESSION)
+    hub.tick()
+    assert arrival_texts(mgr, me) == []
+
+
+def test_use_numbers_only_for_the_admin(hub):
+    in_use_setup(hub, use=HEAVY)
+    _, admin_token = person(hub.store, "root", "admin")
+    alice = next(p for p in hub.store.people() if p["name"] == "alice")
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE machines SET owner_person_id=? WHERE host=?",
+                             (alice["id"], HOST))
+    _, alice_token = member(hub, "alice2")
+    hub.store.grant_machine(HOST, next(p["id"] for p in hub.store.people()
+                                       if p["name"] == "alice2"), by="test")
+
+    def uses(token):
+        status, rows = http.request("GET", hub.url + "/api/machines", token)
+        assert status == 200
+        return [d["facts"].get("use") for m in rows for d in m["devices"]]
+    assert any(u and u["users"] for u in uses(admin_token))
+    assert all(u is None for u in uses(alice_token.token))
