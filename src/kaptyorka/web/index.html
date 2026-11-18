@@ -326,6 +326,32 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .add-box .err, #team-err, #waiting-err { padding: 0 14px 10px; }
 #team-err { padding: 8px 2px 0; }
 .t-ok { padding: 0 2px 10px; font-size: 13px; }
+/* Team > Projects: every GitLab project and every project on the hub, one row each */
+.t-bar.pj-bar { margin-top: 36px; }
+.pj-note { padding: 0 2px 10px; font-size: 13px; color: var(--faint); }
+.pj-note.bad { color: var(--danger); }
+.pj-note code { font: 12px var(--mono); color: var(--muted); }
+.pj-row { display: flex; align-items: center; gap: 14px; min-height: 56px; padding: 10px 10px 10px 16px;
+  border-bottom: 1px solid var(--line); transition: background-color var(--ease); }
+.pj-row:last-child { border-bottom: 0; }
+.pj-row:hover { background: var(--surface2); }
+.pj-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pj-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pj-name { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-row.off .pj-name { color: var(--muted); font-weight: 500; }
+.pj-desc { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-desc.quiet, .pj-who.quiet { color: var(--faint); }
+.pj-who { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-who b { font-weight: 500; color: var(--faint); }
+.pj-acts { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.pj-row:has(.confirm) { flex-wrap: wrap; row-gap: 8px; }
+.pj-row > .confirm { flex: 1 1 100%; max-width: 100%; justify-content: flex-start; }
+.pj-row > .confirm input { flex: 1 1 220px; min-width: 0; height: 26px; padding: 0 8px; font-size: 12px; }
+.pj-tag { flex: none; padding: 0 6px; font-size: 11px; line-height: 18px; color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.pj-tag.off { color: var(--faint); border-style: dashed; }
+.pj-add { flex-wrap: wrap; }
+.pj-add #new-project { flex: 0 1 200px; }
+.pj-add #new-project-desc { flex: 1 1 240px; }
 
 /* shared by Home's panels */
 .phead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 46px; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line); background: var(--surface2); font-size: 14px; font-weight: 650; color: var(--ink); }
@@ -394,6 +420,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   .add-who { flex-basis: 100%; }
   .add-link input { flex-basis: 100%; height: 34px; }
   .add-form input { flex: 1 1 auto; }
+  .pj-row { flex-wrap: wrap; row-gap: 8px; padding-left: 14px; }
+  .pj-text { flex-basis: 100%; }
+  .pj-desc, .pj-who { white-space: normal; }
+  .pj-acts { flex-basis: 100%; justify-content: flex-start; }
+  .pj-add #new-project, .pj-add #new-project-desc { flex: 1 1 100%; height: 34px; }
   .mine-rows { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .mine-rows > span:not(:first-child) { margin-top: 6px; }
   #lock .hint { margin-top: -8px; }
@@ -529,6 +560,24 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         <div class="ok t-ok" id="team-ok" role="status" hidden></div>
         <div class="panel t-list" id="people-rows"></div>
         <div class="err" id="team-err" hidden></div>
+        <div id="projects" hidden>
+          <div class="t-bar pj-bar">
+            <h2 class="t-head">Projects</h2>
+            <button type="button" class="btn small" id="add-project-btn" aria-expanded="false" aria-controls="add-project-box"><svg width="13" height="13"><use href="#i-plus"/></svg>Add project</button>
+          </div>
+          <div class="panel add-box" id="add-project-box" hidden>
+            <form class="add-form pj-add" id="add-project" autocomplete="off">
+              <input id="new-project" placeholder="Folder name" aria-label="Project folder name" maxlength="64" required>
+              <input id="new-project-desc" placeholder="What it is (optional)" aria-label="Description" maxlength="500">
+              <button type="submit" class="btn small primary">Add</button>
+              <button type="button" class="btn small" id="add-project-cancel">Cancel</button>
+            </form>
+            <div class="err" id="add-project-err" hidden></div>
+          </div>
+          <div class="pj-note" id="pj-note" role="status" hidden></div>
+          <div class="panel t-list" id="project-rows"></div>
+          <div class="err" id="projects-err" hidden></div>
+        </div>
       </div>
     </section>
   </main>
@@ -699,7 +748,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   }
   /* after a confirm closes: draw what the refreshes skipped while it was open */
   function redrawAdmin() {
-    ["team", "messages"].forEach(function (k) { seen[k] = null; });
+    ["team", "projects", "messages"].forEach(function (k) { seen[k] = null; });
     if (feed) render();
   }
   document.addEventListener("keydown", function (e) { if (e.key === "Escape" && holdClose) holdClose(); });
@@ -717,7 +766,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     $("team").hidden = !team;
     history.replaceState(null, "", location.pathname + (team ? "#view=team" : ""));
     if (v === "home") { toBottom(); loadAccess(); }
-    if (team) { loadInvites(); loadProposals(true); }
+    if (team) { loadInvites(); loadProposals(true); loadGitlab(); }
   }
 
   function labelOf(name) {
@@ -1488,6 +1537,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       .sort(function (a, b) { return (b.role === "admin") - (a.role === "admin"); }).map(personView);
     var cueKeys = Object.keys(cues).filter(cueOn);
     if (changed("waiting", [items.map(function (w) { return [w.key, w.who, plain(w.what), w.why]; }), answering])) renderWaiting(items);
+    renderProjects();
     if (holding && holding.isConnected && $("people-rows").contains(holding)) return;  /* a Remove question is open */
     if (!changed("team", [people, openPerson, cueKeys, pending, linkFor])) return;
     var focus = document.activeElement, fk = focus && focus.dataset ? focus.dataset.k : null;
@@ -1500,6 +1550,107 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       var b = name != null ? [].filter.call(box.querySelectorAll(".person"), function (r) { return r.dataset.person === name; })[0] : null;
       if (b && b.querySelector(".p-main")) b.querySelector(".p-main").focus();
     }
+  }
+  /* Team > Projects: every project of the GitLab group and every project on the hub. GitLab
+     only names them; who may work on one is decided here (the ticks above, or the command line) */
+  var gitlab = null, gitlabAt = 0, adding = {}, projectOpen = false;
+  function loadGitlab(force) {
+    if (!isAdmin() || (!force && Date.now() - gitlabAt < 60000)) return;
+    gitlabAt = Date.now();
+    get("/api/gitlab/projects" + (force ? "?fresh=1" : "")).then(function (g) { gitlab = g; if (feed) renderTeam(); },
+                                                                  function () { gitlabAt = 0; });
+  }
+  function accessText(members) {
+    var who = members.map(function (m) { return m.person + (m.role === "read" ? " (read)" : ""); });
+    return who.length ? who.join(", ") : "";
+  }
+  function projectList() {
+    var rows = {}, gl = gitlab && gitlab.on && !gitlab.error ? gitlab.projects : [];
+    feed.projects.forEach(function (p) {
+      rows[p.name] = { name: p.name, description: p.description || "", repo: p.repo || "", on: true, gitlab: false,
+                       access: accessText(p.members || []) };
+    });
+    gl.forEach(function (g) {
+      var r = rows[g.name];
+      if (r) { r.gitlab = true; r.path = g.path; return; }
+      rows[g.name] = { name: g.name, description: g.description || "", repo: g.repo || "", on: false, gitlab: true,
+                       path: g.path, adding: !!adding[g.name] };
+    });
+    return Object.keys(rows).map(function (k) { return rows[k]; })
+      .sort(function (a, b) { return (b.on - a.on) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0); });
+  }
+  function addToHub(r, b) {
+    adding[r.name] = 1;
+    b.setAttribute("aria-busy", "true");
+    teamErr("projects-err", "");
+    api("/api/projects", { name: r.name, description: r.description, repo: r.repo })
+      .then(function () { return get("/api/feed"); })
+      .then(function (f) { feed = f; delete adding[r.name]; flash("added:" + r.name); },
+            function (e) { delete adding[r.name]; teamErr("projects-err", e.message); renderTeam(); });
+  }
+  function editProject(r, acts) {
+    confirmInline(acts, null, "Save", function (text) {
+      return api(apiPath("/api/projects/", r.name), { description: text })
+        .then(function () { teamErr("projects-err", ""); flash("saved:" + r.name); },
+              function (e) { teamErr("projects-err", e.message); throw e; });
+    }, { ask: "What it is", value: r.description, edit: true, max: "500" });
+  }
+  function removeProject(r, acts) {
+    confirmInline(acts, "Remove " + r.name + "? Its sessions leave the hub and their chats are deleted. Its notes are kept.",
+                  "Remove", function () {
+      return api(apiPath("/api/projects/", r.name), null, "DELETE")
+        .then(function () { teamErr("projects-err", ""); }, function (e) { teamErr("projects-err", e.message); throw e; });
+    });
+  }
+  function projectRow(r) {
+    var acts = el("span", { "class": "pj-acts" });
+    if (!r.on) {
+      var add = button("Add to hub", "", function () { addToHub(r, add); },
+                       { "aria-label": "Add " + r.name + " to the hub", title: "People can then be given access to it" });
+      if (r.adding) add.setAttribute("aria-busy", "true");
+      acts.appendChild(add);
+    } else {
+      var cue = cueOn("added:" + r.name) ? "Added" : cueOn("saved:" + r.name) ? "Saved" : null;
+      if (cue) acts.appendChild(el("span", { "class": "ok", text: cue }));
+      acts.appendChild(button("Edit", "", function () { editProject(r, acts); }, { "aria-label": "Edit " + r.name }));
+      acts.appendChild(button("Remove", "quiet-danger", function () { removeProject(r, acts); }, { "aria-label": "Remove " + r.name }));
+    }
+    var tag = el("span", { "class": "pj-tag" + (r.on ? "" : " off"), text: r.on ? "On hub" : "Not on hub" });
+    var tip = [r.path && r.path !== r.name ? "GitLab: " + r.path : null, r.repo || null,
+               r.on && gitlab && gitlab.on && !gitlab.error && !r.gitlab ? "not in the GitLab group" : null]
+      .filter(Boolean).join("\n");
+    return el("div", { "class": "pj-row" + (r.on ? "" : " off"), "data-project": r.name }, [
+      el("div", { "class": "pj-text" }, [
+        el("div", { "class": "pj-top" }, [el("b", { "class": "pj-name", text: r.name, title: tip || null }), tag]),
+        el("div", { "class": "pj-desc" + (r.description ? "" : " quiet"), text: r.description || "No description" }),
+        r.on ? el("div", { "class": "pj-who" + (r.access ? "" : " quiet") }, r.access ? [el("b", { text: "Access: " }), r.access]
+                                                                         : ["Nobody has access yet"]) : null]),
+      acts]);
+  }
+  function renderProjects() {
+    $("projects").hidden = false;
+    var rows = projectList(), note = $("pj-note");
+    var text = null, bad = false;
+    if (gitlab && gitlab.on && gitlab.error) { text = gitlab.error; bad = true; }
+    else if (gitlab && !gitlab.on) text = "To list your GitLab group's projects here, run kaptyorka gitlab set <url> <group>.";
+    if (changed("pj-note", [text, bad])) {
+      note.hidden = !text; note.textContent = text || ""; note.classList.toggle("bad", bad);
+    }
+    if (holding && holding.isConnected && $("project-rows").contains(holding)) return;  /* an Edit or Remove is open */
+    var cueKeys = Object.keys(cues).filter(function (k) { return cueOn(k) && /^(added|saved):[^\n]*$/.test(k); });
+    if (!changed("projects", [rows, cueKeys])) return;
+    var box = $("project-rows");
+    box.textContent = "";
+    if (!rows.length) box.appendChild(el("div", { "class": "blank", text: "No projects yet" }));
+    rows.forEach(function (r) { box.appendChild(projectRow(r)); });
+  }
+  function projectBox(open) {
+    projectOpen = open;
+    $("add-project-box").hidden = !open;
+    $("add-project-btn").hidden = open;
+    $("add-project-btn").setAttribute("aria-expanded", open ? "true" : "false");
+    teamErr("add-project-err", "");
+    if (open) $("new-project").focus(); else { $("add-project").reset(); $("add-project-btn").focus(); }
   }
   /* Add person: a name, Add; then their link with Copy, in the same place */
   function addBox(open) {
@@ -1568,7 +1719,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         render();
         loadWarnings();
         loadProposals();
-        if (view === "team") loadInvites();
+        if (view === "team") { loadInvites(); loadGitlab(); }
         loadAccess();
         clearTimeout(timer);
         timer = setTimeout(poll, 2000);
@@ -1660,6 +1811,20 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       .catch(function (x) { teamErr("add-err", x.message); })
       .then(function () { btn.removeAttribute("aria-busy"); });
   });
+  $("add-project-btn").addEventListener("click", function () { projectBox(true); });
+  $("add-project-cancel").addEventListener("click", function () { projectBox(false); });
+  $("add-project-box").addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); projectBox(false); } });
+  $("add-project").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var name = $("new-project").value.trim(), btn = $("add-project").querySelector("button[type=submit]");
+    if (!name || btn.getAttribute("aria-busy") === "true") return;
+    btn.setAttribute("aria-busy", "true");
+    api("/api/projects", { name: name, description: $("new-project-desc").value.trim() })
+      .then(function () { return get("/api/feed"); })
+      .then(function (f) { feed = f; projectBox(false); flash("added:" + name); })
+      .catch(function (x) { teamErr("add-project-err", x.message); })
+      .then(function () { btn.removeAttribute("aria-busy"); });
+  });
   $("ask-kind").addEventListener("change", askNames);
   $("ask-kind").addEventListener("change", function () {
     $("ask-target").placeholder = $("ask-kind").value === "machine" ? "Machine name" : "Project name";
@@ -1688,7 +1853,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     me = m;
     seen = {}; feed = null; invites = []; myAccess = null; conv = "mgr"; phoneOpen = false; askOpen = false;
     readMap = store(function (s) { var r = JSON.parse(s.getItem("kaptyorka.read." + m.person) || "null"); return r && typeof r === "object" ? r : null; });
-    fleet = { warnings: [] }; fleetAt = 0; proposals = []; proposalsAt = 0; openPerson = null;
+    fleet = { warnings: [] }; fleetAt = 0; proposals = []; proposalsAt = 0; openPerson = null; gitlab = null; gitlabAt = 0;
     $("viewer-name").textContent = m.person;
     $("viewer-name").title = "Signed in as " + m.person + (m.role === "admin" ? " (admin)" : "") + " on " + m.device;
     document.querySelectorAll(".admin-only").forEach(function (n) { n.hidden = m.role !== "admin"; });

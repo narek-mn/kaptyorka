@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.12
+
+- The Team page has a **Projects** section, for the admin only. It lists every project of the team's GitLab group and every project on the hub, each with its description, who has access, and **On hub** or **Not on hub**. **Add to hub** registers a GitLab project under its GitLab `path` (the folder name a clone gets) with its description and repo address. A project on the hub has **Edit** (the description) and **Remove**, which asks first and says that its sessions leave the hub and their chats are deleted, while its notes are kept. **Add project** registers one that is not in GitLab. The per-person ticks list the projects on the hub, as before.
+- GitLab only supplies the list; the hub decides access. Set it up with `kaptyorka gitlab set <url> <group>` and a `read_api` token in `~/.kaptyorka/gitlab-token` on the hub machine (`chmod 600`; the hub refuses a file other users can open). `kaptyorka gitlab status` shows the address, the group, the token file's state and how many projects GitLab lists; `kaptyorka gitlab off` stops it. The hub asks GitLab at most every 5 minutes, refuses redirects so the token goes nowhere else, and never logs, shows or sends the token. When GitLab cannot be asked, the page says so in one line.
+- A project description longer than 500 characters is refused when a project is registered, as it already was when one is edited.
+
 ## 0.9.11
 
 **Upgrade note: register your team folders before you update the hub.** The first start of the 0.9.11 hub permanently deletes what it kept from every session whose folder is not a registered team project: those sessions, the messages to and from them with their files, their knocks, doors, connection requests and done checks, and the git history, state writes, conflicts, finished workers and work requests of folders that are no project at all. It cannot be undone. Register each team folder first (`kaptyorka project add <name>`), then update. Notes are kept. Update the hub before the members: a 0.9.11 bridge talking to an older hub reports no sessions, and its tools say the hub has not sent its team project list yet.

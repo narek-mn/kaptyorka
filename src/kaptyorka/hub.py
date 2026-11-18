@@ -23,6 +23,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from kaptyorka import __version__, admin_ops, brief, identity, manager, paths
+from kaptyorka.gitlab import GitLabError, GitLabSource
 from kaptyorka import rules as rules_mod
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
@@ -134,6 +135,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     mm = ManagerStore(store)
     cs = ConnectStore(store, lambda key, text: ws.notify(key, text), mm.person_id)
     brief_cache: dict = {}  # per session key; see brief.cached
+    gl = GitLabSource(store)  # the GitLab group's project list: names only, never access
     decide_lock = threading.Lock()
     work_decide_lock = threading.Lock()  # one decision per request, even when two race
     started = {"first": True}  # the first tick closes a manager left running while off
@@ -1646,6 +1648,44 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         brief_cache.clear()
         wake_bridges()
         return JSONResponse(done)
+
+    @server.custom_route("/api/gitlab", methods=["GET"])
+    async def api_gitlab_status(request: Request) -> Response:
+        """`kaptyorka gitlab status`: the address, the group, the token file and a fresh count."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        return JSONResponse(await asyncio.to_thread(gl.status))
+
+    @server.custom_route("/api/gitlab", methods=["POST"])
+    @_bad_request
+    async def api_gitlab_set(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        try:
+            gl.set(str(body["url"]), str(body["group"]), request.scope["state"]["principal"].person_name)
+        except GitLabError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return JSONResponse(await asyncio.to_thread(gl.status))
+
+    @server.custom_route("/api/gitlab", methods=["DELETE"])
+    async def api_gitlab_off(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        gl.off(request.scope["state"]["principal"].person_name)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/gitlab/projects", methods=["GET"])
+    async def api_gitlab_projects(request: Request) -> Response:
+        """The page's Projects section: the group's projects, cached for a few minutes."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        fresh = request.query_params.get("fresh") == "1"
+        return JSONResponse(await asyncio.to_thread(gl.projects, fresh))
 
     async def project_grant(request: Request, grant: bool) -> Response:
         denied = admin_only(request)

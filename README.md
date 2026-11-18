@@ -318,15 +318,26 @@ The hub has people, and each person has devices (one per machine). The admin is 
 
 ### The Team page
 
-The admin's **Team** tab does three things:
+The admin's **Team** tab does four things:
 
 1. **Waiting for you** (only when something waits; the count is on the tab): one line per request, "bob wants to work on proj-a", with **Yes** and **No**. Yes gives what was asked. Requests, connection requests, knocks and rule proposals all land here.
 2. **Add person**: type a name, **Add**, then **Copy** the invite link and send it. It works once, for 7 days. Until they join, their row says "hasn't joined yet" and has **Copy invite link**.
 3. **Remove**: on a person's row, with a question first ("Remove bob? They are signed out everywhere.").
+4. **Projects**: every project of the team's GitLab group and every project on the hub, one row each, with its description, who has access, and **On hub** or **Not on hub**. **Add to hub** registers a GitLab project with its GitLab description and repo address. A project on the hub has **Edit** (its description) and **Remove**, which asks first: its sessions leave the hub and their chats are deleted; its notes are kept. **Add project** takes a folder name and an optional description, for a project that is not in GitLab.
 
-Click a person to see every project as a box to tick. A tick gives write and saves at once; a project seen only on a session is registered on its first tick.
+Click a person to see every project on the hub as a box to tick. A tick gives write and saves at once; a project seen only on a session is registered on its first tick.
 
 Bob joins with `kaptyorka join <link>` on each of his machines. A member clicks **Ask for access** under their sessions on Home to see what they may use and to **Ask for** read or write access to a project, or use of a machine; an agent asks with `request_access`. To reach someone else's session, a member (or their agent) messages the manager with whom and why; the manager tells the admin, and only the admin opens a door.
+
+#### Projects from GitLab
+
+GitLab only supplies the list of projects: name, description and repo address. It never decides access; the hub does, with the ticks above or `kaptyorka grant`. A project is registered under its GitLab `path`, the folder name a clone gets, because only sessions in a registered project's folder reach the hub.
+
+1. Make a GitLab access token with the `read_api` scope that can see the group.
+2. On the hub machine, put it in `~/.kaptyorka/gitlab-token` and run `chmod 600 ~/.kaptyorka/gitlab-token`. The hub refuses a token file other users can open, and says so.
+3. Run `kaptyorka gitlab set https://gitlab.example team` (the GitLab address and the group's path; subgroups are included).
+
+The hub asks GitLab for the list at most every 5 minutes. If GitLab cannot be asked (no token, a refused token, no answer), the Projects section says so in one line and still lists the projects on the hub. The token stays in the hub process: it is never logged, shown on the page or put in an error. `kaptyorka gitlab status` shows the address, the group, whether the token file is fine and how many projects GitLab lists. `kaptyorka gitlab off` stops the list; the projects on the hub stay.
 
 What the hub decides by itself:
 
@@ -352,6 +363,9 @@ kaptyorka shared-token off             # or on
 kaptyorka project add proj-a --repo <url> --desc "what it is"
 kaptyorka project edit proj-a --description "new words"
 kaptyorka project remove proj-a        # asks first; --yes skips it
+kaptyorka gitlab set https://gitlab.example team   # list the GitLab group's projects on the Team page
+kaptyorka gitlab status                # address, group, token file, how many projects
+kaptyorka gitlab off                   # stop listing; projects on the hub stay
 ```
 
 Removing bob signs out all his devices, closes the workers he started, deletes his open invites, closes his doors, and drops his access, his requests and his open work requests. Machines he owned have no owner afterwards. A worker whose machine cannot take the close order may still run there: the command and the page name it. His messages, notes and the log stay and show him as "bob (removed)". His name can be used again. It refuses to remove the admin, the `manager` account, or a person whose machine still uses the old shared token.
@@ -449,6 +463,9 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka project add <name>` | Admin: register a project (`--repo`, `--desc`); also brings back a removed one |
 | `kaptyorka project edit <name> --description <text>` | Admin: change a project's description |
 | `kaptyorka project remove <name>` | Admin: archive a project, notes kept (asks first; `--yes` skips it) |
+| `kaptyorka gitlab set <url> <group>` | Admin: list the GitLab group's projects on the Team page (token in `~/.kaptyorka/gitlab-token` on the hub machine, `chmod 600`) |
+| `kaptyorka gitlab status` | Admin: show the GitLab address, group, token file state and project count; exit 1 if GitLab cannot be asked |
+| `kaptyorka gitlab off` | Admin: stop listing GitLab projects; projects on the hub stay |
 | `kaptyorka grant <person> <project>:<role>` | Admin: give a project role; or `machine:<host>` to allow a machine |
 | `kaptyorka revoke <person> <project>` | Admin: take it away; or `machine:<host>` |
 | `kaptyorka machine owner <host> <person>` | Admin: name a machine's owner |

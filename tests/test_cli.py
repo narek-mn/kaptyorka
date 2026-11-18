@@ -38,7 +38,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.9.11" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.9.12" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
@@ -48,7 +48,7 @@ def test_subcommands_listed(capsys):
     listed = out.split("positional arguments:")[1].split("options:")[0]
     names = [l.split()[0] for l in listed.splitlines()[2:] if l.startswith("    ") and l[4] != " "]
     assert names == ["start", "join", "leave", "stop", "update", "remove", "invite", "people", "invites", "grant",
-                     "revoke", "project", "shared-token", "machine", "who", "status", "page", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
+                     "revoke", "project", "gitlab", "shared-token", "machine", "who", "status", "page", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
     for hidden in ("serve", "mcp", "bridge", "hook"):
         assert hidden not in names
 

@@ -353,6 +353,10 @@ def test_member_page_shows_no_other_person(tmp_path):
         store.close()
 
 
+def team_row(name):
+    return '[...document.querySelectorAll("#people-rows .person")].find(r => r.dataset.person === %s)' % json.dumps(name)
+
+
 def test_team_add_person_give_project_remove(admin_page):
     """A first-time admin: Add person, type a name, Add, copy the link in place; open the
     person, tick a project seen only on a session (it is registered on that tick) and untick
@@ -567,3 +571,138 @@ def test_manager_waking_row(tmp_path, monkeypatch, w, h):
     finally:
         stop()
         store.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_team_projects_from_gitlab(tmp_path, w, h):
+    """Team > Projects, for a first-time admin: every GitLab project and every project on the hub,
+    with who has access. Add to hub registers a GitLab project with its description and repo;
+    Edit changes the description in place; Remove asks first and says what goes; Add project
+    takes a name for a project that is not in GitLab. A member sees none of it. Screenshots to
+    KAPTYORKA_SHOTS."""
+    import os
+    from helpers import FakeGitLab, gitlab_project
+    from kaptyorka import paths
+    from kaptyorka.gitlab import GitLabSource
+
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    lab = FakeGitLab([gitlab_project("proj-a", "the web shop"),
+                      gitlab_project("proj-b", "billing service that sends the monthly invoices"),
+                      gitlab_project("proj-c")], "glpat-test-token")
+    tok = paths.home() / "gitlab-token"
+    tok.write_text("glpat-test-token")
+    os.chmod(tok, 0o600)
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    GitLabSource(store).set(lab.url, "team", "alice")
+    stop = start_hub(store)
+    _, token = person(store, "alice", "admin")
+    bob, bob_t = person(store, "bob")
+    carol, _ = person(store, "carol")
+    store.project_register("proj-a", "the web shop", by="alice")
+    store.project_register("proj-x", "notes only", by="alice")
+    store.grant_project("proj-a", bob, "write", "alice")
+    store.grant_project("proj-a", carol, "read", "alice")
+    row = 'document.querySelector("#project-rows [data-project=\\"{}\\"]")'.format
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    try:
+        with chrome(w, h) as page:
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=team")
+            page.wait(f'!!{row("proj-c")}')
+            names = page.js('[...document.querySelectorAll("#project-rows .pj-name")].map(n => n.textContent)')
+            assert names == ["proj-a", "proj-x", "proj-b", "proj-c"]  # on the hub first
+            assert page.js(f'{row("proj-a")}.querySelector(".pj-who").textContent') == "Access: bob, carol (read)"
+            assert page.js(f'{row("proj-x")}.querySelector(".pj-who").textContent') == "Nobody has access yet"
+            assert page.js(f'{row("proj-b")}.querySelector(".pj-tag").textContent') == "Not on hub"
+            assert page.js(f'{row("proj-b")}.querySelector(".pj-acts").textContent') == "Add to hub"
+            assert page.js(f'{row("proj-a")}.querySelector(".pj-acts").textContent') == "EditRemove"
+            assert page.js('document.getElementById("pj-note").hidden')
+            assert page.js(wide)
+            page.js('document.getElementById("projects").scrollIntoView()')
+            page.screenshot(shots / f"projects-{tag}.png")
+            # Add to hub: registered with GitLab's description and repo, nobody has access yet
+            click(page, '#project-rows [data-project="proj-b"]', "Add to hub")
+            page.wait(f'{row("proj-b")}.querySelector(".pj-tag").textContent === "On hub"')
+            p = next(x for x in store.projects_for(store.authenticate(token)) if x["name"] == "proj-b")
+            assert (p["description"], p["repo"]) == ("billing service that sends the monthly invoices",
+                                                     "https://gitlab.example/team/proj-b.git")
+            # the person ticks list it now
+            page.js('document.querySelector("#people-rows [data-person=bob] .p-main").click()')
+            page.wait('[...document.querySelectorAll("#people-rows .proj")].map(l => l.textContent).join() === "proj-a,proj-b,proj-x"')
+            # Edit: the description in place
+            click(page, '#project-rows [data-project="proj-a"]', "Edit")
+            page.wait('!!document.querySelector("#project-rows .confirm input")')
+            assert page.js('document.querySelector("#project-rows .confirm input").value') == "the web shop"
+            assert page.js('document.activeElement === document.querySelector("#project-rows .confirm input")')
+            page.js('document.querySelector("#project-rows .confirm input").value = "the web shop, v2"')
+            page.screenshot(shots / f"projects-edit-{tag}.png")
+            click(page, "#project-rows .confirm", "Save")
+            page.wait(f'{row("proj-a")}.querySelector(".pj-desc").textContent === "the web shop, v2"')
+            # Remove asks first, plainly, and holds through refreshes
+            click(page, '#project-rows [data-project="proj-x"]', "Remove")
+            assert page.wait('document.querySelector("#project-rows .confirm")?.textContent') == (
+                "Remove proj-x? Its sessions leave the hub and their chats are deleted. Its notes are kept.RemoveCancel")
+            assert page.js(wide)
+            page.screenshot(shots / f"projects-remove-{tag}.png")
+            time.sleep(2.5)
+            assert page.js('!!document.querySelector("#project-rows .confirm")')
+            click(page, "#project-rows .confirm", "Remove")
+            page.wait(f'!{row("proj-x")}')
+            assert "proj-x" not in store.team_projects()
+            # Add project: a name and a description, for one not in GitLab
+            page.js('document.getElementById("add-project-btn").click()')
+            assert page.js('document.activeElement.id') == "new-project"
+            page.js('document.getElementById("new-project").value = "proj-d"')
+            page.js('document.getElementById("new-project-desc").value = "a side tool"')
+            page.screenshot(shots / f"projects-add-{tag}.png")
+            page.js('document.querySelector("#add-project button[type=submit]").click()')
+            page.wait(f'!!{row("proj-d")} && document.getElementById("add-project-box").hidden')
+            assert "proj-d" in store.team_projects()
+            # a member: no Team tab and no project list
+            page.go("about:blank")
+            page.wait('location.href === "about:blank"')
+            page.go(f"http://127.0.0.1:{stop.port}/#t={bob_t}&view=team")
+            page.wait('document.getElementById("viewer-name").textContent === "bob"')
+            time.sleep(1)
+            assert page.js('document.getElementById("tab-team").hidden && !document.querySelector("#project-rows .pj-row")')
+    finally:
+        stop()
+        store.close()
+        lab.close()
+
+
+def test_team_projects_gitlab_refuses(tmp_path, monkeypatch):
+    """GitLab refuses the token: one plain line over the list, the hub's projects still there."""
+    import os
+    from helpers import FakeGitLab
+    from kaptyorka import paths
+    from kaptyorka.gitlab import GitLabSource
+
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "h"))
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "h" / ".kaptyorka"))
+    lab = FakeGitLab([], "glpat-right")
+    tok = paths.home() / "gitlab-token"
+    tok.write_text("glpat-wrong")
+    os.chmod(tok, 0o600)
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    GitLabSource(store).set(lab.url, "team", "alice")
+    stop = start_hub(store)
+    _, token = person(store, "alice", "admin")
+    store.project_register("proj-a", "the web shop", by="alice")
+    try:
+        with chrome(390, 844) as page:
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=team")
+            note = page.wait('!document.getElementById("pj-note").hidden && document.getElementById("pj-note").textContent')
+            assert note == ("GitLab refused the token (401): it is wrong or expired;"
+                            " put a new one in ~/.kaptyorka/gitlab-token")
+            assert page.js('[...document.querySelectorAll("#project-rows .pj-name")].map(n => n.textContent)') == ["proj-a"]
+            page.js('document.getElementById("projects").scrollIntoView()')
+            page.screenshot(shots / "projects-error-phone.png")
+    finally:
+        stop()
+        store.close()
+        lab.close()

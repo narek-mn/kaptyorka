@@ -644,6 +644,35 @@ def _project_remove(args) -> int:
     return 0
 
 
+def _gitlab_print(st: dict) -> int:
+    if not st.get("on"):
+        print("GitLab project list: off (kaptyorka gitlab set <url> <group> turns it on)")
+        return 0
+    print(f"GitLab:     {st['url']}")
+    print(f"group:      {st['group']}")
+    print(f"token file: {st['token_file']}: {st['token']}")
+    if st.get("error"):
+        print(f"projects:   none listed: {st['error']}")
+        return 1
+    print(f"projects:   {st['count']}")
+    return 0
+
+
+def _gitlab_set(args) -> int:
+    st = _admin_json("POST", "/api/gitlab", {"url": args.url, "group": args.group})
+    return 1 if st is None else _gitlab_print(st)
+
+
+def _gitlab_off(args) -> int:
+    return _admin_do("DELETE", "/api/gitlab", None,
+                     "GitLab project list off; the projects on the hub stay")
+
+
+def _gitlab_status(args) -> int:
+    st = _admin_json("GET", "/api/gitlab")
+    return 1 if st is None else _gitlab_print(st)
+
+
 def _stop(args) -> int:
     hub_stopped = False
     for unit, name in (("kaptyorka-bridge", "bridge"), ("kaptyorka-hub", "hub")):
@@ -1012,6 +1041,18 @@ def entry() -> None:
     px.add_argument("name", help="the project's name")
     px.add_argument("--yes", action="store_true", help="do not ask first")
     px.set_defaults(run=_project_remove)
+    gl = sub.add_parser("gitlab", help="list the team's GitLab group's projects on the Team page"
+                        " (read-only; the hub still decides access)").add_subparsers(
+        dest="gitlab_cmd", required=True, metavar="{set,off,status}")
+    gs = gl.add_parser("set", help="read projects from this GitLab group; the token goes in"
+                       " ~/.kaptyorka/gitlab-token on the hub machine (chmod 600)")
+    gs.add_argument("url", help="the GitLab address, like https://gitlab.example")
+    gs.add_argument("group", help="the group's path, like team or team/sub")
+    gs.set_defaults(run=_gitlab_set)
+    gl.add_parser("off", help="stop listing GitLab projects; projects on the hub stay"
+                  ).set_defaults(run=_gitlab_off)
+    gl.add_parser("status", help="show the GitLab address, group, token file and project count"
+                  ).set_defaults(run=_gitlab_status)
     st = sub.add_parser("shared-token", help="switch the old shared token (machines from before invites) on or off")
     st.add_argument("state", choices=("on", "off"))
     st.set_defaults(run=_shared_token)

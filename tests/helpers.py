@@ -84,3 +84,63 @@ def old_knock(store, from_key: str, to_person: int, about: str) -> int:
             "INSERT INTO knocks (from_key, from_person, to_key, to_person, about, created)"
             " VALUES (?,?,NULL,?,?,?)",
             (from_key, frm["person_id"], to_person, about, store.clock())).lastrowid
+
+
+class FakeGitLab:
+    """A GitLab REST v4 stand-in on 127.0.0.1: GET /api/v4/groups/<group>/projects with
+    pagination by X-Next-Page. `projects` is the group's list, `status` a forced answer code,
+    `redirect` a URL to send every request to instead; `seen` keeps (path, PRIVATE-TOKEN)."""
+
+    def __init__(self, projects=(), token="glpat-test-token"):
+        import http.server
+        import json
+        import threading
+
+        self.projects, self.token, self.status, self.redirect, self.seen = list(projects), token, None, None, []
+        fake = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                from urllib.parse import parse_qs, urlparse
+
+                fake.seen.append((self.path, self.headers.get("PRIVATE-TOKEN")))
+                if fake.redirect:
+                    self.send_response(302)
+                    self.send_header("Location", fake.redirect)
+                    self.end_headers()
+                    return
+                u = urlparse(self.path)
+                if fake.status or self.headers.get("PRIVATE-TOKEN") != fake.token:
+                    self.send_response(fake.status or 401)
+                    self.end_headers()
+                    self.wfile.write(b'{"message":"401 Unauthorized"}')
+                    return
+                if not u.path.startswith("/api/v4/groups/") or not u.path.endswith("/projects"):
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                q = parse_qs(u.query)
+                page, per = int(q.get("page", ["1"])[0]), int(q.get("per_page", ["20"])[0])
+                rows = fake.projects[(page - 1) * per:page * per]
+                body = json.dumps(rows).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("X-Next-Page", str(page + 1) if page * per < len(fake.projects) else "")
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def gitlab_project(path: str, description: str = "", group: str = "team") -> dict:
+    return {"path": path, "description": description, "path_with_namespace": f"{group}/{path}",
+            "http_url_to_repo": f"https://gitlab.example/{group}/{path}.git"}

@@ -521,6 +521,9 @@ SENTENCES = {
     "project_register": _match(r"(.+)", "{0} registered the project {1}"),
     "project_updated": _match(r"(.+)", "{0} changed the description of {1}"),
     "project_removed": _match(r"(.+)", "{0} removed the project {1}"),
+    "gitlab": lambda who, d: (f"{who} turned the GitLab project list off" if d == "off" else
+                              _match(r"(\S+) (\S+)", "{0} set the GitLab project list to the"
+                                                       " group {2} on {1}")(who, d)),
     "person_removed": _match(r"(.+)", "{0} removed {1} from the team"),
     "role": _match(r"(.+) -> (\w+)", "{0} made {1} a {2}"),
     "page_login": _match(r"(.*)", "{0} opened the page ({1})"),
@@ -562,7 +565,7 @@ LOG_GROUPS = [
                 "device_shared", "join"]),
     ("access", ["grant", "revoke", "request", "request_decided", "connect_request",
                 "connect_decided"]),
-    ("projects", ["project_register", "project_updated", "project_removed"]),
+    ("projects", ["project_register", "project_updated", "project_removed", "gitlab"]),
     ("notes", ["note_delete", "note_undo"]),
     ("machines", ["machine_owner", "machine_owner_auto", "legacy_auto_off", "legacy_toggle", "legacy_assign", "legacy_used", "rekeyed",
                   "backup", "auto_update"]),

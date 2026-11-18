@@ -637,6 +637,9 @@ class Store:
         """A registered project: access to it is by role. `by_person_id` gets `manage`."""
         if not PROJECT_NAME.match(name):
             raise KaptyorkaError("project name must be 1 to 64 letters, digits, '.', '_' or '-'")
+        description = description.strip()
+        if len(description) > MAX_ABOUT:
+            raise KaptyorkaError(f"description is too long (max {MAX_ABOUT} characters)")
         with self.lock:
             old = self.db.execute("SELECT * FROM projects WHERE name=?", (name,)).fetchone()
             if old is not None and old["archived_at"] is None:
