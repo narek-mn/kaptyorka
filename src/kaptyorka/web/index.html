@@ -199,7 +199,10 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .av-person { --t: var(--t0); background: color-mix(in srgb, var(--t) 26%, var(--surface)); border-color: color-mix(in srgb, var(--t) 45%, transparent);
   color: color-mix(in srgb, var(--t) 50%, var(--ink)); }
 .tint-1 { --t: var(--t1); } .tint-2 { --t: var(--t2); } .tint-3 { --t: var(--t3); } .tint-4 { --t: var(--t4); } .tint-5 { --t: var(--t5); }
-.av > .dot { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border: 2px solid var(--surface); }
+.av > .dot { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border: 2px solid var(--surface); transition: border-color var(--ease); }
+.list .row:hover .av > .dot { border-color: var(--surface2); }
+.list .row.on .av > .dot { border-color: var(--raised); }
+.chat-head .av > .dot { border-color: var(--bg); }
 
 /* status chips: a pill with a dot. Green is good, coral is active or working, grey is idle */
 .chip { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px 0 7px; border-radius: var(--pill);
@@ -270,6 +273,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .list .bg-head[aria-expanded="true"] > svg { transform: rotate(90deg); }
 .list .bg-head small { font-weight: var(--fw-regular); color: var(--faint); }
 .list .bg-head .count { margin-left: auto; }
+.list .row > .bg-lead { padding: 0 2px; }
 .list .bg-rows.enter .row { animation: bg-in var(--dur-2) var(--ease-out); }
 .quiet-line { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-4) var(--s-3) 18px; font-size: var(--fs-sm); color: var(--faint); }
 .read-only { flex: none; display: flex; align-items: center; gap: var(--s-2); padding: 14px var(--s-6) 18px; border-top: 1px solid var(--line);
@@ -301,9 +305,9 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .group { position: relative; padding: var(--s-2) 0 6px 40px; margin-top: 6px; }
 .group .head > .av { position: absolute; left: 0; top: 10px; }
 /* my own messages: a lightly tinted block */
-.group.mine { margin-left: -12px; padding: 10px var(--s-3) var(--s-2) 52px; border-radius: var(--radius-lg);
-  background: rgba(218, 105, 71, .06); border: 1px solid rgba(218, 105, 71, .14); }
-.group.mine .head > .av { left: 12px; top: 12px; }
+.group.mine { margin-left: -14px; padding-left: 52px; border-left: 2px solid var(--accent); border-radius: 0 var(--radius) var(--radius) 0;
+  background: rgba(218, 105, 71, .035); }
+.group.mine .head > .av { left: 12px; }
 .group .head { display: flex; align-items: baseline; gap: var(--s-2); min-width: 0; margin-bottom: 2px; }
 .group .head b { font-weight: var(--fw-bold); color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group .head b.mine { color: var(--accent); }
@@ -604,7 +608,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   .compose .file-chip { max-width: 55%; }
   .group { padding-left: 34px; }
   .group .head > .av { width: 24px; height: 24px; font-size: 9.5px; }
-  .group.mine { padding-left: 44px; }
+  .group.mine { padding-left: 46px; }
   .working { padding-left: 34px; }
   .chat > .err { padding: 0 var(--s-3) var(--s-2); }
   /* Team: the column uses the phone's width; a waiting line puts its answers under the words */
@@ -1202,11 +1206,12 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   }
   function lead(e) {
     if (e.key === "activity") return avatar("activity", e.name);
-    if (e.key === "mgr") return avatar("manager", e.name);
+    if (e.key === "mgr") return avatar("manager", e.name, { dot: e.online ? true : null });
     if (e.icon === "i-person") return avatar("person", e.name);
-    return TOOLS[e.tool] ? avatar("session", e.name, { tool: e.tool }) : avatar("session", e.name);
+    return avatar("session", e.name, { tool: e.tool, dot: e.online ? true : null });
   }
-  /* how a session is doing, as a pill: working or waiting (coral), online (green), off (grey) */
+  /* how a session is doing, as a pill: working or waiting (coral), off (grey). Online and idle
+     needs none: the green dot on the badge says it */
   function statusChip(e) {
     if (e.icon) return null;
     if (e.state) return chip(e.state, e.state === "starting" ? "active" : "idle", "n");
@@ -1214,7 +1219,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     if (!e.online) return chip("Offline", "idle", null, bg);
     if (WAITING[e.act]) return chip("Waiting", "active", null, bg);
     if (e.act && e.act !== "idle") return chip("Working", "active", null, bg);
-    return chip("Online", "ok", null, bg);
+    return bg;
   }
   function sessionRow(e) {
     var on = e.key === conv && !askOpen && (phoneOpen || wide());  /* a phone marks a chat only while it is open */
