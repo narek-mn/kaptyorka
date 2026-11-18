@@ -56,12 +56,52 @@ def parse_apps(text: str) -> List[Tuple[str, int, float]]:
     return out
 
 
+# Jetson: no nvidia-smi before JetPack 7. The GPU's busy share is in sysfs, as jetson-stats
+# (jtop) reads it: a devfreq device whose device tree name is a known GPU, or the older fixed
+# path. The value is per mille. Per-user GPU memory is not available, so only busy % is kept.
+JETSON_GPU_NAMES = {"gv11b", "gp10b", "ga10b", "gb10b", "gm20b", "gpu"}
+JETSON_LOAD_PATHS = ("devices/gpu.0/load", "devices/platform/gpu.0/load")
+TEGRASTATS_TIMEOUT_S = 2
+
+
+def jetson_gpu_load(sys_root: Path = Path("/sys")) -> Optional[float]:
+    """The integrated GPU's busy % from sysfs, or None when no readable GPU load is found."""
+    files = []
+    try:
+        entries = sorted(os.listdir(sys_root / "class/devfreq"))
+    except OSError:
+        entries = []
+    for e in entries:
+        dev = sys_root / "class/devfreq" / e / "device"
+        try:
+            name = (dev / "of_node/name").read_text().strip("\x00\n ").lower()
+        except OSError:
+            name = e.lower()
+        if name in JETSON_GPU_NAMES or "gpu" in name:
+            files.append(dev / "load")
+    files += [sys_root / p for p in JETSON_LOAD_PATHS]
+    for f in files:
+        try:
+            return min(max(float(f.read_text().strip()) / 10.0, 0.0), 100.0)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def parse_tegrastats(text: str) -> Optional[float]:
+    """GR3D_FREQ (the GPU) busy % from tegrastats output: "GR3D_FREQ 45%" or "GR3D_FREQ 45%@1300"."""
+    import re
+    m = re.search(r"GR3D_FREQ (\d+)%", text)
+    return float(m.group(1)) if m else None
+
+
 class Sampler:
     """Keeps the last CPU ticks per pid, so CPU is the average since the previous read."""
 
     def __init__(self, proc: Path = Path("/proc"), clock: Callable[[], float] = time.monotonic,
-                 popen=None):
-        self.proc, self.clock = Path(proc), clock
+                 popen=None, sys_root: Path = Path("/sys")):
+        self.proc, self.clock, self.sys_root = Path(proc), clock, Path(sys_root)
+        self._tegra_off_until = 0.0
         self.popen = popen or subprocess.Popen
         self._stuck: list = []  # killed nvidia-smi children not yet exited
         self._ticks: Dict[int, int] = {}
@@ -142,6 +182,36 @@ class Sampler:
             return None
         return parse_gpus(outs[0]), parse_apps(outs[1])
 
+    def _jetson(self) -> Optional[List[dict]]:
+        """A Jetson's one GPU with its busy % only: sysfs first, then one tegrastats line within
+        TEGRASTATS_TIMEOUT_S (killed and left like nvidia-smi; off for SMI_RETRY_S after a
+        failure). None when neither gives a number."""
+        util = jetson_gpu_load(self.sys_root)
+        if util is None:
+            exe = shutil.which("tegrastats")
+            if exe and self.clock() >= self._tegra_off_until:
+                try:
+                    p = self.popen([exe, "--interval", "200"], stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, text=True)
+                except OSError:
+                    p = None
+                out = ""
+                if p is not None:
+                    try:
+                        out = p.communicate(timeout=TEGRASTATS_TIMEOUT_S)[0] or ""
+                    except subprocess.TimeoutExpired:  # it runs until stopped: stop it, keep its lines
+                        try:
+                            p.kill()
+                            out = p.communicate(timeout=0.5)[0] or ""
+                        except (OSError, subprocess.TimeoutExpired):
+                            self._stuck.append(p)
+                util = parse_tegrastats(out if isinstance(out, str) else out.decode(errors="replace"))
+                if util is None:
+                    self._tegra_off_until = self.clock() + SMI_RETRY_S
+        if util is None:
+            return None
+        return [{"index": 0, "util": util, "mem": None, "total": None}]
+
     def read(self) -> dict:
         now = self.clock()
         procs = self._procs()
@@ -167,6 +237,10 @@ class Sampler:
                 u = users.setdefault(user, {"cpu": 0.0, "mem": 0.0, "gpus": {}})
                 i = str(index.get(uuid, -1))
                 u["gpus"][i] = u["gpus"].get(i, 0) + mb
+        elif not _nvidia_smi():
+            jetson = self._jetson()
+            if jetson is not None:
+                out["gpus"] = jetson
         out["users"] = {
             name: {**({"cpu": round(u["cpu"], 1)} if window else {}), "mem": int(u["mem"]),
                    "gpus": {i: int(mb) for i, mb in u["gpus"].items()}}

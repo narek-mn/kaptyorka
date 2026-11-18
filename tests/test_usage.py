@@ -88,7 +88,7 @@ def test_cpu_and_memory_per_user_from_proc(tmp_path):
     page = os.sysconf("SC_PAGE_SIZE")
     hz = os.sysconf("SC_CLK_TCK")
     proc = fake_proc(tmp_path, {11: (0, 0, 1048576 * 200 // page)})
-    s = usage.Sampler(proc, clock=lambda: clock[0])
+    s = usage.Sampler(proc, clock=lambda: clock[0], sys_root=tmp_path / "no-sys")
     s._user = lambda uid: "alice"
     first = s.read()
     assert first["mem_mb"] == 64000 and "gpus" not in first  # no nvidia-smi: CPU and memory only
@@ -212,3 +212,79 @@ def test_bridge_sends_the_age_of_its_use_reading():
 
     sent = Bridge._sendable({"use": {"read_at": time.time() - 30, "cpus": 4}, "git": {}}, set())
     assert "read_at" not in sent["use"] and 29 <= sent["use"]["age"] <= 31
+
+
+def _sysfs(root, entries):
+    """A fake /sys: {relative path: text}."""
+    for rel, text in entries.items():
+        f = root / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text)
+    return root
+
+
+def test_jetson_gpu_load_from_devfreq_and_the_old_path(tmp_path):
+    orin = _sysfs(tmp_path / "orin", {
+        "class/devfreq/17000000.ga10b/device/of_node/name": "ga10b\x00",
+        "class/devfreq/17000000.ga10b/device/load": "456\n",
+        "class/devfreq/other/device/of_node/name": "emc", "class/devfreq/other/device/load": "999"})
+    assert usage.jetson_gpu_load(orin) == 45.6
+    nano = _sysfs(tmp_path / "nano", {"devices/gpu.0/load": "1000"})
+    assert usage.jetson_gpu_load(nano) == 100.0
+    by_dir = _sysfs(tmp_path / "jp6", {"class/devfreq/17000000.gpu/device/load": "120"})
+    assert usage.jetson_gpu_load(by_dir) == 12.0  # no device tree name: the folder's name
+    assert usage.jetson_gpu_load(tmp_path / "x86") is None
+    assert usage.jetson_gpu_load(_sysfs(tmp_path / "bad", {"devices/gpu.0/load": "n/a"})) is None
+
+
+def test_parse_tegrastats():
+    line = ("RAM 2448/7620MB (lfb 1x4MB) CPU [12%@1510,8%@1510] EMC_FREQ 0% GR3D_FREQ 37%@[1300]"
+            " cpu@45C")
+    assert usage.parse_tegrastats(line) == 37.0
+    assert usage.parse_tegrastats("RAM 1/2MB GR3D_FREQ 0% AO@30C") == 0.0
+    assert usage.parse_tegrastats("RAM 1/2MB") is None
+
+
+class Tegrastats:
+    """tegrastats runs until stopped: communicate times out, the kill gives its lines."""
+    def __init__(self, out):
+        self.out, self.calls, self.killed = out, [], False
+
+    def __call__(self, cmd, **kw):
+        self.calls.append(cmd)
+        return self
+
+    def communicate(self, timeout=None):
+        if not self.killed:
+            raise subprocess.TimeoutExpired("tegrastats", timeout)
+        return self.out, ""
+
+    def kill(self):
+        self.killed = True
+
+    def poll(self):
+        return 0
+
+
+def test_jetson_reports_gpu_busy_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(usage, "_nvidia_smi", lambda: None)
+    sys_root = _sysfs(tmp_path / "sys", {"devices/gpu.0/load": "900"})
+    s = usage.Sampler(fake_proc(tmp_path, {}), sys_root=sys_root)
+    assert s.read()["gpus"] == [{"index": 0, "util": 90.0, "mem": None, "total": None}]
+    # sysfs unreadable: one tegrastats line, bounded; a failure leaves it out for a while
+    clock = [0.0]
+    monkeypatch.setattr(usage.shutil, "which", lambda name: "/usr/bin/" + name
+                        if name == "tegrastats" else None)
+    t = Tegrastats("RAM 1/2MB GR3D_FREQ 61%@[1300]\n")
+    s = usage.Sampler(fake_proc(tmp_path, {}), clock=lambda: clock[0], popen=t,
+                      sys_root=tmp_path / "none")
+    assert s.read()["gpus"][0]["util"] == 61.0 and t.killed
+    s.popen = Tegrastats("no gpu line\n")
+    assert "gpus" not in s.read()
+    s.popen = t = Tegrastats("GR3D_FREQ 5%\n")
+    assert "gpus" not in s.read() and t.calls == []  # not asked again yet
+    clock[0] += usage.SMI_RETRY_S
+    assert s.read()["gpus"][0]["util"] == 5.0
+    # a Jetson's GPU without per-user memory is never "held", but its busy % shows
+    assert usage.short({"gpus": [{"index": 0, "util": 61.0, "mem": None, "total": None}],
+                        "users": {}}) == "GPU 61%"
