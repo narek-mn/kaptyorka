@@ -967,15 +967,47 @@ OTHER_FOLDER = [{"key": "claude:a1", "tool": "claude-code", "project": "proj-b",
                  "cwd": "/w/proj-b"}]
 
 
-def test_other_folder_in_use_goes_to_manager(hub):
+def test_other_folder_with_no_report_starts_and_tells_the_manager(hub):
     mgr, me = manager_online(hub)
     b, _, bob = in_use_setup(hub, OTHER_FOLDER)
+    assert ask(hub, bob).startswith("starting `proj-a-w1`") and hub.mm.request(1) is None
+    assert inbox(mgr, me) == [manager.text_unchecked("bob", "proj-a", HOST, ["alice"])]
+
+
+def test_other_folder_with_light_use_starts_at_once(hub):
+    mgr, me = manager_online(hub)
+    light = {**HEAVY, "users": {"u": {"cpu": 0.5, "mem": 900, "gpus": {"0": 2000}}},
+             "gpus": [{**g, "util": 5, "mem": 2000} for g in HEAVY["gpus"]]}
+    _, _, bob = in_use_setup(hub, OTHER_FOLDER, light)
+    assert ask(hub, bob).startswith("starting `proj-a-w1`") and hub.mm.request(1) is None
+    assert inbox(mgr, me) == []
+
+
+def test_heavy_use_held_and_decided(hub):
+    mgr, me = manager_online(hub)
+    b, _, bob = in_use_setup(hub, OTHER_FOLDER, HEAVY)
     assert ask(hub, bob) == ("busy: box-1 is in use by alice; the manager is deciding"
                              " (request 1); you will hear back here")
-    assert inbox(mgr, me) == [manager.text_in_use("bob", "proj-a", HOST, ["alice"], NO_REPORT, 1)]
     assert poll(hub, b) == []
-    out = run(call(mgr, me, "work_decide", request_id=1, machine=HOST, reason="light use"))
+    out = run(call(mgr, me, "work_decide", request_id=1, machine=HOST, reason="it fits"))
     assert "proj-a-w1" in out and not hub.ws.by_name("proj-a-w1")["worktree"]
+
+
+def test_choose_prefers_a_machine_nobody_uses_heavily(hub):
+    manager_online(hub)
+    _, bob_id, bob = in_use_setup(hub, use=HEAVY)
+    a_id = next(p["id"] for p in hub.store.people() if p["name"] == "alice")
+    code = hub.store.invite_create(a_id)
+    token, _ = hub.store.invite_redeem(code, "box-2", host="box-2", os_user="u")
+    hub.store.device_set_shared(hub.store.authenticate(token).device_id, True)
+    facts = {"host": "box-2", "os_user": "u", "version": kaptyorka.__version__,
+             "tmux": True, "load": 3.0, "cpus": 4,  # busier by load than box-1
+             "use": {**HEAVY, "users": {}}}
+    assert http.request("POST", hub.url + "/bridge/heartbeat", token,
+                        {"machine": "box-2", "sessions": [], "tools": [], "facts": facts,
+                         "folders": {"proj-a": "/w/proj-a"}})[0] == 200
+    hub.store.grant_machine("box-2", bob_id, by="test")
+    assert ask(hub, bob).startswith("starting `proj-a-w1` on box-2")
 
 
 def test_heavy_use_holds_with_numbers(hub):

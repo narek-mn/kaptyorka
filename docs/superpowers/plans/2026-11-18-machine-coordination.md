@@ -15,9 +15,12 @@ heavily; the manager decides when a second person wants to work there.
 - **`workers.py`.** `clean_facts` keeps a checked `use`. `host_use(host)` gives the freshest use
   reported for a host, with each OS user mapped to the people whose devices run as it there.
   `machine_rows` drops `use` for everyone but the admin.
-- **`hub.py` `work`.** Besides "same folder occupied", a machine where another person has an
-  online session (any folder) or heavy use is "in use": with the manager on, the request is held
-  and the manager gets the numbers. Without a manager, a different folder starts as before.
+- **`hub.py` `work`.** Held for the manager only when another person is in the same folder (as
+  before) or uses the machine heavily; the notice carries the numbers. Light use starts at once,
+  so people share a machine without waiting. Someone present with no fresh report: it starts and
+  the manager is told for information. Without a manager, it starts as before.
+- **`workers.py` `choose`.** When there is a choice, a machine nobody else uses heavily wins
+  over one that someone does (after own account and free folder, before load).
 - **`hub.py` tick.** A person's first session on a host (none there for 10 minutes before) while
   someone else's use there is heavy: the manager is told once, to warn that person in one line
   and tell the admin. Nothing is refused.
@@ -47,7 +50,8 @@ The manager gets the numbers and this rule of thumb, and makes the call. No sett
 - **nvidia-smi hangs or fails:** 5 s timeout; GPU numbers are left out and not asked again for
   10 minutes.
 - **Stale report:** use older than 3 minutes (the bridge's age plus the time since the hub heard
-  it) is ignored, as if unknown.
+  it) is ignored, as if unknown: never a hold, but the manager hears when work starts next to
+  someone it could not check.
 - **First read:** CPU needs two reads; the first report has memory and GPU only.
 - **`/proc` hidden (hidepid):** only what the bridge's account can see is reported.
 - **Privacy:** personal sessions still never reach the hub; arrivals are seen only for

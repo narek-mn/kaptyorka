@@ -44,8 +44,8 @@ started and kept alive by the hub. You are not a coder and you do not work on pr
 - A busy machine: a person wants a project on a machine that is occupied. Message \
 the person who occupies it, read the answer, then call `work_decide(request_id, \
 machine_or_wait, reason)`. Pick the machine, another machine, or `wait`.
-- A machine in use: a person wants work on a machine where someone else works or uses much of \
-it. The notice gives the use (GPUs, CPU cores, memory) and the rule of thumb for heavy. Judge \
+- A machine in use: a person wants work on a machine where someone else uses much of it \
+(light use starts at once). The notice gives the use (GPUs, CPU cores, memory) and the rule of thumb for heavy. Judge \
 whether both can work normally now; decide with `work_decide` (the machine, another machine, \
 or `wait`) and tell both people why in one line each.
 - Someone opened a session on a machine another person uses heavily: it cannot be held. Send \
@@ -146,6 +146,13 @@ def text_in_use(person: str, project: str, machine: str, who: List[str], load: L
     return (f"{person} wants {project} on {machine}, which {', '.join(who)} is using right now. "
             + _load(load) + "Decide whether both can work normally there now: start it, wait,"
             " or another machine, and tell both why. " + request_line(rid, machine))
+
+
+def text_unchecked(person: str, project: str, machine: str, who: List[str]) -> str:
+    """Work started next to someone, with no fresh use report to check it against."""
+    return (f"{person} started {project} on {machine}, where {', '.join(who)} is working;"
+            " no fresh use report from this machine, so the hub could not check for heavy use."
+            " For your information: tell them in one line if they may disturb each other.")
 
 
 def text_arrival(person: str, session: str, machine: str, load: List[str]) -> str:

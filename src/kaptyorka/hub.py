@@ -573,9 +573,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return None
         return mm.session_key(store.clock()) or (mm.last_key() if mm.retired() else None)
 
-    def in_use(host: str, me: str) -> "tuple[List[str], List[str]]":
-        """(the other people working on host or using much of it, one line of use each for the
-        manager). The manager account is nobody; `me`'s own accounts never count."""
+    def in_use(host: str, me: str) -> "tuple[List[str], List[str], List[str], bool]":
+        """(the other people using host heavily, one line of use each for the manager, the
+        other people with a session there, whether the use report is fresh). The manager
+        account is nobody; `me`'s own accounts never count."""
         now = store.clock()
         here = ws.host_use(host, now)
         use, by_person = here if here is not None else ({}, {})
@@ -584,16 +585,16 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                  if me not in p["people"] and usage.heavy(p, use)]
         who = present + [n for n in heavy if n not in present]
         if not who:
-            return [], []
+            return [], [], [], here is not None
         if here is None:
-            return who, ["no fresh use report from this machine"]
+            return [], ["no fresh use report from this machine"], present, False
         named = {n for n in who if n in by_person}
         for n, p in by_person.items():  # a shared account's label holds the person's name
             if n not in named and any(x in p["people"] for x in present):
                 named.add(n)
         lines = [usage.describe(n, by_person[n], use) for n in sorted(
             named, key=lambda n: (-len(usage.held(by_person[n])), -by_person[n]["cpu"], n))]
-        return who, lines or ["no notable use by them"]
+        return heavy, lines or ["no notable use by them"], present, True
 
     @server.tool()
     @_tool_errors
@@ -618,7 +619,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         chosen = ws.choose(usable, project, tool, store.clock(), principal.person_id)
         if chosen is None:
             return no_machine(project, machine or None, tool, usable, reasons)
-        who, load = in_use(chosen["host"], principal.person_name)
+        heavy, load, present, fresh = in_use(chosen["host"], principal.person_name)
         if chosen["occupied"]:
             others = [n for n in ws.folder_people(chosen["host"], chosen["os_user"],
                                                   chosen["folder"], store.clock())
@@ -636,18 +637,23 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             if others:  # no manager online: the asker picks again
                 return (f"busy: {chosen['host']} has {others[0]}'s session in that folder;"
                         " ask again later or name another machine")
-        if who:  # someone else works there, or uses much of it: the manager decides
+        if heavy:  # someone else uses much of it: the manager decides; light use starts
             manager_key = manager_to_wake()
             if manager_key is not None:  # without a manager it starts, as before
                 rid = mm.request_add(principal.person_id, agent.key, project, task, tool,
-                                     resume or None, chosen["host"], who[0], chosen["folder"])
+                                     resume or None, chosen["host"], heavy[0], chosen["folder"])
                 tell(manager_key, manager.text_in_use(principal.person_name, project,
-                                                      chosen["host"], who, load, rid))
-                return (f"busy: {chosen['host']} is in use by {who[0]}; the manager is deciding"
-                        f" (request {rid}); you will hear back here")
+                                                      chosen["host"], heavy, load, rid))
+                return (f"busy: {chosen['host']} is in use by {heavy[0]}; the manager is"
+                        f" deciding (request {rid}); you will hear back here")
         w = ws.create(principal, project, task, chosen, tool, agent.key, resume or None,
                       chosen["occupied"])
         wake_bridges()
+        if present and not fresh:  # could not check for heavy use: the manager hears of it
+            manager_key = manager_to_wake()
+            if manager_key is not None:
+                tell(manager_key, manager.text_unchecked(principal.person_name, project,
+                                                         w["host"], present))
         return (f"starting `{w['name']}` on {w['host']} ({w['os_user']})"
                 + (" in a worktree, the folder is busy" if w["worktree"] else ""))
 

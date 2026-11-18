@@ -292,14 +292,16 @@ class WorkerStore:
                person_id: int) -> Optional[dict]:
         """The best device: it has a folder for the project (and tmux unless the tool is
         Claude Code); the person's own account first, then a folder with no online session,
-        then the lowest load per cpu. A shared account on a host where the person has an own
-        online one is never chosen."""
+        then a machine nobody else uses heavily, then the lowest load per cpu. A shared
+        account on a host where the person has an own online one is never chosen."""
         own_hosts = {c["host"] for c in usable if c.get("person_id") == person_id}
         fits = [c for c in usable if c.get("folder")
                 and (tool == "claude-code" or c.get("tmux"))
                 and (c.get("person_id") == person_id or c["host"] not in own_hosts)]
         if not fits:
             return None
+        hosts = {c["host"] for c in fits}
+        crowded = {h for h in hosts if len(hosts) > 1 and self._heavy_by_others(h, person_id, now)}
         with self.lock:
             busy = [self.db.execute(
                 "SELECT 1 FROM agents WHERE host=? AND os_user=? AND cwd=? AND last_seen>? LIMIT 1",
@@ -308,7 +310,7 @@ class WorkerStore:
 
         def rank(i):
             c = fits[i]
-            return (c.get("person_id") != person_id, busy[i],
+            return (c.get("person_id") != person_id, busy[i], c["host"] in crowded,
                     (c.get("load") or 0.0) / max(c.get("cpus") or 1, 1))
 
         best = min(range(len(fits)), key=rank)
@@ -611,6 +613,14 @@ class WorkerStore:
         if best is None:
             return None
         return best[1], usage.people_use(best[1], owners)
+
+    def _heavy_by_others(self, host: str, person_id: int, now: float) -> bool:
+        here = self.host_use(host, now)
+        if here is None:
+            return False
+        with self.lock:
+            me = self._person_name(person_id)
+        return any(me not in p["people"] and usage.heavy(p, here[0]) for p in here[1].values())
 
     def host_people(self, host: str, now: float) -> dict:
         """{person name: the name of one of their online sessions} on host; the manager account

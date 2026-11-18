@@ -3,7 +3,8 @@
 ## 0.9.14
 
 - **The hub knows who uses a shared machine, and how much.** Each bridge reports, once a minute, CPU cores, memory and (with `nvidia-smi`) GPU busy %, GPU memory and GPU holders per OS user. Numbers only: no process names or command lines. The hub maps each OS user to its person and ignores reports older than 3 minutes. Only the admin and the manager see them.
-- **The manager decides when a second person wants a machine in use.** `work` on a machine where another person has a session in any folder, or uses it heavily, is now held for the manager, with each person's use and the rule of thumb in the notice; before, only the same folder was. The manager starts it, says wait, or picks another machine, and tells both why. Without a manager, a different folder starts as before.
+- **The manager decides when a second person would disturb the first.** `work` on a machine another person uses heavily, in any folder, is now held for the manager, with each person's use and the rule of thumb in the notice; the same folder is held as before. The manager starts it, says wait, or picks another machine, and tells both why. Light use starts at once. Someone working there with no fresh use report: it starts, and the manager is told. Without a manager, a different folder starts as before.
+- When several machines fit, `work` prefers one nobody else uses heavily.
 - **A session opened straight on a heavily used machine is warned, never refused.** Once per arrival (no session of that person there for 10 minutes before), the manager sends it one line on who uses what and tells the admin.
 - Heavy: holding half the GPUs or more (1 GB or more on a GPU holds it), a held GPU 80% busy or full, or half the CPU cores or memory. In `usage.py`, no setting.
 
