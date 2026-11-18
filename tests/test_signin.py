@@ -780,6 +780,24 @@ def test_remove_your_own_machine_only(hub, lab):
     assert hub.store.authenticate(admin) is not None
 
 
+def test_the_hubs_emergency_device_cannot_be_removed_from_the_page(hub, lab):
+    admin = hub.store.device_add(hub.ids["alice"], "hub")
+    (paths.home() / "admin-token").write_text(admin + "\n")
+    hub_id = machine_ids(hub, hub.ids["alice"])["hub"]
+    lab.who = "alice-gl"
+    alice = token_of(sign_in(hub)[0])  # a GitLab sign-in, not the hub's token
+    machines = {m["name"]: m for m in call(hub, "GET", "/api/me/account", alice)[1]["machines"]}
+    assert machines["hub"]["emergency"] is True and machines["alice-laptop"]["emergency"] is False
+    status, why = call(hub, "POST", f"/api/me/machines/{hub_id}/remove", alice)
+    assert (status, why) == (400, "this is the hub's own emergency sign-in; it can't be removed here")
+    assert hub.store.authenticate(admin) is not None
+    # her other machine still goes
+    laptop = machine_ids(hub, hub.ids["alice"])["alice-laptop"]
+    assert call(hub, "POST", f"/api/me/machines/{laptop}/remove", alice)[0] == 204
+    # the page offers no Remove for it
+    assert "!d.current && !d.emergency" in get(hub.url + "/").body
+
+
 def test_sign_out_everywhere_else_ends_only_your_other_browsers(hub, lab):
     first, second = bob_signed_in(hub, lab), bob_signed_in(hub, lab)
     lab.who = "alice-gl"

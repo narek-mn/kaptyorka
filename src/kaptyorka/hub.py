@@ -2,7 +2,6 @@
 import asyncio
 import contextlib
 import functools
-import hashlib
 import html
 import importlib.resources
 import inspect
@@ -10,7 +9,6 @@ import json
 import math
 import mimetypes
 import re
-import secrets
 import sys
 import threading
 from datetime import datetime, timezone
@@ -219,19 +217,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     def admin_token(p: Principal) -> bool:
         """The admin's own token from ~/.kaptyorka/admin-token on this (the hub) machine: the
         one device token that still opens the page while GitLab is down."""
-        if not p.is_admin() or p.legacy:
-            return False
-        try:
-            saved = (paths.home() / "admin-token").read_text().strip()
-        except (OSError, UnicodeDecodeError):
-            return False
-        if not saved:
-            return False
-        with store.lock:
-            row = store.db.execute("SELECT token_hash FROM devices WHERE id=?",
-                                   (p.device_id,)).fetchone()
-        return row is not None and secrets.compare_digest(
-            row["token_hash"], hashlib.sha256(saved.encode()).hexdigest())
+        return p.is_admin() and not p.legacy and admin_ops.emergency_device(store) == p.device_id
 
     def page_ok(p: Principal) -> bool:
         """May this principal use the page? Always while sign-in with GitLab is off; once on,

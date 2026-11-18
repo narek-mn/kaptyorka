@@ -120,10 +120,10 @@ ADDED_COLUMNS = [
     ("agents", "cwd", "TEXT NOT NULL DEFAULT ''"),
     ("requests", "role", "TEXT NOT NULL DEFAULT 'read'"),
     ("agents", "background", "INTEGER NOT NULL DEFAULT 0"),
-    ("devices", "expires", "REAL"),
+    ("devices", "expires", "REAL"),  # a GitLab sign-in's page device ends then (signin.py)
     # the name a person gives their machine on the account page; `name` stays the machine's
     # identity (sessions, the bridge's offers and rekeys match on it)
-    ("devices", "label", "TEXT NOT NULL DEFAULT ''"),  # a GitLab sign-in's page device ends then (signin.py)
+    ("devices", "label", "TEXT NOT NULL DEFAULT ''"),
     ("people", "gitlab_user", "TEXT"),  # the GitLab username a person signs in with
     ("people", "gitlab_id", "INTEGER"),  # that GitLab user's id, kept at their first sign-in
 ]

@@ -1,9 +1,11 @@
 """The admin's changes to people, projects and invites; a member's own access; the log read
 as plain sentences."""
+import hashlib
 import json
 import re
 from typing import Dict, List, Optional, Tuple
 
+from kaptyorka import paths
 from kaptyorka.store import MAX_ABOUT, ONLINE_S, KaptyorkaError, Principal
 
 LIVE = ("starting", "up", "unattended", "abandoned")  # workers.LIVE; workers imports the store
@@ -202,6 +204,24 @@ def invite_self(store, principal: Principal) -> str:
                                limit=SELF_INVITES)
 
 
+def emergency_device(store) -> Optional[int]:
+    """The hub's own device: the admin's token in ~/.kaptyorka/admin-token on this (the hub)
+    machine, the one device token that still opens the page while GitLab is down. Its id while it
+    is live and its person is the admin, else None."""
+    try:
+        saved = (paths.home() / "admin-token").read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not saved:
+        return None
+    with store.lock:
+        row = store.db.execute(
+            "SELECT d.id FROM devices d JOIN people p ON p.id=d.person_id WHERE d.token_hash=?"
+            " AND d.revoked_at IS NULL AND d.legacy=0 AND p.role='admin'",
+            (hashlib.sha256(saved.encode()).hexdigest(),)).fetchone()
+    return row["id"] if row else None
+
+
 _MACHINE = "revoked_at IS NULL AND expires IS NULL AND legacy=0"  # a joined machine, still in
 _BROWSER = ("revoked_at IS NULL AND id IN (SELECT device_id FROM gitlab_sessions)")  # a GitLab sign-in
 
@@ -209,7 +229,7 @@ _BROWSER = ("revoked_at IS NULL AND id IN (SELECT device_id FROM gitlab_sessions
 def account(store, principal: Principal) -> dict:
     """The account page: the caller's own person, machines, browsers signed in with GitLab and
     projects, nothing of anyone else's. `current` marks the device this page signed in with."""
-    now = store.clock()
+    now, emergency = store.clock(), emergency_device(store)
     with store.lock:
         p = store.db.execute("SELECT name, role, gitlab_user FROM people WHERE id=?",
                              (principal.person_id,)).fetchone()
@@ -225,7 +245,8 @@ def account(store, principal: Principal) -> dict:
         "machines": [{"id": d["id"], "name": d["label"] or d["name"], "machine": d["name"],
                       "os_user": d["os_user"], "last_seen": d["last_used"],
                       "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S,
-                      "current": d["id"] == principal.device_id}
+                      "current": d["id"] == principal.device_id,
+                      "emergency": d["id"] == emergency}
                      for d in devices],
         "browsers": [{"id": b["id"], "created": b["created"], "last_used": b["last_used"],
                       "current": b["id"] == principal.device_id} for b in browsers],
@@ -263,6 +284,8 @@ def machine_remove(store, principal: Principal, device_id: int) -> None:
     if device_id == principal.device_id:
         raise KaptyorkaError("this page is signed in with that machine's token; remove it from"
                              " another sign-in")
+    if device_id == emergency_device(store):
+        raise KaptyorkaError("this is the hub's own emergency sign-in; it can't be removed here")
     with store.lock:
         _own_machine(store, principal, device_id)
     store.device_revoke(device_id, by=principal.person_name)

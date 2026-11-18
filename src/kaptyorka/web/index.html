@@ -2009,7 +2009,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       }, { ask: "Machine name", value: d.name, edit: true, max: "80" });
     }, { "aria-label": "Rename " + d.name });
     acts.appendChild(rename);
-    if (!d.current) {  /* the machine whose token opened this page cannot remove itself */
+    if (!d.current && !d.emergency) {  /* not the token this page opened with, nor the hub's emergency sign-in */
       var rm = button("Remove", "quiet-danger", function () {
         confirmInline(rm, "Remove " + d.name + "? It stops reaching the hub until it joins again.", "Remove", function () {
           return api("/api/me/machines/" + d.id + "/remove")
