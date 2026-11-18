@@ -7,8 +7,9 @@
 <meta name="color-scheme" content="dark">
 <title>kaptyorka</title>
 <style>
-/* the team design tokens (dark): warm stone and charcoal, square corners, no shadows,
-   coral as the one accent, Archivo */
+/* the team design tokens (dark): warm stone and charcoal, coral as the one accent, Archivo.
+   Three surface layers (page, panel, raised), small radii (6 px controls, 10 px cards) and a
+   very soft shadow only on raised things: cards, toasts, questions, the picture viewer */
 @font-face { font-family: "Archivo"; font-style: normal; font-weight: 100 900; font-display: swap;
   src: url(/fonts/archivo-latin.woff2) format("woff2"); }
 :root {
@@ -57,9 +58,21 @@
   --s-8: 32px;
   --s-10: 40px;
   --s-12: 48px;
-  /* shape: square corners; only dots and spinners are round */
-  --radius: 0;
+  /* shape and depth */
+  --radius: 6px;
+  --radius-lg: 10px;
+  --pill: 999px;
   --round: 50%;
+  --raised: #2c2a24;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .28);
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 28px rgba(0, 0, 0, .32);
+  /* name tints for people's badges: muted, warm, never louder than the accent */
+  --t0: #b0775a;
+  --t1: #8f9a5b;
+  --t2: #5e9690;
+  --t3: #7486a8;
+  --t4: #9a7396;
+  --t5: #b8954e;
   /* controls: one height per size */
   --h-sm: 32px;
   --h-md: 36px;
@@ -128,7 +141,7 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
   transform: scaleX(0); transition: transform var(--dur-2) var(--ease-out); }
 .tab[aria-selected="true"]::after { transform: none; }
 .tab:focus-visible { outline-offset: -4px; }
-.count { min-width: 18px; padding: 0 5px; font-size: var(--fs-xs); font-weight: var(--fw-semi); line-height: 16px; text-align: center;
+.count { min-width: 18px; padding: 0 6px; border-radius: var(--pill); font-size: var(--fs-xs); font-weight: var(--fw-semi); line-height: 16px; text-align: center;
   color: var(--bg); background: var(--accent); }
 .viewer { position: relative; margin-left: auto; display: flex; align-items: center; }
 #viewer-name { height: 100%; }
@@ -136,7 +149,7 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 #account { overflow-y: auto; }
 .a-sec { margin-top: var(--s-8); }
 .a-sec:first-child { margin-top: 0; }
-.a-profile { display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: var(--s-8); row-gap: 10px; margin: 0; padding: var(--s-4); }
+.a-profile { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; column-gap: var(--s-8); row-gap: 10px; margin: 0; padding: var(--s-4); }
 .a-profile dt { color: var(--muted); }
 .a-profile dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .a-profile .quiet { color: var(--faint); }
@@ -155,11 +168,12 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 .a-acts:has(.confirm) > .btn { display: none; }  /* one question at a time on a row */
 .a-none { display: flex; align-items: center; gap: var(--s-2); padding: 14px var(--s-4); font-size: var(--fs-md); color: var(--faint); }
 .a-join { display: flex; flex-direction: column; gap: var(--s-2); padding: 14px; margin-bottom: 10px; animation: drop var(--dur-2) var(--ease-out); }
-.a-join .cmd { display: flex; align-items: stretch; border: 1px solid var(--line-ctl); background: var(--bg); }
+.a-join .cmd { display: flex; align-items: stretch; border: 1px solid var(--line-ctl); border-radius: var(--radius); overflow: hidden; background: var(--bg); }
 .a-join code { flex: 1; min-width: 0; padding: 9px var(--s-3); font: var(--fs-md)/1.45 var(--mono); color: var(--ink); word-break: break-all; user-select: all; }
-.a-join .cmd .btn { height: auto; border: 0; border-left: 1px solid var(--line-ctl); }
+.a-join .cmd .btn { height: auto; border: 0; border-left: 1px solid var(--line-ctl); border-radius: 0; }
 .a-join small { font-size: var(--fs-sm); color: var(--faint); }
 .a-tag { flex: none; text-transform: capitalize; }
+.a-name { display: flex; align-items: center; gap: 10px; }
 .a-out { margin-top: 36px; align-self: flex-start; }
 .live { display: flex; align-items: center; flex: none; margin-left: -32px; }
 .live i { width: 6px; height: 6px; border-radius: var(--round); background: var(--ok); transition: background-color var(--dur-3); }
@@ -169,52 +183,84 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* a view change: the new view fades in */
 main > section { animation: fade-in var(--dur-3) var(--ease-out); }
-.panel { background: var(--surface); border: 1px solid var(--line); }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); overflow: hidden; }
+
+/* badges: a round mark for every session (its tool, or its initials) and person (initials on a
+   tint from the name); projects and machines get a rounded square. The letters come from
+   data-i through CSS, so they never join the row's text */
+.av { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  border-radius: var(--round); background: var(--raised); border: 1px solid var(--line); color: var(--muted);
+  font-size: 10.5px; font-weight: var(--fw-bold); letter-spacing: .02em; line-height: 1; user-select: none; }
+.av[data-i]::after { content: attr(data-i); }
+.av.sm { width: 22px; height: 22px; font-size: 9px; }
+.av.lg { width: 40px; height: 40px; font-size: var(--fs-md); }
+.av-project, .av-machine, .av-activity { border-radius: var(--radius); }
+.av-manager { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+.av-person { --t: var(--t0); background: color-mix(in srgb, var(--t) 26%, var(--surface)); border-color: color-mix(in srgb, var(--t) 45%, transparent);
+  color: color-mix(in srgb, var(--t) 50%, var(--ink)); }
+.tint-1 { --t: var(--t1); } .tint-2 { --t: var(--t2); } .tint-3 { --t: var(--t3); } .tint-4 { --t: var(--t4); } .tint-5 { --t: var(--t5); }
+.av > .dot { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border: 2px solid var(--surface); }
+
+/* status chips: a pill with a dot. Green is good, coral is active or working, grey is idle */
+.chip { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px 0 7px; border-radius: var(--pill);
+  font-size: var(--fs-xs); font-weight: var(--fw-medium); line-height: 1; white-space: nowrap;
+  color: var(--muted); background: rgba(231, 228, 220, .05); border: 1px solid var(--line); }
+.chip > .dot, .chip .chip-dot { width: 6px; height: 6px; border-radius: var(--round); background: currentColor; flex: none; }
+.chip > .bg-lead { color: inherit; }
+.chip.ok { color: #8fc23a; background: rgba(105, 159, 8, .1); border-color: rgba(105, 159, 8, .35); }
+.chip.ok > .dot { background: var(--ok); }
+.chip.active { color: var(--accent-hover); background: rgba(218, 105, 71, .1); border-color: rgba(218, 105, 71, .38); }
+.chip.active > .dot { background: var(--accent); }
+.chip.idle { color: var(--faint); }
+.chip.idle > .dot { background: var(--faint); }
+.chip.dashed { border-style: dashed; background: none; }
+.chip.n { text-transform: capitalize; }
 
 /* first load: grey bars where the rows will be */
 .skel { display: flex; align-items: center; gap: var(--s-3); min-height: var(--row); padding: 0 var(--s-4); }
-.skel i { display: block; height: 10px; background: var(--surface2); animation: pulse .9s ease-in-out infinite alternate; }
-.skel i:first-child { width: 8px; height: 8px; border-radius: var(--round); }
+.skel i { display: block; height: 10px; border-radius: var(--pill); background: var(--surface2); animation: pulse .9s ease-in-out infinite alternate; }
+.skel i:first-child { flex: none; width: 28px; height: 28px; border-radius: var(--round); }
 .skel i:nth-child(2) { flex: 0 1 38%; }
 .skel i:nth-child(3) { flex: 0 1 22%; opacity: .6; }
 .panel .skel + .skel { border-top: 1px solid var(--line); }
 .list .skel { min-height: var(--row); padding-left: 18px; }
+.panel .skel i:first-child { border-radius: var(--round); }
 
 /* Home: a two-pane chat. The list on the left (manager first), the open chat on the right,
    its compose box pinned to the bottom */
 #home { display: grid; grid-template-columns: 296px minmax(0, 1fr); min-height: 0; }
 .side { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-right: 1px solid var(--line); }
-.list { flex: 0 1 auto; min-height: 0; overflow-y: auto; padding: 6px 0; }
-.list .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; align-items: center; column-gap: var(--s-3);
-  width: 100%; min-height: var(--row); padding: 6px var(--s-4) 6px 13px; text-align: left;
-  border-left: 3px solid transparent; box-shadow: inset 0 -1px var(--line-soft);
-  transition: background-color var(--ease), border-color var(--ease); }
+.list { flex: 0 1 auto; min-height: 0; overflow-y: auto; padding: var(--s-2) 0; }
+.list .row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; align-items: center; column-gap: var(--s-3);
+  width: calc(100% - 16px); min-height: var(--row); margin: 1px var(--s-2); padding: 6px 10px; text-align: left;
+  border: 1px solid transparent; border-radius: var(--radius-lg);
+  transition: background-color var(--ease), border-color var(--ease), box-shadow var(--ease); }
 .list .row:hover { background: var(--surface2); }
 .list .row:active { background: var(--hover); }
 .list .row:focus-visible { outline-offset: -2px; }
-.list .row.on { background: var(--hover); border-left-color: var(--accent); }
+.list .row.on { background: var(--raised); border-color: var(--line); box-shadow: inset 3px 0 var(--accent), var(--shadow-1); }
 .list .row.on .name { color: var(--ink); font-weight: var(--fw-bold); }
 .list .row.off { cursor: default; color: var(--faint); }
 .list .row.off:hover { background: none; }
 .list .row > svg { color: var(--muted); }
 .list .row.on > svg { color: var(--ink); }
-.list .row.activity { border-bottom: 1px solid var(--line); margin-bottom: 6px; box-shadow: none; }
-.list .lead { width: 16px; display: flex; justify-content: center; flex: none; color: var(--muted); }
-.list .row.on .lead { color: var(--ink); }
+.list .row.activity { margin-bottom: var(--s-2); }
+.list .row.activity::after { content: ""; position: absolute; left: 2px; right: 2px; bottom: -6px; height: 1px; background: var(--line); }
+.list .row { position: relative; }
+.list .lead { width: 28px; display: flex; justify-content: center; flex: none; }
 .list .meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .list .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--fw-medium); color: var(--ink); }
 .list .row.unread .name { font-weight: var(--fw-bold); }
 .list .subline { display: flex; gap: var(--s-2); min-width: 0; font-size: var(--fs-sm); color: var(--faint); white-space: nowrap; overflow: hidden; }
 .list .subline span { overflow: hidden; text-overflow: ellipsis; }
 .list .who { color: var(--muted); flex: none; }
-.list .n { flex: none; font-size: var(--fs-sm); color: var(--faint); }
 .list .count { flex: none; }
 .dot { width: 8px; height: 8px; border-radius: var(--round); background: var(--faint); flex: none; transition: background-color var(--dur-3); }
 .dot.on { background: var(--ok); }
 .bg-lead { display: flex; color: var(--faint); }
 .bg-lead.on { color: var(--ok); }
 /* Background: Claude Code background jobs, folded into one group under the chats */
-.list .bg-head { display: flex; align-items: center; gap: var(--s-2); width: 100%; min-height: var(--h-lg); margin-top: 10px; padding: 10px var(--s-4) var(--s-2) 18px;
+.list .bg-head { display: flex; align-items: center; gap: var(--s-2); width: 100%; min-height: var(--h-lg); margin-top: 10px; padding: 10px var(--s-4) var(--s-2) 20px; border-radius: 0;
   border-top: 1px solid var(--line); font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--muted); text-align: left;
   transition: color var(--ease), background-color var(--ease); }
 .list .bg-head:hover { color: var(--ink); background: var(--surface2); }
@@ -233,11 +279,11 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .side-foot .btn[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .chat-head { flex: none; display: flex; align-items: center; gap: var(--s-3); height: 58px; padding: 0 var(--s-6); border-bottom: 1px solid var(--line); }
-.chat-head #chat-lead { display: flex; width: 16px; justify-content: center; color: var(--muted); }
+.chat-head #chat-lead { display: flex; }
 .chat-title { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .chat-title b { font-size: var(--fs-lg); font-weight: var(--fw-semi); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-title small { display: flex; align-items: center; gap: var(--s-2); font-size: var(--fs-sm); color: var(--faint); overflow: hidden; white-space: nowrap; }
-.chat-title small span + span { padding-left: var(--s-2); border-left: 1px solid var(--line); }
+.chat-title small { display: flex; align-items: center; gap: var(--s-2); margin-top: 2px; font-size: var(--fs-sm); color: var(--faint); overflow: hidden; white-space: nowrap; }
+.chat-title small > span:not(.chip) + span:not(.chip) { padding-left: var(--s-2); border-left: 1px solid var(--line); }
 .chat-title small span:first-child { color: var(--muted); }
 #notices-toggle { margin-left: auto; }
 #notices-toggle small { color: var(--faint); font-size: var(--fs-xs); }
@@ -247,14 +293,17 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 #warns li { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 5px var(--s-4) 5px var(--s-6); font-size: var(--fs-md); color: var(--risk);
   background: rgba(194, 148, 47, .09); border-bottom: 1px solid rgba(194, 148, 47, .35); animation: drop var(--dur-2) var(--ease-out); }
 #warns li > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#warns code { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; font: var(--fs-sm) var(--mono);
+#warns code { flex: none; border-radius: var(--radius); max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; font: var(--fs-sm) var(--mono);
   color: var(--ink); background: var(--bg); border: 1px solid var(--line); user-select: all; }
 #log { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-6) 18px; }
 .day { display: flex; align-items: center; gap: var(--s-3); margin: 18px 0 6px; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--faint); }
 .day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-.group { padding: var(--s-2) 0 6px; margin-top: var(--s-2); }
-/* my own messages: a rule on the left */
-.group.mine { margin-left: -14px; padding-left: var(--s-3); border-left: 2px solid var(--accent); }
+.group { position: relative; padding: var(--s-2) 0 6px 40px; margin-top: 6px; }
+.group .head > .av { position: absolute; left: 0; top: 10px; }
+/* my own messages: a lightly tinted block */
+.group.mine { margin-left: -12px; padding: 10px var(--s-3) var(--s-2) 52px; border-radius: var(--radius-lg);
+  background: rgba(218, 105, 71, .06); border: 1px solid rgba(218, 105, 71, .14); }
+.group.mine .head > .av { left: 12px; top: 12px; }
 .group .head { display: flex; align-items: baseline; gap: var(--s-2); min-width: 0; margin-bottom: 2px; }
 .group .head b { font-weight: var(--fw-bold); color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group .head b.mine { color: var(--accent); }
@@ -269,7 +318,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .msg .text.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 12; overflow: hidden; }
 .msg .more { margin-top: var(--s-1); padding: 2px 0; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--accent); }
 .msg .more:hover { text-decoration: underline; }
-.msg.sys { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; font-size: var(--fs-sm); }
+.msg.sys { display: flex; align-items: baseline; gap: 10px; padding: 5px 0 5px 8px; font-size: var(--fs-sm); }
 .msg.sys > svg { align-self: center; color: var(--faint); }
 .msg.sys .text { color: var(--muted); min-width: 0; }
 /* my message on its way, and where it is: quiet, under the last one only */
@@ -284,7 +333,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .tick button:hover { text-decoration: underline; }
 .tick .spin { width: 9px; height: 9px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: var(--round); animation: spin .7s linear infinite; }
 /* the session is working on my message: three dots, its name, what it says it does */
-.working { display: flex; align-items: center; gap: var(--s-2); min-width: 0; padding: var(--s-3) 0 2px; font-size: var(--fs-md); color: var(--muted); animation: rise var(--dur-3) var(--ease-out); }
+.working { display: flex; align-items: center; gap: var(--s-2); min-width: 0; padding: var(--s-3) 0 2px 40px; font-size: var(--fs-md); color: var(--muted); animation: rise var(--dur-3) var(--ease-out); }
 .working b { font-weight: var(--fw-semi); color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
 .working .what { flex: none; }
 .working .more-act { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
@@ -296,14 +345,21 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .chat .blank { color: var(--faint); }
 #log > .blank:only-child { height: 100%; min-height: 0; font-size: var(--fs-md); text-wrap: balance; }
 .access-pane { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-5) var(--s-6); animation: fade-in var(--dur-3) var(--ease-out); }
-.compose { flex: none; display: flex; align-items: flex-end; gap: var(--s-2); padding: var(--s-3) var(--s-6) var(--s-4); border-top: 1px solid var(--line); background: var(--surface); }
-.compose textarea { flex: 1; min-width: 0; height: var(--h-lg); max-height: 200px; padding: 9px var(--s-3); resize: none; line-height: 1.4;
-  background: var(--bg); }
-.compose .btn { height: var(--h-lg); }
-.compose .btn.primary { padding: 0 var(--s-4); }
-.compose .attach { color: var(--muted); }
+.compose { flex: none; padding: var(--s-2) var(--s-6) var(--s-5); }
+.compose-box { display: flex; flex-direction: column; border: 1px solid var(--line-ctl); border-radius: var(--radius-lg); background: var(--surface);
+  box-shadow: var(--shadow-1); transition: border-color var(--ease), box-shadow var(--ease); }
+.compose-box:hover { border-color: var(--line-strong); }
+.compose-box:focus-within { border-color: var(--accent-line); box-shadow: 0 0 0 3px rgba(218, 105, 71, .14), var(--shadow-1); }
+.compose textarea { width: 100%; min-width: 0; height: 48px; max-height: 200px; padding: var(--s-3) 14px 6px; resize: none; line-height: 1.45;
+  background: transparent; border: 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+.compose textarea:focus { box-shadow: none; }
+.compose-bar { display: flex; align-items: center; gap: var(--s-2); min-width: 0; padding: 6px var(--s-2) var(--s-2) var(--s-2); }
+.compose-bar .send { margin-left: auto; }
+.compose .btn { height: var(--h-sm); }
+.compose .btn.primary { padding: 0 var(--s-3); }
+.compose .attach { color: var(--muted); border-color: transparent; }
 .compose .attach:hover { color: var(--ink); }
-.compose .file-chip { height: var(--h-lg); max-width: 220px; min-width: 0; animation: fade-in var(--dur-2) var(--ease-out); }
+.compose .file-chip { height: 28px; max-width: 260px; min-width: 0; animation: fade-in var(--dur-2) var(--ease-out); }
 .chat > .err { padding: 0 var(--s-6) 10px; margin-top: -6px; }
 .file-chip .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .file-chip small { flex: none; }
@@ -311,26 +367,26 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 /* shared parts */
 .tag {
   display: inline-flex; align-items: center; gap: 6px; padding: 2px var(--s-2);
-  border: 1px solid var(--line); color: var(--ink); font-size: var(--fs-sm); background: var(--surface); white-space: nowrap;
+  border: 1px solid var(--line); border-radius: var(--pill); color: var(--ink); font-size: var(--fs-sm); background: var(--surface); white-space: nowrap;
 }
 .tag small { font-size: var(--fs-sm); color: var(--faint); }
 .tag .x { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; margin-right: -6px; color: var(--faint); transition: color var(--ease); }
 .tag .x:hover { color: var(--danger); }
 .sentence code { font: var(--fs-sm) var(--mono); color: var(--ink); }
 .hint { font-size: var(--fs-sm); color: var(--faint); }
-.att { display: block; max-width: min(360px, 100%); max-height: 260px; margin-top: 7px; border: 1px solid var(--line); background: var(--bg); }
+.att { display: block; max-width: min(360px, 100%); max-height: 260px; margin-top: var(--s-2); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg); }
 .att.zoom { cursor: zoom-in; transition: border-color var(--ease); }
 .att.zoom:hover { border-color: var(--line-strong); }
 .att.zoom:focus-visible { outline: var(--ring); outline-offset: 2px; }
 .vid .att { background: #000; }
 .lightbox { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
   padding: 56px var(--s-4) var(--s-4); background: rgba(8, 8, 6, .96); animation: fade-in var(--dur-2) var(--ease-out); }
-.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; animation: lb-in var(--dur-3) var(--ease-out); }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius); box-shadow: var(--shadow-2); animation: lb-in var(--dur-3) var(--ease-out); }
 .lb-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 10px var(--s-3);
-  border-bottom: 1px solid var(--line-soft); }
+  border-bottom: 1px solid var(--line-soft); background: rgba(27, 26, 22, .7); }
 .lb-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-md); color: var(--muted); }
 .lb-close { display: inline-flex; align-items: center; justify-content: center; width: var(--h-md); height: var(--h-md); color: var(--ink); background: none;
-  border: 1px solid var(--line-ctl); cursor: pointer; transition: background-color var(--ease), border-color var(--ease); }
+  border: 1px solid var(--line-ctl); border-radius: var(--radius); cursor: pointer; transition: background-color var(--ease), border-color var(--ease); }
 .lb-close:hover { background: var(--hover); border-color: var(--line-strong); }
 .lb-close:focus-visible, .lightbox .btn:focus-visible { outline: var(--ring); outline-offset: 2px; }
 .lightbox .btn.failed { color: var(--danger); }
@@ -355,7 +411,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .btn {
   height: var(--h-md); padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: var(--s-2);
   border: 1px solid var(--line-ctl); color: var(--ink); background: transparent; font-weight: var(--fw-medium); font-size: var(--fs-md); flex: none;
-  white-space: nowrap; user-select: none;
+  white-space: nowrap; user-select: none; border-radius: var(--radius);
   transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 .btn > svg { color: currentColor; opacity: .85; }
@@ -380,7 +436,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .btn.small { height: var(--h-sm); padding: 0 var(--s-3); font-size: var(--fs-sm); gap: 6px; }
 .btn.icon { width: var(--h-md); padding: 0; }
 .btn.icon.small { width: var(--h-sm); }
-.compose .btn.icon { width: var(--h-lg); }
+.compose .btn.icon { width: var(--h-sm); }
 .btn.copied, .btn.copied:hover { color: var(--ok); border-color: var(--ok); background: transparent; }
 .btn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
 .ok { color: var(--ok); font-size: var(--fs-sm); animation: fade-in var(--dur-2) var(--ease-out); }
@@ -395,10 +451,10 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .team { width: 100%; max-width: 760px; margin: 0 auto; padding: var(--s-8) var(--s-6) var(--s-12); display: flex; flex-direction: column; }
 .t-head { margin: 0; font-size: var(--fs-lg); font-weight: var(--fw-bold); color: var(--ink); }
 #waiting { display: flex; flex-direction: column; gap: var(--s-3); margin-bottom: var(--s-8); animation: fade-in var(--dur-3) var(--ease-out); }
-#waiting .t-list { border-left: 2px solid var(--accent); }
+#waiting .t-list { border-color: rgba(218, 105, 71, .4); box-shadow: inset 3px 0 var(--accent), var(--shadow-1); }
 .t-bar { display: flex; align-items: center; gap: var(--s-3); min-height: var(--h-md); margin-bottom: var(--s-3); }
 .t-bar .btn { margin-left: auto; }
-.w-row { display: flex; align-items: center; gap: 14px; min-height: var(--row); padding: var(--s-2) 10px var(--s-2) var(--s-4);
+.w-row { display: flex; align-items: center; gap: var(--s-3); min-height: var(--row); padding: var(--s-2) 10px var(--s-2) var(--s-4);
   border-bottom: 1px solid var(--line); transition: background-color var(--ease), opacity var(--ease); }
 .w-row:last-child { border-bottom: 0; }
 .w-row:hover { background: var(--surface2); }
@@ -414,9 +470,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .p-line { display: flex; align-items: center; gap: 10px; padding-right: 10px; transition: background-color var(--ease); }
 .p-line:hover { background: var(--surface2); }
 .person.open .p-line { background: var(--surface2); }
-.p-main { flex: 1; min-width: 0; display: grid; grid-template-columns: 8px minmax(72px, max-content) minmax(0, 1fr) 14px;
+.p-main { flex: 1; min-width: 0; display: grid; grid-template-columns: 28px minmax(72px, max-content) minmax(0, 1fr) 14px;
   align-items: center; column-gap: 14px; min-height: var(--row); padding: var(--s-2) 6px var(--s-2) var(--s-4); text-align: left; }
-.p-main.still { grid-template-columns: 8px minmax(72px, max-content) minmax(0, 1fr); cursor: default; }
+.p-main.still { grid-template-columns: 28px minmax(72px, max-content) minmax(0, 1fr); cursor: default; }
 .p-main:focus-visible { outline-offset: -2px; }
 .p-main:active { background: var(--hover); }
 .p-main.still:active { background: none; }
@@ -433,12 +489,12 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .p-act .new-link { min-width: 136px; }  /* every chevron in one column */
 .p-line:has(.confirm) .p-act { min-width: 0; }
 .p-act .confirm { max-width: 420px; }
-.p-projects { display: flex; flex-wrap: wrap; gap: 6px; padding: var(--s-1) 10px var(--s-4) 38px; background: var(--surface2);
+.p-projects { display: flex; flex-wrap: wrap; gap: 6px; padding: var(--s-1) 10px var(--s-4) 58px; background: var(--surface2);
   animation: drop var(--dur-2) var(--ease-out); }
 .p-projects .quiet { font-size: var(--fs-md); color: var(--faint); }
 .p-rm { margin-left: auto; display: flex; align-items: center; }
 .proj { display: inline-flex; align-items: center; gap: var(--s-2); height: var(--h-sm); padding: 0 var(--s-3) 0 10px; font-size: var(--fs-md); color: var(--muted);
-  border: 1px solid var(--line-ctl); background: var(--surface); cursor: pointer; user-select: none;
+  border: 1px solid var(--line-ctl); border-radius: var(--pill); background: var(--surface); cursor: pointer; user-select: none;
   transition: border-color var(--ease), color var(--ease), background-color var(--ease); }
 .proj:hover { border-color: var(--line-strong); color: var(--ink); }
 .proj.on { color: var(--ink); border-color: var(--accent-line); background: var(--accent-soft); }
@@ -447,22 +503,23 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .proj input:focus { box-shadow: none; }
 .proj input:disabled { cursor: default; }
 .proj small { font-size: var(--fs-xs); }
-.p-link { display: flex; align-items: center; gap: var(--s-2); padding: 0 var(--s-4) var(--s-3) 38px; color: var(--muted); animation: drop var(--dur-2) var(--ease-out); }
+.p-link { display: flex; align-items: center; gap: var(--s-2); padding: 0 var(--s-4) var(--s-3) 58px; color: var(--muted); animation: drop var(--dur-2) var(--ease-out); }
 .p-link input, .add-link input { flex: 1; min-width: 0; height: var(--h-sm); padding: 0 var(--s-2); font: var(--fs-sm) var(--mono); }
-.add-box { margin-bottom: 14px; animation: drop var(--dur-2) var(--ease-out); }
+.add-box { margin-bottom: 14px; background: var(--raised); box-shadow: var(--shadow-2); animation: drop var(--dur-2) var(--ease-out); }
 .add-form, .add-link { display: flex; align-items: center; gap: var(--s-2); padding: 10px 10px 10px 14px; }
 .add-form input { flex: 0 1 260px; min-width: 0; height: var(--h-sm); padding: 0 var(--s-2); font-size: var(--fs-md); }
 .add-who { flex: none; color: var(--muted); font-size: var(--fs-md); }
 .add-who b { color: var(--ink); font-weight: var(--fw-semi); }
 .add-box .err, #team-err, #waiting-err { padding: 0 14px 10px; }
 #team-err { padding: var(--s-2) 2px 0; }
-.t-ok { margin-bottom: var(--s-3); padding: var(--s-2) var(--s-3); font-size: var(--fs-md); border-left: 2px solid var(--ok); background: rgba(105, 159, 8, .08); color: var(--ink); }
+.t-ok { margin-bottom: var(--s-3); padding: 10px 14px; font-size: var(--fs-md); border: 1px solid rgba(105, 159, 8, .35); border-left: 3px solid var(--ok);
+  border-radius: var(--radius-lg); background: var(--raised); box-shadow: var(--shadow-2); color: var(--ink); animation: rise var(--dur-3) var(--ease-out); }
 /* Team > Projects: every GitLab project and every project on the hub, one row each */
 .t-bar.pj-bar { margin-top: 40px; }
 .pj-note { padding: 0 2px var(--s-3); font-size: var(--fs-md); color: var(--faint); }
 .pj-note.bad { color: var(--danger); }
-.pj-note code { padding: 1px 5px; font: var(--fs-sm) var(--mono); color: var(--muted); background: var(--surface); border: 1px solid var(--line); }
-.pj-row { display: flex; align-items: center; gap: 14px; min-height: 56px; padding: 10px 10px 10px var(--s-4);
+.pj-note code { padding: 1px 6px; border-radius: 4px; font: var(--fs-sm) var(--mono); color: var(--muted); background: var(--surface); border: 1px solid var(--line); }
+.pj-row { display: flex; align-items: center; gap: var(--s-3); min-height: 56px; padding: 10px 10px 10px var(--s-4);
   border-bottom: 1px solid var(--line); transition: background-color var(--ease); }
 .pj-row:last-child { border-bottom: 0; }
 .pj-row:hover { background: var(--surface2); }
@@ -475,11 +532,10 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .pj-who { font-size: var(--fs-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pj-who b { font-weight: var(--fw-medium); color: var(--faint); }
 .pj-acts { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.pj-row > .av { align-self: flex-start; margin-top: 2px; }
 .pj-row:has(.confirm) { flex-wrap: wrap; row-gap: var(--s-2); }
 .pj-row > .confirm { flex: 1 1 100%; max-width: 100%; justify-content: flex-start; }
 .pj-row > .confirm input { flex: 1 1 220px; min-width: 0; height: var(--h-sm); padding: 0 var(--s-2); font-size: var(--fs-sm); }
-.pj-tag { flex: none; padding: 0 6px; font-size: var(--fs-xs); font-weight: var(--fw-medium); line-height: 18px; color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
-.pj-tag.off { color: var(--faint); border-style: dashed; }
 .pj-add { flex-wrap: wrap; }
 .pj-add #new-project { flex: 0 1 200px; }
 .pj-add #new-project-desc { flex: 1 1 240px; }
@@ -487,14 +543,15 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 /* shared by Home's panels */
 .phead { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2); min-height: 46px; padding: var(--s-2) var(--s-2) var(--s-2) 14px; border-bottom: 1px solid var(--line); background: var(--surface2); font-size: var(--fs-base); font-weight: var(--fw-bold); color: var(--ink); }
 .cell-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.state { display: inline-block; padding: 1px 7px; font-size: var(--fs-sm); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.state { display: inline-block; padding: 1px 8px; border-radius: var(--pill); font-size: var(--fs-sm); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .state.open { color: var(--accent); border-color: rgba(218, 105, 71, .4); background: rgba(218, 105, 71, .1); }
 .attach { display: flex; align-items: center; gap: var(--s-1); }
 
 /* inline confirm: the button gives way to the question and its answers */
 .confirm { max-width: 560px; display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; white-space: normal;
   padding: var(--s-1) var(--s-1) var(--s-1) 10px; border: 1px solid var(--danger-line); background: rgba(213, 149, 135, .07);
-  font-size: var(--fs-sm); font-weight: var(--fw-regular); color: var(--ink); text-align: left; animation: fade-in var(--dur-2) var(--ease-out); }
+  font-size: var(--fs-sm); font-weight: var(--fw-regular); color: var(--ink); text-align: left; border-radius: var(--radius-lg); box-shadow: var(--shadow-1);
+  animation: fade-in var(--dur-2) var(--ease-out); }
 .confirm.edit { border-color: var(--line-ctl); background: var(--surface2); }
 .link { color: var(--accent); font-size: var(--fs-sm); }
 .link:hover { text-decoration: underline; }
@@ -541,21 +598,25 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   #warns li > span { white-space: normal; }
   #log { padding: 6px var(--s-4) 14px; }
   .access-pane { padding: var(--s-3) var(--s-4); }
-  .compose { padding: var(--s-2) var(--s-3) var(--s-3); gap: 6px; }
-  .compose .btn.primary { padding: 0 var(--s-3); }
+  .compose { padding: var(--s-2) var(--s-3) var(--s-3); }
   .compose .btn.primary span { display: none; }
   .compose .btn[aria-busy="true"]::before { left: calc(50% - 6px); }
-  .compose .file-chip { max-width: 40%; }
+  .compose .file-chip { max-width: 55%; }
+  .group { padding-left: 34px; }
+  .group .head > .av { width: 24px; height: 24px; font-size: 9.5px; }
+  .group.mine { padding-left: 44px; }
+  .working { padding-left: 34px; }
   .chat > .err { padding: 0 var(--s-3) var(--s-2); }
   /* Team: the column uses the phone's width; a waiting line puts its answers under the words */
   .team { padding: 18px 16px 32px; }
   .w-row { flex-wrap: wrap; row-gap: var(--s-2); padding-left: 14px; }
   .w-text { flex-basis: 100%; flex-wrap: wrap; white-space: normal; }
+  .w-row > .av { display: none; }
   .w-why { flex-basis: 100%; margin-left: 0; white-space: nowrap; }
   .w-acts .btn { min-width: 64px; }
-  .p-main { grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr) 14px; column-gap: 10px; padding-left: 14px; }
-  .p-main.still { grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr); }
-  .p-projects, .p-link { padding-left: 14px; }
+  .p-main { grid-template-columns: 28px minmax(0, max-content) minmax(0, 1fr) 14px; column-gap: 10px; padding-left: 14px; }
+  .p-main.still { grid-template-columns: 28px minmax(0, max-content) minmax(0, 1fr); }
+  .p-projects, .p-link { padding-left: 52px; }
   .p-line:has(.confirm) { flex-wrap: wrap; }
   .p-line:has(.confirm) .p-act { flex-basis: 100%; padding: 0 0 10px 14px; }
   .p-act .confirm { max-width: 100%; justify-content: flex-start; }
@@ -565,7 +626,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   .add-link input { flex-basis: 100%; height: var(--h-md); }
   .add-form input { flex: 1 1 auto; }
   .pj-row { flex-wrap: wrap; row-gap: var(--s-2); padding-left: 14px; }
-  .pj-text { flex-basis: 100%; }
+  .pj-text { flex: 1 1 calc(100% - 44px); }
   .pj-desc, .pj-who { white-space: normal; }
   .pj-acts { flex-basis: 100%; justify-content: flex-start; }
   .pj-add #new-project, .pj-add #new-project-desc { flex: 1 1 100%; height: var(--h-md); }
@@ -617,6 +678,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10.5l5 5 5-5M4.5 20h15"/></symbol>
+  <symbol id="i-t-claude" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M4 12h16M6.3 6.3l11.4 11.4M17.7 6.3 6.3 17.7"/></symbol>
+  <symbol id="i-t-codex" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5c-2 0-3 1-3 3v1.5C6 11 5 12 4 12c1 0 2 1 2 2.5V16c0 2 1 3 3 3M15 5c2 0 3 1 3 3v1.5c0 1.5 1 2.5 2 2.5-1 0-2 1-2 2.5V16c0 2-1 3-3 3"/></symbol>
+  <symbol id="i-t-opencode" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="m9 10 2.5 2L9 14M13 14.5h2.5"/></symbol>
+  <symbol id="i-t-cursor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4l13 6.5-5.5 1.8L10.5 18z"/></symbol>
+  <symbol id="i-mgr" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.6"/><circle cx="12" cy="4.5" r="1.4"/><circle cx="19.5" cy="12" r="1.4"/><circle cx="12" cy="19.5" r="1.4"/><circle cx="4.5" cy="12" r="1.4"/><path d="M12 6v3.4M18 12h-3.4M12 18v-3.4M6 12h3.4"/></symbol>
   <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 4l8 6.5V19.5a1.5 1.5 0 0 1-1.5 1.5H15v-6H9v6H5.5A1.5 1.5 0 0 1 4 19.5z"/></symbol>
   <symbol id="i-team" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 20c.6-3.4 3.2-5.5 6.5-5.5s5.9 2.1 6.5 5.5"/><path d="M15.5 5.2a3.5 3.5 0 0 1 0 6.6M17.5 14.8c2.2.6 3.6 2.5 4 5.2"/></symbol>
   <symbol id="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 15.5a1.5 1.5 0 0 1-1.5 1.5H8l-4 3.5V5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5z"/></symbol>
@@ -649,7 +715,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       <button class="tab admin-only" role="tab" data-view="team" id="tab-team" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-team"/></svg>Team<span class="count" id="n-team" hidden>0</span></button>
     </nav>
     <div class="viewer" id="viewer">
-      <button type="button" class="tab" id="viewer-name" data-view="account" aria-selected="false" title="Your account"><svg width="16" height="16"><use href="#i-user"/></svg><span id="viewer-label"></span></button>
+      <button type="button" class="tab" id="viewer-name" data-view="account" aria-selected="false" title="Your account"><span class="av av-person sm" id="viewer-av" aria-hidden="true"></span><span id="viewer-label"></span></button>
     </div>
     <div class="live" id="live" title="Connecting"><i></i></div>
   </header>
@@ -688,11 +754,15 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         </div>
         </div>
         <form class="compose" id="compose" autocomplete="off">
-          <span class="tag file-chip" id="file-chip" hidden></span>
-          <textarea id="text" rows="1" placeholder="Message manager" aria-label="Message"></textarea>
-          <button type="button" class="btn icon attach" id="attach" aria-label="Attach" title="Attach a file (up to 5 MB)"><svg width="16" height="16"><use href="#i-clip"/></svg></button>
-          <input type="file" id="file-in" hidden>
-          <button type="submit" class="btn primary" title="Send (Enter)"><svg width="14" height="14"><use href="#i-send"/></svg><span>Send</span></button>
+          <div class="compose-box">
+            <textarea id="text" rows="1" placeholder="Message manager" aria-label="Message"></textarea>
+            <div class="compose-bar">
+              <button type="button" class="btn icon attach" id="attach" aria-label="Attach" title="Attach a file (up to 5 MB)"><svg width="16" height="16"><use href="#i-clip"/></svg></button>
+              <input type="file" id="file-in" hidden>
+              <span class="tag file-chip" id="file-chip" hidden></span>
+              <button type="submit" class="btn primary send" title="Send (Enter). Shift+Enter for a new line"><svg width="14" height="14"><use href="#i-send"/></svg><span>Send</span></button>
+            </div>
+          </div>
         </form>
         <div class="err" id="send-err" hidden></div>
         <div class="read-only" id="read-only" hidden><svg width="14" height="14"><use href="#i-door"/></svg><span>Connected to one of your sessions, not this page. Write to it from that session.</span></div>
@@ -827,6 +897,32 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     u.setAttribute("href", "#" + id);
     s.appendChild(u);
     return s;
+  }
+  /* a badge: kind is person, session, manager, project, machine or activity. Sessions show their
+     tool's glyph (or initials), people their initials on a tint from the name; dot: presence */
+  var TOOLS = { "claude-code": "i-t-claude", codex: "i-t-codex", opencode: "i-t-opencode", cursor: "i-t-cursor", "cursor-agent": "i-t-cursor" };
+  function initials(name) {
+    var parts = String(name || "?").split(/[^A-Za-z0-9]+/).filter(Boolean);
+    if (!parts.length) return "?";
+    return (parts.length > 1 ? parts[0].charAt(0) + parts[1].charAt(0) : parts[0].slice(0, 2)).toUpperCase();
+  }
+  function tintOf(name) {
+    var h = 0;
+    String(name || "").split("").forEach(function (c) { h = (h * 31 + c.charCodeAt(0)) >>> 0; });
+    return h % 6;
+  }
+  function avatar(kind, name, opt) {
+    opt = opt || {};
+    var a = el("span", { "class": "av av-" + kind + (opt.size ? " " + opt.size : "") + (kind === "person" ? " tint-" + tintOf(name) : ""), "aria-hidden": "true" });
+    var glyph = kind === "session" ? TOOLS[opt.tool] : kind === "manager" ? "i-mgr" : kind === "machine" ? "i-monitor" : kind === "activity" ? "i-list" : null;
+    if (glyph) a.appendChild(icon(glyph, opt.size === "sm" ? 12 : 14));
+    else a.setAttribute("data-i", initials(name));
+    if (opt.dot != null) a.appendChild(el("span", { "class": "dot" + (opt.dot ? " on" : "") }));
+    return a;
+  }
+  /* a status pill: tone ok (green), active (coral) or idle (grey); lead: a dot, or a node */
+  function chip(text, tone, cls, lead) {
+    return el("span", { "class": "chip " + tone + (cls ? " " + cls : "") }, [lead || el("span", { "class": "dot" + (tone === "ok" ? " on" : "") }), text]);
   }
   function button(label, cls, fn, attrs) {
     var b = el("button", Object.assign({ "class": "btn small" + (cls ? " " + cls : ""), type: "button" }, attrs || {}),
@@ -1046,7 +1142,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     var mgr = feed.agents.filter(function (a) { return a.role === "manager"; })[0] || null;
     if (admin) list.push({ key: "activity", name: "Activity", icon: "i-list", cls: "activity", sub: "", tip: "Every message", read: true });
     var ms = mgr ? "up" : feed.manager || "off";
-    list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms, sub: mgr ? mgr.machine : "",
+    list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms, sub: mgr ? mgr.machine : "", act: mgr ? mgr.activity || "" : "",
                 to: "manager", tip: "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : "") });
     agents.forEach(function (a) {
       var tip = [a.label ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status,
@@ -1055,7 +1151,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
                  isAdmin() ? harness(a.harness) : null].filter(Boolean).join("\n");
       /* a hidden project: the row goes by the session's handle, which also tells two apart */
       var k = hidden(a) ? a.id : a.name;
-      list.push({ key: k, name: rowName(a, shortName(a.name)), online: true, sub: a.machine, to: k, bg: !!a.background,
+      list.push({ key: k, name: rowName(a, shortName(a.name)), online: true, sub: a.machine, to: k, bg: !!a.background, tool: a.tool, act: a.activity || "",
                   who: !a.mine && (isAdmin() || hidden(a)) ? a.person : null, ro: !a.mine && a.writable === false,
                   tip: hidden(a) ? a.person + "'s session in a project you have no role in" : tip });
     });
@@ -1105,10 +1201,20 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     }
   }
   function lead(e) {
-    if (e.icon) return icon(e.icon, 15);
-    var state = e.online ? "online" : "offline";
-    if (e.bg) return el("span", { "class": "bg-lead" + (e.online ? " on" : ""), title: "background job, " + state }, [icon("i-clock", 14)]);
-    return el("span", { "class": "dot" + (e.online ? " on" : ""), title: state });
+    if (e.key === "activity") return avatar("activity", e.name);
+    if (e.key === "mgr") return avatar("manager", e.name);
+    if (e.icon === "i-person") return avatar("person", e.name);
+    return TOOLS[e.tool] ? avatar("session", e.name, { tool: e.tool }) : avatar("session", e.name);
+  }
+  /* how a session is doing, as a pill: working or waiting (coral), online (green), off (grey) */
+  function statusChip(e) {
+    if (e.icon) return null;
+    if (e.state) return chip(e.state, e.state === "starting" ? "active" : "idle", "n");
+    var bg = e.bg ? el("span", { "class": "bg-lead" + (e.online ? " on" : ""), title: "background job" }, [icon("i-clock", 12)]) : null;
+    if (!e.online) return chip("Offline", "idle", null, bg);
+    if (WAITING[e.act]) return chip("Waiting", "active", null, bg);
+    if (e.act && e.act !== "idle") return chip("Working", "active", null, bg);
+    return chip("Online", "ok", null, bg);
   }
   function sessionRow(e) {
     var on = e.key === conv && !askOpen && (phoneOpen || wide());  /* a phone marks a chat only while it is open */
@@ -1118,7 +1224,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       el("span", { "class": "meta" }, [el("span", { "class": "name", text: e.name }),
         e.sub || e.who ? el("small", { "class": "subline" }, [e.sub ? el("span", { text: e.sub }) : null,
                                                           e.who ? el("span", { "class": "who", text: e.who }) : null]) : null]),
-      e.state ? el("span", { "class": "n", text: e.state }) : null,
+      statusChip(e),
       e.unread ? el("span", { "class": "count", title: e.unread + " unread", text: String(e.unread) }) : null]);
     if (!e.off) b.addEventListener("click", function () { select(e.key); });
     return b;
@@ -1163,6 +1269,12 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   function fromMe(m) {
     if (m.web) return !!me && m.sender === me.person;
     return feed.agents.some(function (a) { return a.mine && a.name === m.sender; });
+  }
+  function senderBadge(m) {
+    if (m.web) return avatar("person", m.sender);
+    if (m.fromMgr || sessionKey(m.sender) === "mgr") return avatar("manager", "manager");
+    var a = feed.agents.filter(function (x) { return x.name === m.sender || (m.fromId && x.id === m.fromId); })[0];
+    return a && TOOLS[a.tool] ? avatar("session", "", { tool: a.tool }) : avatar("session", senderName(m));
   }
   function senderName(m) {
     if (m.web) return me && m.sender === me.person ? "you" : m.sender;
@@ -1274,7 +1386,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       $("chat-name").textContent = e.name;
       var sub = $("chat-sub");
       sub.textContent = "";
-      if (!act) [e.bg ? "background job" : null, e.state || (e.icon ? "" : e.online ? "online" : "offline"), e.sub, e.who].forEach(function (t) { if (t) sub.appendChild(el("span", { text: t })); });
+      if (!act) [e.bg ? "background job" : null, statusChip(e), e.sub, e.who].forEach(function (t) { if (t) sub.appendChild(typeof t === "string" ? el("span", { text: t }) : t); });
     }
     $("access-pane").hidden = !askOpen;
     $("log").hidden = askOpen;
@@ -1311,7 +1423,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       var to = act || !between ? toName(m) : null, k = m.sender + "\n" + (to || "");
       if (!last || last.k !== k || m.created - last.t > 300) {
         group = el("div", { "class": "group" + (p[0] === ME ? " mine" : "") + (m.id > before ? " new" : "") }, [el("div", { "class": "head" }, [
-          el("b", { "class": p[0] === ME ? "mine" : null, text: senderName(m) }),
+          senderBadge(m), el("b", { "class": p[0] === ME ? "mine" : null, text: senderName(m) }),
           to ? el("span", { "class": "to", title: "to " + to }, [icon("i-arrow", 12), el("span", { text: to })]) : null, hm(m.created)])]);
         log.appendChild(group);
       }
@@ -1329,7 +1441,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       var d = new Date(o.created * 1000).toDateString(), k = (me ? me.person : "") + "\n";
       if (d !== day) { log.appendChild(el("div", { "class": "day" }, [el("span", { text: dayLabel(o.created) })])); day = d; last = null; }
       if (!last || last.k !== k || o.created - last.t > 300) {
-        group = el("div", { "class": "group mine" }, [el("div", { "class": "head" }, [el("b", { "class": "mine", text: "you" }), hm(o.created)])]);
+        group = el("div", { "class": "group mine" }, [el("div", { "class": "head" }, [avatar("person", me ? me.person : "you"), el("b", { "class": "mine", text: "you" }), hm(o.created)])]);
         log.appendChild(group);
       }
       last = { k: k, t: o.created };
@@ -1458,7 +1570,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         el("span", { text: w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, "") }), code, copy]));
     });
   }
-  function grow() { var t = $("text"); t.style.height = "40px"; t.style.height = Math.max(40, Math.min(t.scrollHeight + 2, 200)) + "px"; }
+  function grow() { var t = $("text"); t.style.height = "48px"; t.style.height = Math.max(48, Math.min(t.scrollHeight + 2, 200)) + "px"; }
   function sendErr(msg) { $("send-err").hidden = !msg; $("send-err").textContent = msg || ""; }
   /* the chosen file as a chip "name · size ×" beside the message */
   function renderAttached() {
@@ -1673,7 +1785,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       var no = button("No", "", function () { answer(false); }, { "aria-label": "No: " + w.who + " " + plain(w.what) });
       if (busyNow) { yes.disabled = no.disabled = true; (answering[w.key] === "yes" ? yes : no).setAttribute("aria-busy", "true"); }
       box.appendChild(el("div", { "class": "w-row" + (!first && !waitSeen[w.key] ? " new" : "") + (busyNow ? " going" : ""), "data-key": w.key }, [
-        el("span", { "class": "w-text", title: w.tip }, [el("b", { text: w.who }), " "].concat(w.what, [
+        avatar("person", w.who), el("span", { "class": "w-text", title: w.tip }, [el("b", { text: w.who }), " "].concat(w.what, [
           w.why ? el("span", { "class": "w-why", text: w.why }) : null])),
         el("span", { "class": "w-acts" }, [yes, no])]));
     });
@@ -1759,7 +1871,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     var open = !v.admin && openPerson === v.name, id = "pp-" + v.name.replace(/[^A-Za-z0-9_-]/g, "_");
     var held = v.projects.filter(function (n) { return v.held[n]; });
     var summary = v.admin ? "you" : !v.joined ? "hasn't joined yet" : held.length ? held.join(", ") : "no projects";
-    var lead = el("span", { "class": "dot" + (v.online ? " on" : ""), title: v.online ? "online" : "offline" });
+    var lead = avatar("person", v.name, { dot: v.online });
+    lead.title = v.online ? "online" : "offline";
     var parts = [lead, el("b", { "class": "p-name", text: v.name }),
                  el("span", { "class": "p-sum" + (v.joined && held.length ? "" : " quiet"), title: summary, text: summary })];
     var main;
@@ -1900,12 +2013,12 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       acts.appendChild(button([icon("i-edit", 14), "Edit"], "", function () { editProject(r, acts); }, { "aria-label": "Edit " + r.name }));
       acts.appendChild(button("Remove", "quiet-danger", function () { removeProject(r, acts); }, { "aria-label": "Remove " + r.name }));
     }
-    var tag = el("span", { "class": "pj-tag" + (r.on ? "" : " off"), text: r.on ? "On hub" : "Not on hub" });
+    var tag = r.on ? chip("On hub", "ok", "pj-tag") : chip("Not on hub", "idle", "pj-tag off dashed");
     var tip = [r.path && r.path !== r.name ? "GitLab: " + r.path : null, r.repo || null,
                r.on && gitlab && gitlab.on && !gitlab.error && !r.gitlab ? "not in the GitLab group" : null]
       .filter(Boolean).join("\n");
     return el("div", { "class": "pj-row" + (r.on ? "" : " off"), "data-project": r.name }, [
-      el("div", { "class": "pj-text" }, [
+      avatar("project", r.name), el("div", { "class": "pj-text" }, [
         el("div", { "class": "pj-top" }, [el("b", { "class": "pj-name", text: r.name, title: tip || null }), tag]),
         el("div", { "class": "pj-desc" + (r.description ? "" : " quiet"), text: r.description || "No description" }),
         r.on ? el("div", { "class": "pj-who" + (r.access ? "" : " quiet") }, r.access ? [el("b", { text: "Access: " }), r.access]
@@ -2126,7 +2239,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       acts.appendChild(rm);
     }
     return el("div", { "class": "a-row", "data-machine": String(d.id) }, [
-      el("span", { "class": "dot" + (d.online ? " on" : ""), title: d.online ? "online" : "offline" }),
+      avatar("machine", d.name, { dot: !!d.online }),
       el("div", { "class": "a-text" }, [el("b", { text: d.name, title: d.name === d.machine ? d.name : d.name + " (" + d.machine + ")" }), sub]),
       acts]);
   }
@@ -2140,7 +2253,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       gl.push(" ", c);
     }
     prof.textContent = "";
-    [["Name", [a.person]], ["Role", [roles[a.role] || a.role]], ["GitLab", gl]].forEach(function (r) {
+    [["Name", [el("span", { "class": "a-name" }, [avatar("person", a.person), a.person])]], ["Role", [roles[a.role] || a.role]], ["GitLab", gl]].forEach(function (r) {
       prof.appendChild(el("dt", { text: r[0] }));
       prof.appendChild(el("dd", null, r[1]));
     });
@@ -2162,8 +2275,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     box.textContent = "";
     if (!a.projects.length) box.appendChild(el("div", { "class": "a-none" }, [icon("i-folder", 14), el("span", { text: "No projects yet" })]));
     a.projects.forEach(function (p) {
-      box.appendChild(el("div", { "class": "a-row pj" }, [el("div", { "class": "a-text" }, [el("b", { text: p.name, title: p.name })]),
-                                                         el("span", { "class": "state a-tag", text: p.role })]));
+      box.appendChild(el("div", { "class": "a-row pj" }, [avatar("project", p.name, { size: "sm" }), el("div", { "class": "a-text" }, [el("b", { text: p.name, title: p.name })]),
+                                                         chip(p.role, p.role === "read" ? "idle" : "active", "a-tag")]));
     });
   }
   $("browsers-out").addEventListener("click", function () {
@@ -2271,6 +2384,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     readMap = store(function (s) { var r = JSON.parse(s.getItem("kaptyorka.read." + m.person) || "null"); return r && typeof r === "object" ? r : null; });
     fleet = { warnings: [] }; fleetAt = 0; proposals = []; proposalsAt = 0; openPerson = null; gitlab = null; gitlabAt = 0;
     $("viewer-label").textContent = m.person;
+    $("viewer-av").className = "av av-person sm tint-" + tintOf(m.person);
+    $("viewer-av").setAttribute("data-i", initials(m.person));
     $("a-join").hidden = true;
     $("viewer-name").title = "Signed in as " + m.person + (m.role === "admin" ? " (admin)" : "") + " on " + m.device;
     document.querySelectorAll(".admin-only").forEach(function (n) { n.hidden = m.role !== "admin"; });

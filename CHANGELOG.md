@@ -2,9 +2,13 @@
 
 ## 0.9.18
 
-- **A calmer, more finished page, same layout and colours.** One set of sizes for spacing, text, control heights and motion, used everywhere. Buttons come in four kinds (filled, outlined, quiet, red for the yes of a removal) with hover, press, keyboard focus and disabled states, and are at least 32 px tall (40 px on a touch screen). One icon set with one line weight: Home and Team in the top bar, Edit, Rename and Add to hub, the picture viewer's Download, and the empty chat, project and machine lists.
-- Quick, quiet motion: a view fades in, new messages and requests rise in, panels, edits and questions open smoothly, and grey placeholder rows stand where the lists will be until the first data arrives. All of it stops for people who ask their system for less motion.
-- Small readability fixes: the grey text is a little lighter (4.5:1 contrast), roles read "Write", "Read", "Manage", the chat header separates its facts with a thin line, and the GitLab hint shows its command as a command. The invite page uses the same look and wraps the join command on a phone.
+- **A more finished page, same layout and colours.** Every session and person has a small round badge: a session shows its tool (our own simple glyphs for Claude Code, Codex, OpenCode and Cursor) or its initials, the manager the hub's mark, a person their initials on a muted tint from their name, with a green dot when online. Projects and machines get a rounded square. The badges show in the session list, the chat header, each group of messages, the Team rows, the requests waiting for you and the Account page.
+- **Status as small pills with a dot**: green for online and On hub, coral for working, waiting and write access, grey for offline, off and read access.
+- **Depth**: rounded corners (6 px on controls, 10 px on panels), three surface layers, and a very soft shadow on raised things (panels, the add forms, questions, the removal notice, the picture viewer). The selected chat is a raised row with a coral edge.
+- **Chat**: messages group by sender with the badge once; your own messages sit on a lightly tinted block. The message box is roomier, rounded, with Attach and Send inside it; Enter sends, Shift+Enter adds a line.
+- One set of sizes for spacing, text, controls and motion. Buttons come in four kinds (filled, outlined, quiet, red for the yes of a removal), with hover, press, focus and disabled states, at least 32 px tall (40 px on a touch screen). One icon set with one line weight.
+- Quick, quiet motion: views fade in, new messages and requests rise in, panels and questions open smoothly, and placeholder rows show until the first data arrives. All of it stops for people who ask their system for less motion.
+- The grey text is a little lighter (4.5:1 contrast), roles read "Write", "Read", "Manage", and the GitLab hint shows its command as a command. The invite page uses the same look and wraps the join command on a phone.
 
 ## 0.9.17
 
