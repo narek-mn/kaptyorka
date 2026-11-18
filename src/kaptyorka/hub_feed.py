@@ -113,8 +113,6 @@ def feed(store: Store, principal: Principal, ws=None, cs=None) -> dict:
         "notes": _notes(store, principal),
         "knocks": knocks(store, principal) if admin else [],  # only the admin answers
         "doors": doors,
-        # everyone else online, without content; see connects.directory
-        "others": cs.directory(principal) if cs is not None else [],
     }
     if not admin and ws is not None:  # only what blocks this person; the admin has /api/warnings
         out["warnings"] = [w for w in ws.warnings(now, __version__) if w["person"] == me]

@@ -1,11 +1,10 @@
-"""The session directory and connection requests: a member sees every other online session
-without its content and asks to be connected to one; only the admin approves, which opens a
-session door between the two. Kept out of store.py; a ConnectStore shares the Store's
+"""Connection requests made before 0.9.11, when a member could see a directory of other
+sessions and ask for one (now a member asks the manager): only the admin decides, which opens
+a session door between the two. Kept out of store.py; a ConnectStore shares the Store's
 database, lock and clock."""
 from typing import Callable, List, Optional, Tuple
 
-from kaptyorka.secrets_check import check_secrets
-from kaptyorka.store import MAX_ABOUT, PRIVATE, KaptyorkaError, Principal, Store, session_id
+from kaptyorka.store import KaptyorkaError, Principal, Store, session_id
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS connects (
@@ -41,115 +40,6 @@ class ConnectStore:
 
     def _limited(self, principal: Principal) -> bool:
         return principal.role not in ("admin", "manager")
-
-    def _others(self, pid, now):
-        """Online sessions of other people that person `pid` may not see: the directory."""
-        s = self.store
-        return [r for r in s._online_rows(now)
-                if r["person_id"] is not None and r["person_id"] != pid and not s._listed(pid, r)]
-
-    def directory(self, principal: Principal) -> List[dict]:
-        """Every online session the viewer may not reach yet, without content: its handle
-        (`id`), name and project under the who() rule, label, person, machine, tool, and this
-        person's request for it. Empty for the admin and the manager: they reach everyone."""
-        if not self._limited(principal):
-            return []
-        pid, s = principal.person_id, self.store
-        with self.lock:
-            now = s.clock()
-            s._expire_doors(now)
-            asked = {}
-            for c in self.db.execute("SELECT * FROM connects WHERE person_id=? ORDER BY id",
-                                     (pid,)):
-                asked[c["to_key"]] = c  # the latest wins
-            out = []
-            for r in self._others(pid, now):
-                name = s._shown(r, pid)
-                c = asked.get(r["key"])
-                request = None
-                if c is not None and c["decided_at"] is None:
-                    request = {"id": c["id"], "state": "requested"}
-                elif c is not None and c["decision"] == "denied":
-                    request = {"id": c["id"], "state": "denied", "reason": c["reason"]}
-                out.append({"id": session_id(r["key"]), "name": name, "label": r["label"],
-                            "person": s._person_name(r["person_id"]), "machine": r["machine"],
-                            "tool": r["tool"], "project": r["project"] if name == r["name"] else PRIVATE,
-                            "online": True, "reachable": False, "request": request})
-            return out
-
-    def _target(self, pid, to, now):
-        """The directory row `to` names: a handle, a name as the asker sees it, or a label.
-        Never a hidden project's real name, so asking cannot test whether one exists."""
-        s, to = self.store, (to or "").strip()
-        rows = [r for r in s._online_rows(now) if r["person_id"] is not None and r["person_id"] != pid]
-        for how in (lambda r: session_id(r["key"]) == to, lambda r: s._shown(r, pid) == to,
-                    lambda r: bool(r["label"]) and r["label"].lower() == to.lower()):
-            match = [r for r in rows if how(r)]
-            if len(match) > 1:
-                raise KaptyorkaError(f"several sessions are named {to}; use one of: "
-                                     + ", ".join(session_id(r["key"]) for r in match))
-            if match:
-                return match[0]
-        return None
-
-    def request(self, principal: Principal, from_key: str, to: str, why: str = "") -> int:
-        """Ask for a door between `from_key` (one of the person's online sessions, or their
-        page `web:<name>`) and the session `to` names. The manager hears of it; the admin
-        decides."""
-        why = (why or "").strip()
-        if len(why) > MAX_ABOUT:
-            raise KaptyorkaError(f"why is too long (max {MAX_ABOUT} characters)")
-        check_secrets(why)
-        pid, s = principal.person_id, self.store
-        if not self._limited(principal):
-            raise KaptyorkaError("you can already message every session")
-        mid = self.manager_id()
-        with self.lock:
-            now = s.clock()
-            s._expire_doors(now)
-            if from_key.startswith("web:"):
-                if from_key != f"web:{principal.person_name}":
-                    raise KaptyorkaError("that is not your page")
-                me = {"key": from_key, "person_id": pid}
-            else:
-                me = next((r for r in s._online_rows(now) if r["key"] == from_key), None)
-                if me is None or me["person_id"] != pid:
-                    raise KaptyorkaError("connect one of your own online sessions")
-            own = next((r for r in s._online_rows(now) if r["person_id"] == pid
-                        and (session_id(r["key"]) == to or r["name"] == to)), None)
-            if own is not None:
-                raise KaptyorkaError("that is your own session")
-            t = self._target(pid, to, now)
-            if t is None:
-                raise KaptyorkaError(f"no online session named {to} in the directory")
-            if mid is not None and t["person_id"] == mid:
-                raise KaptyorkaError("the manager is always reachable; send to it")
-            if s._may_message(me, t):
-                raise KaptyorkaError("already connected: send to it")
-            dup = self.db.execute("SELECT id FROM connects WHERE from_key=? AND to_key=? AND"
-                                  " decided_at IS NULL", (from_key, t["key"])).fetchone()
-            if dup is not None:
-                raise KaptyorkaError(f"already requested (#{dup['id']}); the admin decides")
-            cid = self.db.execute(
-                "INSERT INTO connects (person_id, from_key, to_key, to_person, why, created)"
-                " VALUES (?,?,?,?,?,?)", (pid, from_key, t["key"], t["person_id"], why, now)).lastrowid
-            them = s._person_name(t["person_id"])
-            log = f"#{cid} {from_key if from_key.startswith('web:') else me['name']} -> {t['name']}"
-            tell = []
-            if mid is not None:
-                for r in s._online_rows(now):
-                    if r["person_id"] == mid:
-                        tell.append((r["key"], (
-                            f"Connection request #{cid}: {principal.person_name}"
-                            f" ({self._side_name(from_key, mid)}) asks to reach {them}'s session"
-                            f" {s._shown(t, mid)}" + (f" ({t['label']})" if t["label"] else "")
-                            + (f". Why: {why}" if why else "") + ". Only the admin approves,"
-                            " on the Team page; you may tell the admin"
-                            " and answer the member.")))
-        s.log_add(principal.person_name, "connect_request", log)
-        for key, text in tell:
-            self.notify(key, text)
-        return cid
 
     def _rows(self, where: str, args: tuple = ()) -> List[dict]:
         out = []

@@ -125,32 +125,8 @@ section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .list .bg-head small { font-weight: 400; color: var(--faint); }
 .list .bg-head .count { margin-left: auto; }
 .list .bg-rows.enter .row { animation: bg-in 150ms cubic-bezier(.2, .7, .3, 1); }
-.list .bg-head + .bg-rows + .others-head { margin-top: 0; }
 @keyframes bg-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
 .quiet-line { padding: 4px 16px 12px; font-size: 12px; color: var(--faint); }
-/* Others: everyone else online, locked until the admin connects you */
-.list .others-head { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 12px 16px 6px 17px;
-  border-top: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--muted); }
-.list .others-head small { font-weight: 400; color: var(--faint); }
-.list .row.locked .name { color: var(--muted); font-weight: 400; }
-.list .row.locked .lead { color: var(--faint); }
-.list .row.locked:hover .name, .list .row.locked.on .name { color: var(--ink); }
-.list .row.locked:hover .lead { color: var(--muted); }
-.ask-state { flex: none; padding: 1px 7px; font-size: 11px; line-height: 16px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
-.ask-state.requested { color: var(--accent); border-color: rgba(218, 105, 71, .45); background: rgba(218, 105, 71, .1); }
-.ask-state.denied { color: var(--faint); }
-/* the request panel, where the chat would be */
-#connect { flex: none; max-width: 640px; }
-#connect .phead > svg { color: var(--muted); }
-.connect-state { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink); }
-.connect-state > svg { margin-top: 2px; }
-.connect-state.requested { border-left: 2px solid var(--accent); }
-.connect-state.requested > svg { color: var(--accent); }
-.connect-state.denied { border-left: 2px solid var(--line-strong); color: var(--muted); }
-.connect-state small { display: block; margin-top: 2px; font-size: 12px; color: var(--faint); }
-#connect-form #connect-why { flex: 1 1 220px; min-width: 0; }
-#connect-form select { max-width: 100%; }
-#connect-err { padding: 0 14px 10px; }
 .read-only { flex: none; display: flex; align-items: center; gap: 8px; padding: 14px 24px 18px; border-top: 1px solid var(--line);
   background: var(--surface); font-size: 12px; color: var(--muted); }
 .side-foot { flex: none; margin-top: auto; padding: 12px 14px; border-top: 1px solid var(--line); }
@@ -519,20 +495,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
           <div class="err" id="ask-err" hidden></div>
         </div>
         </div>
-        <div class="access-pane" id="connect-pane" hidden>
-        <div class="panel" id="connect">
-          <div class="phead"><svg width="15" height="15"><use href="#i-lock"/></svg>Request connection</div>
-          <div class="mine-rows" id="connect-rows"></div>
-          <div class="connect-state" id="connect-state" role="status" hidden></div>
-          <form class="sentence ask" id="connect-form" autocomplete="off">
-            <b>Connect</b>
-            <select id="connect-from" aria-label="Which of mine"></select>
-            <input id="connect-why" placeholder="Why (optional)" aria-label="Why" maxlength="500">
-            <button type="submit" class="btn small primary"><svg width="13" height="13"><use href="#i-send"/></svg>Send</button>
-          </form>
-          <div class="err" id="connect-err" hidden></div>
-        </div>
-        </div>
         <form class="compose" id="compose" autocomplete="off">
           <span class="tag file-chip" id="file-chip" hidden></span>
           <textarea id="text" rows="1" placeholder="Message manager" aria-label="Message"></textarea>
@@ -838,16 +800,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     Object.keys(people).sort().forEach(function (x) {
       list.push({ key: x, name: x.slice(1), icon: "i-person", sub: "", to: x.slice(1), tip: "On the web page" });
     });
-    (feed.others || []).forEach(function (o) {
-      var st = o.request ? o.request.state : "";
-      list.push({ key: "req:" + o.id, name: rowName(o, shortName(o.name)), sub: o.machine, who: o.person, locked: true, read: true,
-                  req: o, ask: st, tip: [o.person + "'s session", o.project === "(private)" ? "project hidden" : o.project, o.tool,
-                                         st === "denied" ? "denied" + (o.request.reason ? ": " + o.request.reason : "") : st].filter(Boolean).join("\n") });
-    });
-    if (conv.indexOf("req:") === 0 && !list.some(function (e) { return e.key === conv; })) {
-      /* connected: the locked row is now a normal chat; gone offline: back to the manager */
-      conv = list.some(function (e) { return e.key === conv.slice(4); }) ? conv.slice(4) : "mgr";
-    }
     if (!list.some(function (e) { return e.key === conv; }) && conv !== "activity" && conv.charAt(0) !== "@") {
       list.push({ key: conv, name: labelOf(conv) || shortName(conv), online: false, sub: conv.split("/")[0], to: conv, tip: conv + "\noffline" });
     }
@@ -861,7 +813,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     box.textContent = "";
     entryOf = {};
     entries.forEach(function (e) { entryOf[e.key] = e; });
-    entries.filter(function (e) { return !e.bg && !e.locked; }).forEach(function (e) { box.appendChild(sessionRow(e)); });
+    entries.filter(function (e) { return !e.bg; }).forEach(function (e) { box.appendChild(sessionRow(e)); });
     var bgs = entries.filter(function (e) { return e.bg; });
     if (bgs.length) {
       var inBg = conv !== bgFolded && bgs.some(function (e) { return e.key === conv; });
@@ -883,12 +835,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       bgEnter = false;
       box.appendChild(rows);
     }
-    var locked = entries.filter(function (e) { return e.locked; });
-    if (locked.length) box.appendChild(el("div", { "class": "others-head", title: "Everyone else online. Ask, and the admin may connect you." }, ["Others"]));
-    locked.forEach(function (e) { box.appendChild(sessionRow(e)); });
   }
   function lead(e) {
-    if (e.locked) return el("span", { title: "Locked: ask to connect" }, [icon("i-lock", 14)]);
     if (e.icon) return icon(e.icon, 15);
     var state = e.online ? "online" : "offline";
     if (e.bg) return el("span", { "class": "bg-lead" + (e.online ? " on" : ""), title: "background job, " + state }, [icon("i-clock", 13)]);
@@ -896,14 +844,13 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   }
   function sessionRow(e) {
     var on = e.key === conv && !askOpen && (phoneOpen || wide());  /* a phone marks a chat only while it is open */
-    var b = el("button", { type: "button", "class": "row" + (e.cls ? " " + e.cls : "") + (on ? " on" : "") + (e.off ? " off" : "") + (e.locked ? " locked" : "") + (e.unread ? " unread" : ""),
+    var b = el("button", { type: "button", "class": "row" + (e.cls ? " " + e.cls : "") + (on ? " on" : "") + (e.off ? " off" : "") + (e.unread ? " unread" : ""),
                            title: e.tip || null, "aria-current": on ? "true" : null, "data-key": e.key }, [
       el("span", { "class": "lead" }, [lead(e)]),
       el("span", { "class": "meta" }, [el("span", { "class": "name", text: e.name }),
         e.sub || e.who ? el("small", { "class": "subline" }, [e.sub ? el("span", { text: e.sub }) : null,
                                                           e.who ? el("span", { "class": "who", text: e.who }) : null]) : null]),
       e.state ? el("span", { "class": "n", text: e.state }) : null,
-      e.ask ? el("span", { "class": "ask-state " + e.ask, text: e.ask === "requested" ? "Requested" : "Denied" }) : null,
       e.unread ? el("span", { "class": "count", title: e.unread + " unread", text: String(e.unread) }) : null]);
     if (!e.off) b.addEventListener("click", function () { select(e.key); });
     return b;
@@ -917,7 +864,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     $("ask-link").setAttribute("aria-expanded", "false");
     renderHome(true);
     grow();
-    if (wide() && k !== "activity") ($("connect-pane").hidden ? $("text") : $("connect-why")).focus();
+    if (wide() && k !== "activity") $("text").focus();
   }
   /* the manager's session name as this page sees it, to know its messages */
   function managerTo() {
@@ -1007,49 +954,15 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       $("chat-name").textContent = e.name;
       var sub = $("chat-sub");
       sub.textContent = "";
-      if (!act) [e.bg ? "background job" : null, e.locked ? "locked" : e.state || (e.icon ? "" : e.online ? "online" : "offline"), e.sub, e.who].forEach(function (t) { if (t) sub.appendChild(el("span", { text: t })); });
+      if (!act) [e.bg ? "background job" : null, e.state || (e.icon ? "" : e.online ? "online" : "offline"), e.sub, e.who].forEach(function (t) { if (t) sub.appendChild(el("span", { text: t })); });
     }
-    var locked = !askOpen && !!e.locked;
     $("access-pane").hidden = !askOpen;
-    $("connect-pane").hidden = !locked;
-    if (locked) renderConnect(e);
-    $("log").hidden = askOpen || locked;
-    $("compose").hidden = askOpen || act || locked || !!e.off || !!e.ro;
-    $("read-only").hidden = askOpen || locked || !e.ro;
+    $("log").hidden = askOpen;
+    $("compose").hidden = askOpen || act || !!e.off || !!e.ro;
+    $("read-only").hidden = askOpen || !e.ro;
     $("send-err").hidden = $("send-err").hidden || $("compose").hidden;
     $("text").placeholder = "Message " + (e.name || "manager");
     $("home").classList.toggle("open", phoneOpen);
-  }
-  /* a locked row: whose session it is and the request; Send asks the admin to connect it to
-     this page or to one of my sessions */
-  function renderConnect(e) {
-    var o = e.req, st = o.request ? o.request.state : "";
-    var mine = feed.agents.filter(function (a) { return a.mine; });
-    var froms = [["page", "this page"]].concat(mine.map(function (a) { return [a.name, "my session " + (a.label || shortName(a.name)) + " (" + a.machine + ")"]; }));
-    if (!changed("connect", [o, froms]) && $("connect-rows").firstChild) return;
-    var rows = $("connect-rows");
-    rows.textContent = "";
-    [["Session", rowName(o, shortName(o.name))], ["Project", hidden(o) ? null : o.project], ["Person", o.person], ["Machine", o.machine + ", " + o.tool]].forEach(function (r) {
-      rows.appendChild(el("span", { text: r[0] }));
-      rows.appendChild(r[1] ? el("b", { text: r[1] }) : el("span", { "class": "none", text: "hidden", title: "A project you have no role in" }));
-    });
-    var box = $("connect-state");
-    box.textContent = "";
-    box.className = "connect-state " + st;
-    box.hidden = !st;
-    if (st === "requested") {
-      box.appendChild(icon("i-clock", 14));
-      box.appendChild(el("div", null, ["Requested. The admin decides; the answer comes to your manager chat.",
-        el("small", { text: "The manager is told too." })]));
-    } else if (st === "denied") {
-      box.appendChild(icon("i-x", 14));
-      box.appendChild(el("div", null, [o.request.reason ? "Denied: " + o.request.reason : "Denied.",
-        el("small", { text: "You may ask again." })]));
-    }
-    $("connect-form").hidden = st === "requested";
-    var sel = $("connect-from"), keep = sel.dataset.for === o.id ? sel.value : (mine.length === 1 ? mine[0].name : "page");
-    options(sel, froms, keep);
-    sel.dataset.for = o.id;
   }
   var shownTo = {};
   var BG_EMPTY = "No messages yet. This job works on its own; write to it below.";
@@ -1137,7 +1050,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   var workEl = null;
   var WAITING = { permission_prompt: "is waiting for a permission", needs_input: "is waiting for an answer" };
   function working(all) {
-    if (conv === "activity" || askOpen || conv.charAt(0) === "@" || conv.indexOf("req:") === 0) return null;
+    if (conv === "activity" || askOpen || conv.charAt(0) === "@") return null;
     var said = all.filter(function (m) { return !notice(m); }).pop();
     var mineOut = outbox.some(function (o) { return o.conv === conv && o.state !== "failed"; });
     if (!mineOut && (!said || parties(said)[0] !== ME)) return null;
@@ -1724,15 +1637,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   document.addEventListener("click", function (e) { if (!$("viewer").contains(e.target)) viewerOpen(false); });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") viewerOpen(false); });
   $("compose").addEventListener("submit", function (e) { e.preventDefault(); send(); });
-  $("connect-form").addEventListener("submit", function (ev) {
-    ev.preventDefault();
-    var e = entryOf[conv], btn = $("connect-form").querySelector("button[type=submit]");
-    if (!e || !e.locked || btn.getAttribute("aria-busy") === "true") return;
-    btn.setAttribute("aria-busy", "true");
-    act("connect-err", "/api/connects", { to: e.req.id, from: $("connect-from").value, why: $("connect-why").value.trim() })
-      .then(function () { $("connect-why").value = ""; seen.connect = null; }, function () {})
-      .then(function () { btn.removeAttribute("aria-busy"); });
-  });
   $("text").addEventListener("input", grow);
   $("text").addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }

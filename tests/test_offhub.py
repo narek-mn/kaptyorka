@@ -85,7 +85,7 @@ def visible(team, key) -> dict:  # noqa: F811
     label = "secret-desk"
     for who in ("alice", "admin", "manager"):
         in_feed = any(a.get("label") == label for a in feed(team, who)["agents"])
-        rows = run(call(client(team, who), me(team, who), "who", others=True))
+        rows = run(call(client(team, who), me(team, who), "who"))
         out[who] = in_feed or any(r.get("label") == label for r in rows)
     out["store"] = team.store.agent(key) is not None
     return out

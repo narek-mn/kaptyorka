@@ -209,10 +209,8 @@ def _alice_reads(team) -> str:
                  "/api/knocks", "/api/me/access", "/api/workers", "/api/requests"):
         status, body = http.request("GET", url + path, tok)
         assert status == 200, (path, body)
-        if path == "/api/feed":  # the directory (0.9.4) names everyone, without content:
-            for row in body.pop("others"):  # see test_connects
-                assert set(row) == {"id", "name", "label", "person", "machine", "tool",
-                                    "project", "online", "reachable", "request"}
+        if path == "/api/feed":  # no directory of other people's sessions (0.9.11)
+            assert "others" not in body
         out.append(repr(body))
     for tool in ("who", "projects", "workers", "inbox"):
         out.append(repr(run(call(a, ident_a, tool))))
@@ -314,8 +312,8 @@ def test_feed_marks_messages_from_and_to_the_manager(team):
 
 
 def test_member_page_sweep_shows_only_their_own(team):
-    """A member's page and tools: their own sessions and chats, the manager, and nothing of
-    another person's except the content-less Others list used to ask the admin."""
+    """A member's page and tools: their own sessions and chats and the manager, nothing of
+    another person's: no session, no name, machine or label, no way to message it."""
     s = team.store
     s.project_register("proj-b", by="admin")
     s.grant_project("proj-b", team.ids["bob"], "write", "admin")
@@ -331,11 +329,9 @@ def test_member_page_sweep_shows_only_their_own(team):
     assert all(m["sender"] not in (team.names["bob"], "bob") for m in body["messages"])
     dump = repr(body)
     for secret in ("bob-private-text", "admin-to-bob-text", "bob-note-text", "bob-plan",
-                   "bob-status", "bob-activity"):
+                   "bob-status", "bob-activity", "bob-secret", "bob-desk", "box-2", "'bob'"):
         assert secret not in dump, secret
-    # Others: bob's sessions without content, to ask for a connection; never reachable
-    assert body["others"] and all(o["reachable"] is False for o in body["others"])
-    assert all("status" not in o and "activity" not in o for o in body["others"])
+    assert "others" not in body
     rows = run(call(client(team, "alice"), me(team, "alice"), "who"))
     assert {r["person"] for r in rows} == {"alice", "manager"}
     with pytest.raises(RuntimeError):
