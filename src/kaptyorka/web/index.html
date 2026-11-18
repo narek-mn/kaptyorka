@@ -1033,7 +1033,13 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     x.focus();
   }
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && lightbox) { e.stopPropagation(); closeLightbox(); }
+    if (!lightbox) return;
+    if (e.key === "Escape") { e.stopPropagation(); closeLightbox(); }
+    else if (e.key === "Tab") {  /* focus stays on Download and Close */
+      var ctl = lightbox.node.querySelectorAll("button"), first = ctl[0], last = ctl[ctl.length - 1];
+      if (!lightbox.node.contains(document.activeElement) || (e.shiftKey && document.activeElement === first)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
   }, true);
   function attachment(f) {
     var src = "/api/files/" + f.id + "?t=" + encodeURIComponent(token);

@@ -1,5 +1,6 @@
 """The page in a real headless Chrome: the admin's Team (add a person and copy the link, give a
 project, answer a request, remove), and the chat. Run with: pytest -m slow tests/test_page_slow.py"""
+import base64
 import json
 import time
 from pathlib import Path
@@ -853,6 +854,60 @@ def test_image_opens_large_and_video_plays(tmp_path, w, h):
             assert page.js('!!document.querySelector(".lightbox")')
             page.js('document.querySelector(".lightbox").click()')  # the backdrop
             assert page.js('!document.querySelector(".lightbox")')
+    finally:
+        stop()
+        store.close()
+
+
+TINY_WEBM = base64.b64decode(
+    "GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAIwEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHYTbuMU6uEElTDZ1OsggEeTbuMU6uEHFO7a1OsggIa7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsirXsYMPQkBNgI1MYXZmNjAuMTYuMTAwV0GNTGF2ZjYwLjE2LjEwMESJiEBywAAAAAAAFlSua8GuAQAAAAAAADjXgQFzxYjmh3qhIsItHZyBACK1nIN1bmSIgQCGhVZfVlA4g4EBI+ODhAX14QDgibCBQLqBMJqBAhJUw2f8c3OgY8CAZ8iaRaOHRU5DT0RFUkSHjUxhdmY2MC4xNi4xMDBzc9ZjwItjxYjmh3qhIsItHWfIoUWjh0VOQ09ERVJEh5RMYXZjNjAuMzEuMTAyIGxpYnZweGfIoUWjiERVUkFUSU9ORIeTMDA6MDA6MDAuMzAwMDAwMDAwAB9DtnX254EAo8GBAACAUAMAnQEqQAAwAABHCIWFiIWEiAICAnWqA/gCBwjVZ5mPN9IA/v9NEv/8WFfxYV/FhX/xYV/8/M7txfzmAKOWgQBkANEBAAEQEAAYABhYL/QACIwAAKOWgQDIANEBAAEQEAAYABhYL/QACIwAABxTu2uRu4+zgQC3iveBAfGCAZ/wgQM=")
+
+
+def _open_chat(page, stop, token):
+    page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+    page.wait('[...document.querySelectorAll("#agents .row")].some(r => r.querySelector(".name")?.textContent === "proj-a")')
+    page.js('[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name").textContent === "proj-a").click()')
+
+
+def test_video_loads_under_the_page_policy(tmp_path):
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    alice, token = person(store, "alice", "admin")
+    vid = store.file_add("clip.webm", TINY_WEBM, alice)
+    store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(token))
+    store.send_from_web("alice", "box-1/codex/proj-a", "a video", person_id=alice, file_id=vid)
+    try:
+        with chrome() as page:
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+            page.js("window.__csp = []; document.addEventListener('securitypolicyviolation', e => window.__csp.push(e.violatedDirective))")
+            _open_chat(page, stop, token)
+            page.wait('document.querySelector("#log video.att")?.readyState >= 1')
+            assert page.js("window.__csp") == []
+            assert page.js('document.querySelector("#log video.att").duration') > 0
+    finally:
+        stop()
+        store.close()
+
+
+def test_viewer_keeps_focus_on_its_two_buttons(tmp_path):
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    alice, token = person(store, "alice", "admin")
+    pic = store.file_add("p.png", b"\x89PNG", alice)
+    store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(token))
+    store.send_from_web("alice", "box-1/codex/proj-a", "pic", person_id=alice, file_id=pic)
+    try:
+        with chrome() as page:
+            _open_chat(page, stop, token)
+            page.wait('!!document.querySelector("#log img.att.zoom")')
+            page.js('document.querySelector("#log img.att.zoom").click()')
+            tab = ('document.dispatchEvent(new KeyboardEvent("keydown", {key: "Tab", shiftKey: @@S@@, bubbles: true, cancelable: true}));'
+                   'document.activeElement.className + "|" + document.activeElement.textContent')
+            assert page.js("document.activeElement.className") == "lb-close"
+            assert page.js(tab.replace("@@S@@", "false")) == "btn|Download"  # Close is last: wraps to Download
+            assert page.js(tab.replace("@@S@@", "true")) == "lb-close|"      # Download is first: wraps back to Close
     finally:
         stop()
         store.close()
