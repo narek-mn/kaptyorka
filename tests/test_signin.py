@@ -103,7 +103,7 @@ def test_full_flow_signs_alice_in_as_the_admin(hub, lab):
     assert "HttpOnly" in start.headers["Set-Cookie"] and "SameSite=Lax" in start.headers["Set-Cookie"]
     token = token_of(done)
     assert me(hub, token) == (200, {"person": "alice", "role": "admin", "device": "gitlab-web",
-                                    "person_id": hub.ids["alice"]})
+                                    "person_id": hub.ids["alice"], "gitlab_connect": False})
     dev = [d for d in hub.store.devices(hub.ids["alice"]) if d["name"] == "gitlab-web"][0]
     assert dev["expires"] == hub.now[0] + signin.SESSION_S
     # the token went through the page's storage, never the address bar
@@ -325,3 +325,205 @@ def test_cli_people_gitlab(hub, capsys):
     assert capsys.readouterr().out.strip() == "bob is no longer linked to GitLab"
     assert entry_with_exit(["people", "gitlab", "nobody", "x"]) == 1
     assert capsys.readouterr().err.strip() == "no person named nobody"
+
+
+# people link their own GitLab: from the invite link, or from their own page
+
+def post(url, cookie="", headers=None, body=b""):
+    u = urlparse(url)
+    c = http.client.HTTPConnection(u.hostname, u.port, timeout=10)
+    h = {"Content-Type": "application/x-www-form-urlencoded", **(headers or {})}
+    if cookie:
+        h["Cookie"] = cookie
+    c.request("POST", u.path, body=body, headers=h)
+    r = c.getresponse()
+    out = SimpleNamespace(status=r.status, headers=r.headers, body=r.read().decode())
+    c.close()
+    return out
+
+
+def finish(start, cookie=None):
+    """GitLab's authorize page and the callback, after a start answer that set the cookie."""
+    cookie = start.headers["Set-Cookie"].split(";")[0] if cookie is None else cookie
+    back = get(start.headers["Location"])
+    assert back.status == 302, back.body
+    return get(back.headers["Location"], cookie), back.headers["Location"]
+
+
+def link_invite(hub, code, headers=None):
+    start = post(f"{hub.url}/i/{code}/gitlab", headers=headers)
+    if start.status != 303:
+        return start, None
+    return finish(start)
+
+
+def redeem(hub, code):
+    return khttp.request("POST", f"{hub.url}/i/{code}", "", {"device_name": "box-1"})
+
+
+def linked(hub, name):
+    with hub.store.lock:
+        r = hub.store.db.execute("SELECT gitlab_user, gitlab_id FROM people WHERE name=?", (name,)).fetchone()
+    return r["gitlab_user"], r["gitlab_id"]
+
+
+def sentences(hub):
+    return [r["sentence"] for r in khttp.request("GET", hub.url + "/api/feed", hub.tokens["alice"])[1]["log"]]
+
+
+@pytest.fixture
+def dave(hub, lab):
+    """dave: added by the admin with no GitLab name, invited; GitLab knows him as dave-gl."""
+    hub.store.person_create("dave", by="alice")
+    lab.who = "dave-gl"
+    return hub.store.invite_create(hub.store.person_by_name("dave")["id"], by="alice")
+
+
+def test_invite_link_signs_in_and_links_then_join_still_works(hub, lab, dave):
+    page = get(f"{hub.url}/i/{dave}")
+    assert page.status == 200 and f"action='/i/{dave}/gitlab'" in page.body
+    assert "Sign in with GitLab" in page.body and f"kaptyorka join {hub.url}/i/{dave}" in page.body
+    assert "Open the page as this person" not in page.body  # that one would use the invite up
+    (done, back), = [link_invite(hub, dave)]
+    assert dave not in back  # the invite rides in the server-side state, not the callback
+    token = token_of(done)
+    assert me(hub, token)[1] == {"person": "dave", "role": "member", "device": "gitlab-web",
+                                 "person_id": hub.store.person_by_name("dave")["id"], "gitlab_connect": False}
+    assert linked(hub, "dave") == ("dave-gl", 44)
+    assert "dave linked the GitLab user dave-gl (from the invite)" in sentences(hub)
+    assert "dave signed in to the page with GitLab (dave-gl)" in sentences(hub)
+    assert SECRET not in done.body + str(done.headers)
+    # the invite is not used up: join works afterwards
+    status, got = redeem(hub, dave)
+    assert status == 200 and got["person"] == "dave"
+    # used and linked: the invite page is done
+    assert get(f"{hub.url}/i/{dave}").status == 404
+    # a plain sign-in finds dave now
+    assert me(hub, token_of(sign_in(hub)[0]))[1]["person"] == "dave"
+
+
+def test_join_first_then_the_invite_link_still_links(hub, lab, dave):
+    assert redeem(hub, dave)[0] == 200
+    page = get(f"{hub.url}/i/{dave}")
+    assert page.status == 200 and "Sign in with GitLab" in page.body and "kaptyorka join" not in page.body
+    assert redeem(hub, dave) == (400, "invite already used")  # join still works once only
+    done, _ = link_invite(hub, dave)
+    assert me(hub, token_of(done))[1]["person"] == "dave" and linked(hub, "dave") == ("dave-gl", 44)
+    # once linked, the used link can link nothing more
+    assert get(f"{hub.url}/i/{dave}").status == 404
+    lab.users["erin-gl"] = {"id": 66, "state": "active"}
+    lab.who = "erin-gl"
+    done, _ = link_invite(hub, dave)
+    assert done.status == 403 and "You are already linked to another GitLab account" in done.body
+    assert linked(hub, "dave") == ("dave-gl", 44)
+
+
+def test_expired_invite_cannot_link(hub, lab, dave):
+    from kaptyorka.store import INVITE_TTL_S
+
+    hub.now[0] += INVITE_TTL_S - 100
+    start = post(f"{hub.url}/i/{dave}/gitlab")
+    assert start.status == 303
+    back = get(start.headers["Location"])
+    hub.now[0] += 200  # expired while the person was at GitLab
+    done = get(back.headers["Location"], start.headers["Set-Cookie"].split(";")[0])
+    assert done.status == 403 and "This invite link is no longer valid" in done.body
+    assert "kaptyorka.token" not in done.body
+    assert get(f"{hub.url}/i/{dave}").status == 404
+    late = post(f"{hub.url}/i/{dave}/gitlab")
+    assert late.status == 404 and "no longer valid" in late.body
+    assert post(f"{hub.url}/i/no-such-code/gitlab").status == 404
+    assert linked(hub, "dave") == (None, None)
+
+
+def test_already_linked_person_and_taken_account_are_refused(hub, lab, dave):
+    # a GitLab account someone else has
+    lab.who = "bob-gl"
+    done, _ = link_invite(hub, dave)
+    assert done.status == 403 and "The GitLab user bob-gl is already linked to someone else" in done.body
+    assert linked(hub, "dave") == (None, None)
+    # bob's GitLab id (kept at his first sign-in), under a new username, is still bob's
+    assert sign_in(hub)[0].status == 200
+    lab.users["bob-new"] = {"id": 22, "state": "active"}
+    lab.who = "bob-new"
+    assert link_invite(hub, dave)[0].status == 403 and linked(hub, "dave") == (None, None)
+    # the first link wins; the same account again is a plain sign-in
+    lab.who = "dave-gl"
+    assert link_invite(hub, dave)[0].status == 200
+    done, _ = link_invite(hub, dave)
+    assert done.status == 200 and me(hub, token_of(done))[1]["person"] == "dave"
+    assert sentences(hub).count("dave linked the GitLab user dave-gl (from the invite)") == 1
+    # the admin set dave to another account: a link from his invite is refused
+    signin.set_user(hub.store, hub.si, "dave", "other-gl", hub.by)
+    done, _ = link_invite(hub, dave)
+    assert done.status == 403 and "already linked to another GitLab account" in done.body
+    assert linked(hub, "dave") == ("other-gl", None)
+
+
+def test_the_manager_account_cannot_link(hub, lab):
+    mid, mtoken = person(hub.store, "manager", "manager")
+    with hub.store.lock:  # an invite cannot be made for it, but an old row must still not link
+        hub.store.db.execute("INSERT INTO invites (code, person_id, created, expires) VALUES (?,?,?,?)",
+                             ("mgr-code", mid, hub.now[0], hub.now[0] + 3600))
+    lab.who = "dave-gl"
+    done, _ = link_invite(hub, "mgr-code")
+    assert done.status == 403 and "The manager account cannot sign in with GitLab" in done.body
+    assert me(hub, mtoken)[1]["gitlab_connect"] is False
+    assert khttp.request("POST", hub.url + "/api/me/gitlab", mtoken)[0] == 400
+    assert linked(hub, "manager") == (None, None)
+
+
+def test_connect_gitlab_from_the_page(hub, lab):
+    dave_id, dave_t = person(hub.store, "dave")  # joined before 0.9.16: a device token, no link
+    assert me(hub, dave_t)[1]["gitlab_connect"] is True
+    assert me(hub, hub.tokens["bob"])[1]["gitlab_connect"] is False  # linked already
+    lab.who = "dave-gl"
+    u = urlparse(hub.url)
+    c = http.client.HTTPConnection(u.hostname, u.port, timeout=10)
+    c.request("POST", "/api/me/gitlab", body=b"{}", headers={"Authorization": f"Bearer {dave_t}",
+                                                            "Content-Type": "application/json"})
+    r = c.getresponse()
+    start = SimpleNamespace(status=r.status, headers=r.headers, body=json.loads(r.read()))
+    c.close()
+    assert start.status == 200 and "HttpOnly" in start.headers["Set-Cookie"]
+    assert start.headers["Set-Cookie"].split(";")[0].split("=", 1)[1] in start.body["url"]
+    start.headers = {"Set-Cookie": start.headers["Set-Cookie"], "Location": start.body["url"]}
+    done, _ = finish(start)
+    token = token_of(done)
+    assert me(hub, token)[1]["person"] == "dave" and linked(hub, "dave") == ("dave-gl", 44)
+    assert "dave linked the GitLab user dave-gl (from their page)" in sentences(hub)
+    # linked: the action is gone, for the old device token too
+    assert me(hub, dave_t)[1]["gitlab_connect"] is False and me(hub, token)[1]["gitlab_connect"] is False
+    assert khttp.request("POST", hub.url + "/api/me/gitlab", dave_t) == (400, "you cannot connect GitLab here")
+    # no sign-in set up: no action
+    erin_id, erin_t = person(hub.store, "erin")
+    assert me(hub, erin_t)[1]["gitlab_connect"] is True
+    os.unlink(paths.home() / "gitlab-oauth")
+    assert me(hub, erin_t)[1]["gitlab_connect"] is False
+    assert khttp.request("POST", hub.url + "/api/me/gitlab", erin_t)[0] == 400
+
+
+def test_link_state_cannot_be_tampered_with(hub, lab, dave):
+    # another site's form cannot start a link for its own invite in the visitor's browser
+    for h in ({"Sec-Fetch-Site": "cross-site"}, {"Sec-Fetch-Site": "same-site"},
+              {"Origin": "http://evil.example"}):
+        start = post(f"{hub.url}/i/{dave}/gitlab", headers=h)
+        assert start.status == 403 and "Location" not in start.headers
+    assert post(f"{hub.url}/i/{dave}/gitlab", headers={"Sec-Fetch-Site": "same-origin",
+                                                      "Origin": hub.url}).status == 303
+    # the callback needs the state its own cookie names
+    plain = get(hub.url + "/auth/gitlab/start")
+    link = post(f"{hub.url}/i/{dave}/gitlab")
+    done, _ = finish(link, cookie=plain.headers["Set-Cookie"].split(";")[0])
+    assert done.status == 403 and "old or was already used" in done.body
+    link = post(f"{hub.url}/i/{dave}/gitlab")
+    back = get(link.headers["Location"])
+    forged = re.sub(r"state=[^&]+", "state=forged", back.headers["Location"])
+    assert get(forged, link.headers["Set-Cookie"].split(";")[0]).status == 403
+    assert linked(hub, "dave") == (None, None)
+    # the real callback works once, never twice
+    assert get(back.headers["Location"], link.headers["Set-Cookie"].split(";")[0]).status == 200
+    assert get(back.headers["Location"], link.headers["Set-Cookie"].split(";")[0]).status == 403
+    # GitLab is only ever sent the state; the invite code never leaves the hub
+    link = post(f"{hub.url}/i/{dave}/gitlab")
+    assert dave not in link.headers["Location"] and dave not in link.headers["Set-Cookie"]

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import asdict, replace
 from typing import Dict, List, Mapping, Optional, Union
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -57,6 +57,11 @@ INVITE_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='
                "font:16px system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem}}"
                "pre{{background:#1b2027;padding:1rem;border-radius:6px;overflow-x:auto}}</style>"
                "{body}")
+
+# the invite page's Sign in with GitLab: a form, so another site cannot start it with a link
+INVITE_GITLAB = ("<form method=post action='{action}'><button style='font:inherit;padding:.6rem 1.2rem;"
+                 "border-radius:4px;border:1px solid #3d71d9;background:#3d71d9;color:#fff;"
+                 "cursor:pointer'>Sign in with GitLab</button></form>")
 
 # the invite page's second way in, without script: the form's POST redirects to the page
 INVITE_WEB = ("<form method=post action='{action}'><button style='font:inherit;padding:.5rem 1rem;"
@@ -976,7 +981,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         p = request.scope["state"]["principal"]
         store.page_seen(p)  # only the page asks who it is
         return JSONResponse({"person": p.person_name, "role": p.role, "device": p.device_name,
-                             "person_id": p.person_id})
+                             "person_id": p.person_id, "gitlab_connect": signin.can_connect(store, p)})
 
     def manager_state():
         """The manager session's state word, why it cannot start, and its worker row."""
@@ -1884,14 +1889,27 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     async def invite_page(request: Request) -> Response:
         code = request.path_params["code"]
         headers = {"Cache-Control": "no-store"}
+        on = signin.status(store) is None
         if not store.invite_valid(code):
-            return HTMLResponse(INVITE_PAGE.format(body="<p>This invite is not valid.</p>"),
-                                status_code=404, headers=headers)
+            # used by join, not expired: the person can still link their GitLab, until they do
+            who = signin.invite_person(store, code) if on else None
+            if who is None or who["gitlab_user"]:
+                return HTMLResponse(INVITE_PAGE.format(body="<p>This invite is not valid.</p>"),
+                                    status_code=404, headers=headers)
+            body = ("<h1>Join the team hub</h1>"
+                    + INVITE_GITLAB.format(action=html.escape(f"/i/{code}/gitlab")))
+            return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)
         cmd = html.escape(f"kaptyorka join {hub_url(request)}/i/{code}")
-        body = (f"<h1>Join the team hub</h1><pre>{cmd}</pre>"
-                "<p>Paste this link to your agent and say: join this.</p>"
-                "<p>This link works for 7 days, once.</p>"
-                + INVITE_WEB.format(action=html.escape(f"/i/{code}/web")))
+        if on:  # sign in first; the join command still works afterwards
+            body = ("<h1>Join the team hub</h1>"
+                    + INVITE_GITLAB.format(action=html.escape(f"/i/{code}/gitlab"))
+                    + "<p>Then, on your computer, run this or paste the link to your agent:</p>"
+                    f"<pre>{cmd}</pre><p>This link works for 7 days and joins one machine.</p>")
+        else:
+            body = (f"<h1>Join the team hub</h1><pre>{cmd}</pre>"
+                    "<p>Paste this link to your agent and say: join this.</p>"
+                    "<p>This link works for 7 days, once.</p>"
+                    + INVITE_WEB.format(action=html.escape(f"/i/{code}/web")))
         return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)
 
     @server.custom_route("/i/{code}", methods=["POST"])
@@ -1943,6 +1961,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         """For the lock screen: whether to show Sign in with GitLab."""
         return JSONResponse({"on": signin.status(store) is None}, headers=NO_STORE)
 
+    def state_cookie(state: str) -> str:
+        return (f"{signin.COOKIE}={state}; Path=/auth/gitlab; HttpOnly; SameSite=Lax;"
+                f" Max-Age={signin.STATE_S}")
+
     @server.custom_route("/auth/gitlab/start", methods=["GET"])
     async def auth_gitlab_start(request: Request) -> Response:
         # GitLab sends the browser back to the address it reached the hub on
@@ -1950,9 +1972,48 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             to, state = si.start(hub_url(request) + signin.CALLBACK)
         except KaptyorkaError as e:
             return signin_page(str(e), 404)
-        cookie = (f"{signin.COOKIE}={state}; Path=/auth/gitlab; HttpOnly; SameSite=Lax;"
-                  f" Max-Age={signin.STATE_S}")
-        return Response(status_code=302, headers={**NO_STORE, "Location": to, "Set-Cookie": cookie})
+        return Response(status_code=302, headers={**NO_STORE, "Location": to,
+                                                  "Set-Cookie": state_cookie(state)})
+
+    def cross_site(request: Request) -> bool:
+        """A form sent from another site: it could link the visitor's GitLab to someone else."""
+        site = request.headers.get("sec-fetch-site")
+        if site is not None and site not in ("same-origin", "none"):
+            return True
+        origin = request.headers.get("origin")
+        return origin is not None and urlparse(origin).netloc != (request.headers.get("host") or "")
+
+    @server.custom_route("/i/{code}/gitlab", methods=["POST"])
+    async def invite_gitlab(request: Request) -> Response:
+        """The invite page's Sign in with GitLab: links the invite's person to the GitLab user
+        who signs in, while they are unlinked. The invite stays good for join."""
+        code = request.path_params["code"]
+        key = (request.client.host if request.client else "?", code)
+        if limiter.blocked(key):
+            return PlainTextResponse("too many failed attempts", status_code=429)
+        if cross_site(request):
+            return signin_page("open your invite link again and sign in from there", 403)
+        if signin.invite_person(store, code) is None:
+            limiter.hit(key)
+            return signin_page("this invite link is no longer valid; ask the admin for a new one", 404)
+        try:
+            to, state = si.start(hub_url(request) + signin.CALLBACK, ("invite", code))
+        except KaptyorkaError as e:
+            return signin_page(str(e), 404)
+        return Response(status_code=303, headers={**NO_STORE, "Location": to,
+                                                  "Set-Cookie": state_cookie(state)})
+
+    @server.custom_route("/api/me/gitlab", methods=["POST"])
+    async def api_me_gitlab(request: Request) -> Response:
+        """The page's Connect GitLab: the same sign-in, bound to the person signed in."""
+        p = request.scope["state"]["principal"]
+        if not signin.can_connect(store, p):
+            return PlainTextResponse("you cannot connect GitLab here", status_code=400)
+        try:
+            to, state = si.start(hub_url(request) + signin.CALLBACK, ("page", p.person_id))
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return JSONResponse({"url": to}, headers={**NO_STORE, "Set-Cookie": state_cookie(state)})
 
     @server.custom_route(signin.CALLBACK, methods=["GET"])
     async def auth_gitlab_callback(request: Request) -> Response:

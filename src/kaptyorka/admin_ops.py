@@ -527,6 +527,7 @@ SENTENCES = {
     "gitlab_user": lambda who, d: (_match(r"(.+) unlinked", "{0} unlinked {1} from GitLab")(who, d)
                                    if d.endswith(" unlinked") else
                                    _match(r"(.+) -> (.+)", "{0} linked {1} to the GitLab user {2}")(who, d)),
+    "gitlab_link": _match(r"(.+)", "{0} linked the GitLab user {1}"),
     "gitlab_signin": _match(r"(.+)", "{0} signed in to the page with GitLab ({1})"),
     "gitlab_signout": _match(r"(.+)", "{0}'s GitLab sign-in ended: {1}"),
     "person_removed": _match(r"(.+)", "{0} removed {1} from the team"),
@@ -570,7 +571,7 @@ KNOWN_KINDS = tuple(SENTENCES)
 # the plain groups of the log page, in order, and the raw kinds each covers
 LOG_GROUPS = [
     ("people", ["person", "person_removed", "role", "invite", "invite_cancel", "device",
-                "device_shared", "join", "gitlab_user"]),
+                "device_shared", "join", "gitlab_user", "gitlab_link"]),
     ("access", ["grant", "revoke", "request", "request_decided", "connect_request",
                 "connect_decided"]),
     ("projects", ["project_register", "project_updated", "project_removed", "gitlab"]),

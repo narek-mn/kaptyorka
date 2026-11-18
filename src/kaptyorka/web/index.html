@@ -73,11 +73,14 @@ nav { display: flex; align-items: stretch; gap: 20px; }
 .viewer { position: relative; margin-left: auto; display: flex; align-items: center; }
 #viewer-name { color: var(--muted); height: 100%; }
 #viewer-name:hover, .viewer.open #viewer-name { color: var(--ink); }
-/* Sign out under the name, on hover or click */
-.signout { display: none; position: absolute; top: 100%; right: -8px; z-index: 30; align-items: center; gap: 8px;
-  padding: 9px 12px; white-space: nowrap; color: var(--ink); background: var(--surface2); border: 1px solid var(--line); }
-.signout:hover { background: var(--hover); }
-.viewer:hover .signout, .viewer.open .signout { display: flex; }
+/* Sign out (and Connect GitLab while unlinked) under the name, on hover or click */
+.vmenu { display: none; position: absolute; top: 100%; right: -8px; z-index: 30; flex-direction: column;
+  background: var(--surface2); border: 1px solid var(--line); }
+.vmenu > button { display: flex; align-items: center; gap: 8px; padding: 9px 12px; white-space: nowrap; color: var(--ink);
+  transition: background-color .12s; }
+.vmenu > button:hover, .vmenu > button:focus-visible { background: var(--hover); }
+.vmenu .err { max-width: 260px; padding: 0 12px 9px; white-space: normal; }
+.viewer:hover .vmenu, .viewer.open .vmenu { display: flex; }
 .live { display: flex; align-items: center; flex: none; margin-left: -12px; }
 .live i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
 .live.down i { background: var(--danger); }
@@ -513,7 +516,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     </nav>
     <div class="viewer" id="viewer">
       <button type="button" id="viewer-name" aria-haspopup="true" aria-expanded="false"></button>
-      <button class="signout" id="signout" type="button" title="Sign out"><svg width="15" height="15"><use href="#i-signout"/></svg>Sign out</button>
+      <div class="vmenu">
+        <button id="connect-gitlab" type="button" title="Sign in with GitLab from now on" hidden><svg width="15" height="15"><use href="#i-link"/></svg>Connect GitLab</button>
+        <button class="signout" id="signout" type="button" title="Sign out"><svg width="15" height="15"><use href="#i-signout"/></svg>Sign out</button>
+        <div class="err" id="connect-err" role="alert" hidden></div>
+      </div>
     </div>
     <div class="live" id="live" title="Connecting"><i></i></div>
   </header>
@@ -576,7 +583,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         <div class="panel add-box" id="add-box" hidden>
           <form class="add-form" id="add-person" autocomplete="off">
             <input id="new-name" placeholder="Name" aria-label="Name" maxlength="40" required>
-            <input id="new-gitlab" placeholder="GitLab username (optional)" aria-label="GitLab username, optional" maxlength="255" hidden>
             <button type="submit" class="btn small primary">Add</button>
             <button type="button" class="btn small" id="add-person-cancel">Cancel</button>
           </form>
@@ -1767,7 +1773,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     $("add-person-btn").setAttribute("aria-expanded", open ? "true" : "false");
     $("add-person").hidden = !!added;
     $("add-link").hidden = !added;
-    $("new-gitlab").hidden = !gitlabOn();
     teamErr("add-err", "");
     if (!open) { added = null; $("add-person").reset(); $("add-person").hidden = false; $("add-link").hidden = true; $("add-person-btn").focus(); return; }
     if (!added) $("new-name").focus();
@@ -1854,6 +1859,13 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     if (token) fetch("/api/me/signout", { method: "POST", cache: "no-store", headers: { Authorization: "Bearer " + token } }).catch(function () {});
     lock(false);
   });
+  /* Connect GitLab: the same sign-in, bound to this person on the hub; GitLab sends them back signed in */
+  $("connect-gitlab").addEventListener("click", function () {
+    $("connect-err").hidden = true;
+    api("/api/me/gitlab").then(function (r) { return r.json(); })
+      .then(function (x) { location.assign(x.url); })
+      .catch(function (x) { if (x.message === "unauthorized") return; $("connect-err").hidden = false; $("connect-err").textContent = x.message; });
+  });
   function enter() {
     $("lock").hidden = true;
     $("app").hidden = false;
@@ -1912,8 +1924,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     var name = $("new-name").value.trim(), btn = $("add-person").querySelector("button[type=submit]");
     if (!name || btn.getAttribute("aria-busy") === "true") return;
     btn.setAttribute("aria-busy", "true");
-    var gl = gitlabOn() ? $("new-gitlab").value.trim() : "";
-    api("/api/people", gl ? { name: name, gitlab: gl } : { name: name })
+    api("/api/people", { name: name })
       .then(function () { return api("/api/invites", { person: name }); })
       .then(function (r) { return r.json(); })
       .then(function (x) {
@@ -1968,6 +1979,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     readMap = store(function (s) { var r = JSON.parse(s.getItem("kaptyorka.read." + m.person) || "null"); return r && typeof r === "object" ? r : null; });
     fleet = { warnings: [] }; fleetAt = 0; proposals = []; proposalsAt = 0; openPerson = null; gitlab = null; gitlabAt = 0;
     $("viewer-name").textContent = m.person;
+    $("connect-gitlab").hidden = !m.gitlab_connect;
+    $("connect-err").hidden = true;
     $("viewer-name").title = "Signed in as " + m.person + (m.role === "admin" ? " (admin)" : "") + " on " + m.device;
     document.querySelectorAll(".admin-only").forEach(function (n) { n.hidden = m.role !== "admin"; });
     $("ask-link").hidden = m.role === "admin";

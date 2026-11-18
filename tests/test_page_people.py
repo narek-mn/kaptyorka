@@ -42,7 +42,8 @@ def post(app, who, path, body):
 
 def test_me(app):
     assert get(app, "ann", "/api/me") == {"person": "ann", "role": "member",
-                                          "device": "ann-laptop", "person_id": app.ids["ann"]}
+                                          "device": "ann-laptop", "person_id": app.ids["ann"],
+                                          "gitlab_connect": False}
     assert get(app, "boss", "/api/me")["role"] == "admin"
 
 
@@ -395,7 +396,7 @@ def test_page_login_and_sign_out():
     # Sign out sits under the person's name: on hover, or a click on the name (Esc or a click
     # outside closes it)
     assert 'id="viewer-name" aria-haspopup="true"' in html
-    assert ".viewer:hover .signout, .viewer.open .signout { display: flex; }" in html
+    assert ".viewer:hover .vmenu, .viewer.open .vmenu { display: flex; }" in html
     assert 'if (!$("viewer").contains(e.target)) viewerOpen(false);' in html
 
 

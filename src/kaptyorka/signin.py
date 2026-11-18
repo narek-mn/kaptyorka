@@ -1,9 +1,11 @@
 """Sign in to the hub page with GitLab: the OAuth 2 authorization code flow with PKCE against
 the team's own GitLab (the `gitlab_url` setting), scope read_user.
 
-The admin links each hub person to a GitLab username once. After the callback the hub asks
-GitLab who signed in (GET /api/v4/user); a linked, active user gets a page device of their own
-person, `gitlab-web`, whose token the page keeps like a `#t=` link. That device ends after
+A person is linked to a GitLab user by the admin, or links themselves: from their invite link
+(while it has not expired, used by join or not) or from their own page (signed in with a device
+token). Either way only someone who already holds that person's hub credential can link, only
+while the person is unlinked, and the first link wins. After the callback the hub asks GitLab who
+signed in (GET /api/v4/user); a linked, active user gets a page device of their own person, `gitlab-web`, whose token the page keeps like a `#t=` link. That device ends after
 SESSION_S, and every CHECK_S the hub uses the sign-in's refresh token to ask GitLab again: a
 refused refresh, a user GitLab no longer lets in, or a changed link signs the device out. While
 GitLab cannot be reached the device keeps working until it ends.
@@ -169,9 +171,11 @@ class SignIn:
     def __init__(self, store, clock=None):
         self.store, self.clock = store, clock or store.clock
         self.lock = threading.Lock()
-        self.pending: Dict[str, Tuple[str, str, float]] = {}  # state -> (verifier, redirect, at)
+        # state -> (verifier, redirect, at, bind); bind is None for a plain sign-in, or what the
+        # sign-in links: ("invite", code) or ("page", person id). It never leaves the hub.
+        self.pending: Dict[str, Tuple[str, str, float, Optional[Tuple[str, object]]]] = {}
 
-    def start(self, redirect_uri: str) -> Tuple[str, str]:
+    def start(self, redirect_uri: str, bind: Optional[Tuple[str, object]] = None) -> Tuple[str, str]:
         """(the GitLab address to send the browser to, the state for its cookie)."""
         url, _ = settings(self.store)
         why = status(self.store)
@@ -185,7 +189,7 @@ class SignIn:
             if len(self.pending) > 1000:  # nobody signs in this much: drop the oldest
                 for k in sorted(self.pending, key=lambda k: self.pending[k][2])[:500]:
                     del self.pending[k]
-            self.pending[state] = (verifier, redirect_uri, now)
+            self.pending[state] = (verifier, redirect_uri, now, bind)
         q = urlencode({"client_id": client_id, "redirect_uri": redirect_uri,
                        "response_type": "code", "scope": SCOPE, "state": state,
                        "code_challenge": _b64(hashlib.sha256(verifier.encode()).digest()),
@@ -201,7 +205,7 @@ class SignIn:
             raise SignInError("this sign-in is old or was already used; go back and sign in again")
         if not code:
             raise SignInError("GitLab sent no sign-in code; go back and sign in again")
-        verifier, redirect_uri, _ = got
+        verifier, redirect_uri, _, bind = got
         url, _ = settings(self.store)
         why = status(self.store)
         if why:
@@ -219,7 +223,45 @@ class SignIn:
             raise SignInError("GitLab did not answer; try again in a minute") from None
         if not _active(user):
             raise SignInError("your GitLab account is not active, so you cannot sign in here")
+        if bind is not None:
+            self._link(user, bind)
         return self._open(user, tokens["refresh_token"])
+
+    def _link(self, user: dict, bind: Tuple[str, object]) -> None:
+        """Link the bound person to this GitLab user, unless they are linked already (to this
+        user: nothing to do, the sign-in goes on; to another: refused)."""
+        how, key = bind
+        with self.store.lock:
+            if how == "invite":
+                inv = self.store.db.execute("SELECT person_id, expires FROM invites WHERE code=?",
+                                            (key,)).fetchone()
+                if inv is None or inv["expires"] <= self.clock():
+                    raise SignInError("this invite link is no longer valid; ask the admin for a new one")
+                pid = inv["person_id"]
+            else:
+                pid = key
+            row = self.store.db.execute("SELECT * FROM people WHERE id=? AND removed_at IS NULL",
+                                        (pid,)).fetchone()
+            if row is None:
+                raise SignInError("you are no longer on this hub; ask the admin")
+            if (row["name"], row["role"]) == (MANAGER_ACCOUNT, "manager"):
+                raise SignInError("the manager account cannot sign in with GitLab")
+            if row["gitlab_user"]:
+                if row["gitlab_user"].lower() == user["username"].lower() \
+                        and row["gitlab_id"] in (None, user["id"]):
+                    return  # already this user: a plain sign-in
+                raise SignInError("you are already linked to another GitLab account;"
+                                  " sign in with that one")
+            other = self.store.db.execute(
+                "SELECT 1 FROM people WHERE removed_at IS NULL AND id<>? AND (gitlab_id=?"
+                " OR lower(gitlab_user)=lower(?))", (pid, user["id"], user["username"])).fetchone()
+            if other is not None:
+                raise SignInError(f"the GitLab user {user['username']} is already linked to someone"
+                                  " else on this hub; ask the admin")
+            self.store.db.execute("UPDATE people SET gitlab_user=?, gitlab_id=? WHERE id=?"
+                                  " AND gitlab_user IS NULL", (user["username"], user["id"], pid))
+        where = "the invite" if how == "invite" else "their page"
+        self.store.log_add(row["name"], "gitlab_link", f"{user['username']} (from {where})")
 
     def _open(self, user: dict, refresh: str) -> Tuple[str, str]:
         name, now = user["username"], self.clock()
@@ -361,6 +403,29 @@ def set_user(store, si: Optional[SignIn], name: str, username: str, by: Principa
         store.log_add(by.person_name, "gitlab_user",
                       f"{row['name']} -> {username}" if username else f"{row['name']} unlinked")
     return username or None
+
+
+def invite_person(store, code: str) -> Optional[dict]:
+    """For the invite page: the invite's person while it has not expired, used or not, with
+    whether it is used and their GitLab link. None for an unknown or expired code."""
+    with store.lock:
+        row = store.db.execute(
+            "SELECT p.id, p.name, p.role, p.gitlab_user, i.used_at FROM invites i JOIN people p"
+            " ON p.id=i.person_id WHERE i.code=? AND i.expires>? AND p.removed_at IS NULL",
+            (code, store.clock())).fetchone()
+    return dict(row) if row is not None else None
+
+
+def can_connect(store, principal: Principal) -> bool:
+    """The page's Connect GitLab: a person on their own device token, not linked yet, on a hub
+    where sign-in is set up."""
+    if principal.shared or principal.legacy or principal.device_name == DEVICE \
+            or (principal.person_name, principal.role) == (MANAGER_ACCOUNT, "manager"):
+        return False
+    with store.lock:
+        row = store.db.execute("SELECT gitlab_user FROM people WHERE id=?",
+                               (principal.person_id,)).fetchone()
+    return row is not None and not row["gitlab_user"] and status(store) is None
 
 
 def check_free(store, username: str) -> str:

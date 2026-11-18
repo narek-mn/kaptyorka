@@ -68,16 +68,17 @@ Run `kaptyorka join` to set up the agent tools on the hub machine. Then invite e
 kaptyorka invite alice
 ```
 
-It prints `added alice to the team` (only for a new person) and the link, `http://<hub>/i/<code>`. The link works once and for 7 days. Alice runs this on each of her machines, or gives the link to her agent (see "For agents"):
+It prints `added alice to the team` (only for a new person) and the link, `http://<hub>/i/<code>`. The link works for 7 days and joins one machine. Alice:
 
-```bash
-pipx install kaptyorka
-kaptyorka join http://<hub>/i/<code>
-```
+1. Opens the invite link in her browser and clicks **Sign in with GitLab** (when the hub has sign-in with GitLab; see "Sign in with GitLab"). That links her GitLab account to her hub person and opens her page.
+2. On her machine, runs `pipx install kaptyorka`.
+3. Runs `kaptyorka join http://<hub>/i/<code>`, or gives the link to her agent (see "For agents").
+
+Steps 1 and 3 work in either order: signing in does not use the link up.
 
 Each machine gets a token of its own, tied to Alice, and a signing secret. Both are saved in `~/.kaptyorka/config.json`. The machine name defaults to `user@host`; add `--name <name>` to change it. `kaptyorka people` lists each person with their role, how many devices they have and when one was last used.
 
-Opening the invite link in a browser shows the same `join` command, and a button that opens the page as Alice.
+Opening the invite link in a browser shows the same `join` command, and **Sign in with GitLab** when it is set up; without it, a button that opens the page as Alice (that one uses the link up).
 
 Open the `page` link to watch the team live and act from it. It has two tabs. **Home** is for everyone and works like a chat app. On the left is the list: the manager first (with `asleep` or `off` when it is not running), then the sessions you may see. Each has a green dot when online, a grey one when not, its machine, and a count of unread replies; hover for the full name, folder and tool. Claude Code background jobs (`claude --bg`) sit in one **Background** group under your other chats, folded at first, with how many there are and their unread count; the page remembers whether you left it open. Inside, a job shows a small clock instead of the dot; its chat stays empty until it or you write, and you can write to it like any session. Click one to open its chat on the right: the messages in full, grouped by sender, with the box to write at the bottom (Enter sends, Shift+Enter makes a new line). Your last message says **Sending…**, **Sent** or **Delivered** (the session has it), or **Not sent** with **Retry**; while the session works on it, three dots and "is working" show under it ("waking the manager…" when the manager was asleep). What a session thinks is never sent to the hub. The admin also gets **Activity** at the top: every message as "from → to", read only, with the hub's own notices behind a **Notices** toggle. If something stops you working (for example no agent tool logged in on your machine), one bar over the chat shows it with the command that fixes it and a copy button. On a phone you see the list first; a tap opens the chat and **Back** returns. Members never see other people's sessions; to reach one, they write to the manager, and once the admin opens a door that session shows as a normal chat. Members find **Ask for access** at the bottom of the list. **Team**, for the admin only, holds what waits for a Yes or No and the people (see People and access). Members see only Home: their own sessions and the manager. They keep notes, rules, machines and workers through their agents and the commands, not on the page.
 
@@ -95,7 +96,7 @@ If your human pastes an invite link (`http://<hub>/i/<code>`) and says "join thi
 2. `kaptyorka join <invite-link>` (add `--name <machine>` if your human gives a machine name)
 3. Restart what `join` tells you to restart. Done.
 
-The link works once. If your human gives you a hub address and a token instead, run `kaptyorka join --hub <hub> --token <token> --name <machine>`.
+The link joins one machine. If your human gives you a hub address and a token instead, run `kaptyorka join --hub <hub> --token <token> --name <machine>`.
 
 ## What `join` changes
 
@@ -345,7 +346,7 @@ The hub has people, and each person has devices (one per machine). The admin is 
 The admin's **Team** tab does four things:
 
 1. **Waiting for you** (only when something waits; the count is on the tab): one line per request, "bob wants to work on proj-a", with **Yes** and **No**. Yes gives what was asked. Requests, connection requests, knocks and rule proposals all land here.
-2. **Add person**: type a name, **Add**, then **Copy** the invite link and send it. It works once, for 7 days. Until they join, their row says "hasn't joined yet" and has **Copy invite link**.
+2. **Add person**: type a name, **Add**, then **Copy** the invite link and send it. It joins one machine, within 7 days; with sign-in with GitLab, the person links their own GitLab from it. Once linked, their row shows `@username`. Until they join, their row says "hasn't joined yet" and has **Copy invite link**.
 3. **Remove**: on a person's row, with a question first ("Remove bob? They are signed out everywhere.").
 4. **Projects**: every project of the team's GitLab group and every project on the hub, one row each, with its description, who has access, and **On hub** or **Not on hub**. **Add to hub** registers a GitLab project with its GitLab description and repo address. A project on the hub has **Edit** (its description) and **Remove**, which asks first: its sessions leave the hub and their chats are deleted; its notes are kept. **Add project** takes a folder name and an optional description, for a project that is not in GitLab.
 
@@ -369,12 +370,14 @@ People can open the page with their GitLab account instead of a private link: no
 
 1. In GitLab, make an application (in the Admin area under Applications, or in a group's settings): scope `read_user`, confidential. Its redirect URI is the hub address people open plus `/auth/gitlab/callback`, for example `http://<hub>:8765/auth/gitlab/callback`. `kaptyorka gitlab status` prints it. If people open the hub under more than one address, put each on its own line.
 2. On the hub machine, put the application id on line 1 and the secret on line 2 of `~/.kaptyorka/gitlab-oauth`, then `chmod 600 ~/.kaptyorka/gitlab-oauth`. The hub refuses a file other users can open, and says so. The secret is never logged, shown or sent anywhere but GitLab.
-3. Link each person to their GitLab username: on the Team page, click **GitLab name** on their row (or type it when adding them), or run `kaptyorka people gitlab bob bob-gl`. Link yourself too. `kaptyorka gitlab status` then says `sign-in: on`.
+3. Link yourself: on the Team page, click **GitLab name** on your row, or run `kaptyorka people gitlab alice alice-gl`. `kaptyorka gitlab status` then says `sign-in: on`.
+
+Everyone else links themselves: **Sign in with GitLab** on their invite link page, or, for someone who joined before, **Connect GitLab** under their name on their own page (`kaptyorka page`). Only a person's own invite link or device token can link them, only while they are not linked yet, and the first link wins. A GitLab account already linked to someone else, a person already linked to another account, and the `manager` account are refused. The admin can still set, change or clear anyone's link with **GitLab name** or `kaptyorka people gitlab bob bob-gl`. A leaked invite link that was already used can link someone's GitLab only until they link theirs or the link expires (7 days).
 
 How it works:
 
 - GitLab sends the browser back to the address the person reached the hub on. GitLab accepts only the redirect URIs registered in step 1, so nothing else can be used.
-- The hub asks GitLab who signed in. A linked person gets a page sign-in of their own (a device named `gitlab-web`). Someone GitLab knows but nobody linked is told to ask the admin to add them. The GitLab account's id is kept at the first sign-in, so a username that later moves to another account is refused.
+- The hub asks GitLab who signed in. A linked person gets a page sign-in of their own (a device named `gitlab-web`). Someone GitLab knows but nobody linked is told to ask the admin to add them: random GitLab users cannot get in, only people the admin added. The GitLab account's id is kept at the first sign-in, so a username that later moves to another account is refused.
 - A sign-in lasts 7 days, then the page asks again. Every 15 minutes the hub asks GitLab whether the person may still come in: a blocked or deactivated account, a refused grant or a changed link signs them out within about 15 minutes. While GitLab cannot be reached, sign-ins keep working until their 7 days end.
 - **Sign out** on the page ends a GitLab sign-in on the hub too. Changing or clearing a person's GitLab name ends their GitLab sign-ins. Removing a person ends everything.
 - The private `#t=` link keeps working, so the admin can still get in when GitLab is down. Members keep `kaptyorka page` too.

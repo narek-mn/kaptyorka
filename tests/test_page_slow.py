@@ -712,8 +712,7 @@ def test_team_projects_gitlab_refuses(tmp_path, monkeypatch):
 @pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
 def test_sign_in_with_gitlab(tmp_path, w, h):
     """Sign in with GitLab, as a first-time person: the lock screen has one button; GitLab sends
-    the browser back signed in. The admin sets a GitLab username on a person's row and when adding
-    one; an unknown GitLab user is told to ask the admin; Sign out shows the button again; the
+    the browser back signed in. The admin sets a GitLab username on a person's row; an unknown GitLab user is told to ask the admin; Sign out shows the button again; the
     admin's private link still works. Screenshots to KAPTYORKA_SHOTS."""
     import os
     from helpers import FakeGitLabOAuth
@@ -781,15 +780,13 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
             page.wait(f'{gl("bob")} && {gl("bob")}.textContent === "@bob-gl"')
             assert store.person_by_name("bob") and [p["gitlab_user"] for p in store.people()
                                                     if p["name"] == "bob"] == ["bob-gl"]
-            # Add person takes an optional GitLab username
+            # Add person is a name only: people link their own GitLab from the invite
             page.js('document.getElementById("add-person-btn").click()')
-            assert not page.js('document.getElementById("new-gitlab").hidden')
+            assert page.js('document.getElementById("new-gitlab")') is None
             page.js('document.getElementById("new-name").value = "dave"')
-            page.js('document.getElementById("new-gitlab").value = "dave-gl"')
-            page.screenshot(shots / f"team-add-gitlab-{tag}.png")
             page.js('document.querySelector("#add-person button[type=submit]").click()')
             page.wait('!document.getElementById("add-link").hidden')
-            assert [p["gitlab_user"] for p in store.people() if p["name"] == "dave"] == ["dave-gl"]
+            assert [p["gitlab_user"] for p in store.people() if p["name"] == "dave"] == [None]
             # Sign out ends this sign-in; the button is back
             page.js('document.getElementById("signout").click()')
             page.wait('!document.getElementById("lock").hidden && document.getElementById("lock").dataset.mode === "gitlab"')
@@ -806,6 +803,74 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
             lab.down = True
             page.go(f"{base}/#t={admin_t}")
             page.wait('document.getElementById("viewer-name")?.textContent === "alice"')
+    finally:
+        stop()
+        store.close()
+        lab.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_people_link_their_own_gitlab(tmp_path, w, h):
+    """dave opens his invite link, clicks Sign in with GitLab and lands on his page, linked; the
+    invite still joins a machine. erin, who joined before, finds Connect GitLab under her name,
+    which goes away once she is linked. Screenshots to KAPTYORKA_SHOTS."""
+    import os
+    from helpers import FakeGitLabOAuth
+    from kaptyorka import paths, signin
+    from kaptyorka.gitlab import GitLabSource
+
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    lab = FakeGitLabOAuth(users={"alice-gl": {"id": 11, "state": "active"},
+                                 "dave-gl": {"id": 44, "state": "active"},
+                                 "erin-gl": {"id": 55, "state": "active"}})
+    app_file = paths.home() / "gitlab-oauth"
+    app_file.write_text("app-id\napp-secret-value\n")
+    os.chmod(app_file, 0o600)
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    GitLabSource(store).set(lab.url, "team", "alice")
+    stop = start_hub(store)
+    _, admin_t = person(store, "alice", "admin")
+    signin.set_user(store, None, "alice", "alice-gl", store.authenticate(admin_t))
+    dave = store.person_create("dave", by="alice")
+    code = store.invite_create(dave, by="alice")
+    _, erin_t = person(store, "erin")
+    base = f"http://127.0.0.1:{stop.port}"
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    try:
+        with chrome(w, h) as page:
+            page.go(f"{base}/i/{code}")
+            page.wait('!!document.querySelector("form button")')
+            assert page.js('document.querySelector("form button").textContent') == "Sign in with GitLab"
+            assert f"kaptyorka join {base}/i/{code}" in page.js("document.body.innerText")
+            assert page.js(wide)
+            page.screenshot(shots / f"invite-gitlab-{tag}.png")
+            lab.who = "dave-gl"
+            page.js('document.querySelector("form button").click()')
+            page.wait('document.getElementById("viewer-name")?.textContent === "dave"')
+            assert [p["gitlab_user"] for p in store.people() if p["name"] == "dave"] == ["dave-gl"]
+            assert store.invite_valid(code)  # join still works on his machine
+            page.js('document.getElementById("viewer-name").click()')
+            assert page.js('document.getElementById("connect-gitlab").hidden')
+        with chrome(w, h) as page:
+            page.go(f"{base}/#t={erin_t}")
+            page.wait('document.getElementById("viewer-name")?.textContent === "erin"')
+            assert not page.js('document.getElementById("connect-gitlab").hidden')
+            page.js('document.getElementById("viewer-name").click()')
+            page.wait('getComputedStyle(document.getElementById("connect-gitlab")).display === "flex"')
+            assert page.js('document.getElementById("connect-gitlab").textContent') == "Connect GitLab"
+            assert page.js(wide)
+            page.screenshot(shots / f"connect-gitlab-{tag}.png")
+            lab.who = "erin-gl"
+            page.js('document.getElementById("connect-gitlab").click()')
+            page.wait('document.getElementById("viewer-name")?.textContent === "erin"'
+                      ' && localStorage.getItem("kaptyorka.token") !== ' + json.dumps(erin_t))
+            assert [p["gitlab_user"] for p in store.people() if p["name"] == "erin"] == ["erin-gl"]
+            page.js('document.getElementById("viewer-name").click()')
+            assert page.js('document.getElementById("connect-gitlab").hidden')
+            page.screenshot(shots / f"connected-{tag}.png")
     finally:
         stop()
         store.close()
