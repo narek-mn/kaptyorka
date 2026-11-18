@@ -52,21 +52,50 @@ FONTS = ("archivo-latin.woff2",)  # the page's font files (web/fonts/, SIL OFL 1
 NO_STORE = {"Cache-Control": "no-store"}
 CLEAR_COOKIE = "kaptyorka_signin=; Path=/auth/gitlab; HttpOnly; SameSite=Lax; Max-Age=0"
 
-INVITE_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-               "<title>kaptyorka</title><style>body{{background:#111418;color:#e6e8eb;"
-               "font:16px system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem}}"
-               "pre{{background:#1b2027;padding:1rem;border-radius:6px;overflow-x:auto}}</style>"
-               "{body}")
+# the invite and sign-in pages: the main page's tokens, font, button and mark (web/index.html)
+_INVITE_STYLE = (
+    '@font-face { font-family: "Archivo"; font-style: normal; font-weight: 100 900; font-display: swap;'
+    ' src: url(/fonts/archivo-latin.woff2) format("woff2"); }'
+    ":root { --bg: #1b1a16; --surface: #211f1a; --ink: #e7e4dc; --muted: #aaa498;"
+    " --line: rgba(231, 228, 220, 0.18); --accent: #da6947; --ease: 150ms cubic-bezier(.2, .7, .3, 1);"
+    ' --sans: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;'
+    ' --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace; }'
+    "* { box-sizing: border-box; }"
+    "body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased;"
+    " max-width: 40rem; margin: 4rem auto; padding: 0 16px; }"
+    ".brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 18px; margin-bottom: 28px; }"
+    "h1 { font-size: 26px; font-weight: 650; margin: 0 0 20px; }"
+    "pre { font: 13px var(--mono); background: var(--surface); border: 1px solid var(--line); padding: 14px 16px;"
+    " overflow-x: auto; }"
+    "a { color: var(--accent); }"
+    "form { margin: 0 0 20px; }"
+    ".btn { height: 40px; padding: 0 22px; display: inline-flex; align-items: center; justify-content: center;"
+    " font: 600 14px var(--sans); color: var(--bg); background: var(--accent); border: 1px solid var(--accent);"
+    " cursor: pointer; transition: background-color var(--ease), border-color var(--ease); }"
+    ".btn:hover { background: #e27a5a; border-color: #e27a5a; }"
+    ".btn:active { background: #c45a3a; border-color: #c45a3a; }"
+    ".btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }"
+    "@media (prefers-reduced-motion: reduce) { .btn { transition: none; } }")
+_MARK = ('<svg width="28" height="28" viewBox="0 0 512 512" aria-hidden="true">'
+         '<rect width="512" height="512" rx="112" fill="#111217"/>'
+         '<g stroke="#3a3f4a" stroke-width="14" stroke-linecap="round">'
+         '<line x1="256" y1="256" x2="256" y2="118"/><line x1="256" y1="256" x2="394" y2="256"/>'
+         '<line x1="256" y1="256" x2="256" y2="394"/><line x1="256" y1="256" x2="118" y2="256"/></g>'
+         '<g fill="#ccccdc"><circle cx="256" cy="118" r="34"/><circle cx="394" cy="256" r="34"/>'
+         '<circle cx="256" cy="394" r="34"/><circle cx="118" cy="256" r="34"/></g>'
+         '<circle cx="256" cy="256" r="52" fill="#f5b73d"/></svg>')
+INVITE_PAGE = ("<!doctype html><html lang=en><meta charset=utf-8>"
+               "<meta name=viewport content='width=device-width, initial-scale=1'>"
+               "<meta name=color-scheme content=dark><title>kaptyorka</title><style>"
+               + _INVITE_STYLE.replace("{", "{{").replace("}", "}}")
+               + "</style><div class=brand>" + _MARK + "<span>kaptyorka</span></div>{body}")
 
 # the invite page's Sign in with GitLab: a form, so another site cannot start it with a link
-INVITE_GITLAB = ("<form method=post action='{action}'><button style='font:inherit;padding:.6rem 1.2rem;"
-                 "border-radius:4px;border:1px solid #3d71d9;background:#3d71d9;color:#fff;"
-                 "cursor:pointer'>Sign in with GitLab</button></form>")
+INVITE_GITLAB = "<form method=post action='{action}'><button class=btn>Sign in with GitLab</button></form>"
 
 # the invite page's second way in, without script: the form's POST redirects to the page
-INVITE_WEB = ("<form method=post action='{action}'><button style='font:inherit;padding:.5rem 1rem;"
-              "border-radius:4px;border:1px solid #3d71d9;background:#3d71d9;color:#fff;"
-              "cursor:pointer'>Open the page as this person</button></form>")
+INVITE_WEB = ("<form method=post action='{action}'><button class=btn>Open the page as this person"
+              "</button></form>")
 
 INSTRUCTIONS = (
     "kaptyorka connects you with the other coding agents on this team. "
@@ -1888,7 +1917,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.custom_route("/i/{code}", methods=["GET"])
     async def invite_page(request: Request) -> Response:
         code = request.path_params["code"]
-        headers = {"Cache-Control": "no-store"}
+        headers = {"Cache-Control": "no-store", "Content-Security-Policy": CSP}
         on = signin.status(store) is None
         if not store.invite_valid(code):
             # used by join, not expired: the person can still link their GitLab, until they do
@@ -1952,9 +1981,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     def signin_page(text: str, status_code: int) -> Response:
         body = (f"<h1>Sign in</h1><p>{html.escape(text[:1].upper() + text[1:])}.</p>"
-                "<p><a href='/' style='color:#8fb3ff'>Back to the sign-in page</a></p>")
+                "<p><a href='/'>Back to the sign-in page</a></p>")
         return HTMLResponse(INVITE_PAGE.format(body=body), status_code=status_code,
-                            headers={**NO_STORE, "Set-Cookie": CLEAR_COOKIE})
+                            headers={**NO_STORE, "Set-Cookie": CLEAR_COOKIE,
+                                     "Content-Security-Policy": CSP})
 
     @server.custom_route("/auth/gitlab", methods=["GET"])
     async def auth_gitlab(request: Request) -> Response:
