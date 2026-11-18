@@ -430,7 +430,10 @@ class Store:
                                   " AND removed_at IS NULL", (name.strip(),)).fetchone()
             return dict(row) if row else None
 
-    def invite_create(self, person_id: int, ttl_s: float = INVITE_TTL_S, by: str = "") -> str:
+    def invite_create(self, person_id: int, ttl_s: float = INVITE_TTL_S, by: str = "",
+                      log_kind: str = "invite", limit: Optional[int] = None) -> str:
+        """A new invite. With `limit`, refused while the person already has that many unused,
+        unexpired invites."""
         code = secrets.token_urlsafe(16)
         now = self.clock()
         with self.lock:
@@ -440,9 +443,14 @@ class Store:
             if (row["name"], row["role"]) == ("manager", "manager"):  # manager.PERSON
                 # whoever redeemed it would act as the manager
                 raise KaptyorkaError("the manager account cannot be invited; it runs on the hub machine")
+            if limit is not None and self.db.execute(
+                    "SELECT COUNT(*) FROM invites WHERE person_id=? AND used_at IS NULL"
+                    " AND expires>?", (person_id, now)).fetchone()[0] >= limit:
+                raise KaptyorkaError(f"you already have {limit} unused links to add a machine;"
+                                     " use one of them, or try again tomorrow")
             self.db.execute("INSERT INTO invites (code, person_id, created, expires)"
                             " VALUES (?,?,?,?)", (code, person_id, now, now + ttl_s))
-        self.log_add(by or row["name"], "invite", f"invite for {row['name']}")
+        self.log_add(by or row["name"], log_kind, f"invite for {row['name']}")
         return code
 
     def invite_valid(self, code: str) -> bool:

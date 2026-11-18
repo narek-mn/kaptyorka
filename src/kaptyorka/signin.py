@@ -416,6 +416,13 @@ def invite_person(store, code: str) -> Optional[dict]:
     return dict(row) if row is not None else None
 
 
+def is_session(store, device_id: int) -> bool:
+    """True for a GitLab sign-in's page device (not just any device named gitlab-web)."""
+    with store.lock:
+        return store.db.execute("SELECT 1 FROM gitlab_sessions WHERE device_id=?",
+                                (device_id,)).fetchone() is not None
+
+
 def can_connect(store, principal: Principal) -> bool:
     """The page's Connect GitLab: a person on their own device token, not linked yet, on a hub
     where sign-in is set up."""

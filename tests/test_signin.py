@@ -14,6 +14,7 @@ import pytest
 from conftest import start_hub
 from helpers import FakeGitLabOAuth, person
 from kaptyorka import http as khttp
+from kaptyorka import hub as khub
 from kaptyorka import paths, signin
 from kaptyorka.gitlab import GitLabSource
 from kaptyorka.manager import ManagerStore
@@ -103,7 +104,7 @@ def test_full_flow_signs_alice_in_as_the_admin(hub, lab):
     assert "HttpOnly" in start.headers["Set-Cookie"] and "SameSite=Lax" in start.headers["Set-Cookie"]
     token = token_of(done)
     assert me(hub, token) == (200, {"person": "alice", "role": "admin", "device": "gitlab-web",
-                                    "person_id": hub.ids["alice"], "gitlab_connect": False})
+                                    "person_id": hub.ids["alice"], "gitlab_connect": False, "page": True})
     dev = [d for d in hub.store.devices(hub.ids["alice"]) if d["name"] == "gitlab-web"][0]
     assert dev["expires"] == hub.now[0] + signin.SESSION_S
     # the token went through the page's storage, never the address bar
@@ -228,8 +229,9 @@ def test_sign_out_ends_a_gitlab_sign_in_only(hub):
     token = token_of(sign_in(hub)[0])
     assert khttp.request("POST", hub.url + "/api/me/signout", token)[0] == 204
     assert me(hub, token)[0] == 401
-    assert khttp.request("POST", hub.url + "/api/me/signout", hub.tokens["alice"])[0] == 204
-    assert me(hub, hub.tokens["alice"])[0] == 200  # a device token stays good
+    # a device token is not a page sign-in: the page route refuses it, and it stays good
+    assert khttp.request("POST", hub.url + "/api/me/signout", hub.tokens["alice"])[0] == 403
+    assert me(hub, hub.tokens["alice"])[0] == 200
 
 
 def test_app_file_with_open_permissions_is_refused(hub):
@@ -254,7 +256,11 @@ def test_admin_backup_link_works_when_gitlab_is_down(hub, lab):
     lab.down = True
     failed = get(back.headers["Location"], start.headers["Set-Cookie"].split(";")[0])
     assert failed.status == 403 and "GitLab did not answer" in failed.body
-    assert me(hub, hub.tokens["alice"])[1]["role"] == "admin"  # the #t= link's token
+    # the admin token (kaptyorka page on the hub machine) still opens the page
+    admin = hub.store.device_add(hub.ids["alice"], "hub")
+    (paths.home() / "admin-token").write_text(admin + "\n")
+    assert me(hub, admin)[1]["role"] == "admin" and me(hub, admin)[1]["page"] is True
+    assert khttp.request("GET", hub.url + "/api/log", admin)[0] == 200
     assert get(hub.url + "/").status == 200
 
 
@@ -389,7 +395,8 @@ def test_invite_link_signs_in_and_links_then_join_still_works(hub, lab, dave):
     assert dave not in back  # the invite rides in the server-side state, not the callback
     token = token_of(done)
     assert me(hub, token)[1] == {"person": "dave", "role": "member", "device": "gitlab-web",
-                                 "person_id": hub.store.person_by_name("dave")["id"], "gitlab_connect": False}
+                                 "person_id": hub.store.person_by_name("dave")["id"], "gitlab_connect": False,
+                                 "page": True}
     assert linked(hub, "dave") == ("dave-gl", 44)
     assert "dave linked the GitLab user dave-gl (from the invite)" in sentences(hub)
     assert "dave signed in to the page with GitLab (dave-gl)" in sentences(hub)
@@ -549,3 +556,203 @@ def test_the_admin_cancels_a_used_invite_so_it_can_no_longer_link(hub, lab, dave
     assert done.status == 403 and "This invite link is no longer valid" in done.body
     assert linked(hub, "dave") == (None, None)
     assert "alice cancelled the invite link for dave" in sentences(hub)
+
+
+# 0.9.17: with sign-in on, the page needs a GitLab sign-in (or the admin token); machines and
+# the command line keep their device tokens
+
+PAGE_ROUTES = [("GET", "/api/log"), ("GET", "/api/me/account"), ("POST", "/api/me/invite"),
+               ("GET", "/api/workers"), ("GET", "/api/warnings"), ("GET", "/api/proposals"),
+               ("GET", "/api/me/access"), ("POST", "/api/me/signout"), ("GET", "/api/gitlab/projects")]
+
+
+def call(hub, method, path, token, body=None):
+    return khttp.request(method, hub.url + path, token, body)
+
+
+def test_the_page_refuses_device_tokens_once_sign_in_is_on(hub):
+    for method, path in PAGE_ROUTES:
+        assert call(hub, method, path, hub.tokens["alice"]) == (403, khub.SIGN_IN_FIRST), path
+        assert call(hub, method, path, hub.tokens["bob"])[0] == 403, path
+    assert me(hub, hub.tokens["bob"])[1]["page"] is False
+    # a GitLab sign-in opens it
+    token = token_of(sign_in(hub)[0])
+    assert me(hub, token)[1]["page"] is True
+    assert call(hub, "GET", "/api/log", token)[0] == 200
+    assert call(hub, "GET", "/api/me/account", token)[0] == 200
+    # a device that only carries the sign-in's name is still a device token
+    fake = hub.store.device_add(hub.ids["bob"], "gitlab-web")
+    assert call(hub, "GET", "/api/me/account", fake)[0] == 403
+
+
+def test_only_the_admin_token_file_opens_the_page_with_a_device_token(hub):
+    admin = hub.store.device_add(hub.ids["alice"], "hub")
+    assert call(hub, "GET", "/api/log", admin)[0] == 403  # no file yet: just another device
+    (paths.home() / "admin-token").write_text(admin + "\n")
+    assert call(hub, "GET", "/api/log", admin)[0] == 200
+    assert call(hub, "GET", "/api/log", hub.tokens["alice"])[0] == 403  # the admin's other device
+    # the file holding a member's token makes no member an emergency admin
+    (paths.home() / "admin-token").write_text(hub.tokens["bob"] + "\n")
+    assert call(hub, "GET", "/api/me/account", hub.tokens["bob"])[0] == 403
+
+
+def test_machine_routes_keep_device_tokens(hub):
+    t = hub.tokens["alice"]
+    for method, path, body in (("GET", "/api/feed", None), ("GET", "/api/me", None),
+                               ("GET", "/api/people", None), ("GET", "/api/invites", None),
+                               ("GET", "/api/machines", None), ("GET", "/api/rules", None),
+                               ("GET", "/api/settings", None), ("GET", "/api/gitlab", None),
+                               ("POST", "/api/invites", {"person": "bob"})):
+        assert call(hub, method, path, t, body)[0] == 200, path
+    # the hooks and the bridge: refused for their own reasons, never for the page's
+    assert call(hub, "GET", "/api/brief", t)[1] != khub.SIGN_IN_FIRST
+    assert call(hub, "POST", "/bridge/heartbeat", t, {})[1] != khub.SIGN_IN_FIRST
+
+
+@pytest.mark.parametrize("method,path", [
+    # every route a machine or the command line calls (bridge, shim, hooks, doctor, join,
+    # hub-state, the admin commands)
+    ("GET", "/api/brief"), ("GET", "/api/done-check"), ("POST", "/api/files"), ("GET", "/api/files/7"),
+    ("HEAD", "/api/files/7"), ("GET", "/api/me"), ("GET", "/api/feed"), ("GET", "/api/settings"),
+    ("POST", "/api/me/gitlab"), ("GET", "/api/people"), ("POST", "/api/people"),
+    ("POST", "/api/people/bob/gitlab"), ("POST", "/api/people/bob/role"), ("DELETE", "/api/people/bob"),
+    ("GET", "/api/invites"), ("POST", "/api/invites"), ("DELETE", "/api/invites/abc"),
+    ("GET", "/api/rules"), ("POST", "/api/rules"), ("PUT", "/api/skills"), ("GET", "/api/machines"),
+    ("POST", "/api/machines/box-1/grant"), ("POST", "/api/machines/box-1/owner"),
+    ("POST", "/api/machines/box-1/revoke"), ("POST", "/api/projects"), ("POST", "/api/projects/proj-a"),
+    ("DELETE", "/api/projects/proj-a"), ("POST", "/api/projects/proj-a/grant"),
+    ("POST", "/api/projects/proj-a/revoke"), ("POST", "/api/devices/3/revoke"),
+    ("POST", "/api/legacy/on"), ("POST", "/api/legacy/off"), ("GET", "/api/gitlab"),
+    ("POST", "/api/gitlab"), ("DELETE", "/api/gitlab"), ("POST", "/mcp"), ("GET", "/bridge/poll"),
+])
+def test_machine_route_list(method, path):
+    assert khub.machine_route(method, path)
+
+
+@pytest.mark.parametrize("method,path", [m for m in PAGE_ROUTES] + [
+    ("POST", "/api/send"), ("POST", "/api/notes"), ("POST", "/api/doors"), ("GET", "/api/projects"),
+    ("GET", "/api/projects/proj-a/activity"), ("POST", "/api/devices/3/shared"), ("GET", "/api/feed/"),
+    ("POST", "/api/settings"), ("POST", "/api/legacy/assign")])
+def test_page_route_list(method, path):
+    assert not khub.machine_route(method, path)
+
+
+def test_without_sign_in_nothing_changes(hub):
+    os.unlink(paths.home() / "gitlab-oauth")
+    for method, path in PAGE_ROUTES:
+        for who in ("alice", "bob"):
+            assert call(hub, method, path, hub.tokens[who])[1] != khub.SIGN_IN_FIRST, path
+    assert call(hub, "GET", "/api/log", hub.tokens["alice"])[0] == 200
+    assert call(hub, "GET", "/api/me/account", hub.tokens["bob"])[0] == 200
+    assert me(hub, hub.tokens["bob"])[1]["page"] is True
+    hub.store.person_create("dave", by="alice")
+    code = hub.store.invite_create(hub.store.person_by_name("dave")["id"], by="alice")
+    assert post(f"{hub.url}/i/{code}/web").status == 303  # the invite page's own way in
+
+
+def test_the_invite_page_cannot_make_a_page_device_with_sign_in_on(hub, dave):
+    r = post(f"{hub.url}/i/{dave}/web")
+    assert r.status == 403 and "Location" not in r.headers
+    assert redeem(hub, dave)[0] == 200  # the invite is still good for join
+
+
+# lost or expired invite links
+
+def test_new_invite_link_ends_the_old_ones(hub, lab, dave):
+    used_code = dave
+    assert redeem(hub, used_code)[0] == 200  # used, unexpired: it could still link GitLab
+    spare = hub.store.invite_create(hub.store.person_by_name("dave")["id"], by="alice")
+    bob_code = hub.store.invite_create(hub.ids["bob"], by="alice")
+    status, got = call(hub, "POST", "/api/invites", hub.tokens["alice"], {"person": "dave", "replace": True})
+    assert status == 200 and got["url"].endswith("/i/" + got["code"])
+    assert get(f"{hub.url}/i/{spare}").status == 404 and get(f"{hub.url}/i/{used_code}").status == 404
+    assert post(f"{hub.url}/i/{used_code}/gitlab").status == 404
+    assert redeem(hub, spare)[0] == 400
+    assert redeem(hub, got["code"])[0] == 200
+    assert hub.store.invite_valid(bob_code)  # nobody else's
+    assert "alice made a new invite link for dave; the old ones no longer work" in sentences(hub)
+    # only the admin
+    assert call(hub, "POST", "/api/invites", hub.tokens["bob"], {"person": "bob", "replace": True})[0] == 403
+
+
+def test_add_a_machine_makes_an_invite_for_yourself_only(hub, lab):
+    lab.who = "bob-gl"
+    bob = token_of(sign_in(hub)[0])
+    status, got = call(hub, "POST", "/api/me/invite", bob, {"person": "alice"})  # a name is ignored
+    assert status == 200 and got["command"] == f"kaptyorka join {got['url']}"
+    code = got["url"].rsplit("/", 1)[1]
+    assert signin.invite_person(hub.store, code)["name"] == "bob"
+    assert got["expires"] == hub.now[0] + 86400
+    assert "bob made a link to add a machine" in sentences(hub)
+    # a member still cannot invite anyone through the admin's route
+    assert call(hub, "POST", "/api/invites", bob, {"person": "alice"})[0] == 403
+    # at most 3 unused at once; a used one frees a place, and so does a day
+    assert call(hub, "POST", "/api/me/invite", bob)[0] == 200
+    assert call(hub, "POST", "/api/me/invite", bob)[0] == 200
+    status, why = call(hub, "POST", "/api/me/invite", bob)
+    assert status == 429 and "already have 3 unused links" in why
+    assert redeem(hub, code)[0] == 200
+    assert call(hub, "POST", "/api/me/invite", bob)[0] == 200
+    assert call(hub, "POST", "/api/me/invite", bob)[0] == 429
+    hub.now[0] += 86401
+    assert call(hub, "POST", "/api/me/invite", bob)[0] == 200
+
+
+def test_the_manager_account_cannot_add_a_machine(hub):
+    os.unlink(paths.home() / "gitlab-oauth")  # off: its device token reaches the page
+    _, mtoken = person(hub.store, "manager", "manager")
+    assert call(hub, "POST", "/api/me/invite", mtoken)[0] == 403
+    assert call(hub, "GET", "/api/me/account", mtoken)[1]["add_machine"] is False
+
+
+def test_the_account_panel_holds_only_your_own_data(hub, lab):
+    from kaptyorka.store import ONLINE_S
+
+    hub.store.device_add(hub.ids["alice"], "alice@box-9")
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE devices SET os_user='bob', host='box-1', last_used=? WHERE person_id=?",
+                             (hub.now[0] - 5, hub.ids["bob"]))
+    hub.store.device_add(hub.ids["bob"], "bob@box-2")
+    for name in ("proj-a", "proj-b"):
+        hub.store.project_register(name, by="alice")
+    hub.store.grant_project("proj-a", hub.ids["bob"], "read", by="alice")
+    lab.who = "bob-gl"
+    bob = token_of(sign_in(hub)[0])
+    status, acc = call(hub, "GET", "/api/me/account", bob)
+    assert status == 200
+    assert (acc["person"], acc["role"], acc["gitlab_user"], acc["add_machine"]) == ("bob", "member", "bob-gl", True)
+    # his two machines, not alice's, and not this GitLab sign-in
+    assert [(m["name"], m["os_user"], m["online"]) for m in acc["machines"]] == [
+        ("bob-laptop", "bob", True), ("bob@box-2", "", False)]
+    assert acc["machines"][0]["last_seen"] == hub.now[0] - 5 and ONLINE_S > 5
+    assert acc["projects"] == [{"name": "proj-a", "role": "read"}]
+    assert set(acc) == {"person", "role", "gitlab_user", "machines", "projects", "add_machine"}
+    assert "alice" not in json.dumps(acc)
+
+
+def test_cli_page_on_a_member_machine_says_sign_in_with_gitlab(hub, capsys, monkeypatch):
+    from kaptyorka import cli
+
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    paths.save_config({"hub": hub.url, "token": hub.tokens["bob"]})
+    assert cli._page(None) == 0
+    out = capsys.readouterr().out
+    assert out.strip() == f"open {hub.url} and sign in with GitLab" and hub.tokens["bob"] not in out
+    # not linked yet: the link's Sign in with GitLab links them
+    _, dave_t = person(hub.store, "dave")
+    paths.save_config({"hub": hub.url, "token": dave_t})
+    cli._page(None)
+    assert f"{hub.url}/#t={dave_t}" in capsys.readouterr().out
+    # the hub machine: the admin token's link, as before
+    admin = hub.store.device_add(hub.ids["alice"], "hub")
+    (paths.home() / "admin-token").write_text(admin + "\n")
+    paths.save_config({"hub": hub.url, "token": admin})
+    cli._page(None)
+    assert f"{hub.url}/#t={admin}" in capsys.readouterr().out
+    # sign-in off: every machine's link opens the page
+    os.unlink(paths.home() / "gitlab-oauth")
+    paths.save_config({"hub": hub.url, "token": hub.tokens["bob"]})
+    cli._page(None)
+    assert f"{hub.url}/#t={hub.tokens['bob']}" in capsys.readouterr().out

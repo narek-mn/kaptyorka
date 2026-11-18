@@ -77,7 +77,7 @@ def test_home_warns_only_what_blocks(hub):
 
 def test_member_page_makes_no_admin_fetch(hub):
     html = page(hub)
-    for fn in ("loadWarnings", "loadProposals", "loadInvites"):
+    for fn in ("loadWarnings", "loadProposals", "loadGitlab"):
         body = html[html.index(f"function {fn}("):]
         assert "isAdmin()" in body[:body.index("\n  }")], fn
 
@@ -186,9 +186,9 @@ def test_team_waiting_lines_and_answers(hub):
 
 def test_team_people_rows(hub):
     code = team_code(page(hub))
-    # one action at most: Copy invite link before they join, Remove after; none on yourself
+    # New invite link at any time, Remove once they joined; none on yourself
     assert '"hasn\'t joined yet"' in code and 'v.admin ? "you"' in code
-    assert '"Copy invite link"' in code and 'button("Remove", "quiet-danger"' in code
+    assert '"New invite link"' in code and 'v.admin ? null : button(' in code and 'button("Remove", "quiet-danger"' in code
     assert '"Remove " + v.name + "? They are signed out everywhere."' in code
     assert "return !isManagerAccount(p);" in code  # the manager account is not listed
     # a tick gives write; a project seen only on a session is registered on its first tick

@@ -73,14 +73,37 @@ nav { display: flex; align-items: stretch; gap: 20px; }
 .viewer { position: relative; margin-left: auto; display: flex; align-items: center; }
 #viewer-name { color: var(--muted); height: 100%; }
 #viewer-name:hover, .viewer.open #viewer-name { color: var(--ink); }
-/* Sign out (and Connect GitLab while unlinked) under the name, on hover or click */
-.vmenu { display: none; position: absolute; top: 100%; right: -8px; z-index: 30; flex-direction: column;
-  background: var(--surface2); border: 1px solid var(--line); }
-.vmenu > button { display: flex; align-items: center; gap: 8px; padding: 9px 12px; white-space: nowrap; color: var(--ink);
-  transition: background-color .12s; }
-.vmenu > button:hover, .vmenu > button:focus-visible { background: var(--hover); }
-.vmenu .err { max-width: 260px; padding: 0 12px 9px; white-space: normal; }
-.viewer:hover .vmenu, .viewer.open .vmenu { display: flex; }
+#viewer-name { display: flex; align-items: center; gap: 6px; }
+#viewer-name > svg { color: var(--faint); transition: transform var(--ease); }
+.viewer.open #viewer-name > svg { transform: rotate(180deg); color: var(--ink); }
+/* the account panel under the name: who you are, your machines, your projects, Sign out */
+.acct { position: absolute; top: 100%; right: -8px; z-index: 30; width: 340px; max-height: calc(100vh - 64px);
+  overflow-y: auto; background: var(--surface2); border: 1px solid var(--line-strong); animation: acct-in 120ms cubic-bezier(.2, .7, .3, 1); }
+@keyframes acct-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.acct-sec { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.acct-who b { display: block; font-size: 16px; font-weight: 650; color: var(--ink); }
+.acct-who span { display: block; margin-top: 2px; font-size: 13px; color: var(--muted); }
+.acct-who .btn { margin-top: 10px; }
+.acct-cap { margin-bottom: 8px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.acct-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; min-height: 40px; }
+.acct-row.pj { grid-template-columns: minmax(0, 1fr) auto; min-height: 30px; }
+.acct-row b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--ink); }
+.acct-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--faint); }
+.acct-row > time, .acct-row > .seen { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.acct-row > .seen.on { color: var(--ok); }
+.acct-none { font-size: 13px; color: var(--faint); padding: 2px 0 4px; }
+.acct .add-machine { margin-top: 8px; }
+.acct-join { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.acct-join .cmd { display: flex; align-items: stretch; border: 1px solid var(--line-ctl); background: var(--bg); }
+.acct-join code { flex: 1; min-width: 0; padding: 8px 10px; font: 12px/1.45 var(--mono); color: var(--ink); word-break: break-all; user-select: all; }
+.acct-join .cmd .btn { height: auto; border: 0; border-left: 1px solid var(--line-ctl); }
+.acct-join small { font-size: 12px; color: var(--faint); }
+.acct .err { padding: 8px 0 0; }
+.acct-foot { padding: 6px; }
+.acct-foot button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px; color: var(--ink); transition: background-color var(--ease); }
+.acct-foot button:hover, .acct-foot button:focus-visible { background: var(--hover); }
+.acct-foot button:active { background: var(--surface); }
+#lock-note { text-align: center; margin: -10px 0 0; width: min(360px, calc(100vw - 32px)); font-size: 14px; color: var(--muted); }
 .live { display: flex; align-items: center; flex: none; margin-left: -12px; }
 .live i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
 .live.down i { background: var(--danger); }
@@ -323,7 +346,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .p-main > svg { color: var(--faint); transition: transform var(--ease), color var(--ease); }
 .p-main:hover > svg { color: var(--muted); }
 .p-main[aria-expanded="true"] > svg { transform: rotate(90deg); color: var(--ink); }
-.p-act { flex: none; display: flex; justify-content: flex-end; min-width: 132px; }  /* every chevron in one column */
+.p-act { flex: none; display: flex; justify-content: flex-end; min-width: 132px; }
+.p-act .new-link { min-width: 124px; }  /* every chevron in one column */
 .p-line:has(.confirm) .p-act { min-width: 0; }
 .p-act .confirm { max-width: 420px; }
 .p-projects { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 10px 16px 38px; background: var(--surface2);
@@ -454,6 +478,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   .mine-rows { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .mine-rows > span:not(:first-child) { margin-top: 6px; }
   #lock .hint { margin-top: -8px; }
+  .acct { position: fixed; top: 48px; left: 0; right: 0; width: auto; max-height: calc(100dvh - 48px); border-width: 1px 0; }
+  .p-act .new-link { min-width: 0; }
+  .p-act .new-link .lbl { display: none; }
 }
 @keyframes slide-in { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes slide-out { to { transform: translateX(32px); opacity: 0; } }
@@ -475,6 +502,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="1.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v3"/></symbol>
   <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-chev-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
   <symbol id="i-status" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
   <symbol id="i-person" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.2 3.6-7 8-7s8 2.8 8 7"/></symbol>
@@ -497,6 +525,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   <a class="btn primary" id="gitlab-signin" href="/auth/gitlab/start">Sign in with GitLab</a>
   <form id="unlock"><input id="unlock-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your token" aria-label="Token"><button class="btn primary" type="submit">Open</button></form>
   <p class="hint">Use the link from kaptyorka start, or ask your admin for an invite.</p>
+  <p id="lock-note" role="status" hidden>This link no longer opens the page. Sign in with GitLab instead.</p>
   <div class="err" id="lock-err" role="alert" hidden>That token did not work.</div></div>
 
 <div id="app" hidden>
@@ -515,11 +544,28 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       <button class="tab admin-only" role="tab" data-view="team" id="tab-team" hidden>Team<span class="count" id="n-team" hidden>0</span></button>
     </nav>
     <div class="viewer" id="viewer">
-      <button type="button" id="viewer-name" aria-haspopup="true" aria-expanded="false"></button>
-      <div class="vmenu">
-        <button id="connect-gitlab" type="button" title="Sign in with GitLab from now on" hidden><svg width="15" height="15"><use href="#i-link"/></svg>Connect GitLab</button>
-        <button class="signout" id="signout" type="button" title="Sign out"><svg width="15" height="15"><use href="#i-signout"/></svg>Sign out</button>
-        <div class="err" id="connect-err" role="alert" hidden></div>
+      <button type="button" id="viewer-name" aria-haspopup="dialog" aria-expanded="false" aria-controls="account"><span id="viewer-label"></span><svg width="11" height="11"><use href="#i-chev-down"/></svg></button>
+      <div class="acct" id="account" role="dialog" aria-label="Account" hidden>
+        <div class="acct-sec acct-who">
+          <b id="acct-name"></b><span id="acct-sub"></span>
+          <button id="connect-gitlab" class="btn small" type="button" title="Sign in with GitLab from now on" hidden><svg width="13" height="13"><use href="#i-link"/></svg>Connect GitLab</button>
+          <div class="err" id="connect-err" role="alert" hidden></div>
+        </div>
+        <div class="acct-sec">
+          <div class="acct-cap">Your machines</div>
+          <div id="acct-machines"></div>
+          <button type="button" class="btn small add-machine" id="add-machine" aria-expanded="false" aria-controls="acct-join"><svg width="13" height="13"><use href="#i-plus"/></svg>Add a machine</button>
+          <div class="acct-join" id="acct-join" hidden>
+            <div class="cmd"><code id="join-cmd"></code><button type="button" class="btn small" id="join-copy" title="Copy"><svg width="13" height="13"><use href="#i-copy"/></svg>Copy</button></div>
+            <small>Run it on the new machine. Works once, for 24 hours.</small>
+          </div>
+          <div class="err" id="add-machine-err" role="alert" hidden></div>
+        </div>
+        <div class="acct-sec">
+          <div class="acct-cap">Projects</div>
+          <div id="acct-projects"></div>
+        </div>
+        <div class="acct-foot"><button class="signout" id="signout" type="button"><svg width="15" height="15"><use href="#i-signout"/></svg>Sign out</button></div>
       </div>
     </div>
     <div class="live" id="live" title="Connecting"><i></i></div>
@@ -629,7 +675,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   var holding = null, holdClose = null;  /* an open inline confirm or edit: refreshes leave its panel alone */
   var bgOpen = store(function (s) { return s.getItem("kaptyorka.bg-open"); }) === "1";  /* this viewer's Background group, open or folded */
   var bgFolded = null, bgEnter = false;  /* the open background chat the viewer folded away anyway; rows fade in once on opening */
-  var invites = [], openPerson = null, addOpen = false, added = null, cue = null;  /* Team: open invites, the person shown open, Add person, its link, "Saved" */
+  var openPerson = null, addOpen = false, added = null, cue = null;  /* Team: the person shown open, Add person, its link, "Saved" */
+  var account = null, joinCmd = null, linkToken = null;  /* the account panel's data; its Add a machine command; a device link kept only to link GitLab */
   var myAccess = null;
   var attached = null;  /* the file waiting in the compose bar {file, id} */
 
@@ -722,6 +769,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     $("app").hidden = true;
     $("lock").hidden = false;
     $("lock-err").hidden = !refused;
+    $("lock-note").hidden = true;
+    linkToken = null;
     $("lock-err").textContent = gitlabSignin ? "You are signed out. Sign in again." : "That token did not work.";
     $("unlock-token").value = "";
     lockMode();
@@ -809,7 +858,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     $("team").hidden = !team;
     history.replaceState(null, "", location.pathname + (team ? "#view=team" : ""));
     if (v === "home") { toBottom(); loadAccess(); }
-    if (team) { loadInvites(); loadProposals(true); loadGitlab(); }
+    if (team) { loadProposals(true); loadGitlab(); }
   }
 
   function labelOf(name) {
@@ -1399,10 +1448,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   var PROJECT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
   var pending = {}, answering = {}, cues = {}, linkFor = null, waitSeen = null;
   function isManagerAccount(p) { return p.name === "manager" && p.role === "manager"; }
-  function loadInvites() {
-    if (!isAdmin()) return;
-    get("/api/invites").then(function (rows) { invites = rows; if (feed) renderTeam(); }, function () {});
-  }
   function loadProposals(force) {
     if (!isAdmin() || (!force && view !== "team" && Date.now() - proposalsAt < 10000)) return;
     proposalsAt = Date.now();
@@ -1529,7 +1574,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   function personView(p) {
     /* machines only: a GitLab page sign-in (a device that ends) is not a joined machine */
     var now = Date.now() / 1000, live = p.devices.filter(function (d) { return d.revoked_at == null && d.expires == null; });
-    var inv = invites.filter(function (v) { return v.person === p.name && !v.used; }).pop() || null;
     var held = heldBy(p.name), names = knownProjects();
     Object.keys(pending).forEach(function (k) {
       var i = k.indexOf("\n");
@@ -1539,7 +1583,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
              online: live.some(function (d) { return d.last_used != null && now - d.last_used < 30; }) ||
                      feed.agents.some(function (a) { return a.person === p.name; }),
              joined: live.some(function (d) { return d.last_used != null; }),
-             invite: inv ? inv.url : null, held: held, projects: names,
+             held: held, projects: names,
              gitlab: gitlabOn() ? p.gitlab_user || "" : null };
   }
   function setProject(v, project, on) {
@@ -1554,17 +1598,16 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       .then(function (f) { feed = f; delete pending[k]; flash("saved:" + k); },
             function (e) { delete pending[k]; teamErr("team-err", e.message); renderTeam(); });
   }
-  function copyInvite(v, b) {
-    var k = "copied:" + v.name;
-    function done(url) {
-      return copyText(url).then(function (ok) {
-        if (ok) { linkFor = null; flash(k); } else { linkFor = { name: v.name, url: url }; renderTeam(); }
-      });
-    }
-    if (v.invite) { done(v.invite); return; }
+  /* New invite link: their older links stop working; the fresh one is copied (or shown to copy) */
+  function newInvite(v, b) {
     b.setAttribute("aria-busy", "true");
-    api("/api/invites", { person: v.name }).then(function (r) { return r.json(); })
-      .then(function (x) { invites = invites.concat([{ person: v.name, url: x.url, code: x.code }]); return done(x.url); })
+    teamErr("team-err", "");
+    api("/api/invites", { person: v.name, replace: true }).then(function (r) { return r.json(); })
+      .then(function (x) {
+        return copyText(x.url).then(function (ok) {
+          if (ok) { linkFor = null; flash("copied:" + v.name); } else { linkFor = { name: v.name, url: x.url }; renderTeam(); }
+        });
+      })
       .catch(function (e) { b.removeAttribute("aria-busy"); teamErr("team-err", e.message); });
   }
   function removePerson(v, b) {
@@ -1599,12 +1642,14 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
                             title: open ? "Hide projects" : "Projects" }, parts.concat([icon("i-chev", 13)]));
       main.addEventListener("click", function () { openPerson = open ? null : v.name; linkFor = null; renderTeam(); });
     }
-    var act = null;
-    if (!v.admin && !v.joined) {
-      var copied = cueOn("copied:" + v.name);
-      act = button(copied ? [icon("i-check", 13), "Copied"] : [icon("i-link", 13), "Copy invite link"], copied ? "copied" : "",
-                   function () { copyInvite(v, act); }, { title: "Send it to " + v.name + "; it works once, for 7 days" });
-    } else if (!v.admin) {
+    /* yourself: Add a machine in the account panel instead */
+    var copied = cueOn("copied:" + v.name), act = null;
+    var invite = v.admin ? null : button(copied ? [icon("i-check", 13), el("span", { "class": "lbl", text: "Copied" })]
+                               : [icon("i-link", 13), el("span", { "class": "lbl", text: "New invite link" })],
+                        "new-link" + (copied ? " copied" : ""), function () { newInvite(v, invite); },
+                        { "aria-label": copied ? "Copied" : "New invite link for " + v.name,
+                          title: "Copy a fresh link for " + v.name + " (works once, for 7 days); older links stop working" });
+    if (!v.admin && v.joined) {
       act = button("Remove", "quiet-danger", function () { removePerson(v, act); }, { "aria-label": "Remove " + v.name });
     }
     var gl = null;
@@ -1614,7 +1659,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
                   { title: v.gitlab ? "Signs in with GitLab as " + v.gitlab + ". Click to change" : "Add their GitLab username so they can sign in with GitLab",
                     "aria-label": (v.gitlab ? "Change" : "Add") + " " + v.name + "'s GitLab username" });
     }
-    var acts = [gl, act].filter(Boolean);
+    var acts = [gl, invite, act].filter(Boolean);
     var row = el("div", { "class": "person" + (open ? " open" : ""), "data-person": v.name }, [
       el("div", { "class": "p-line" }, [main, acts.length ? el("span", { "class": "p-act" }, acts) : null])]);
     if (linkFor && linkFor.name === v.name) {
@@ -1832,7 +1877,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         render();
         loadWarnings();
         loadProposals();
-        if (view === "team") { loadInvites(); loadGitlab(); }
+        if (view === "team") loadGitlab();
         loadAccess();
         clearTimeout(timer);
         timer = setTimeout(poll, 2000);
@@ -1853,6 +1898,21 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       $("lock-err").hidden = false;
       $("lock-err").textContent = "The hub did not answer. Try again.";
     });
+  });
+  /* a device link on a hub where the page needs GitLab: say so; an unlinked person's Sign in with
+     GitLab links their account through that link, as Connect GitLab did */
+  function deviceLock(m) {
+    var t = token;
+    lock(false);
+    linkToken = m.gitlab_connect ? t : null;
+    $("lock-note").hidden = false;
+  }
+  $("gitlab-signin").addEventListener("click", function (e) {
+    if (!linkToken) return;
+    e.preventDefault();
+    fetch("/api/me/gitlab", { method: "POST", cache: "no-store", headers: { Authorization: "Bearer " + linkToken } })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (x) { location.assign(x.url); }, function () { location.assign("/auth/gitlab/start"); });
   });
   $("signout").addEventListener("click", function () {
     /* a GitLab sign-in ends on the hub too; a device token stays good */
@@ -1903,14 +1963,73 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     if (askOpen) loadAccess(); else $("my-access").hidden = true;
     if (feed) renderHome(!askOpen);
   });
-  /* the name opens Sign out; a click outside or Esc closes it */
-  function viewerOpen(open) {
+  /* the name opens the account panel; a second click, a click outside or Esc closes it */
+  function accountOpen(open) {
     $("viewer").classList.toggle("open", open);
+    $("account").hidden = !open;
     $("viewer-name").setAttribute("aria-expanded", open ? "true" : "false");
+    if (!open) { $("acct-join").hidden = true; $("add-machine").setAttribute("aria-expanded", "false"); $("add-machine-err").hidden = true; return; }
+    $("connect-err").hidden = true;
+    if (account) renderAccount();
+    get("/api/me/account").then(function (a) { account = a; renderAccount(); }, function () {});
   }
-  $("viewer-name").addEventListener("click", function () { viewerOpen(!$("viewer").classList.contains("open")); });
-  document.addEventListener("click", function (e) { if (!$("viewer").contains(e.target)) viewerOpen(false); });
-  document.addEventListener("keydown", function (e) { if (e.key === "Escape") viewerOpen(false); });
+  function renderAccount() {
+    var a = account, roles = { admin: "Admin", member: "Member", manager: "Manager" };
+    $("acct-name").textContent = a.person;
+    $("acct-sub").textContent = (roles[a.role] || a.role) + " \u00b7 " + (a.gitlab_user ? "GitLab @" + a.gitlab_user : "No GitLab account linked");
+    $("connect-gitlab").hidden = !me || !me.gitlab_connect;
+    var box = $("acct-machines");
+    box.textContent = "";
+    if (!a.machines.length) box.appendChild(el("div", { "class": "acct-none", text: "No machines yet" }));
+    a.machines.forEach(function (d) {
+      box.appendChild(el("div", { "class": "acct-row" }, [
+        el("span", { "class": "dot" + (d.online ? " on" : ""), title: d.online ? "online" : "offline" }),
+        el("div", null, [el("b", { text: d.name, title: d.name }), d.os_user ? el("small", { text: "as " + d.os_user }) : null]),
+        d.online ? el("span", { "class": "seen on", text: "online" })
+                 : d.last_seen ? timeEl(d.last_seen) : el("span", { "class": "seen", text: "not seen yet" })]));
+    });
+    $("add-machine").hidden = !a.add_machine;
+    box = $("acct-projects");
+    box.textContent = "";
+    if (!a.projects.length) box.appendChild(el("div", { "class": "acct-none", text: "No projects yet" }));
+    a.projects.forEach(function (p) {
+      box.appendChild(el("div", { "class": "acct-row pj" }, [el("b", { text: p.name, title: p.name }), el("span", { "class": "state", text: p.role })]));
+    });
+  }
+  /* Add a machine: a fresh invite for yourself as the join command. The same one is shown again
+     until a machine joins or it ends, so opening it twice does not use up the limit */
+  function showJoin() {
+    $("join-cmd").textContent = joinCmd.command;
+    $("acct-join").hidden = false;
+    $("add-machine").setAttribute("aria-expanded", "true");
+    $("join-copy").focus();
+  }
+  $("add-machine").addEventListener("click", function () {
+    var b = $("add-machine");
+    if (!$("acct-join").hidden) { $("acct-join").hidden = true; b.setAttribute("aria-expanded", "false"); return; }
+    $("add-machine-err").hidden = true;
+    var n = account ? account.machines.length : -1;
+    if (joinCmd && joinCmd.machines === n && joinCmd.expires > Date.now() / 1000 + 60) { showJoin(); return; }
+    b.setAttribute("aria-busy", "true");
+    api("/api/me/invite").then(function (r) { return r.json(); })
+      .then(function (x) { joinCmd = { command: x.command, expires: x.expires, machines: n }; showJoin(); })
+      .catch(function (x) { if (x.message === "unauthorized") return; $("add-machine-err").hidden = false; $("add-machine-err").textContent = x.message; })
+      .then(function () { b.removeAttribute("aria-busy"); });
+  });
+  $("join-copy").addEventListener("click", function () {
+    var b = $("join-copy");
+    copyText(joinCmd ? joinCmd.command : "").then(function (ok) {
+      if (!ok) { getSelection().selectAllChildren($("join-cmd")); return; }
+      var was = b.firstChild;
+      b.classList.add("copied"); b.lastChild.textContent = "Copied"; b.replaceChild(icon("i-check", 13), was);
+      setTimeout(function () { b.classList.remove("copied"); b.lastChild.textContent = "Copy"; b.replaceChild(was, b.firstChild); }, 1500);
+    });
+  });
+  $("viewer-name").addEventListener("click", function () { accountOpen($("account").hidden); });
+  document.addEventListener("click", function (e) { if (!$("viewer").contains(e.target) && !$("account").hidden) accountOpen(false); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !$("account").hidden) { accountOpen(false); $("viewer-name").focus(); }
+  });
   $("compose").addEventListener("submit", function (e) { e.preventDefault(); send(); });
   $("text").addEventListener("input", grow);
   $("text").addEventListener("keydown", function (e) {
@@ -1928,7 +2047,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       .then(function () { return api("/api/invites", { person: name }); })
       .then(function (r) { return r.json(); })
       .then(function (x) {
-        invites = invites.concat([{ person: name, url: x.url, code: x.code }]);
         added = { name: name, url: x.url };
         showAdded();
       })
@@ -1974,11 +2092,13 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     });
   }
   function start(m) {
+    if (m.page === false) { deviceLock(m); return; }
     me = m;
-    seen = {}; feed = null; invites = []; myAccess = null; conv = "mgr"; phoneOpen = false; askOpen = false;
+    seen = {}; feed = null; myAccess = null; account = null; joinCmd = null; conv = "mgr"; phoneOpen = false; askOpen = false;
     readMap = store(function (s) { var r = JSON.parse(s.getItem("kaptyorka.read." + m.person) || "null"); return r && typeof r === "object" ? r : null; });
     fleet = { warnings: [] }; fleetAt = 0; proposals = []; proposalsAt = 0; openPerson = null; gitlab = null; gitlabAt = 0;
-    $("viewer-name").textContent = m.person;
+    $("viewer-label").textContent = m.person;
+    accountOpen(false);
     $("connect-gitlab").hidden = !m.gitlab_connect;
     $("connect-err").hidden = true;
     $("viewer-name").title = "Signed in as " + m.person + (m.role === "admin" ? " (admin)" : "") + " on " + m.device;

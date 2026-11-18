@@ -56,11 +56,12 @@ def bearer(headers) -> str:
 
 class Auth:
     """ASGI wrapper: open routes pass; everything else needs a device token, whose
-    principal goes into scope["state"]["principal"]."""
+    principal goes into scope["state"]["principal"]. `gate(scope, principal)` may still refuse
+    a good token with a sentence (a 403)."""
 
     def __init__(self, app, store, open_paths=("/",), open_prefixes=("/i/", "/fonts/", "/auth/"),
-                 limiter: "RateLimiter | None" = None):
-        self.app, self.store = app, store
+                 limiter: "RateLimiter | None" = None, gate=None):
+        self.app, self.store, self.gate = app, store, gate
         self.open_paths, self.open_prefixes = tuple(open_paths), tuple(open_prefixes)
         self.limiter = limiter or RateLimiter()
 
@@ -101,6 +102,10 @@ class Auth:
                                           else "unauthorized", status_code=401)
                         if scope["type"] == "http" else WebSocketClose(1008))
             await deny(scope, receive, send)
+            return
+        why = self.gate(scope, principal) if self.gate and scope["type"] == "http" else None
+        if why:
+            await PlainTextResponse(why, status_code=403)(scope, receive, send)
             return
         scope.setdefault("state", {})["principal"] = principal
         await self.app(scope, receive, send)

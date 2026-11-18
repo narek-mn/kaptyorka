@@ -387,7 +387,7 @@ def test_team_add_person_give_project_remove(admin_page):
     assert page.wait('document.getElementById("add-copy").textContent === "Copied" && navigator.clipboard.readText()') == link
     page.wait(f'!!{team_row("carol")}')
     assert page.js(f'{team_row("carol")}.querySelector(".p-sum").textContent') == "hasn't joined yet"
-    assert page.js(f'{team_row("carol")}.querySelector(".p-act").textContent') == "Copy invite link"
+    assert page.js(f'{team_row("carol")}.querySelector(".p-act").textContent') == "New invite link"
     page.js('document.getElementById("add-done").click()')
     assert page.js('document.getElementById("add-box").hidden && !document.getElementById("add-person-btn").hidden')
     # bob: open, tick proj-a (only a session had it), Saved; it is registered and he may write
@@ -732,7 +732,7 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
     GitLabSource(store).set(lab.url, "team", "alice")
     stop = start_hub(store)
     _, admin_t = person(store, "alice", "admin")
-    person(store, "bob")
+    _, bob_t = person(store, "bob")
     carol = store.person_create("carol", by="alice")  # invited; signed in on the page before any join
     lab.users["carol-gl"] = {"id": 55, "state": "active"}
     signin.set_user(store, None, "alice", "alice-gl", store.authenticate(admin_t))
@@ -765,7 +765,7 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
             page.wait(f'!!{gl("bob")}')
             carol_row = 'document.querySelector("#people-rows [data-person=carol]")'
             assert page.js(f'{carol_row}.querySelector(".p-sum").textContent') == "hasn't joined yet"
-            assert "Copy invite link" in page.js(f'{carol_row}.querySelector(".p-act").textContent')
+            assert "New invite link" in page.js(f'{carol_row}.querySelector(".p-act").textContent')
             assert carol
             assert page.js(f'{gl("alice")}.textContent') == "@alice-gl"
             assert page.js(f'{gl("bob")}.textContent') == "GitLab name"
@@ -799,8 +799,17 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
                              ' && document.body.innerText')
             assert "ask the admin to add you" in text
             page.screenshot(shots / f"signin-unknown-{tag}.png")
-            # the admin's private link still works
+            # a member's device link no longer opens the page: it says to sign in with GitLab
+            page.go(f"{base}/#t={bob_t}")
+            page.wait('!document.getElementById("lock-note").hidden && document.getElementById("lock").dataset.mode === "gitlab"')
+            assert page.js('document.getElementById("app").hidden')
+            assert page.js('localStorage.getItem("kaptyorka.token")') is None
+            assert page.js(wide)
+            page.screenshot(shots / f"device-link-{tag}.png")
+            # the admin token (kaptyorka page on the hub machine) still works, with GitLab down
+            (paths.home() / "admin-token").write_text(admin_t + "\n")
             lab.down = True
+            page.go("about:blank")  # a new hash alone would not load the page again
             page.go(f"{base}/#t={admin_t}")
             page.wait('document.getElementById("viewer-name")?.textContent === "alice"')
     finally:
@@ -812,8 +821,8 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
 @pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
 def test_people_link_their_own_gitlab(tmp_path, w, h):
     """dave opens his invite link, clicks Sign in with GitLab and lands on his page, linked; the
-    invite still joins a machine. erin, who joined before, finds Connect GitLab under her name,
-    which goes away once she is linked. Screenshots to KAPTYORKA_SHOTS."""
+    invite still joins a machine. erin, who joined before, opens her device link: it says to
+    sign in with GitLab, and that sign-in links her. Screenshots to KAPTYORKA_SHOTS."""
     import os
     from helpers import FakeGitLabOAuth
     from kaptyorka import paths, signin
@@ -857,17 +866,14 @@ def test_people_link_their_own_gitlab(tmp_path, w, h):
             assert page.js('document.getElementById("connect-gitlab").hidden')
         with chrome(w, h) as page:
             page.go(f"{base}/#t={erin_t}")
-            page.wait('document.getElementById("viewer-name")?.textContent === "erin"')
-            assert not page.js('document.getElementById("connect-gitlab").hidden')
-            page.js('document.getElementById("viewer-name").click()')
-            page.wait('getComputedStyle(document.getElementById("connect-gitlab")).display === "flex"')
-            assert page.js('document.getElementById("connect-gitlab").textContent') == "Connect GitLab"
+            page.wait('!document.getElementById("lock-note").hidden')
+            assert page.js('document.getElementById("gitlab-signin").textContent') == "Sign in with GitLab"
             assert page.js(wide)
             page.screenshot(shots / f"connect-gitlab-{tag}.png")
             lab.who = "erin-gl"
-            page.js('document.getElementById("connect-gitlab").click()')
+            page.js('document.getElementById("gitlab-signin").click()')
             page.wait('document.getElementById("viewer-name")?.textContent === "erin"'
-                      ' && localStorage.getItem("kaptyorka.token") !== ' + json.dumps(erin_t))
+                      ' && localStorage.getItem("kaptyorka.token") !== null')
             assert [p["gitlab_user"] for p in store.people() if p["name"] == "erin"] == ["erin-gl"]
             page.js('document.getElementById("viewer-name").click()')
             assert page.js('document.getElementById("connect-gitlab").hidden')
@@ -977,3 +983,115 @@ def test_viewer_keeps_focus_on_its_two_buttons(tmp_path):
     finally:
         stop()
         store.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_account_panel_add_machine_and_new_invite_link(tmp_path, w, h):
+    """bob signs in with GitLab and opens his name: his machines (online or when last seen, and
+    the OS user), his projects, Add a machine with the join command and Copy, Sign out. The admin's
+    Team row has New invite link, which copies a fresh link and kills the old one. Screenshots to
+    KAPTYORKA_SHOTS."""
+    import os
+    from helpers import FakeGitLabOAuth
+    from kaptyorka import paths, signin
+    from kaptyorka.gitlab import GitLabSource
+
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    lab = FakeGitLabOAuth(users={"alice-gl": {"id": 11, "state": "active"},
+                                 "bob-gl": {"id": 22, "state": "active"}})
+    app_file = paths.home() / "gitlab-oauth"
+    app_file.write_text("app-id\napp-secret-value\n")
+    os.chmod(app_file, 0o600)
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    GitLabSource(store).set(lab.url, "team", "alice")
+    stop = start_hub(store)
+    _, admin_t = person(store, "alice", "admin")
+    bob, _ = person(store, "bob")
+    by = store.authenticate(admin_t)
+    signin.set_user(store, None, "alice", "alice-gl", by)
+    signin.set_user(store, None, "bob", "bob-gl", by)
+    for name in ("proj-a", "proj-b"):
+        store.project_register(name, by="alice")
+    store.grant_project("proj-a", bob, "write", "alice")
+    store.grant_project("proj-b", bob, "read", "alice")
+    store.device_add(bob, "bob@box-2")
+    with store.lock:
+        store.db.execute("UPDATE devices SET name='bob@box-1', os_user='bob', last_used=? WHERE name='bob-laptop'",
+                         (store.clock(),))
+        store.db.execute("UPDATE devices SET os_user='bob', last_used=? WHERE name='bob@box-2'",
+                         (store.clock() - 3 * 3600,))
+    old = store.invite_create(bob, by="alice")
+    base = f"http://127.0.0.1:{stop.port}"
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    acct = 'document.getElementById("account")'
+    try:
+        with chrome(w, h) as page:
+            lab.who = "bob-gl"
+            page.go(base + "/")
+            page.wait('document.getElementById("lock").dataset.mode === "gitlab"')
+            page.js('document.getElementById("gitlab-signin").click()')
+            page.wait('document.getElementById("viewer-name")?.textContent === "bob"')
+            page.js('document.getElementById("viewer-name").click()')
+            page.wait('document.querySelectorAll("#acct-machines .acct-row").length === 2')
+            text = page.js(f"{acct}.innerText")
+            for want in ("bob", "Member", "GitLab @bob-gl", "bob@box-1", "as bob", "online", "bob@box-2",
+                         "3h ago", "proj-a", "write", "proj-b", "read", "Add a machine", "Sign out"):
+                assert want in text, want
+            assert "alice" not in text and "gitlab-web" not in text
+            assert page.js(wide)
+            page.screenshot(shots / f"account-{tag}.png")
+            # a second click closes it; so do Esc and a click outside
+            page.js('document.getElementById("viewer-name").click()')
+            assert page.js(f"{acct}.hidden")
+            page.js('document.getElementById("viewer-name").click()')
+            page.js('document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape"}))')
+            assert page.js(f"{acct}.hidden")
+            page.js('document.getElementById("viewer-name").click()')
+            page.js('document.querySelector("main").click()')
+            assert page.js(f"{acct}.hidden")
+            # Add a machine: the join command with a fresh invite for bob
+            page.js('document.getElementById("viewer-name").click()')
+            page.wait(f"!{acct}.hidden")
+            page.js('document.getElementById("add-machine").click()')
+            cmd = page.wait('!document.getElementById("acct-join").hidden && document.getElementById("join-cmd").textContent')
+            assert cmd.startswith(f"kaptyorka join {base}/i/")
+            assert signin.invite_person(store, cmd.rsplit("/", 1)[1])["name"] == "bob"
+            page.call("Browser.grantPermissions", permissions=["clipboardReadWrite", "clipboardSanitizedWrite"],
+                      origin=base)
+            page.call("Page.bringToFront")  # the clipboard needs a focused page
+            page.js('document.getElementById("join-copy").click()')
+            page.wait('document.getElementById("join-copy").classList.contains("copied")')
+            assert page.js(wide)
+            page.screenshot(shots / f"add-machine-{tag}.png")
+            # shown again, not made again
+            page.js('document.getElementById("add-machine").click()')
+            page.js('document.getElementById("add-machine").click()')
+            assert page.js('document.getElementById("join-cmd").textContent') == cmd
+            # Sign out from the panel
+            page.js('document.getElementById("signout").click()')
+            page.wait('!document.getElementById("lock").hidden')
+        with chrome(w, h) as page:
+            lab.who = "alice-gl"
+            page.go(base + "/")
+            page.wait('document.getElementById("lock").dataset.mode === "gitlab"')
+            page.js('document.getElementById("gitlab-signin").click()')
+            page.wait('document.getElementById("viewer-name")?.textContent === "alice"')
+            page.js('document.getElementById("tab-team").click()')
+            page.wait('!!document.querySelector("#people-rows [data-person=bob] .new-link")')
+            row = 'document.querySelector("#people-rows [data-person=bob]")'
+            page.call("Browser.grantPermissions", permissions=["clipboardReadWrite", "clipboardSanitizedWrite"],
+                      origin=base)
+            page.call("Page.bringToFront")
+            page.js(f'{row}.querySelector(".new-link").click()')
+            link = page.wait(f'!!{row}.querySelector(".new-link.copied") && navigator.clipboard.readText()')
+            assert link.startswith(f"{base}/i/") and old not in link
+            assert not store.invite_valid(old)
+            assert page.js(wide)
+            page.screenshot(shots / f"team-row-{tag}.png")
+    finally:
+        stop()
+        store.close()
+        lab.close()

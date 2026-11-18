@@ -4,7 +4,7 @@ import json
 import re
 from typing import Dict, List, Optional, Tuple
 
-from kaptyorka.store import MAX_ABOUT, KaptyorkaError, Principal
+from kaptyorka.store import MAX_ABOUT, ONLINE_S, KaptyorkaError, Principal
 
 LIVE = ("starting", "up", "unattended", "abandoned")  # workers.LIVE; workers imports the store
 MANAGER = "manager"  # manager.PERSON; manager imports the store
@@ -171,6 +171,55 @@ def invite_cancel(store, code: str, by: Principal) -> None:
             raise KaptyorkaError("no open invite with that code")
         store.db.execute("DELETE FROM invites WHERE code=?", (code,))
     store.log_add(by.person_name, "invite_cancel", f"invite for {row['name']}")
+
+
+def invite_renew(store, name: str, by: Principal) -> str:
+    """The Team row's New invite link: the person's unexpired invites, used or not, stop
+    working, and a fresh one is made."""
+    _admin(by)
+    with store.lock:
+        row = _live_person(store.db, name)
+        store.db.execute("DELETE FROM invites WHERE person_id=? AND expires>?",
+                         (row["id"], store.clock()))
+    return store.invite_create(row["id"], by=by.person_name, log_kind="invite_new")
+
+
+SELF_INVITES = 3  # unused invites a person may hold at once from Add a machine
+SELF_INVITE_TTL_S = 86400  # a link to add a machine is for now: it ends after a day
+
+
+def can_add_machine(principal: Principal) -> bool:
+    return not (principal.legacy or principal.shared
+                or (principal.person_name, principal.role) == (MANAGER, MANAGER))
+
+
+def invite_self(store, principal: Principal) -> str:
+    """Add a machine: an invite for the caller's own person, never anyone else's."""
+    if not can_add_machine(principal):
+        raise KaptyorkaError("this sign-in cannot add a machine; ask the admin")
+    return store.invite_create(principal.person_id, ttl_s=SELF_INVITE_TTL_S,
+                               by=principal.person_name, log_kind="invite_self",
+                               limit=SELF_INVITES)
+
+
+def account(store, principal: Principal) -> dict:
+    """The account panel: the caller's own person, machines and projects, nothing of anyone
+    else's. A machine is a joined device; GitLab page sign-ins and the old shared token are not."""
+    now = store.clock()
+    with store.lock:
+        p = store.db.execute("SELECT name, role, gitlab_user FROM people WHERE id=?",
+                             (principal.person_id,)).fetchone()
+        devices = store.db.execute(
+            "SELECT name, os_user, last_used FROM devices WHERE person_id=? AND revoked_at IS NULL"
+            " AND expires IS NULL AND legacy=0 ORDER BY name", (principal.person_id,)).fetchall()
+    return {
+        "person": p["name"], "role": p["role"], "gitlab_user": p["gitlab_user"],
+        "machines": [{"name": d["name"], "os_user": d["os_user"], "last_seen": d["last_used"],
+                      "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S}
+                     for d in devices],
+        "projects": [{"name": x["name"], "role": x["role"]} for x in store.projects_for(principal)],
+        "add_machine": can_add_machine(principal),
+    }
 
 
 # projects
@@ -520,6 +569,9 @@ SENTENCES = {
     "person": _match(r"(.+) created as (\w+)", "{0} added {1} with the role {2}"),
     "device": _device_added,
     "invite": _match(r"invite for (.+)", "{0} made an invite link for {1}"),
+    "invite_new": _match(r"invite for (.+)", "{0} made a new invite link for {1}; the old ones"
+                                              " no longer work"),
+    "invite_self": _match(r"invite for (.+)", "{0} made a link to add a machine"),
     "invite_cancel": _match(r"invite for (.+)", "{0} cancelled the invite link for {1}"),
     "device_shared": _device_shared,
     "join": _match(r"device (.+)", "{0} joined with the device {1}"),
@@ -575,7 +627,8 @@ KNOWN_KINDS = tuple(SENTENCES)
 
 # the plain groups of the log page, in order, and the raw kinds each covers
 LOG_GROUPS = [
-    ("people", ["person", "person_removed", "role", "invite", "invite_cancel", "device",
+    ("people", ["person", "person_removed", "role", "invite", "invite_new", "invite_self",
+                "invite_cancel", "device",
                 "device_shared", "join", "gitlab_user", "gitlab_link"]),
     ("access", ["grant", "revoke", "request", "request_decided", "connect_request",
                 "connect_decided"]),

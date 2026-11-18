@@ -2,6 +2,7 @@
 import asyncio
 import contextlib
 import functools
+import hashlib
 import html
 import importlib.resources
 import inspect
@@ -9,6 +10,7 @@ import json
 import math
 import mimetypes
 import re
+import secrets
 import sys
 import threading
 from datetime import datetime, timezone
@@ -51,6 +53,33 @@ CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
 FONTS = ("archivo-latin.woff2",)  # the page's font files (web/fonts/, SIL OFL 1.1)
 NO_STORE = {"Cache-Control": "no-store"}
 CLEAR_COOKIE = "kaptyorka_signin=; Path=/auth/gitlab; HttpOnly; SameSite=Lax; Max-Age=0"
+
+# The /api/ routes machines and the command line call with a device token: the bridge, the MCP
+# shim (files), the hooks (brief, done-check), doctor and join (me, feed), hub-state (feed),
+# Connect GitLab from a device link (me/gitlab) and the admin commands. Every other /api/ route
+# is the page's: with sign-in with GitLab on, only a GitLab sign-in or the admin token reaches
+# it. Routes outside /api/ (/mcp, /bridge/...) are all machines'.
+MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
+    ("GET", r"/api/(brief|done-check|me|feed|settings|people|invites|rules|machines|gitlab)"),
+    ("GET", r"/api/files/\d+"),
+    ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab)"),
+    ("POST", r"/api/people/[^/]+/(gitlab|role)"),
+    ("POST", r"/api/machines/[^/]+/(grant|owner|revoke)"),
+    ("POST", r"/api/projects/[^/]+(/grant|/revoke)?"),
+    ("POST", r"/api/devices/\d+/revoke"),
+    ("POST", r"/api/legacy/(on|off)"),
+    ("PUT", r"/api/skills"),
+    ("DELETE", r"/api/(people|invites|projects)/[^/]+"),
+    ("DELETE", r"/api/gitlab"),
+)]
+SIGN_IN_FIRST = "the page needs a GitLab sign-in: open the hub in a browser and sign in with GitLab"
+
+
+def machine_route(method: str, path: str) -> bool:
+    if not path.startswith("/api/"):
+        return True
+    method = "GET" if method == "HEAD" else method
+    return any(m == method and p.fullmatch(path) for m, p in MACHINE_ROUTES)
 
 # the invite and sign-in pages: the main page's tokens, font, button and mark (web/index.html)
 _INVITE_STYLE = (
@@ -186,6 +215,34 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if principal is None:
             raise KaptyorkaError("unauthorized")
         return principal
+
+    def admin_token(p: Principal) -> bool:
+        """The admin's own token from ~/.kaptyorka/admin-token on this (the hub) machine: the
+        one device token that still opens the page while GitLab is down."""
+        if not p.is_admin() or p.legacy:
+            return False
+        try:
+            saved = (paths.home() / "admin-token").read_text().strip()
+        except (OSError, UnicodeDecodeError):
+            return False
+        if not saved:
+            return False
+        with store.lock:
+            row = store.db.execute("SELECT token_hash FROM devices WHERE id=?",
+                                   (p.device_id,)).fetchone()
+        return row is not None and secrets.compare_digest(
+            row["token_hash"], hashlib.sha256(saved.encode()).hexdigest())
+
+    def page_ok(p: Principal) -> bool:
+        """May this principal use the page? Always while sign-in with GitLab is off; once on,
+        only a GitLab sign-in or the admin token."""
+        return signin.is_session(store, p.device_id) or signin.status(store) is not None \
+            or admin_token(p)
+
+    def page_gate(scope, p: Principal) -> Optional[str]:
+        if machine_route(scope.get("method", ""), scope["path"]) or page_ok(p):
+            return None
+        return SIGN_IN_FIRST
 
     def on_hub(project: str, key: str, principal: Optional[Principal] = None) -> bool:
         """Only sessions in a registered project's folder reach the hub, besides the manager
@@ -1008,9 +1065,30 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.custom_route("/api/me", methods=["GET"])
     async def api_me(request: Request) -> Response:
         p = request.scope["state"]["principal"]
-        store.page_seen(p)  # only the page asks who it is
+        ok = page_ok(p)  # false: a device token on a hub where the page needs a GitLab sign-in
+        if ok:
+            store.page_seen(p)  # only the page asks who it is
         return JSONResponse({"person": p.person_name, "role": p.role, "device": p.device_name,
-                             "person_id": p.person_id, "gitlab_connect": signin.can_connect(store, p)})
+                             "person_id": p.person_id, "gitlab_connect": signin.can_connect(store, p),
+                             "page": ok})
+
+    @server.custom_route("/api/me/account", methods=["GET"])
+    async def api_me_account(request: Request) -> Response:
+        """The account panel: only the caller's own person, machines and projects."""
+        return JSONResponse(admin_ops.account(store, request.scope["state"]["principal"]),
+                            headers=NO_STORE)
+
+    @server.custom_route("/api/me/invite", methods=["POST"])
+    async def api_me_invite(request: Request) -> Response:
+        """Add a machine: a fresh invite for yourself, with the command that uses it."""
+        p = request.scope["state"]["principal"]
+        try:
+            code = admin_ops.invite_self(store, p)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=429 if "already have" in str(e) else 403)
+        url = f"{hub_url(request)}/i/{code}"
+        return JSONResponse({"url": url, "command": f"kaptyorka join {url}",
+                             "expires": admin_ops.invite_expires(store, code)}, headers=NO_STORE)
 
     def manager_state():
         """The manager session's state word, why it cannot start, and its worker row."""
@@ -1429,9 +1507,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         person = store.person_by_name(str(body["person"]))
         if person is None:
             return PlainTextResponse("no such person", status_code=404)
-        try:
-            code = store.invite_create(person["id"],
-                                       by=request.scope["state"]["principal"].person_name)
+        principal = request.scope["state"]["principal"]
+        try:  # replace: the Team row's New invite link; the person's older links stop working
+            code = (admin_ops.invite_renew(store, person["name"], principal) if body.get("replace")
+                    else store.invite_create(person["id"], by=principal.person_name))
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"code": code, "url": f"{hub_url(request)}/i/{code}",
@@ -1971,6 +2050,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         key = (request.client.host if request.client else "?", code)
         if limiter.blocked(key):
             return PlainTextResponse("too many failed attempts", status_code=429)
+        if signin.status(store) is None:  # its token could not open the page
+            return PlainTextResponse("sign in with GitLab instead", status_code=403)
         try:
             token, _ = store.invite_redeem(code, "web")
         except KaptyorkaError as e:
@@ -2104,7 +2185,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             await asyncio.sleep(TICK_S)
 
     app = server.streamable_http_app(host="0.0.0.0")
-    app.add_middleware(Auth, store=store, limiter=limiter)
+    app.add_middleware(Auth, store=store, limiter=limiter, gate=page_gate)
     app.add_middleware(NoWebSocket)  # outside Auth: a stray WebSocket client is not a failed login
     quiet_upgrade_warnings()
     app.state.tick = tick  # tests run a tick by hand

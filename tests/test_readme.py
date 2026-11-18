@@ -66,7 +66,7 @@ def test_readme_people_and_access_short_with_commands():
     r = (ROOT / "README.md").read_text()
     people = r.split("## People and access", 1)[1].split("\n## ", 1)[0]
     assert people.index("### The Team page") < people.index("### Commands")
-    for word in ["Waiting for you", "Add person", "Copy invite link", "Remove", "Ask for access", "Ask for",
+    for word in ["Waiting for you", "Add person", "New invite link", "Remove", "Ask for access", "Ask for",
                  "request_access", "Register again", "Archived", "7 days", "(removed)",
                  "the first person to join from a machine owns it", "switches itself off once no machine has used it for 7 days",
                  "a session door closes by itself when either session goes offline"]:

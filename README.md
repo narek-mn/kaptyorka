@@ -86,7 +86,7 @@ The hub address uses the machine's IP. Use `--host` to set another one, and `--p
 
 `join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart, and only for tools that changed: when nothing did, it says `already joined to <hub>; all set`. `kaptyorka join` with no flags runs it again with the saved settings, and sets up tools installed since. `kaptyorka join <invite link>` on a machine already joined to that hub does nothing and says so (the link is not used up); for another hub it prints `moved from <old hub> to <new hub>` and goes on. `kaptyorka join --hub <hub> --token <token>` still works, for a token you already have. On a first join it ends with this machine's `page` link.
 
-The page asks for a device token: open a link ending in `#t=<token>`, paste the token on the lock screen, or use an invite link. When the admin has set up sign-in with GitLab (see "Sign in with GitLab"), the lock screen shows only **Sign in with GitLab**; the `#t=` link and `kaptyorka page` still work. On the LAN, links to images on the page carry the token in the URL, since there is no reverse proxy; do not paste such links elsewhere.
+The page asks for a device token: open a link ending in `#t=<token>`, paste the token on the lock screen, or use an invite link. When the admin has set up sign-in with GitLab (see "Sign in with GitLab"), the lock screen shows only **Sign in with GitLab**, and the page opens only with it: a `#t=` link from a member's machine says to sign in with GitLab instead. The one exception is the admin token on the hub machine (see "Sign in with GitLab"). On the LAN, links to images on the page carry the token in the URL, since there is no reverse proxy; do not paste such links elsewhere.
 
 ## For agents
 
@@ -346,13 +346,13 @@ The hub has people, and each person has devices (one per machine). The admin is 
 The admin's **Team** tab does four things:
 
 1. **Waiting for you** (only when something waits; the count is on the tab): one line per request, "bob wants to work on proj-a", with **Yes** and **No**. Yes gives what was asked. Requests, connection requests, knocks and rule proposals all land here.
-2. **Add person**: type a name, **Add**, then **Copy** the invite link and send it. It joins one machine, within 7 days; with sign-in with GitLab, the person links their own GitLab from it. Once linked, their row shows `@username`. Until they join, their row says "hasn't joined yet" and has **Copy invite link**.
+2. **Add person**: type a name, **Add**, then **Copy** the invite link and send it. It joins one machine, within 7 days; with sign-in with GitLab, the person links their own GitLab from it. Once linked, their row shows `@username`. Until they join, their row says "hasn't joined yet". **New invite link** on any person's row, at any time, makes a fresh link and copies it; their older links stop working, so a lost or expired link is never a problem.
 3. **Remove**: on a person's row, with a question first ("Remove bob? They are signed out everywhere.").
 4. **Projects**: every project of the team's GitLab group and every project on the hub, one row each, with its description, who has access, and **On hub** or **Not on hub**. **Add to hub** registers a GitLab project with its GitLab description and repo address. A project on the hub has **Edit** (its description) and **Remove**, which asks first: its sessions leave the hub and their chats are deleted; its notes are kept. **Add project** takes a folder name and an optional description, for a project that is not in GitLab.
 
 Click a person to see every project on the hub as a box to tick. A tick gives write and saves at once; a project seen only on a session is registered on its first tick.
 
-Bob joins with `kaptyorka join <link>` on each of his machines. A member clicks **Ask for access** under their sessions on Home to see what they may use and to **Ask for** read or write access to a project, or use of a machine; an agent asks with `request_access`. To reach someone else's session, a member (or their agent) messages the manager with whom and why; the manager tells the admin, and only the admin opens a door.
+Bob joins with `kaptyorka join <link>` on each of his machines. Clicking your name, top right, shows your account: your role and GitLab user, **Your machines** (each with the OS user it runs as, and online or when last seen), your projects with your role, and **Sign out**. **Add a machine** there shows the exact `kaptyorka join` command with a fresh link for yourself, with **Copy**: it works once, for 24 hours, and you can hold 3 unused at a time. Only the admin makes links for other people. A member clicks **Ask for access** under their sessions on Home to see what they may use and to **Ask for** read or write access to a project, or use of a machine; an agent asks with `request_access`. To reach someone else's session, a member (or their agent) messages the manager with whom and why; the manager tells the admin, and only the admin opens a door.
 
 #### Projects from GitLab
 
@@ -372,7 +372,7 @@ People can open the page with their GitLab account instead of a private link: no
 2. On the hub machine, put the application id on line 1 and the secret on line 2 of `~/.kaptyorka/gitlab-oauth`, then `chmod 600 ~/.kaptyorka/gitlab-oauth`. The hub refuses a file other users can open, and says so. The secret is never logged, shown or sent anywhere but GitLab.
 3. Link yourself: on the Team page, click **GitLab name** on your row, or run `kaptyorka people gitlab alice alice-gl`. `kaptyorka gitlab status` then says `sign-in: on`.
 
-Everyone else links themselves: **Sign in with GitLab** on their invite link page, or, for someone who joined before, **Connect GitLab** under their name on their own page (`kaptyorka page`). Only a person's own invite link or device token can link them, only while they are not linked yet, and the first link wins. A GitLab account already linked to someone else, a person already linked to another account, and the `manager` account are refused. The admin can still set, change or clear anyone's link with **GitLab name** or `kaptyorka people gitlab bob bob-gl`. A leaked invite link that was already used can link someone's GitLab only until they link theirs or the link expires (7 days); `kaptyorka invites` lists it as `used` until then, and `kaptyorka invites --cancel <code>` closes it. The invite page says whose invite it is ("This invite is for bob") above the button.
+Everyone else links themselves: **Sign in with GitLab** on their invite link page, or, for someone who joined before, **Sign in with GitLab** on the page that their `kaptyorka page` link opens (it links them through that link). Only a person's own invite link or device token can link them, only while they are not linked yet, and the first link wins. A GitLab account already linked to someone else, a person already linked to another account, and the `manager` account are refused. The admin can still set, change or clear anyone's link with **GitLab name** or `kaptyorka people gitlab bob bob-gl`. A leaked invite link that was already used can link someone's GitLab only until they link theirs or the link expires (7 days); `kaptyorka invites` lists it as `used` until then, and `kaptyorka invites --cancel <code>` closes it. The invite page says whose invite it is ("This invite is for bob") above the button.
 
 How it works:
 
@@ -380,7 +380,9 @@ How it works:
 - The hub asks GitLab who signed in. A linked person gets a page sign-in of their own (a device named `gitlab-web`). Someone GitLab knows but nobody linked is told to ask the admin to add them: random GitLab users cannot get in, only people the admin added. The GitLab account's id is kept at the first sign-in, so a username that later moves to another account is refused.
 - A sign-in lasts 7 days, then the page asks again. Every 15 minutes the hub asks GitLab whether the person may still come in: a blocked or deactivated account, a refused grant or a changed link signs them out within about 15 minutes. While GitLab cannot be reached, sign-ins keep working until their 7 days end.
 - **Sign out** on the page ends a GitLab sign-in on the hub too. Changing or clearing a person's GitLab name ends their GitLab sign-ins. Removing a person ends everything.
-- The private `#t=` link keeps working, so the admin can still get in when GitLab is down. Members keep `kaptyorka page` too.
+- Once sign-in is on, the page opens only with a GitLab sign-in. Device tokens keep working for everything machines and the command line do (the bridge, the agents' tools, the hooks, `doctor`, `join`, the admin commands), but not for the page's own screens. `kaptyorka page` on a member's machine says `open <hub> and sign in with GitLab`.
+- **The emergency door:** the admin token in `~/.kaptyorka/admin-token` on the hub machine still opens the page, so the admin can get in when GitLab is down. `kaptyorka page` on the hub machine prints its link. No other device token does.
+- Without sign-in with GitLab set up, nothing of this applies: every `#t=` link opens the page.
 
 What the hub decides by itself:
 
@@ -515,7 +517,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka machine owner <host> <person>` | Admin: name a machine's owner |
 | `kaptyorka who` | List sessions online |
 | `kaptyorka status` | Show whether this machine's bridge, the hub (on the hub machine) and the manager (admin) are running; exit 1 if not |
-| `kaptyorka page` | Open your own page on the hub in a browser and print its private link (keep it to yourself: it signs you in) |
+| `kaptyorka page` | Open your own page on the hub in a browser and print its private link (keep it to yourself: it signs you in). With sign-in with GitLab on, a member's machine says to open the hub and sign in with GitLab |
 | `kaptyorka rules push [--force] <dir>` | Admin: upload the team rules folder (`RULES.md` and `skills/*.md`); stops if the hub has rule lines not in `RULES.md`, unless `--force` |
 | `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
 | `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |
