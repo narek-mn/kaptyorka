@@ -421,7 +421,8 @@ class Store:
                 raise KaptyorkaError(f"a person named {name} already exists")
             if role == "admin" and self.db.execute(
                     "SELECT 1 FROM people WHERE role='admin'").fetchone():
-                raise KaptyorkaError("there is already an admin")
+                raise KaptyorkaError("there is already an admin; add them as a member, then make"
+                                     " them an admin")
             pid = self.db.execute("INSERT INTO people (name, role, created) VALUES (?,?,?)",
                                   (name, role, self.clock())).lastrowid
         self.log_add(by or name, "person", f"{name} created as {role}")

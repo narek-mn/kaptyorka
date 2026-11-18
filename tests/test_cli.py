@@ -521,12 +521,22 @@ def test_cli_people_remove_yes_and_error(admin_hub, monkeypatch, capsys):
 
 
 def test_cli_people_role(admin_hub, capsys):
+    admin_hub["answers"][("POST", "/api/people/bob/role")] = (200, {"role": "manager", "note": ""})
     assert entry_with_exit(["people", "role", "bob", "manager"]) == 0
     assert admin_hub["calls"] == [("POST", "/api/people/bob/role", {"role": "manager"})]
     assert capsys.readouterr().out.strip() == "bob is now a manager"
-    admin_hub["answers"][("POST", "/api/people/bob/role")] = (404, "no person named bob")
+    admin_hub["answers"][("POST", "/api/people/bob/role")] = (200, {"role": "admin", "note": ""})
+    assert entry_with_exit(["people", "role", "bob", "admin"]) == 0
+    assert capsys.readouterr().out.strip() == "bob is now an admin"
+    admin_hub["answers"][("POST", "/api/people/alice/role")] = (200, {
+        "role": "member", "note": "The hub machine's emergency page link was theirs; run"
+                                  " kaptyorka start on the hub machine for a new one."})
+    assert entry_with_exit(["people", "role", "alice", "member"]) == 0
+    assert capsys.readouterr().out.splitlines()[1].startswith("The hub machine's emergency")
+    admin_hub["answers"][("POST", "/api/people/bob/role")] = (400, "bob is the last admin; make"
+                                                                   " someone else an admin first")
     assert entry_with_exit(["people", "role", "bob", "member"]) == 1
-    assert "no person named bob" in capsys.readouterr().err
+    assert "bob is the last admin" in capsys.readouterr().err
 
 
 def test_cli_people_still_lists(admin_hub, capsys):

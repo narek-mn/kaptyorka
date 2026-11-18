@@ -11,7 +11,7 @@ import kaptyorka
 from conftest import start_hub
 from helpers import call, call_error, old_knock, person, run
 from test_hub_workers import BOSS, as_token, bridge, heartbeat, ident, member, poll
-from kaptyorka import http, identity, manager, paths
+from kaptyorka import admin_ops, http, identity, manager, paths
 from kaptyorka.hub import MANAGER_FAILED, MANAGER_FIRST
 from kaptyorka.hub_feed import feed
 from kaptyorka.manager import ManagerStore
@@ -542,14 +542,16 @@ def test_pushes_once_each(hub, clock):
     mgr, me = manager_online(hub)
     hub.tick()
     texts = drain(hub, mgr, me)
+    [only] = admin_ops.admins(hub.store)  # the hub's first admin (from the shared token)
+    them = f"the admin ({only})"
     assert "worker `w-old` of alice is abandoned (unattended a day) on box-1;" \
-           " tell the admin in one line" in texts
+           f" tell {them} in one line" in texts
     assert f"bridge on box-1 (u), a shared machine, has been offline 11 minutes;" \
-           " tell the admin" in texts
-    assert "alice's workers failed to start twice (no tmux); tell the admin" in texts
-    assert "proposal from alice has waited a day: always lint; remind the admin" in texts
+           f" tell {them}" in texts
+    assert f"alice's workers failed to start twice (no tmux); tell {them}" in texts
+    assert f"proposal from alice has waited a day: always lint; remind {them}" in texts
     assert "access request from alice has waited a day: project proj-x: need it;" \
-           " remind the admin" in texts
+           f" remind {them}" in texts
     assert any(t.startswith("weekly review: read log(500)") for t in texts)
     assert len(texts) == 6
     hub.tick()
@@ -1178,3 +1180,29 @@ def test_machine_in_use_log_sentence():
     assert admin_ops.log_sentence(row) == (
         f"bob opened a session on box-1, which someone else uses heavily: {ALICE_LINE}")
     assert "machine_in_use" in dict(admin_ops.LOG_GROUPS)["machines"]
+
+
+def test_notices_name_every_admin(hub, clock):
+    now = clock[0]
+    alice, _, _ = plain(hub, "alice")
+    insert_worker(hub, "w-old", "abandoned", alice, now)
+    person(hub.store, "root", "admin")
+    first = admin_ops.admins(hub.store)[0]
+    mgr, me = manager_online(hub)
+    hub.tick()
+    texts = drain(hub, mgr, me)
+    assert "worker `w-old` of alice is abandoned (unattended a day) on box-1;" \
+           f" tell each admin ({first}, root) in one line" in texts
+
+
+def test_manager_down_notice_reaches_every_admin_page(hub, clock):
+    from kaptyorka.hub import MANAGER_UNTRUSTED
+    b = admin_bridge(hub)
+    person(hub.store, "bob", "admin")
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    ack(hub, b, o, ok=False, error=TRUST)
+    hub.tick()
+    assert MANAGER_UNTRUSTED in page_texts(hub, "root")
+    assert MANAGER_UNTRUSTED in page_texts(hub, "bob")

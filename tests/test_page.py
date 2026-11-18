@@ -197,8 +197,8 @@ def test_team_waiting_lines_and_answers(hub):
 def test_team_people_rows(hub):
     code = team_code(page(hub))
     # New invite link at any time, Remove once they joined; none on yourself
-    assert '"hasn\'t joined yet"' in code and 'v.admin ? "you"' in code
-    assert '"New invite link"' in code and 'v.admin ? null : button(' in code and 'button("Remove", "quiet-danger"' in code
+    assert '"hasn\'t joined yet"' in code and 'v.self ? "you"' in code
+    assert '"New invite link"' in code and 'v.self ? null : button(' in code and 'button("Remove", "quiet-danger"' in code
     assert '"Remove " + v.name + "? They are signed out everywhere."' in code
     assert "return !isManagerAccount(p);" in code  # the manager account is not listed
     # a tick gives write; a project seen only on a session is registered on its first tick

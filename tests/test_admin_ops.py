@@ -121,7 +121,7 @@ def test_remove_refusals(store, ws, ids):
     with pytest.raises(KaptyorkaError, match="you cannot remove yourself"):
         admin_ops.remove_person(s, ws, "alice", admin)
     other_admin = Principal(999, "x", "admin", 0, "d", False, False)
-    with pytest.raises(KaptyorkaError, match="the admin cannot be removed"):
+    with pytest.raises(KaptyorkaError, match="alice is an admin; remove their admin role first"):
         admin_ops.remove_person(s, ws, "alice", other_admin)
     with pytest.raises(KaptyorkaError, match="the manager account cannot be removed; use"
                                              " kaptyorka start --no-manager"):
@@ -190,13 +190,74 @@ def test_set_role_bounds(store, ids):
     admin_ops.set_role(store, "bob", "member", admin)
     assert store.person_by_name("bob")["role"] == "member"
     assert store.log(1)[0]["kind"] == "role"
-    for name, role in (("bob", "admin"), ("alice", "member")):
-        with pytest.raises(KaptyorkaError, match="the admin role cannot be given or taken here"):
-            admin_ops.set_role(store, name, role, admin)
-    with pytest.raises(KaptyorkaError, match="role must be member or manager"):
+    with pytest.raises(KaptyorkaError, match="role must be admin, member or manager"):
         admin_ops.set_role(store, "bob", "boss", admin)
     with pytest.raises(KaptyorkaError, match="admin only"):
         admin_ops.set_role(store, "carol", "manager", who(store, "bob"))
+    with pytest.raises(KaptyorkaError, match="admin only"):  # a member cannot promote either
+        admin_ops.set_role(store, "bob", "admin", who(store, "bob"))
+    assert store.person_by_name("bob")["role"] == "member"
+
+
+def test_promote_and_demote(store, ids):
+    assert admin_ops.set_role(store, "bob", "admin", who(store, "alice")) == {"role": "admin",
+                                                                             "note": ""}
+    assert admin_ops.admins(store) == ["alice", "bob"]
+    assert admin_ops.log_sentence(store.log(1)[0]) == "alice made bob an admin"
+    bob = who(store, "bob")
+    assert bob.is_admin() and store.project_role("proj-x", ids["bob"]) == "manage"
+    admin_ops.set_role(store, "alice", "member", bob)  # the new admin can demote the old one
+    assert admin_ops.log_sentence(store.log(1)[0]) == "bob removed alice's admin role"
+    assert admin_ops.admins(store) == ["bob"]
+    with pytest.raises(KaptyorkaError, match="admin only"):
+        admin_ops.set_role(store, "bob", "member", who(store, "alice"))
+    admin_ops.set_role(store, "alice", "admin", bob)
+    admin_ops.set_role(store, "alice", "manager", bob)  # an admin straight to manager
+    assert [admin_ops.log_sentence(r) for r in store.log(2)] == ["bob made alice a manager",
+                                                                 "bob removed alice's admin role"]
+
+
+def test_last_admin_guard(store, ids):
+    alice = who(store, "alice")
+    with pytest.raises(KaptyorkaError, match="^you are the last admin; make someone else an"
+                                             " admin first$"):
+        admin_ops.set_role(store, "alice", "member", alice)
+    assert store.person_by_name("alice")["role"] == "admin"
+    admin_ops.set_role(store, "bob", "admin", alice)
+    admin_ops.set_role(store, "alice", "member", alice)  # another admin exists: self-demote is fine
+    with pytest.raises(KaptyorkaError, match="^bob is the last admin"):
+        admin_ops.set_role(store, "bob", "manager", Principal(999, "x", "admin", 0, "d", False, False))
+    with pytest.raises(KaptyorkaError, match="bob is an admin; remove their admin role first"):
+        admin_ops.remove_person(store, None, "bob", Principal(999, "x", "admin", 0, "d", False,
+                                                              False))
+
+
+def test_manager_account_never_admin(store, ids):
+    person(store, "manager", "manager")
+    with pytest.raises(KaptyorkaError, match="the hub's manager account keeps its role"):
+        admin_ops.set_role(store, "manager", "admin", who(store, "alice"))
+    assert admin_ops.admins(store) == ["alice"]
+
+
+def test_shared_token_person_cannot_become_admin(store, ids):
+    with store.lock:
+        store.db.execute("INSERT INTO settings (key, value) VALUES (?, ?)",
+                         ("legacy:box-1", str(ids["bob"])))
+    with pytest.raises(KaptyorkaError, match="bob still uses the old shared token on box-1"):
+        admin_ops.set_role(store, "bob", "admin", who(store, "alice"))
+
+
+def test_demoting_the_emergency_admin_says_so(store, ids, tmp_path, monkeypatch):
+    from kaptyorka import paths
+    monkeypatch.setattr(paths, "home", lambda: tmp_path)
+    token = store.device_add(ids["alice"], "hub")
+    (tmp_path / "admin-token").write_text(token + "\n")
+    dev = store.authenticate(token).device_id
+    assert admin_ops.emergency_device(store) == dev
+    admin_ops.set_role(store, "bob", "admin", who(store, "alice"))
+    done = admin_ops.set_role(store, "alice", "member", who(store, "bob"))
+    assert "emergency page link was theirs; run kaptyorka start" in done["note"]
+    assert admin_ops.emergency_device(store) is None  # tied to alice, who is no admin now
 
 
 def test_invites_list_and_cancel(store, ws, ids, clock):

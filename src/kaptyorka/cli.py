@@ -120,7 +120,9 @@ def _serve(args) -> int:
 
 def _admin_device(legacy_token: str) -> str:
     """The admin's own device token (device `hub`), made on the first start and kept in
-    ~/.kaptyorka/admin-token, so the admin never depends on the shared token."""
+    ~/.kaptyorka/admin-token, so the admin never depends on the shared token. It stays with the
+    admin it was made for; once that person is no longer an admin, a new one is made for the
+    oldest admin."""
     from kaptyorka.store import Store
 
     p = paths.home() / "admin-token"
@@ -620,8 +622,16 @@ def _people_remove(args) -> int:
 
 
 def _people_role(args) -> int:
-    return _admin_do("POST", f"/api/people/{quote(args.name, safe='')}/role",
-                     {"role": args.role}, f"{args.name} is now a {args.role}")
+    got = _admin_call("POST", f"/api/people/{quote(args.name, safe='')}/role", {"role": args.role})
+    if got is None:
+        return 1
+    if got[0] != 200:
+        print(_problem(got), file=sys.stderr)
+        return 1
+    print(f"{args.name} is now {'an' if args.role == 'admin' else 'a'} {args.role}")
+    if isinstance(got[1], dict) and got[1].get("note"):
+        print(got[1]["note"])
+    return 0
 
 
 def _people_revoke(args) -> int:
@@ -1076,9 +1086,9 @@ def entry() -> None:
     pv.add_argument("name", help="the person's name")
     pv.add_argument("device", help="the device's name")
     pv.set_defaults(run=_people_revoke)
-    pl = ps.add_parser("role", help="make a person a member or a manager")
+    pl = ps.add_parser("role", help="make a person an admin, a member or a manager")
     pl.add_argument("name", help="the person's name")
-    pl.add_argument("role", choices=("member", "manager"), help="the new role")
+    pl.add_argument("role", choices=("admin", "member", "manager"), help="the new role")
     pl.set_defaults(run=_people_role)
     pg = ps.add_parser("gitlab", help="link a person to their GitLab username, for Sign in with GitLab"
                        " ('' unlinks)")

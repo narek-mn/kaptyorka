@@ -329,6 +329,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         key = mm.session_key(now) if mm.enabled() else None
         if key is None:
             return
+        names = admin_ops.admins(store)  # several admins: the manager tells each one
+        them = (f"the admin ({names[0]})" if len(names) == 1
+                else f"each admin ({', '.join(names)})")
 
         def push(push_key: str, ttl: Optional[float], text: str) -> None:
             if mm.push_once(push_key, now, ttl):
@@ -336,26 +339,26 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         for w in ws.abandoned():
             push(f"abandoned:{w['name']}", None,
                  f"worker `{w['name']}` of {w['person']} is abandoned (unattended a day)"
-                 f" on {w['host']}; tell the admin in one line")
+                 f" on {w['host']}; tell {them} in one line")
         for d in ws.shared_offline(now):
             push(f"offline:{d['id']}", 86400,
                  f"bridge on {d['host']} ({d['os_user']}), a shared machine, has been offline"
-                 f" {d['minutes']} minutes; tell the admin")
+                 f" {d['minutes']} minutes; tell {them}")
         for f in ws.failed_twice(now):
             push(f"failed:{f['person_id']}", 3600,
-                 f"{f['person']}'s workers failed to start twice ({f['error']}); tell the admin")
+                 f"{f['person']}'s workers failed to start twice ({f['error']}); tell {them}")
         old = now - manager.REMIND_AFTER_S
         for p in rs.proposals("open"):
             if p["time"] < old:
                 push(f"remind:proposal:{p['id']}", 86400,
                      f"proposal from {p['person']} has waited a day: {p['text'][:80]};"
-                     " remind the admin")
+                     f" remind {them}")
         for r in store.requests(pending_only=True):
             if r["created"] < old:
                 what = f"{r['kind']} {r['target']}: {r['why']}"
                 push(f"remind:request:{r['id']}", 86400,
                      f"access request from {r['person']} has waited a day: {what[:80]};"
-                     " remind the admin")
+                     f" remind {them}")
         push("weekly", manager.WEEKLY_S,
              "weekly review: read log(500) for repeated conflicts and corrections; file"
              " propose_rule for what repeats; never edit rules")
@@ -418,13 +421,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         failed = mm.trust_failure()
         if failed is not None and mm.push_once(f"manager-untrusted:{failed!r}", now):
             mm.set_blocked("trust")  # relaunching cannot help; start --manager clears it
-            if admin is not None:
-                names = {p["id"]: p["name"] for p in store.people()}
-                tell(f"web:{names.get(admin['person_id'], '')}", MANAGER_UNTRUSTED)
+            if admin is not None:  # every admin's page: any of them may be the one at hand
+                for name in admin_ops.admins(store):
+                    tell(f"web:{name}", MANAGER_UNTRUSTED)
         if admin is not None and mm.failures_last_hour(now) >= 2 \
                 and mm.push_once("manager-failed", now, 3600):
-            names = {p["id"]: p["name"] for p in store.people()}
-            tell(f"web:{names.get(admin['person_id'], '')}", MANAGER_FAILED)
+            for name in admin_ops.admins(store):
+                tell(f"web:{name}", MANAGER_FAILED)
         ok, _ = mm.may_launch(now)
         if not ok or admin is None:
             return
@@ -1579,11 +1582,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return denied
         body = await request.json()
         try:
-            admin_ops.set_role(store, request.path_params["name"], str(body["role"]),
-                               request.scope["state"]["principal"])
+            done = admin_ops.set_role(store, request.path_params["name"], str(body["role"]),
+                                      request.scope["state"]["principal"])
         except KaptyorkaError as e:
             return admin_error(e)
-        return Response(status_code=204)
+        return JSONResponse(done)
 
     @server.custom_route("/api/me/access", methods=["GET"])
     async def api_my_access(request: Request) -> Response:

@@ -480,6 +480,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .p-main:focus-visible { outline-offset: -2px; }
 .p-main:active { background: var(--hover); }
 .p-main.still:active { background: none; }
+.p-who { min-width: 0; display: flex; align-items: center; gap: var(--s-2); }
 .p-name { font-weight: var(--fw-semi); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .p-sum { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--fs-md); }
 .p-sum.quiet { color: var(--faint); }
@@ -492,6 +493,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .p-act { flex: none; display: flex; gap: 6px; align-items: center; justify-content: flex-end; min-width: 140px; }
 .p-act .new-link { min-width: 136px; }  /* every chevron in one column */
 .p-line:has(.confirm) .p-act { min-width: 0; }
+.p-act:has(.confirm) > .btn { display: none; }  /* one question at a time on a row */
 .p-act .confirm { max-width: 420px; }
 .p-projects { display: flex; flex-wrap: wrap; gap: 6px; padding: var(--s-1) 10px var(--s-4) 58px; background: var(--surface2);
   animation: drop var(--dur-2) var(--ease-out); }
@@ -1823,7 +1825,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       var i = k.indexOf("\n");
       if (k.slice(0, i) === p.name) { if (pending[k]) held[k.slice(i + 1)] = 1; else delete held[k.slice(i + 1)]; }
     });
-    return { name: p.name, admin: p.role === "admin",
+    return { name: p.name, admin: p.role === "admin", self: !!me && p.name === me.person,
+             admins: feed.people.filter(function (x) { return x.role === "admin"; }).length,
              online: live.some(function (d) { return d.last_used != null && now - d.last_used < 30; }) ||
                      feed.agents.some(function (a) { return a.person === p.name; }),
              joined: live.some(function (d) { return d.last_used != null; }),
@@ -1864,6 +1867,24 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       }, function (e) { teamErr("team-err", e.message); throw e; });
     });
   }
+  /* Make admin / Remove admin: the hub keeps at least one admin and says so if asked to drop it */
+  function setAdmin(v, b, on) {
+    var text = on ? "Make " + v.name + " an admin? They can change everything on the hub."
+                  : v.self ? "Remove your own admin role? You lose the Team page."
+                  : "Remove " + v.name + "'s admin role? They keep their machines.";
+    confirmInline(b, text, on ? "Make admin" : "Remove admin", function () {
+      return api(apiPath("/api/people/", v.name, "/role"), { role: on ? "admin" : "member" }).then(function (r) { return r.json(); })
+        .then(function (r) {
+          teamErr("team-err", "");
+          var ok = $("team-ok");
+          ok.hidden = false;
+          ok.textContent = (on ? v.name + " is now an admin." : v.self ? "You are no longer an admin." : v.name + " is no longer an admin.") + (r.note ? " " + r.note : "");
+          clearTimeout(ok._t); ok._t = setTimeout(function () { ok.hidden = true; }, 8000);
+          if (v.self && !on) return get("/api/me").then(start);
+          return get("/api/feed").then(function (f) { feed = f; });
+        }, function (e) { teamErr("team-err", e.message); throw e; });
+    }, on ? { edit: true } : null);
+  }
   function gitlabOn() { return !!(gitlab && gitlab.on); }
   function editGitlab(v, b) {
     confirmInline(b, null, "Save", function (text) {
@@ -1875,10 +1896,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   function personRow(v) {
     var open = !v.admin && openPerson === v.name, id = "pp-" + v.name.replace(/[^A-Za-z0-9_-]/g, "_");
     var held = v.projects.filter(function (n) { return v.held[n]; });
-    var summary = v.admin ? "you" : !v.joined ? "hasn't joined yet" : held.length ? held.join(", ") : "no projects";
+    var summary = v.self ? "you" : v.admin ? "every project" : !v.joined ? "hasn't joined yet" : held.length ? held.join(", ") : "no projects";
     var lead = avatar("person", v.name, { dot: v.online });
     lead.title = v.online ? "online" : "offline";
-    var parts = [lead, el("b", { "class": "p-name", text: v.name }),
+    var who = el("span", { "class": "p-who" }, [el("b", { "class": "p-name", text: v.name }), v.admin ? chip("Admin", "active", "p-role") : null]);
+    var parts = [lead, who,
                  el("span", { "class": "p-sum" + (v.joined && held.length ? "" : " quiet"), title: summary, text: summary })];
     var main;
     if (v.admin) main = el("div", { "class": "p-main still" }, parts);
@@ -1889,7 +1911,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     }
     /* yourself: Add a machine in the account panel instead */
     var copied = cueOn("copied:" + v.name), act = null;
-    var invite = v.admin ? null : button(copied ? [icon("i-check", 14), el("span", { "class": "lbl", text: "Copied" })]
+    var invite = v.self ? null : button(copied ? [icon("i-check", 14), el("span", { "class": "lbl", text: "Copied" })]
                                : [icon("i-link", 14), el("span", { "class": "lbl", text: "New invite link" })],
                         "new-link" + (copied ? " copied" : ""), function () { newInvite(v, invite); },
                         { "aria-label": copied ? "Copied" : "New invite link for " + v.name,
@@ -1904,7 +1926,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
                   { title: v.gitlab ? "Signs in with GitLab as " + v.gitlab + ". Click to change" : "Add their GitLab username so they can sign in with GitLab",
                     "aria-label": (v.gitlab ? "Change" : "Add") + " " + v.name + "'s GitLab username" });
     }
-    var acts = [gl, invite, act].filter(Boolean);
+    var role = null;
+    if (!v.admin) role = button("Make admin", "", function () { setAdmin(v, role, true); }, { "aria-label": "Make " + v.name + " an admin" });
+    else if (!v.self || v.admins > 1) role = button("Remove admin", "quiet-danger", function () { setAdmin(v, role, false); },
+                                                   { "aria-label": v.self ? "Remove your own admin role" : "Remove " + v.name + "'s admin role" });
+    var acts = [gl, invite, role, act].filter(Boolean);
     var row = el("div", { "class": "person" + (open ? " open" : ""), "data-person": v.name }, [
       el("div", { "class": "p-line" }, [main, acts.length ? el("span", { "class": "p-act" }, acts) : null])]);
     if (linkFor && linkFor.name === v.name) {

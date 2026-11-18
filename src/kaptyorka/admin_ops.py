@@ -59,7 +59,7 @@ def remove_person(store, ws, name: str, by: Principal) -> dict:
         if pid == by.person_id:
             raise KaptyorkaError("you cannot remove yourself")
         if row["role"] == "admin":
-            raise KaptyorkaError("the admin cannot be removed")
+            raise KaptyorkaError(f"{name} is an admin; remove their admin role first")
         if name == MANAGER and row["role"] == "manager":
             raise KaptyorkaError("the manager account cannot be removed;"
                                  " use kaptyorka start --no-manager")
@@ -125,20 +125,60 @@ def _remove(store, pid: int, name: str, new: str, now: float) -> tuple:
     return devices, doors, grants, requests, work, owned
 
 
-def set_role(store, name: str, role: str, by: Principal) -> None:
-    _admin(by)
-    if role == "admin":
-        raise KaptyorkaError("the admin role cannot be given or taken here")
-    if role not in ("member", "manager"):
-        raise KaptyorkaError("role must be member or manager")
+ROLE_CHOICES = ("admin", "member", "manager")
+
+
+def admins(store) -> List[str]:
+    """The names of the hub's admins, oldest first."""
     with store.lock:
-        row = _live_person(store.db, name)
-        if row["role"] == "admin":
-            raise KaptyorkaError("the admin role cannot be given or taken here")
-        if row["name"] == MANAGER and row["role"] == "manager":
-            raise KaptyorkaError("the manager account keeps its role")
-        store.db.execute("UPDATE people SET role=? WHERE id=?", (role, row["id"]))
-    store.log_add(by.person_name, "role", f"{row['name']} -> {role}")
+        return [r["name"] for r in store.db.execute(
+            "SELECT name FROM people WHERE role='admin' AND removed_at IS NULL ORDER BY id")]
+
+
+def set_role(store, name: str, role: str, by: Principal) -> dict:
+    """Give a person a role. Several admins may be; the last one cannot go, and the hub's own
+    manager account keeps its role. Returns {"role", "note"}: the note says what the change
+    stops on the hub machine ("" when nothing)."""
+    _admin(by)
+    if role not in ROLE_CHOICES:
+        raise KaptyorkaError("role must be admin, member or manager")
+    emergency = emergency_device(store)
+    with store.lock:
+        db = store.db
+        row = _live_person(db, name)
+        name, old = row["name"], row["role"]
+        if name == MANAGER and old == "manager":
+            raise KaptyorkaError("the hub's manager account keeps its role")
+        if old == role:
+            return {"role": role, "note": ""}
+        if role == "admin":
+            on = db.execute("SELECT value FROM settings WHERE key='legacy_enabled'").fetchone()
+            mapped = db.execute("SELECT key FROM settings WHERE key LIKE 'legacy:%' AND value=?",
+                                (str(row["id"]),)).fetchone()
+            if mapped is not None and (on is None or on["value"] != "0"):
+                # anyone holding the shared token on that machine would be an admin
+                raise KaptyorkaError(f"{name} still uses the old shared token on"
+                                     f" {mapped['key'][len('legacy:'):]}; turn the shared token"
+                                     " off first")
+        if old == "admin" and db.execute(
+                "SELECT 1 FROM people WHERE role='admin' AND removed_at IS NULL AND id<>?",
+                (row["id"],)).fetchone() is None:
+            raise KaptyorkaError(("you are" if row["id"] == by.person_id else f"{name} is")
+                                 + " the last admin; make someone else an admin first")
+        mine = emergency is not None and db.execute(
+            "SELECT 1 FROM devices WHERE id=? AND person_id=?", (emergency, row["id"])).fetchone()
+        db.execute("UPDATE people SET role=? WHERE id=?", (role, row["id"]))
+    if role == "admin":
+        store.log_add(by.person_name, "admin_given", name)
+    elif old == "admin":
+        store.log_add(by.person_name, "admin_taken", name)
+    if role != "admin" and old != "admin" or role == "manager":
+        store.log_add(by.person_name, "role", f"{name} -> {role}")
+    note = ""
+    if old == "admin" and mine:
+        note = ("The hub machine's emergency page link was theirs; run kaptyorka start on the"
+                " hub machine for a new one.")
+    return {"role": role, "note": note}
 
 
 # invites
@@ -673,6 +713,8 @@ SENTENCES = {
     "gitlab_signout": _match(r"(.+)", "{0}'s GitLab sign-in ended: {1}"),
     "person_removed": _match(r"(.+)", "{0} removed {1} from the team"),
     "role": _match(r"(.+) -> (\w+)", "{0} made {1} a {2}"),
+    "admin_given": _match(r"(.+)", "{0} made {1} an admin"),
+    "admin_taken": _match(r"(.+)", "{0} removed {1}'s admin role"),
     "page_login": _match(r"(.*)", "{0} opened the page ({1})"),
     "request": _match(r"(\w+):(.+)", "{0} asked for access to the {1} {2}"),
     "request_decided": _match(r"(\w+):(.+) -> (.+): (\w+).*",
@@ -711,7 +753,7 @@ KNOWN_KINDS = tuple(SENTENCES)
 
 # the plain groups of the log page, in order, and the raw kinds each covers
 LOG_GROUPS = [
-    ("people", ["person", "person_removed", "role", "invite", "invite_new", "invite_self",
+    ("people", ["person", "person_removed", "role", "admin_given", "admin_taken", "invite", "invite_new", "invite_self",
                 "machine_label", "browsers_out",
                 "invite_cancel", "device",
                 "device_shared", "join", "gitlab_user", "gitlab_link"]),

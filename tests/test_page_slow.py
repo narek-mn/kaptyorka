@@ -370,7 +370,7 @@ def test_team_add_person_give_project_remove(admin_page):
     page.go(url)
     page.wait(f'!!{team_row("bob")}')
     assert page.js('document.getElementById("waiting").hidden')  # nothing waits: no box
-    assert page.js(f'{team_row("alice")}.textContent') == "aliceyou"
+    assert page.js(f'{team_row("alice")}.textContent') == "aliceAdminyou"
     assert page.js(f'{team_row("alice")}.querySelector("button")') is None  # nothing to do on yourself
     # Add person: the name field has the focus; Add shows the link with Copy in the same place
     page.js('document.getElementById("add-person-btn").click()')
@@ -388,7 +388,7 @@ def test_team_add_person_give_project_remove(admin_page):
     assert page.wait('document.getElementById("add-copy").textContent === "Copied" && navigator.clipboard.readText()') == link
     page.wait(f'!!{team_row("carol")}')
     assert page.js(f'{team_row("carol")}.querySelector(".p-sum").textContent') == "hasn't joined yet"
-    assert page.js(f'{team_row("carol")}.querySelector(".p-act").textContent') == "New invite link"
+    assert page.js(f'{team_row("carol")}.querySelector(".p-act").textContent') == "New invite linkMake admin"
     page.js('document.getElementById("add-done").click()')
     assert page.js('document.getElementById("add-box").hidden && !document.getElementById("add-person-btn").hidden')
     # bob: open, tick proj-a (only a session had it), Saved; it is registered and he may write
@@ -1116,3 +1116,53 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
         stop()
         store.close()
         lab.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_team_make_and_remove_admin(tmp_path, w, h):
+    """Make admin on a member's row asks first, then the row carries the Admin pill and Remove
+    admin; your own row offers Remove admin only while another admin exists. Screenshots to
+    KAPTYORKA_SHOTS."""
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    _, token = person(store, "alice", "admin")
+    bob, bob_t = person(store, "bob")
+    person(store, "carol")
+    store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(bob_t))
+    row = 'document.querySelector("#people-rows [data-person=\\"{}\\"]")'.format
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    try:
+        with chrome(w, h) as page:
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=team")
+            page.wait(f'!!{row("bob")}')
+            assert page.js(f'{row("alice")}.querySelector(".p-role").textContent') == "Admin"
+            assert page.js(f'!{row("bob")}.querySelector(".p-role")')
+            assert "Remove admin" not in page.js(f'{row("alice")}.textContent')  # the only admin
+            assert page.js(wide)
+            page.screenshot(shots / f"admin-rows-{tag}.png")
+            click(page, '#people-rows [data-person="bob"]', "Make admin")
+            page.wait(f'!!{row("bob")}.querySelector(".confirm")')
+            assert page.js(f'{row("bob")}.querySelector(".confirm span").textContent') == \
+                "Make bob an admin? They can change everything on the hub."
+            assert page.js(wide)
+            page.screenshot(shots / f"admin-confirm-{tag}.png")
+            click(page, '#people-rows [data-person="bob"] .confirm', "Make admin")
+            page.wait(f'{row("bob")} && !!{row("bob")}.querySelector(".p-role")')
+            assert store.person_by_name("bob")["role"] == "admin"
+            assert page.js('document.getElementById("team-ok").textContent') == "bob is now an admin."
+            assert "Remove admin" in page.js(f'{row("alice")}.textContent')  # now there are two
+            page.screenshot(shots / f"admin-two-{tag}.png")
+            click(page, '#people-rows [data-person="bob"]', "Remove admin")
+            page.wait(f'!!{row("bob")}.querySelector(".confirm")')
+            page.screenshot(shots / f"admin-remove-confirm-{tag}.png")
+            click(page, '#people-rows [data-person="bob"] .confirm', "Remove admin")
+            page.wait(f'{row("bob")} && !{row("bob")}.querySelector(".p-role")')
+            assert store.person_by_name("bob")["role"] == "member"
+    finally:
+        stop()
+        store.close()

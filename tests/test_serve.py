@@ -123,6 +123,30 @@ def test_start_replaces_a_revoked_admin_device(home, capsys, monkeypatch):
     assert second != first and f"/#t={second}" in capsys.readouterr().out
 
 
+def test_start_reissues_the_admin_token_when_its_admin_is_demoted(home, capsys, monkeypatch):
+    from kaptyorka.store import Store
+
+    monkeypatch.setattr(service, "install", lambda *a, **k: [])
+    with pytest.raises(SystemExit):
+        run_cli(["start", "--port", "9999", "--host", "10.0.0.5"])
+    first = (paths.home() / "admin-token").read_text().strip()
+    store = Store(paths.home() / "hub.db")
+    old = store.authenticate(first)
+    bob = store.person_create("bob", "member")
+    with store.lock:  # bob becomes an admin and the first one is demoted
+        store.db.execute("UPDATE people SET role='admin' WHERE id=?", (bob,))
+        store.db.execute("UPDATE people SET role='member' WHERE id=?", (old.person_id,))
+    store.close()
+    with pytest.raises(SystemExit):
+        run_cli(["start"])
+    second = (paths.home() / "admin-token").read_text().strip()
+    store = Store(paths.home() / "hub.db")
+    p = store.authenticate(second)
+    assert second != first and p.person_name == "bob" and p.is_admin()
+    assert store.authenticate(first).role == "member"  # the old one stays the old person's
+    store.close()
+
+
 def test_who_prints_table(hub, home, capsys):
     hub.store.heartbeat("m1", [{"key": "k1", "tool": "claude", "project": "proj", "label": "my-label"}])
     paths.save_config({"hub": hub.url, "token": hub.token})

@@ -49,10 +49,10 @@ machine_or_wait, reason)`. Pick the machine, another machine, or `wait`.
 whether both can work normally now; decide with `work_decide` (the machine, another machine, \
 or `wait`) and tell both people why in one line each.
 - Someone opened a session on a machine another person uses heavily: it cannot be held. Send \
-that session one line on who uses what, and tell the admin in one line. Never refuse it.
+that session one line on who uses what, and tell each admin in one line. Never refuse it.
 - An abandoned worker, a shared-machine bridge that is offline, or a launch that failed \
-twice: tell the admin's online session in one line with `send`.
-- A proposal or an access request that has waited a day: remind the admin in one line.
+twice: tell each admin the notice names, in one line with `send` to their online session.
+- A proposal or an access request that has waited a day: remind each admin in one line.
 - Weekly: read `log(500)`, look for repeated conflicts and corrections, and file \
 `propose_rule` for each pattern.
 
@@ -159,7 +159,7 @@ def text_arrival(person: str, session: str, machine: str, load: List[str]) -> st
     """A session opened directly on a machine someone else uses heavily: a warning only."""
     return (f"{person} opened session {session} on {machine}, where {'; '.join(load)} right"
             f" now. It cannot be held: send that session one line on who uses what, so they"
-            " know they may slow each other down, and tell the admin in one line."
+            " know they may slow each other down, and tell each admin in one line."
             " Do not refuse anything.")
 
 

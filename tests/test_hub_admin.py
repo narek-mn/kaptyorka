@@ -61,10 +61,15 @@ def test_remove_person_route(app):
 
 
 def test_role_route(app):
-    assert call(app, "alice", "POST", "/api/people/bob/role", {"role": "manager"})[0] == 204
+    assert call(app, "alice", "POST", "/api/people/bob/role", {"role": "manager"})[0] == 200
     assert app.store.person_by_name("bob")["role"] == "manager"
-    status, text = call(app, "alice", "POST", "/api/people/bob/role", {"role": "admin"})
-    assert (status, text) == (400, "the admin role cannot be given or taken here")
+    status, text = call(app, "alice", "POST", "/api/people/alice/role", {"role": "member"})
+    assert (status, text) == (400, "you are the last admin; make someone else an admin first")
+    assert call(app, "alice", "POST", "/api/people/carol/role", {"role": "admin"}) == \
+        (200, {"role": "admin", "note": ""})
+    assert call(app, "bob", "POST", "/api/people/bob/role", {"role": "admin"}) == (403, "admin only")
+    assert call(app, "carol", "POST", "/api/people/alice/role", {"role": "member"})[0] == 200
+    assert call(app, "alice", "GET", "/api/people") == (403, "admin only")
 
 
 def test_invite_routes(app):

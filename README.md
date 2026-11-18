@@ -329,7 +329,7 @@ On the page, Home lists it with its state (`up`, `asleep`, `off`). When it is no
 
 ## People and access
 
-The hub has people, and each person has devices (one per machine). The admin is the first person. Everyone else comes by invite. Access is decided by plain code, by role:
+The hub has people, and each person has devices (one per machine). The first admin is the first person; there may be several admins, all with the same rights. Everyone else comes by invite. Access is decided by plain code, by role:
 
 | Level | Role | What it allows |
 |---|---|---|
@@ -347,7 +347,7 @@ The admin's **Team** tab does four things:
 
 1. **Waiting for you** (only when something waits; the count is on the tab): one line per request, "bob wants to work on proj-a", with **Yes** and **No**. Yes gives what was asked. Requests, connection requests, knocks and rule proposals all land here.
 2. **Add person**: type a name, **Add**, then **Copy** the invite link and send it. It joins one machine, within 7 days; with sign-in with GitLab, the person links their own GitLab from it. Once linked, their row shows `@username`. Until they join, their row says "hasn't joined yet". **New invite link** on any person's row, at any time, makes a fresh link and copies it; their older links stop working, so a lost or expired link is never a problem.
-3. **Remove**: on a person's row, with a question first ("Remove bob? They are signed out everywhere.").
+3. **Remove**: on a person's row, with a question first ("Remove bob? They are signed out everywhere."). **Make admin** and **Remove admin** on a row change the admin role, each with a question first; admin rows carry an **Admin** pill. See "Admins".
 4. **Projects**: every project of the team's GitLab group and every project on the hub, one row each, with its description, who has access, and **On hub** or **Not on hub**. **Add to hub** registers a GitLab project with its GitLab description and repo address. A project on the hub has **Edit** (its description) and **Remove**, which asks first: its sessions leave the hub and their chats are deleted; its notes are kept. **Add project** takes a folder name and an optional description, for a project that is not in GitLab.
 
 Click a person to see every project on the hub as a box to tick. A tick gives write and saves at once; a project seen only on a session is registered on its first tick.
@@ -390,6 +390,12 @@ What the hub decides by itself:
 - **Old shared token**: it switches itself off once no machine has used it for 7 days. A machine still on it is told so, with the command to switch it back on (`kaptyorka shared-token on`) or to join properly.
 - **Doors**: a Yes opens a door; a session door closes by itself when either session goes offline.
 
+### Admins
+
+Several people can be admins; each one has every admin right. To add one: **Make admin** on their Team row, or `kaptyorka people role bob admin`. To take it away: **Remove admin**, or `kaptyorka people role bob member`. The hub refuses to remove or demote the last admin ("bob is the last admin; make someone else an admin first"), so you can demote yourself only while another admin exists. The hub's own `manager` account never becomes an admin, and a person the old shared token still speaks for cannot become one until the shared token is off. Remove someone's admin role before removing them from the team. The log says "alice made bob an admin" and "alice removed bob's admin role".
+
+To hand the hub over: make the new person an admin, let them sign in, then they (or you) remove your admin role. The emergency link (`~/.kaptyorka/admin-token` on the hub machine) stays with the admin it was made for; once that person is no longer an admin, it stops opening the page, and the next `kaptyorka start` on the hub machine makes a new one for the oldest admin and prints its link. The manager runs through an admin's bridge on the hub machine, so keep the person whose machine that is an admin while the hub stays there. Notices for the admin go to every admin: the manager names each one, and its failures reach every admin's page.
+
 ### Commands
 
 Everything else stays in the command line. Every command prints one plain sentence when it fails and exits with 1; `kaptyorka <command> --help` explains each one.
@@ -399,7 +405,7 @@ kaptyorka invite bob                   # adds bob if new, prints the link
 kaptyorka invites                      # open links (and used ones that can still link GitLab); --cancel <code> stops one
 kaptyorka people                       # people, roles, devices, last use
 kaptyorka people revoke bob laptop     # sign out one lost device; bob stays
-kaptyorka people role bob manager      # or member
+kaptyorka people role bob admin        # or member, or manager
 kaptyorka people gitlab bob bob-gl     # bob signs in with the GitLab user bob-gl; '' unlinks
 kaptyorka people remove bob            # asks first; --yes skips it
 kaptyorka grant bob proj-a:read        # read, write or manage; or machine:box-1
@@ -414,7 +420,7 @@ kaptyorka gitlab status                # address, group, token file, how many pr
 kaptyorka gitlab off                   # stop listing; projects on the hub stay
 ```
 
-Removing bob signs out all his devices, closes the workers he started, deletes his open invites, closes his doors, and drops his access, his requests and his open work requests. Machines he owned have no owner afterwards. A worker whose machine cannot take the close order may still run there: the command and the page name it. His messages, notes and the log stay and show him as "bob (removed)". His name can be used again. It refuses to remove the admin, the `manager` account, or a person whose machine still uses the old shared token.
+Removing bob signs out all his devices, closes the workers he started, deletes his open invites, closes his doors, and drops his access, his requests and his open work requests. Machines he owned have no owner afterwards. A worker whose machine cannot take the close order may still run there: the command and the page name it. His messages, notes and the log stay and show him as "bob (removed)". His name can be used again. It refuses to remove an admin (remove their admin role first), the `manager` account, or a person whose machine still uses the old shared token.
 
 Removing a project archives it: everyone loses their role in it, and only the admin can read its notes, under **Archived**, read-only. **Register again** with `kaptyorka project add proj-a`: it comes back with its notes and its old description, and nobody has a role in it until the admin grants one.
 
