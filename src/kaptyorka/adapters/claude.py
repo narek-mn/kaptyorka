@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from kaptyorka import offhub
+from kaptyorka import offhub, paths
 from kaptyorka.adapters.base import (DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, login_output,
                                      mentions_hook, merge_json, write_atomic)
 
@@ -47,6 +47,38 @@ def hook_entry(kaptyorka: str, name: str) -> dict:
 def hooks(kaptyorka: str) -> dict:
     """The settings `hooks` block that `configure` installs, on its own."""
     return {event: [hook_entry(kaptyorka, name)] for event, name in HOOKS}
+
+
+STATUS_SAVE = "statusline.json"  # under ~/.kaptyorka: the status line join replaced, for leave
+
+
+def _saved_status() -> Optional[dict]:
+    try:
+        st = json.loads((paths.home() / STATUS_SAVE).read_text())
+    except (OSError, ValueError):
+        return None
+    return st if isinstance(st, dict) and isinstance(st.get("ours"), str) else None
+
+
+def _status_argv(command) -> List[str]:
+    try:
+        return shlex.split(command) if isinstance(command, str) else []
+    except ValueError:
+        return []
+
+
+def _our_status(command, kaptyorka: str = "") -> bool:
+    """A status line command `join` wrote: `<kaptyorka> statusline [-- <their command>]`."""
+    argv = _status_argv(command)
+    saved = _saved_status()
+    return (saved is not None and command == saved["ours"]) or (
+        len(argv) >= 2 and argv[1] == "statusline"
+        and (argv[0] == kaptyorka or os.path.basename(argv[0]) == "kaptyorka"))
+
+
+def status_command(kaptyorka: str, original: Optional[str]) -> str:
+    exe = shlex.quote(kaptyorka)
+    return f"{exe} statusline -- {shlex.quote(original)}" if original else f"{exe} statusline"
 
 
 def _same_start(pid: int, proc_start) -> Optional[bool]:
@@ -233,7 +265,87 @@ class ClaudeAdapter:
             self.log(f"left alone, not valid JSON: {settings}")
         elif result == "changed":
             lines.append(f"Claude Code: kaptyorka hooks added to {settings}")
-        return lines + self.install_command(kaptyorka)
+        return lines + self.wire_status(kaptyorka) + self.install_command(kaptyorka)
+
+    def wire_status(self, kaptyorka: str) -> List[str]:
+        """Put the hub field in the status line. With none, the line shows only the field; with
+        one of the person's own, `kaptyorka statusline -- <theirs>` runs it and appends the field.
+        What it replaced is kept in ~/.kaptyorka/statusline.json, for leave."""
+        said: List[str] = []
+
+        def update(data: dict) -> bool:
+            cur = data.get("statusLine")
+            if cur is not None and not isinstance(cur, dict):
+                return False  # a shape we do not know: leave it alone
+            cmd = cur.get("command") if cur else None
+            saved = _saved_status()
+            if cur and _our_status(cmd, kaptyorka):
+                if saved is not None:
+                    original = saved.get("original")
+                    theirs = original.get("command") if isinstance(original, dict) else None
+                else:  # the saved file is gone: what we wrap is in the command itself
+                    argv = _status_argv(cmd)
+                    theirs = " ".join(argv[3:]) if argv[2:3] == ["--"] else None
+                    original = {"type": "command", "command": theirs} if theirs else None
+                want = status_command(kaptyorka, theirs)
+                if cmd == want and saved is not None:
+                    return False
+                self._save_status(want, original)
+                cur["command"] = want
+                return True
+            if cur and (cur.get("type", "command") != "command" or not isinstance(cmd, str) or not cmd.strip()):
+                return False
+            want = status_command(kaptyorka, cmd if cur else None)
+            self._save_status(want, dict(cur) if cur else None)
+            if cur:
+                data["statusLine"] = {**cur, "command": want}
+                said.append("Claude Code: added the hub field after your status line;"
+                            " kaptyorka leave puts yours back as it was")
+            else:
+                data["statusLine"] = {"type": "command", "command": want, "padding": 0}
+                said.append("Claude Code: the status line shows the hub field (kaptyorka leave removes it)")
+            return True
+
+        settings = self.home / ".claude" / "settings.json"
+        if merge_json(settings, update) == "broken":
+            return []  # configure already said so
+        return said
+
+    @staticmethod
+    def _save_status(ours: str, original: Optional[dict]) -> None:
+        write_atomic(paths.home() / STATUS_SAVE, json.dumps({"ours": ours, "original": original}))
+
+    def unwire_status(self) -> List[str]:
+        """Put back the status line `join` replaced, exactly; one changed since is left alone."""
+        said: List[str] = []
+        saved = _saved_status()
+
+        def update(data: dict) -> bool:
+            cur = data.get("statusLine")
+            cmd = cur.get("command") if isinstance(cur, dict) else None
+            if not cur or not _our_status(cmd):
+                return False
+            if saved is not None and cmd == saved["ours"]:
+                original = saved.get("original")
+            else:  # no saved file: unwrap the command itself
+                argv = _status_argv(cmd)
+                theirs = " ".join(argv[3:]) if argv[2:3] == ["--"] else None
+                original = {**cur, "command": theirs} if theirs else None
+            if isinstance(original, dict):
+                data["statusLine"] = original
+                said.append("Claude Code: your status line is back as it was")
+            else:
+                del data["statusLine"]
+                said.append("Claude Code: hub field removed from the status line")
+            return True
+
+        settings = self.home / ".claude" / "settings.json"
+        merge_json(settings, update)
+        try:
+            (paths.home() / STATUS_SAVE).unlink()
+        except OSError:
+            pass
+        return said
 
     def unconfigure(self) -> List[str]:
         lines = []
@@ -273,4 +385,4 @@ class ClaudeAdapter:
             self.log(f"left alone, not valid JSON: {settings}")
         elif result == "changed":
             lines.append(f"Claude Code: kaptyorka hooks removed from {settings}")
-        return lines
+        return lines + self.unwire_status()

@@ -975,7 +975,25 @@ def _doctor(args) -> int:
     return doctor.run(paths.load_config(), fix=args.fix)
 
 
+def _hub_state(args) -> int:
+    from kaptyorka import hubstate
+
+    return hubstate.main_state(args)
+
+
+def _statusline(args) -> int:
+    from kaptyorka import hubstate
+
+    return hubstate.main_statusline(args)
+
+
 def entry() -> None:
+    argv = sys.argv[1:]
+    # a status line runs these on every update: skip building the whole parser
+    if len(argv) == 2 and argv[0] == "hub-state" and not argv[1].startswith("-"):
+        sys.exit(_hub_state(argparse.Namespace(session_id=argv[1])))
+    if argv[:1] == ["statusline"] and "-h" not in argv[1:2] and "--help" not in argv[1:2]:
+        sys.exit(_statusline(argparse.Namespace(command=argv[1:])))
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents: run the hub, invite people, give them access to projects.")
     p.add_argument("--version", action="version", version=f"kaptyorka {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="{start,join,leave,stop,update,remove,invite,people,"
@@ -1089,6 +1107,15 @@ def entry() -> None:
                    ).set_defaults(run=_status)
     sub.add_parser("page", help="open your own page on the hub (prints its private link)"
                    ).set_defaults(run=_page)
+    # for status lines, set up by join; no help text keeps them out of the list
+    hs = sub.add_parser("hub-state", description="print on, off or lost: whether a Claude Code session"
+                        " is on the hub (for status lines; never waits on the network)")
+    hs.add_argument("session_id", help="the Claude Code session id")
+    hs.set_defaults(run=_hub_state)
+    sl = sub.add_parser("statusline", description="Claude Code status line: runs your own command"
+                        " (after --) and adds the hub field; join sets it up")
+    sl.add_argument("command", nargs=argparse.REMAINDER, help="-- and your own status line command")
+    sl.set_defaults(run=_statusline)
     d = sub.add_parser("doctor", help="check this machine's setup; --fix repairs what it can")
     d.add_argument("--fix", action="store_true", help="re-wire failing tools and restart a stopped bridge")
     d.set_defaults(run=_doctor)
