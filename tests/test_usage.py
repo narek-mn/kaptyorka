@@ -288,3 +288,24 @@ def test_jetson_reports_gpu_busy_only(tmp_path, monkeypatch):
     # a Jetson's GPU without per-user memory is never "held", but its busy % shows
     assert usage.short({"gpus": [{"index": 0, "util": 61.0, "mem": None, "total": None}],
                         "users": {}}) == "GPU 61%"
+
+
+def test_tegrastats_stops_at_its_first_gpu_line(tmp_path, monkeypatch):
+    """A real tegrastats-like child that keeps running: the reading ends at the first GR3D
+    line, well inside the 2 s cap, and the child is killed and reaped."""
+    import sys
+    monkeypatch.setattr(usage, "_nvidia_smi", lambda: None)
+    monkeypatch.setattr(usage.shutil, "which", lambda name: "/usr/bin/" + name
+                        if name == "tegrastats" else None)
+    kids = []
+    script = ("import sys, time; print('RAM 1/2MB', flush=True);"
+              " print('RAM 1/2MB GR3D_FREQ 42%@[1300]', flush=True); time.sleep(30)")
+
+    def popen(cmd, **kw):
+        kids.append(subprocess.Popen([sys.executable, "-c", script], **kw))
+        return kids[-1]
+    s = usage.Sampler(fake_proc(tmp_path, {}), popen=popen, sys_root=tmp_path / "none")
+    t0 = time.monotonic()
+    assert s.read()["gpus"][0]["util"] == 42.0
+    assert time.monotonic() - t0 < 1.5
+    assert kids[0].returncode is not None  # reaped

@@ -544,8 +544,9 @@ class Store:
 
     def device_move(self, device_id: int, to_name: str, by: str) -> dict:
         """Give a joined machine (device) to another person, without joining again: its token
-        keeps working and now speaks for them. Its sessions move with it; session doors of
-        those sessions close; the old person's ownership of the host follows when this was
+        keeps working and now speaks for them. Its running sessions (online now) move with it
+        and their session doors close; older sessions stay the old person's, with their
+        messages, so the new owner never inherits that history; the old person's ownership of the host follows when this was
         their last device there. Returns {"device", "from", "to"}."""
         with self.lock:
             d = self.db.execute(
@@ -566,8 +567,8 @@ class Store:
             if to["id"] == d["person_id"]:
                 raise KaptyorkaError(f"it is already {to['name']}'s")
             old, new, now = d["person_id"], to["id"], self.clock()
-            keys = [r["key"] for r in self.db.execute("SELECT key FROM agents WHERE device_id=?",
-                                                      (device_id,))]
+            keys = [r["key"] for r in self.db.execute(
+                "SELECT key FROM agents WHERE device_id=? AND last_seen>?", (device_id, now - ONLINE_S))]
             self.db.execute("UPDATE devices SET person_id=?, label='' WHERE id=?", (new, device_id))
             for k in keys:
                 self.db.execute("UPDATE agents SET person_id=? WHERE key=?", (new, k))

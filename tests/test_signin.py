@@ -624,6 +624,7 @@ def test_machine_routes_keep_device_tokens(hub):
     ("POST", "/api/projects/proj-a/revoke"), ("POST", "/api/devices/3/revoke"),
     ("POST", "/api/legacy/on"), ("POST", "/api/legacy/off"), ("GET", "/api/gitlab"),
     ("POST", "/api/gitlab"), ("DELETE", "/api/gitlab"), ("POST", "/mcp"), ("GET", "/bridge/poll"),
+    ("POST", "/api/team-machines"), ("GET", "/api/team/machines"), ("POST", "/api/devices/3/move"),
 ])
 def test_machine_route_list(method, path):
     assert khub.machine_route(method, path)

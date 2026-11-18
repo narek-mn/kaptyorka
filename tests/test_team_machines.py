@@ -157,6 +157,28 @@ def test_move_a_machine_to_another_person(store, team):
         store.device_move(9999, "bob", "alice")
 
 
+def test_move_keeps_the_old_owners_history(store, team, monkeypatch):
+    """Only sessions running now follow a moved machine. An older session, and the messages it
+    sent and got, stay with the old owner; the new owner never sees them."""
+    from kaptyorka.store import ONLINE_S
+    bob, carol = who(store, "bob"), who(store, "carol")
+    p = store.authenticate(store.device_add(bob.person_id, "laptop-1"))
+    store.heartbeat("lap", [], principal=p, facts={"host": "lap", "os_user": "bob"})
+    store.seen("s-old", "lap", "codex", "proj-a", principal=p)
+    store.seen("b1", "pc-b", "codex", "proj-b", principal=store.authenticate(
+        store.device_add(bob.person_id, "pc-b")))
+    store.send("s-old", store.agent("b1").name, "bob's private note")
+    later = store.clock() + ONLINE_S + 60
+    monkeypatch.setattr(store, "clock", lambda: later)
+    store.seen("s-now", "lap", "codex", "proj-a", principal=p)
+    store.device_move(p.device_id, "carol", "alice")
+    assert store.agent("s-now").person_id == carol.person_id  # running: moved
+    assert store.agent("s-old").person_id == bob.person_id  # older: stays bob's
+    texts = lambda w: [m["text"] for m in store.messages_for(w)]
+    assert "bob's private note" in texts(bob)
+    assert "bob's private note" not in texts(carol)
+
+
 def test_routes(tmp_path):
     from conftest import start_hub
     from kaptyorka import http

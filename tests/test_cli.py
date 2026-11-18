@@ -539,6 +539,13 @@ def test_cli_people_role(admin_hub, capsys):
     assert "bob is the last admin" in capsys.readouterr().err
 
 
+def test_cli_people_role_on_an_older_hub(admin_hub, capsys):
+    """A 0.9.18 hub answers the role change with 204 and no body: still done."""
+    admin_hub["answers"][("POST", "/api/people/bob/role")] = (204, None)
+    assert entry_with_exit(["people", "role", "bob", "manager"]) == 0
+    assert capsys.readouterr().out.strip() == "bob is now a manager"
+
+
 def test_cli_people_still_lists(admin_hub, capsys):
     admin_hub["answers"][("GET", "/api/people")] = (200, [{"name": "alice", "role": "admin",
                                                            "devices": []}])

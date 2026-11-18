@@ -58,13 +58,13 @@ CLEAR_COOKIE = "kaptyorka_signin=; Path=/auth/gitlab; HttpOnly; SameSite=Lax; Ma
 # is the page's: with sign-in with GitLab on, only a GitLab sign-in or the admin token reaches
 # it. Routes outside /api/ (/mcp, /bridge/...) are all machines'.
 MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
-    ("GET", r"/api/(brief|done-check|me|feed|settings|people|invites|rules|machines|gitlab)"),
+    ("GET", r"/api/(brief|done-check|me|feed|settings|people|invites|rules|machines|team/machines|gitlab)"),
     ("GET", r"/api/files/\d+"),
-    ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab)"),
+    ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab|team-machines)"),
     ("POST", r"/api/people/[^/]+/(gitlab|role)"),
     ("POST", r"/api/machines/[^/]+/(grant|owner|revoke)"),
     ("POST", r"/api/projects/[^/]+(/grant|/revoke)?"),
-    ("POST", r"/api/devices/\d+/revoke"),
+    ("POST", r"/api/devices/\d+/(revoke|move)"),
     ("POST", r"/api/legacy/(on|off)"),
     ("PUT", r"/api/skills"),
     ("DELETE", r"/api/(people|invites|projects)/[^/]+"),

@@ -3,6 +3,8 @@ the one rule the hub and the manager use to call a person's use "heavy". Only nu
 user leave the machine: never pids, process names or command lines."""
 import os
 import pwd
+import re
+import select
 import shutil
 import subprocess
 import time
@@ -197,20 +199,44 @@ class Sampler:
                     p = None
                 out = ""
                 if p is not None:
-                    try:
-                        out = p.communicate(timeout=TEGRASTATS_TIMEOUT_S)[0] or ""
-                    except subprocess.TimeoutExpired:  # it runs until stopped: stop it, keep its lines
-                        try:
-                            p.kill()
-                            out = p.communicate(timeout=0.5)[0] or ""
-                        except (OSError, subprocess.TimeoutExpired):
-                            self._stuck.append(p)
+                    out = self._first_gr3d(p)
                 util = parse_tegrastats(out if isinstance(out, str) else out.decode(errors="replace"))
                 if util is None:
                     self._tegra_off_until = self.clock() + SMI_RETRY_S
         if util is None:
             return None
         return [{"index": 0, "util": util, "mem": None, "total": None}]
+
+    def _first_gr3d(self, p) -> str:
+        """tegrastats' output up to its first complete GR3D line, within TEGRASTATS_TIMEOUT_S;
+        then it is killed and reaped (or kept in _stuck). It runs until stopped."""
+        out = ""
+        fileno = getattr(getattr(p, "stdout", None), "fileno", None)
+        if fileno is not None:  # a real pipe: stop at the first GPU line
+            fd, end = fileno(), time.monotonic() + TEGRASTATS_TIMEOUT_S
+            try:
+                while not re.search(r"GR3D[^\n]*\n", out):
+                    left = end - time.monotonic()
+                    if left <= 0 or not select.select([fd], [], [], left)[0]:
+                        break
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
+                        break
+                    out += chunk.decode(errors="replace")
+            except (OSError, ValueError):
+                pass
+        else:
+            try:
+                return p.communicate(timeout=TEGRASTATS_TIMEOUT_S)[0] or ""
+            except subprocess.TimeoutExpired:
+                pass
+        try:  # stop it, keep what it still had
+            p.kill()
+            more = p.communicate(timeout=0.5)[0] or ""
+            out += more if isinstance(more, str) else more.decode(errors="replace")
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            self._stuck.append(p)
+        return out
 
     def read(self) -> dict:
         now = self.clock()

@@ -666,7 +666,7 @@ def _people_role(args) -> int:
     got = _admin_call("POST", f"/api/people/{quote(args.name, safe='')}/role", {"role": args.role})
     if got is None:
         return 1
-    if got[0] != 200:
+    if got[0] not in (200, 204):  # 204: a 0.9.18 hub
         print(_problem(got), file=sys.stderr)
         return 1
     print(f"{args.name} is now {'an' if args.role == 'admin' else 'a'} {args.role}")
