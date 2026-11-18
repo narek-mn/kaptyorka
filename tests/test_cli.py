@@ -48,7 +48,7 @@ def test_subcommands_listed(capsys):
     listed = out.split("positional arguments:")[1].split("options:")[0]
     names = [l.split()[0] for l in listed.splitlines()[2:] if l.startswith("    ") and l[4] != " "]
     assert names == ["start", "join", "leave", "stop", "update", "remove", "invite", "people", "invites", "grant",
-                     "revoke", "project", "shared-token", "machine", "who", "status", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
+                     "revoke", "project", "shared-token", "machine", "who", "status", "page", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
     for hidden in ("serve", "mcp", "bridge", "hook"):
         assert hidden not in names
 
@@ -991,7 +991,8 @@ def test_status_member_bridge_running(monkeypatch, home, capsys):
     _units(monkeypatch, bridge=True)
     monkeypatch.setattr(http, "request", lambda *a, **k: (403, "admin only"))
     assert entry_with_exit(["status"]) == 0
-    assert capsys.readouterr().out == "joined to http://10.0.0.9:8765 as box-1\nbridge: running\n"
+    assert capsys.readouterr().out == ("joined to http://10.0.0.9:8765 as box-1\nbridge: running\n"
+                                       "open your page: kaptyorka page\n")
 
 
 def test_status_hub_machine_with_manager_asleep(monkeypatch, home, capsys):
@@ -1001,7 +1002,8 @@ def test_status_hub_machine_with_manager_asleep(monkeypatch, home, capsys):
     monkeypatch.setattr(http, "request", lambda *a, **k: (200, {"manager_state": "asleep", "manager_reason": ""}))
     assert entry_with_exit(["status"]) == 0
     assert capsys.readouterr().out == ("joined to http://10.0.0.1:8765 as box-1\nbridge: running\n"
-                                       "hub: running\nmanager: asleep\n")
+                                       "hub: running\nmanager: asleep\n"
+                                       "open your page: kaptyorka page\n")
 
 
 def test_status_manager_off_is_ok(monkeypatch, home, capsys):
@@ -1010,7 +1012,7 @@ def test_status_manager_off_is_ok(monkeypatch, home, capsys):
     _units(monkeypatch, bridge=True, hub=True)
     monkeypatch.setattr(http, "request", lambda *a, **k: (200, {"manager_state": "off", "manager_reason": ""}))
     assert entry_with_exit(["status"]) == 0
-    assert capsys.readouterr().out.splitlines()[-1] == "manager: off"
+    assert capsys.readouterr().out.splitlines()[-2] == "manager: off"
 
 
 def test_status_token_refused(monkeypatch, home, capsys):
@@ -1018,7 +1020,7 @@ def test_status_token_refused(monkeypatch, home, capsys):
     _units(monkeypatch, bridge=True)
     monkeypatch.setattr(http, "request", lambda *a, **k: (401, "unauthorized"))
     assert entry_with_exit(["status"]) == 1
-    assert capsys.readouterr().out.splitlines()[-1] == (
+    assert capsys.readouterr().out.splitlines()[-2] == (
         "hub: refused this machine's token (ask your admin for a new invite link, then: kaptyorka join <link>)")
 
 
@@ -1028,7 +1030,8 @@ def test_status_foreground_hub_counts_as_running(monkeypatch, home, capsys):
     _units(monkeypatch, bridge=True, hub=False)
     monkeypatch.setattr(http, "request", lambda *a, **k: (200, {"manager_state": "up", "manager_reason": ""}))
     assert entry_with_exit(["status"]) == 0
-    assert capsys.readouterr().out.splitlines()[2:] == ["hub: running", "manager: running"]
+    assert capsys.readouterr().out.splitlines()[2:] == ["hub: running", "manager: running",
+                                                       "open your page: kaptyorka page"]
 
 
 def test_status_hub_unreachable(monkeypatch, home, capsys):
@@ -1040,7 +1043,7 @@ def test_status_hub_unreachable(monkeypatch, home, capsys):
     _units(monkeypatch, bridge=True)
     monkeypatch.setattr(http, "request", boom)
     assert entry_with_exit(["status"]) == 1
-    assert capsys.readouterr().out.splitlines()[-1] == "hub: not reachable at http://10.0.0.9:8765"
+    assert capsys.readouterr().out.splitlines()[-2] == "hub: not reachable at http://10.0.0.9:8765"
 
 
 def test_status_bridge_stopped_exit_1(monkeypatch, home, capsys):
@@ -1134,3 +1137,28 @@ def test_cli_shared_token_on_off(admin_hub, capsys):
     assert entry_with_exit(["shared-token", "on"]) == 0
     assert admin_hub["calls"][-1] == ("POST", "/api/legacy/on", {})
     assert capsys.readouterr().out.strip() == "the shared token is on"
+
+
+def test_page_prints_the_link_and_opens_it_where_there_is_a_screen(monkeypatch, home, capsys):
+    import webbrowser
+
+    _joined("http://10.0.0.9:8765")
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url) or True)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":0")
+    assert entry_with_exit(["page"]) == 0
+    token = paths.load_config()["token"]
+    assert opened == [f"http://10.0.0.9:8765/#t={token}"]
+    out = capsys.readouterr().out
+    assert f"http://10.0.0.9:8765/#t={token}" in out and "opened in your browser" in out
+    # over ssh, no screen: only the link, never a text browser in the terminal
+    monkeypatch.delenv("DISPLAY")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    assert entry_with_exit(["page"]) == 0
+    assert len(opened) == 1 and "opened" not in capsys.readouterr().out
+
+
+def test_page_not_joined(home, capsys):
+    assert entry_with_exit(["page"]) == 1
+    assert capsys.readouterr().out == "not joined: kaptyorka join <invite link>\n"

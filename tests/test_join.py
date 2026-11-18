@@ -52,7 +52,8 @@ def test_join_configures_installed_only(hub, home, capsys):
     assert calls == [("kaptyorka-bridge", [EXE, "bridge"])]
     out = capsys.readouterr().out
     assert "on: wired on" in out and "bridge: service ok" in out
-    assert out.endswith(f"done, nothing to restart\npage: {hub.url}/#t=T\n")
+    assert out.endswith(f"done, nothing to restart\nopen your page: {hub.url}/#t=T  (keep this link private: it signs you in)\n"
+                        "open it again any time: kaptyorka page\n")
 
 
 def test_join_twice_same_result(hub, home, fake_claude_cli):  # noqa: F811
@@ -67,8 +68,9 @@ def test_join_twice_same_result(hub, home, fake_claude_cli):  # noqa: F811
 def test_join_prints_restart_notes(hub, home, capsys):
     a = FakeAdapter("claude-code", note="Claude Code: restart")
     assert main(hub.url, "T", "pc", adapters=[a, FakeAdapter("b")], install=no_service([])) == 0
-    assert capsys.readouterr().out.splitlines()[-2:] == ["restart: Claude Code: restart",
-                                                          f"page: {hub.url}/#t=T"]
+    assert capsys.readouterr().out.splitlines()[-3:] == [
+        "restart: Claude Code: restart", f"open your page: {hub.url}/#t=T  (keep this link private: it signs you in)",
+        "open it again any time: kaptyorka page"]
 
 
 def test_join_only_limits_adapters(hub, home):
@@ -271,7 +273,7 @@ def test_join_prints_tool_lines_only_when_changed(hub, home, capsys):
 
 def test_join_first_time_prints_the_page_link(hub, home, capsys):
     assert main(hub.url, "T", "pc", adapters=[FakeAdapter("a")], install=lambda *x, **k: []) == 0
-    assert f"page: {hub.url}/#t=T" in capsys.readouterr().out
+    assert f"open your page: {hub.url}/#t=T  (keep this link private: it signs you in)" in capsys.readouterr().out
 
 
 def test_join_drops_the_doubled_tool_prefix(hub, home, capsys):

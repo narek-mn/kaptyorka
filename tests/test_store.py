@@ -106,7 +106,8 @@ def test_offer_frames_and_ack_marks_read(store):
     store.seen("s", "pc", "codex", "a"); store.seen("t", "box-2", "codex", "b")
     store.send("s", "box-2/codex/b", "hi")
     [o] = store.offer("box-2")
-    assert o["key"] == "t" and o["text"] == "Kaptyorka message from pc/codex/a:\n\nhi"
+    assert o["key"] == "t" and o["text"] == ("Kaptyorka message from pc/codex/a:\n\nhi"
+                                             "\nAnswer with send(to=\"pc/codex/a\"); text written only in your terminal is not seen by them.")
     store.ack(o["id"], True); assert store.inbox("t") == [] and store.offer("box-2") == []
 
 
@@ -265,7 +266,8 @@ def test_send_from_web_lands_in_inbox_and_is_pushed(store):
     assert store.send_from_web("alice", "pc/codex/nav", "hello") == 1
     assert [(m.sender, m.text) for m in store.inbox("k")] == [("alice", "hello")]
     store.send_from_web("alice", "pc/codex/nav", "again")
-    assert store.offer("pc")[0]["text"] == "Kaptyorka message from alice (web page):\n\nagain"
+    assert store.offer("pc")[0]["text"] == ("Kaptyorka message from alice (web page):\n\nagain"
+                                            "\nAnswer with send(to=\"alice\"); text written only in your terminal is not seen by them.")
     assert [m.from_web for m in store.messages()] == [True, True]
 
 

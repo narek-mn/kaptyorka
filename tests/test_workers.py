@@ -679,7 +679,7 @@ def test_hosting_bridge_delivers_to_a_worker_on_its_shared_box(store, ws, alice,
     assert ws.link("proj-a-w1", "claude:w1", dev)
     store.send("claude:boss", store.agent("claude:w1").name, "hi")
     items = store.offer("box-2", "0.3", principal=bob_bridge)
-    assert [(i["key"], i["text"].endswith("hi")) for i in items] == [("claude:w1", True)]
+    assert [(i["key"], "\n\nhi\n" in i["text"]) for i in items] == [("claude:w1", True)]
     # alice's own session elsewhere is still not offered to bob's bridge
     own, own_token = device(store, alice, "box-1")
     store.heartbeat("box-1", [{"key": "claude:pc", "tool": "claude-code", "project": "proj-a"}],

@@ -173,7 +173,7 @@ def test_attachment_line_and_fetch_by_message_id(hub, home):
     run(call(hub, ia, "send", to=bname, text="look", file=f"id:{fid}"))
     line = f"[attached: pic.png (2 KB) — get it with fetch_file({fid})]"
     [item] = [o for o in hub.store.offer("pc") if o["kind"] == "message"]
-    assert item["text"].endswith(f"look\n{line}")
+    assert f"look\n{line}\nAnswer with send(to=" in item["text"]
     hub.store.ack(item["id"], False)  # not read: still in the inbox
     hub.token = bob_t
     rows = run(call(hub, ib, "inbox"))

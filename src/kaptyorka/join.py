@@ -155,5 +155,6 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     elif not rc:
         print(f"already joined to {hub}; all set")
     if first:
-        print(f"page: {hub}/#t={token}")
+        print(f"open your page: {hub}/#t={token}  (keep this link private: it signs you in)")
+        print("open it again any time: kaptyorka page")
     return rc

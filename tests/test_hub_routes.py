@@ -81,7 +81,8 @@ def test_poll_returns_immediately_when_queued(hub):
                                  timeout=30)
     assert status == 200 and len(items) == 1 and time.time() - t0 < 1
     assert items[0]["key"] == BOX2["key"]
-    assert items[0]["text"] == "Kaptyorka message from pc/claude-code/proj-a:\n\nhi"
+    assert items[0]["text"] == ("Kaptyorka message from pc/claude-code/proj-a:\n\nhi"
+                                "\nAnswer with send(to=\"pc/claude-code/proj-a\"); text written only in your terminal is not seen by them.")
 
 
 def test_poll_wakes_on_send(hub):
@@ -306,8 +307,9 @@ def test_web_routes_require_token(hub):
 def test_agent_reply_to_web_sender_goes_to_page_not_inbox(hub):
     box2_online(hub)
     http.request("POST", hub.url + "/api/send", "T", {"to": BOX2_NAME, "text": "hi"})
-    assert http.request("GET", hub.url + "/bridge/poll?machine=box-2&wait=0", "T")[1][0]["text"] == \
+    assert http.request("GET", hub.url + "/bridge/poll?machine=box-2&wait=0", "T")[1][0]["text"] == (
         f"Kaptyorka message from {ADMIN_NAME} (web page):\n\nhi"
+        f"\nAnswer with send(to=\"{ADMIN_NAME}\"); text written only in your terminal is not seen by them.")
     assert "sent to 1 session" in str(hub_send(hub, BOX2, ADMIN_NAME, "on it"))
     last = feed(hub)["messages"][-1]
     assert (last["to"], last["to_web"], last["read"]) == (ADMIN_NAME, True, True)

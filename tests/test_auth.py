@@ -131,3 +131,35 @@ def test_authenticate_updates_last_used(store, clock):
     assert store.devices(pid)[0]["last_used"] == 2000.0
     assert store.authenticate("nope") is None
 
+
+
+def test_websocket_upgrade_is_refused_quietly(hub, capsys):
+    import logging
+    import socket
+    from urllib.parse import urlparse
+
+    from kaptyorka.auth import NO_WEBSOCKET
+
+    port = urlparse(hub.url).port
+    ask = (b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+           b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n"
+           b"User-Agent: some-ws-client/1.0\r\n\r\n")
+    for _ in range(3):
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+            s.sendall(ask)
+            reply = b""
+            while not reply.endswith(NO_WEBSOCKET.encode()):  # head and body may come apart
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                reply += chunk
+        assert reply.startswith(b"HTTP/1.1 400") and NO_WEBSOCKET.encode() in reply
+    err = capsys.readouterr().err
+    assert err.count("refused WebSocket requests from 127.0.0.1 to /ws (some-ws-client/1.0)") == 1
+    # uvicorn's own warning per request is dropped
+    log = logging.getLogger("uvicorn.error")
+    rec = log.makeRecord("uvicorn.error", logging.WARNING, __file__, 1,
+                         "Unsupported upgrade request.", (), None)
+    assert not all(f.filter(rec) for f in log.filters)
+    other = log.makeRecord("uvicorn.error", logging.WARNING, __file__, 1, "other", (), None)
+    assert all(f.filter(other) for f in log.filters)

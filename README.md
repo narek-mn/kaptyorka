@@ -454,6 +454,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka machine owner <host> <person>` | Admin: name a machine's owner |
 | `kaptyorka who` | List sessions online |
 | `kaptyorka status` | Show whether this machine's bridge, the hub (on the hub machine) and the manager (admin) are running; exit 1 if not |
+| `kaptyorka page` | Open your own page on the hub in a browser and print its private link (keep it to yourself: it signs you in) |
 | `kaptyorka rules push [--force] <dir>` | Admin: upload the team rules folder (`RULES.md` and `skills/*.md`); stops if the hub has rule lines not in `RULES.md`, unless `--force` |
 | `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
 | `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |

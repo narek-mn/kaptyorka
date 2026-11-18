@@ -848,7 +848,7 @@ def test_sleeping_manager_wakes_for_the_admin_page(hub, clock):
     b = asleep_manager(hub, clock)
     assert http.request("POST", hub.url + "/api/send", b.token,
                         {"to": MGR_NAME, "text": "from root"})[0] == 200
-    assert any(t.endswith("from root") for t in woken(hub, b))
+    assert any("\n\nfrom root\n" in t for t in woken(hub, b))
 
 
 def test_sleeping_manager_wakes_for_a_member_page(hub, clock):
@@ -856,7 +856,7 @@ def test_sleeping_manager_wakes_for_a_member_page(hub, clock):
     _, btok, _ = plain(hub, "bob")
     assert http.request("POST", hub.url + "/api/send", btok,
                         {"to": MGR_NAME, "text": "from bob"})[0] == 200
-    assert any(t.endswith("from bob") for t in woken(hub, b))
+    assert any("\n\nfrom bob\n" in t for t in woken(hub, b))
 
 
 def test_sleeping_manager_wakes_for_a_member_session(hub, clock):
@@ -866,7 +866,7 @@ def test_sleeping_manager_wakes_for_a_member_session(hub, clock):
     run(call(bob, B, "inbox"))
     assert run(call(bob, B, "send", to=MGR_NAME, text="from bob's session")) \
         == "sent to 1 session"
-    assert any(t.endswith("from bob's session") for t in woken(hub, b))
+    assert any("\n\nfrom bob's session\n" in t for t in woken(hub, b))
 
 
 def test_sleeping_manager_wakes_for_a_hub_notice(hub, clock):

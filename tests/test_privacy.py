@@ -311,3 +311,39 @@ def test_feed_marks_messages_from_and_to_the_manager(team):
     for who in ("alice", "admin"):
         got = [(m["from_manager"], m["to_manager"]) for m in feed(team, who)["messages"]]
         assert got == [(False, True), (True, False), (False, False)], who
+
+
+def test_member_page_sweep_shows_only_their_own(team):
+    """A member's page and tools: their own sessions and chats, the manager, and nothing of
+    another person's except the content-less Others list used to ask the admin."""
+    s = team.store
+    s.project_register("proj-b", by="admin")
+    s.grant_project("proj-b", team.ids["bob"], "write", "admin")
+    s.heartbeat("box-2", [{"key": "k:bob2", "tool": "codex", "project": "proj-b",
+                           "label": "bob-secret", "activity": "bob-activity"}],
+                principal=s.authenticate(team.tokens["bob"]), facts={"host": "box-2", "os_user": "bob"})
+    s.set_status("k:bob2", "bob-status")
+    s.send("k:bob2", team.names["bob"], "bob-private-text")
+    s.send(team.keys["admin"], s.agent("k:bob2").name, "admin-to-bob-text")
+    s.notes_write("k:bob2", "bob-plan", "bob-note-text", "proj-b")
+    body = feed(team, "alice")
+    assert {a["person"] for a in body["agents"]} == {"alice", "manager"}
+    assert all(m["sender"] not in (team.names["bob"], "bob") for m in body["messages"])
+    dump = repr(body)
+    for secret in ("bob-private-text", "admin-to-bob-text", "bob-note-text", "bob-plan",
+                   "bob-status", "bob-activity"):
+        assert secret not in dump, secret
+    # Others: bob's sessions without content, to ask for a connection; never reachable
+    assert body["others"] and all(o["reachable"] is False for o in body["others"])
+    assert all("status" not in o and "activity" not in o for o in body["others"])
+    rows = run(call(client(team, "alice"), me(team, "alice"), "who"))
+    assert {r["person"] for r in rows} == {"alice", "manager"}
+    with pytest.raises(RuntimeError):
+        run(call(client(team, "alice"), me(team, "alice"), "send", to=team.names["bob"], text="x"))
+    with pytest.raises(RuntimeError):
+        run(call(client(team, "alice"), me(team, "alice"), "notes_read", topic="bob-plan",
+                 project="proj-b"))
+    status, _ = http.request("POST", team.hub.url + "/api/send", team.tokens["alice"],
+                             {"to": s.agent("k:bob2").name, "text": "x"})
+    assert status != 200
+    assert s.inbox("k:bob2") and all(m.text != "x" for m in s.inbox("k:bob2"))

@@ -1,5 +1,7 @@
 """ASGI auth: each device token resolves to a principal; failed tokens are rate-limited."""
 import hashlib
+import logging
+import sys
 import time
 from typing import Callable, Dict, Hashable, List
 from urllib.parse import parse_qs, unquote
@@ -101,4 +103,49 @@ class Auth:
             await deny(scope, receive, send)
             return
         scope.setdefault("state", {})["principal"] = principal
+        await self.app(scope, receive, send)
+
+
+NO_WEBSOCKET = "this hub serves no WebSocket"
+UPGRADE_WARNINGS = ("Unsupported upgrade request.", "No supported WebSocket library detected")
+UPGRADE_NOTE_S = 3600  # one line per client and path an hour
+
+
+class _QuietUpgrades(logging.Filter):
+    """Drops uvicorn's two warnings per WebSocket upgrade request; NoWebSocket logs them."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not str(record.getMessage()).startswith(UPGRADE_WARNINGS)
+
+
+def quiet_upgrade_warnings() -> None:
+    log = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, _QuietUpgrades) for f in log.filters):
+        log.addFilter(_QuietUpgrades())
+
+
+class NoWebSocket:
+    """ASGI: a request that asks for a WebSocket gets a plain 400, and one stderr line per
+    client and path an hour names who asks (the hub has no WebSocket route)."""
+
+    def __init__(self, app, clock: Callable[[], float] = time.monotonic, report=None):
+        self.app, self.clock = app, clock
+        self.report = report or (lambda line: print(line, file=sys.stderr, flush=True))
+        self.noted: Dict[Hashable, float] = {}
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
+            if headers.get("upgrade", "").lower() == "websocket":
+                client = scope.get("client")
+                who = client[0] if client else "?"
+                key, now = (who, scope["path"]), self.clock()
+                if now - self.noted.get(key, -UPGRADE_NOTE_S) >= UPGRADE_NOTE_S:
+                    self.noted = {k: t for k, t in self.noted.items() if now - t < UPGRADE_NOTE_S}
+                    self.noted[key] = now
+                    agent = headers.get("user-agent", "")[:120] or "no user agent"
+                    self.report(f"kaptyorka: refused WebSocket requests from {who} to"
+                                f" {scope['path'][:200]} ({agent}); once an hour")
+                await PlainTextResponse(NO_WEBSOCKET, status_code=400)(scope, receive, send)
+                return
         await self.app(scope, receive, send)

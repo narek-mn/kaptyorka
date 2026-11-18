@@ -274,7 +274,9 @@ def test_hidden_name_and_handle_address_a_session(team):
     # a message from a hidden project: masked in inbox, the push text and the brief
     t.store.send("b2", "box-1/codex/proj-a", "pushed")
     [item] = [o for o in t.store.offer("box-1") if o["kind"] == "message"]
-    assert item["text"] == f"Kaptyorka message from box-2/codex/(private) (reply to {session_id('b2')}):\n\npushed"
+    assert item["text"] == (f"Kaptyorka message from box-2/codex/(private) (reply to {session_id('b2')}):\n\npushed"
+                            f"\nAnswer with send(to=\"{session_id('b2')}\"); text written only in your"
+                            " terminal is not seen by them.")
     t.store.ack(item["id"], True)
     t.store.send("b2", "box-1/codex/proj-a", "read me")
     [m] = tool(t, "alice", "inbox")

@@ -113,7 +113,8 @@ def test_poll_delivers_and_acks(hub, home):
     bridge.heartbeat()
     send_hi(hub)
     assert bridge.poll_once(wait=1) == 1
-    assert fake.delivered == [("codex:5", "Kaptyorka message from pc/claude-code/proj-a:\n\nhi")]
+    assert fake.delivered == [("codex:5", "Kaptyorka message from pc/claude-code/proj-a:\n\nhi"
+                              "\nAnswer with send(to=\"pc/claude-code/proj-a\"); text written only in your terminal is not seen by them.")]
     assert hub.store.inbox("codex:5") == []
 
 

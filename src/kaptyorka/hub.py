@@ -24,7 +24,7 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 
 from kaptyorka import __version__, admin_ops, brief, identity, manager, paths
 from kaptyorka import rules as rules_mod
-from kaptyorka.auth import Auth, RateLimiter, bearer
+from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
 from kaptyorka.hub_feed import feed, session_row
@@ -1830,6 +1830,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     app = server.streamable_http_app(host="0.0.0.0")
     app.add_middleware(Auth, store=store, limiter=limiter)
+    app.add_middleware(NoWebSocket)  # outside Auth: a stray WebSocket client is not a failed login
+    quiet_upgrade_warnings()
     app.state.tick = tick  # tests run a tick by hand
     inner = app.router.lifespan_context
 

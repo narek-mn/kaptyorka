@@ -248,11 +248,42 @@ def _who(args) -> int:
     return 0
 
 
+PAGE_HINT = "open your page: kaptyorka page"
+
+
+def _page(args) -> int:
+    """Print this device's own page link and open it in a browser where there is a screen."""
+    cfg = paths.load_config()
+    if not cfg.get("hub") or not cfg.get("token"):
+        print("not joined: kaptyorka join <invite link>")
+        return 1
+    url = f"{cfg['hub'].rstrip('/')}/#t={cfg['token']}"
+    print(PAGE_LINK.format(url=cfg["hub"].rstrip("/"), token=cfg["token"]))
+    # with no screen (ssh), a text browser would take over the terminal: only print then
+    screen = sys.platform == "darwin" or bool(os.environ.get("DISPLAY")
+                                              or os.environ.get("WAYLAND_DISPLAY"))
+    if screen:
+        import webbrowser
+
+        try:
+            if webbrowser.open(url):
+                print("opened in your browser")
+        except Exception:
+            pass
+    return 0
+
+
 def _status(args) -> int:
     cfg = paths.load_config()
     if not cfg.get("hub") or not cfg.get("token"):
         print("not joined: kaptyorka join <invite link>")
         return 1
+    rc = _status_of(cfg)
+    print(PAGE_HINT)
+    return rc
+
+
+def _status_of(cfg: dict) -> int:
     hub = cfg["hub"]
     print(f"joined to {hub} as {cfg.get('machine') or '?'}")
     ok = True
@@ -992,6 +1023,8 @@ def entry() -> None:
     sub.add_parser("who", help="list the agents on the team and what each is doing").set_defaults(run=_who)
     sub.add_parser("status", help="show whether this machine's bridge, the hub and the manager are running"
                    ).set_defaults(run=_status)
+    sub.add_parser("page", help="open your own page on the hub (prints its private link)"
+                   ).set_defaults(run=_page)
     d = sub.add_parser("doctor", help="check this machine's setup; --fix repairs what it can")
     d.add_argument("--fix", action="store_true", help="re-wire failing tools and restart a stopped bridge")
     d.set_defaults(run=_doctor)

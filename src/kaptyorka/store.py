@@ -264,6 +264,12 @@ class Note:
     project: Optional[str] = None
 
 
+def reply_line(to: str) -> str:
+    """How a pushed message is answered: an agent may otherwise answer in its own terminal."""
+    return (f"\nAnswer with send(to=\"{_one_line(to)}\"); text written only in your terminal"
+            " is not seen by them.")
+
+
 def attach_line(file: Optional[dict]) -> str:
     """One plain line telling an agent a message carries a file ("" when it has none)."""
     if not file:
@@ -1609,6 +1615,7 @@ class Store:
                     sender = f"{shown} (reply to {reply})" if reply else _sender(m)
                     text = (f"Kaptyorka message from {_one_line(sender)}:\n\n{m['text']}"
                             f"{attach_line(self._file_info(m['file_id']))}"
+                            f"{'' if m['sender_key'].startswith('hub:') else reply_line(reply or m['sender_name'])}"
                             if m["kind"] == "message" else m["text"])  # knocks and doors: as written
                     out.append({"kind": "message", "id": m["id"], "key": t["key"], "text": text})
             return out

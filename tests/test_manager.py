@@ -383,7 +383,7 @@ def test_message_to_sleeping_manager_wakes_and_reaches_it(store, ms, clock):
     assert not ms.asleep(clock[0])
     wake(store, mgr, admin, clock)
     items = store.offer(HOST, "0.8.0", principal=admin)
-    assert [(i["key"], i["text"].endswith("hi")) for i in items] == [("claude:m2", True)]
+    assert [(i["key"], "\n\nhi\n" in i["text"]) for i in items] == [("claude:m2", True)]
 
 
 def test_sleeping_manager_not_relaunched_without_work(store, ms, clock):
