@@ -187,14 +187,15 @@ def _mem_total(proc: Path) -> int:
 
 # the hub's side: people, heavy, words
 
-def people_use(use: dict, owners: Dict[str, List[str]]) -> Dict[str, dict]:
+def people_use(use: dict, owners: Dict[str, List[str]], team=()) -> Dict[str, dict]:
     """{person: {"cpu", "mem", "gpus": {index: MB}, "people"}}, each OS user's numbers added under the
     people whose devices run as it ("alice and bob" for a shared account); an OS user no one
-    joined from shows as "account <name>"."""
+    joined from shows as "account <name>", and a team machine's (`team`) as
+    "account <name> (team)"."""
     out: Dict[str, dict] = {}
     for user, u in (use.get("users") or {}).items():
         people = sorted(set(owners.get(user) or []))
-        label = " and ".join(people) or f"account {user}"
+        label = " and ".join(people) or f"account {user}" + (" (team)" if user in team else "")
         p = out.setdefault(label, {"cpu": 0.0, "mem": 0, "gpus": {}, "people": people})
         p["cpu"] += u.get("cpu") or 0.0
         p["mem"] += u.get("mem") or 0
@@ -246,3 +247,21 @@ def describe(name: str, p: dict, use: dict) -> str:
     words = ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1] if parts \
         else "the machine"
     return f"{name} is using {words}"
+
+
+def short(use: Optional[dict]) -> str:
+    """A machine's use in a few words for the admin's Machines list: "GPU 90% · CPU 35% · memory
+    40%" (GPU: the busiest one), "" when nothing was reported."""
+    if not isinstance(use, dict):
+        return ""
+    parts = []
+    utils = [g.get("util") for g in use.get("gpus") or [] if g.get("util") is not None]
+    if utils:
+        parts.append(f"GPU {round(max(utils))}%")
+    users = (use.get("users") or {}).values()
+    cpus, mem = use.get("cpus") or 0, use.get("mem_mb") or 0
+    if cpus:
+        parts.append(f"CPU {round(100 * sum(u.get('cpu') or 0 for u in users) / cpus)}%")
+    if mem:
+        parts.append(f"memory {round(100 * sum(u.get('mem') or 0 for u in users) / mem)}%")
+    return " · ".join(parts)

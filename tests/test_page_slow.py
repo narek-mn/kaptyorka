@@ -1166,3 +1166,72 @@ def test_team_make_and_remove_admin(tmp_path, w, h):
     finally:
         stop()
         store.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_team_machines_add_list_move(tmp_path, w, h):
+    """Machines on the Team page: one row per machine with who uses it, online and its use.
+    Add team machine shows the join command; Move gives a machine to another person, asked in
+    place. Screenshots to KAPTYORKA_SHOTS."""
+    import json as _json
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    _, token = person(store, "alice", "admin")
+    bob, bob_t = person(store, "bob")
+    person(store, "carol")
+    b = store.authenticate(bob_t)
+    store.heartbeat("gpu-1", [], principal=b, facts={"host": "gpu-1", "os_user": "bob"})
+    with store.lock:
+        store.db.execute("INSERT INTO device_facts (device_id, facts, updated) VALUES (?,?,?)",
+                         (b.device_id, _json.dumps({"use": {
+                             "age": 0, "cpus": 16, "mem_mb": 64000,
+                             "gpus": [{"index": 0, "util": 90.0, "mem": 0, "total": 0}],
+                             "users": {"bob": {"cpu": 6.0, "mem": 20000}}}}), store.clock()))
+    row = 'document.querySelector("#team-machine-rows [data-host=\\"{}\\"]")'.format
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    try:
+        with chrome(w, h) as page:
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=team")
+            page.wait(f'!!{row("gpu-1")}')
+            assert page.js(f'{row("gpu-1")}.querySelector(".pj-desc").textContent') == "bob"
+            assert page.js(f'{row("gpu-1")}.querySelector(".m-use").textContent') == \
+                "GPU 90% · CPU 38% · memory 31%"
+            # Add team machine: a name, then the command to run on its shared account
+            page.js('document.getElementById("add-team-btn").click()')
+            page.js('document.getElementById("new-team").value = "jet-1"')
+            page.js('document.querySelector("#add-team button[type=submit]").click()')
+            page.wait('!document.getElementById("add-team-link").hidden')
+            cmd = page.js('document.querySelector("#add-team-link input").value')
+            assert cmd.startswith("kaptyorka join http://127.0.0.1:")
+            assert page.js(wide)
+            page.js('document.getElementById("machines-sec").scrollIntoView()')
+            page.screenshot(shots / f"team-machine-added-{tag}.png")
+            code = cmd.rsplit("/", 1)[1]
+            t, _ = store.invite_redeem(code, "jet-1", host="jet-1", os_user="nvidia")
+            store.heartbeat("jet-1", [], principal=store.authenticate(t),
+                            facts={"host": "jet-1", "os_user": "nvidia"})
+            page.js('[...document.querySelectorAll("#add-team-link button")].find(b => b.textContent === "Done").click()')
+            page.wait(f'!!{row("jet-1")}')
+            assert page.js(f'{row("jet-1")}.querySelector(".pj-desc").textContent') == "Team machine"
+            assert page.js(f'{row("jet-1")}.querySelector(".chip").textContent') == "Team"
+            assert "jet-1" not in page.js('document.getElementById("people-rows").textContent')
+            page.js('document.getElementById("machines-sec").scrollIntoView()')
+            page.screenshot(shots / f"machines-{tag}.png")
+            # Move bob's machine to carol, asked in place
+            click(page, '#team-machine-rows [data-host="gpu-1"]', "Move")
+            page.wait(f'!!{row("gpu-1")}.querySelector(".confirm select")')
+            page.js(f'{row("gpu-1")}.querySelector(".confirm select").value = "carol"')
+            assert page.js(wide)
+            page.screenshot(shots / f"machine-move-{tag}.png")
+            click(page, '#team-machine-rows [data-host="gpu-1"] .confirm', "Move")
+            page.wait(f'{row("gpu-1")} && {row("gpu-1")}.querySelector(".pj-desc").textContent === "carol"')
+            assert store.db.execute("SELECT person_id FROM devices WHERE id=?",
+                                    (b.device_id,)).fetchone()[0] == store.person_by_name("carol")["id"]
+    finally:
+        stop()
+        store.close()

@@ -200,7 +200,7 @@ def test_team_people_rows(hub):
     assert '"hasn\'t joined yet"' in code and 'v.self ? "you"' in code
     assert '"New invite link"' in code and 'v.self ? null : button(' in code and 'button("Remove", "quiet-danger"' in code
     assert '"Remove " + v.name + "? They are signed out everywhere."' in code
-    assert "return !isManagerAccount(p);" in code  # the manager account is not listed
+    assert "return !isManagerAccount(p) && !p.team;" in code  # nor the manager account, nor team machines
     # a tick gives write; a project seen only on a session is registered on its first tick
     assert 'on ? { person: v.name, role: "write" } : { person: v.name }' in code
     assert 'api("/api/projects", { name: project })' in code

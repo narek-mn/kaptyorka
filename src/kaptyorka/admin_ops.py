@@ -41,9 +41,11 @@ def _live_person(db, name: str):
 
 
 def names(store) -> Dict[int, str]:
-    """{person id: name} for everyone, removed people too: their old sessions keep a name."""
+    """{person id: name} for everyone, removed people too: their old sessions keep a name. A team
+    machine reads "<name> (team)"."""
     with store.lock:
-        return {r["id"]: r["name"] for r in store.db.execute("SELECT id, name FROM people")}
+        return {r["id"]: r["name"] + (" (team)" if r["team"] else "")
+                for r in store.db.execute("SELECT id, name, team FROM people")}
 
 
 # people
@@ -149,6 +151,8 @@ def set_role(store, name: str, role: str, by: Principal) -> dict:
         name, old = row["name"], row["role"]
         if name == MANAGER and old == "manager":
             raise KaptyorkaError("the hub's manager account keeps its role")
+        if row["team"]:
+            raise KaptyorkaError(f"{name} is a team machine; it has no role to change")
         if old == role:
             return {"role": role, "note": ""}
         if role == "admin":
@@ -237,7 +241,7 @@ def can_add_machine(principal: Principal) -> bool:
 
 def invite_self(store, principal: Principal) -> str:
     """Add a machine: an invite for the caller's own person, never anyone else's."""
-    if not can_add_machine(principal):
+    if not can_add_machine(principal) or store.is_team(principal.person_id):
         raise KaptyorkaError("this sign-in cannot add a machine; ask the admin")
     return store.invite_create(principal.person_id, ttl_s=SELF_INVITE_TTL_S,
                                by=principal.person_name, log_kind="invite_self",
@@ -291,7 +295,7 @@ def account(store, principal: Principal) -> dict:
         "browsers": [{"id": b["id"], "created": b["created"], "last_used": b["last_used"],
                       "current": b["id"] == principal.device_id} for b in browsers],
         "projects": [{"name": x["name"], "role": x["role"]} for x in store.projects_for(principal)],
-        "add_machine": can_add_machine(principal),
+        "add_machine": can_add_machine(principal) and not store.is_team(principal.person_id),
     }
 
 
@@ -715,6 +719,8 @@ SENTENCES = {
     "role": _match(r"(.+) -> (\w+)", "{0} made {1} a {2}"),
     "admin_given": _match(r"(.+)", "{0} made {1} an admin"),
     "admin_taken": _match(r"(.+)", "{0} removed {1}'s admin role"),
+    "team_machine": _match(r"(.+)", "{0} added the team machine {1}"),
+    "machine_move": _match(r"(.+): (.+) -> (.+)", "{0} moved the machine {1} from {2} to {3}"),
     "page_login": _match(r"(.*)", "{0} opened the page ({1})"),
     "request": _match(r"(\w+):(.+)", "{0} asked for access to the {1} {2}"),
     "request_decided": _match(r"(\w+):(.+) -> (.+): (\w+).*",
@@ -753,7 +759,7 @@ KNOWN_KINDS = tuple(SENTENCES)
 
 # the plain groups of the log page, in order, and the raw kinds each covers
 LOG_GROUPS = [
-    ("people", ["person", "person_removed", "role", "admin_given", "admin_taken", "invite", "invite_new", "invite_self",
+    ("people", ["person", "person_removed", "role", "admin_given", "admin_taken", "team_machine", "invite", "invite_new", "invite_self",
                 "machine_label", "browsers_out",
                 "invite_cancel", "device",
                 "device_shared", "join", "gitlab_user", "gitlab_link"]),
@@ -761,7 +767,7 @@ LOG_GROUPS = [
                 "connect_decided"]),
     ("projects", ["project_register", "project_updated", "project_removed", "gitlab"]),
     ("notes", ["note_delete", "note_undo"]),
-    ("machines", ["machine_owner", "machine_owner_auto", "machine_in_use", "legacy_auto_off", "legacy_toggle", "legacy_assign", "legacy_used", "rekeyed",
+    ("machines", ["machine_move", "machine_owner", "machine_owner_auto", "machine_in_use", "legacy_auto_off", "legacy_toggle", "legacy_assign", "legacy_used", "rekeyed",
                   "backup", "auto_update"]),
     ("messages", ["settings", "retention", "door_open", "door_close", "knock", "knock_answer"]),
     ("rules", ["rules", "skills", "propose", "proposal", "conflict"]),

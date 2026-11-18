@@ -1537,6 +1537,25 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         return JSONResponse({"code": code, "url": f"{hub_url(request)}/i/{code}",
                              "expires": admin_ops.invite_expires(store, code)})
 
+    @server.custom_route("/api/team-machines", methods=["POST"])
+    @_bad_request
+    async def api_team_machines(request: Request) -> Response:
+        """Add a team machine: its row and an invite, with the join command to run on the
+        shared account."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        try:
+            _, code = store.team_machine_add(str(body["name"]),
+                                             request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=409 if "taken" in str(e) else 400)
+        url = f"{hub_url(request)}/i/{code}"
+        return JSONResponse({"name": str(body["name"]).strip(), "url": url,
+                             "command": f"kaptyorka join {url}",
+                             "expires": admin_ops.invite_expires(store, code)}, headers=NO_STORE)
+
     def admin_error(e: KaptyorkaError) -> Response:
         return PlainTextResponse(str(e), status_code=404 if str(e).startswith("no ") else 400)
 
@@ -1711,6 +1730,29 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
+
+    @server.custom_route("/api/team/machines", methods=["GET"])
+    async def api_team_machines_list(request: Request) -> Response:
+        """The admin's Machines list (WorkerStore.overview)."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        return JSONResponse(ws.overview())
+
+    @server.custom_route("/api/devices/{device_id:int}/move", methods=["POST"])
+    @_bad_request
+    async def api_device_move(request: Request) -> Response:
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        try:
+            done = store.device_move(request.path_params["device_id"], str(body["person"]),
+                                     request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return admin_error(e)
+        wake_bridges()
+        return JSONResponse(done)
 
     @server.custom_route("/api/machines/{host}/grant", methods=["POST"])
     @_bad_request

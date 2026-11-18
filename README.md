@@ -396,6 +396,14 @@ Several people can be admins; each one has every admin right. To add one: **Make
 
 To hand the hub over: make the new person an admin, let them sign in, then they (or you) remove your admin role. The emergency link (`~/.kaptyorka/admin-token` on the hub machine) stays with the admin it was made for; once that person is no longer an admin, it stops opening the page, and the next `kaptyorka start` on the hub machine makes a new one for the oldest admin and prints its link. The manager runs through an admin's bridge on the hub machine, so keep the person whose machine that is an admin while the hub stays there. Notices for the admin go to every admin: the manager names each one, and its failures reach every admin's page.
 
+### Machines and team machines
+
+The Team page's **Machines** list has one row per machine: who uses it (people, or **Team machine**), a green dot when a bridge there is online, and a short use line such as `GPU 90% · CPU 38% · memory 31%` (the busiest GPU, and the share of CPU and memory in use). Only the admin sees it.
+
+**Move** on a row gives a joined machine to another person without joining again: pick the person (and the machine, when several joined from that host), then **Move**. Its token keeps working and now speaks for them; its sessions move with it, their doors close, and the old person's ownership of the host follows when it was their last machine there. `kaptyorka machine move laptop-1 carol` does the same (a name or the id `kaptyorka people` shows). The log says "alice moved the machine laptop-1 from bob to carol".
+
+A **team machine** is one OS account everyone logs into, such as a Jetson in the lab. **Add team machine**, type a name, and run the `kaptyorka join` command it shows on that shared account (or `kaptyorka machine team jetson-1` prints it). It joins as a device of the team, not of a person: a row in people marked as a team machine, which never owns the host, signs in to the page, or holds an admin role. Its sessions show as `jetson-1 (team)` to everyone with a role in that session's project, who may also message them; people without that role do not see them, so members still never see other people's private work. Only team-project folders reach the hub, as everywhere. Give it projects like a person (`kaptyorka grant jetson-1 proj-a:write`) so its sessions can keep notes. People who log into their own OS account on the same box join as usual and stay personal machines. Its use counts as `account <os user> (team)` for the manager and the use line.
+
 ### Commands
 
 Everything else stays in the command line. Every command prints one plain sentence when it fails and exits with 1; `kaptyorka <command> --help` explains each one.
@@ -411,6 +419,8 @@ kaptyorka people remove bob            # asks first; --yes skips it
 kaptyorka grant bob proj-a:read        # read, write or manage; or machine:box-1
 kaptyorka revoke bob proj-a            # or machine:box-1
 kaptyorka machine owner box-1 bob
+kaptyorka machine team jetson-1        # a team machine; prints the join command for its shared account
+kaptyorka machine move laptop-1 carol  # give a joined machine to another person
 kaptyorka shared-token off             # or on
 kaptyorka project add proj-a --repo <url> --desc "what it is"
 kaptyorka project edit proj-a --description "new words"

@@ -1174,3 +1174,24 @@ def test_page_prints_the_link_and_opens_it_where_there_is_a_screen(monkeypatch, 
 def test_page_not_joined(home, capsys):
     assert entry_with_exit(["page"]) == 1
     assert capsys.readouterr().out == "not joined: kaptyorka join <invite link>\n"
+
+
+def test_cli_machine_team_and_move(admin_hub, capsys):
+    admin_hub["answers"][("POST", "/api/team-machines")] = (200, {
+        "name": "jet-1", "url": "http://h/i/c", "command": "kaptyorka join http://h/i/c"})
+    assert entry_with_exit(["machine", "team", "jet-1"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "team machine jet-1 added; on its shared account, run:", "kaptyorka join http://h/i/c"]
+    admin_hub["answers"][("GET", "/api/team/machines")] = (200, [
+        {"host": "pc", "devices": [{"id": 7, "name": "laptop", "person": "bob"}]},
+        {"host": "pc2", "devices": [{"id": 8, "name": "twin", "person": "bob"},
+                                    {"id": 9, "name": "twin", "person": "carol"}]}])
+    admin_hub["answers"][("POST", "/api/devices/7/move")] = (200, {
+        "device": "laptop", "from": "bob", "to": "carol"})
+    assert entry_with_exit(["machine", "move", "laptop", "carol"]) == 0
+    assert capsys.readouterr().out.strip() == "moved laptop from bob to carol"
+    assert ("POST", "/api/devices/7/move", {"person": "carol"}) in admin_hub["calls"]
+    assert entry_with_exit(["machine", "move", "twin", "carol"]) == 1
+    assert "2 machines are named twin; use the id: 8 (bob), 9 (carol)" in capsys.readouterr().err
+    assert entry_with_exit(["machine", "move", "nope", "carol"]) == 1
+    assert capsys.readouterr().err.strip() == "no machine named nope"

@@ -252,6 +252,38 @@ class WorkerStore:
                                         else s["role"] != "admin")
         return rows
 
+    def overview(self) -> List[dict]:
+        """The admin's Machines list: one row per host with who uses it (people, or a team
+        machine), whether a bridge there is online, a short use line, and its joined machines
+        (devices) to move. GitLab page sign-ins are not machines."""
+        now = self.clock()
+        with self.lock:
+            devs = self.db.execute(
+                "SELECT d.id, d.name, d.label, d.host, d.os_user, d.last_used, d.person_id,"
+                " p.name AS person, p.team, p.role FROM devices d JOIN people p ON p.id=d.person_id"
+                " WHERE d.revoked_at IS NULL AND d.legacy=0 AND d.expires IS NULL AND d.host!=''"
+                " AND p.removed_at IS NULL AND NOT (p.name=? AND p.role='manager')"
+                " ORDER BY d.host, d.id", (MANAGER_ACCOUNT,)).fetchall()
+        hosts: dict = {}
+        for d in devs:
+            h = hosts.setdefault(d["host"], {"host": d["host"], "people": [], "team": [],
+                                             "online": False, "devices": []})
+            online = d["last_used"] is not None and d["last_used"] > now - ONLINE_S
+            h["online"] = h["online"] or online
+            (h["team"] if d["team"] else h["people"]).append(d["person"])
+            h["devices"].append({"id": d["id"], "name": d["label"] or d["name"],
+                                 "person": d["person"], "team": bool(d["team"]),
+                                 "os_user": d["os_user"], "online": online,
+                                 "last_seen": d["last_used"]})
+        out = []
+        for h in hosts.values():
+            here = self.host_use(h["host"], now)
+            h["people"] = sorted(set(h["people"]))
+            h["team"] = sorted(set(h["team"]))
+            h["use"] = usage.short(here[0]) if here else ""
+            out.append(h)
+        return out
+
     # where a worker can run
 
     def candidates(self, principal: Principal, project: str,
@@ -605,15 +637,19 @@ class WorkerStore:
                 if age <= usage.STALE_S and (best is None or age < best[0]):
                     best = (age, use)
             owners: dict = {}
+            team = set()  # OS users of team machines: the team's, not anyone's
             for d in self.db.execute(
-                    "SELECT DISTINCT d.os_user, p.name FROM devices d JOIN people p"
+                    "SELECT DISTINCT d.os_user, p.name, p.team FROM devices d JOIN people p"
                     " ON p.id=d.person_id WHERE d.host=? AND d.revoked_at IS NULL AND d.legacy=0"
                     " AND NOT (p.name=? AND p.role='manager') AND d.os_user!=''",
                     (host, MANAGER_ACCOUNT)):
-                owners.setdefault(d["os_user"], []).append(d["name"])
+                if d["team"]:
+                    team.add(d["os_user"])
+                else:
+                    owners.setdefault(d["os_user"], []).append(d["name"])
         if best is None:
             return None
-        return best[1], usage.people_use(best[1], owners)
+        return best[1], usage.people_use(best[1], owners, team)
 
     def _heavy_by_others(self, host: str, person_id: int, now: float) -> bool:
         here = self.host_use(host, now)

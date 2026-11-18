@@ -576,6 +576,47 @@ def _machine_owner(args) -> int:
                      {"person": args.person}, f"{args.host} owned by {args.person}")
 
 
+def _machine_team(args) -> int:
+    got = _admin_call("POST", "/api/team-machines", {"name": args.name})
+    if got is None:
+        return 1
+    if got[0] != 200:
+        print(_problem(got), file=sys.stderr)
+        return 1
+    print(f"team machine {args.name} added; on its shared account, run:")
+    print(got[1]["command"])
+    return 0
+
+
+def _machine_move(args) -> int:
+    """`device`: a device id, or a joined machine's name (kaptyorka people lists them)."""
+    dev = args.device
+    if not dev.isdigit():
+        got = _admin_call("GET", "/api/team/machines")
+        if got is None:
+            return 1
+        if got[0] != 200:
+            print(_problem(got), file=sys.stderr)
+            return 1
+        found = [d for m in got[1] for d in m["devices"] if d["name"] == dev]
+        if not found:
+            print(f"no machine named {dev}", file=sys.stderr)
+            return 1
+        if len(found) > 1:
+            print(f"{len(found)} machines are named {dev}; use the id: "
+                  + ", ".join(f"{d['id']} ({d['person']})" for d in found), file=sys.stderr)
+            return 1
+        dev = str(found[0]["id"])
+    got = _admin_call("POST", f"/api/devices/{dev}/move", {"person": args.person})
+    if got is None:
+        return 1
+    if got[0] != 200:
+        print(_problem(got), file=sys.stderr)
+        return 1
+    print(f"moved {got[1]['device']} from {got[1]['from']} to {got[1]['to']}")
+    return 0
+
+
 def _project_add(args) -> int:
     return _admin_do("POST", "/api/projects",
                      {"name": args.name, "repo": args.repo, "description": args.desc},
@@ -1137,12 +1178,20 @@ def entry() -> None:
     st = sub.add_parser("shared-token", help="switch the old shared token (machines from before invites) on or off")
     st.add_argument("state", choices=("on", "off"))
     st.set_defaults(run=_shared_token)
-    mc = sub.add_parser("machine", help="say who owns a machine").add_subparsers(
-        dest="machine_cmd", required=True, metavar="{owner}")
+    mc = sub.add_parser("machine", help="say who owns a machine, add a team machine, or move one").add_subparsers(
+        dest="machine_cmd", required=True, metavar="{owner,team,move}")
     mo = mc.add_parser("owner", help="make a person the owner of a machine")
     mo.add_argument("host", help="the machine's name (kaptyorka fleet list shows them)")
     mo.add_argument("person", help="the person's name")
     mo.set_defaults(run=_machine_owner)
+    mt = mc.add_parser("team", help="add a team machine (one shared account everyone logs into);"
+                                    " prints the join command to run there")
+    mt.add_argument("name", help="a name for it, for example jetson-1")
+    mt.set_defaults(run=_machine_team)
+    mv = mc.add_parser("move", help="give a joined machine to another person, without joining again")
+    mv.add_argument("device", help="the machine's name or id (kaptyorka people lists them)")
+    mv.add_argument("person", help="the person who gets it")
+    mv.set_defaults(run=_machine_move)
     sub.add_parser("who", help="list the agents on the team and what each is doing").set_defaults(run=_who)
     sub.add_parser("status", help="show whether this machine's bridge, the hub and the manager are running"
                    ).set_defaults(run=_status)

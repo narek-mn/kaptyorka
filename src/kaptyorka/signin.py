@@ -246,6 +246,8 @@ class SignIn:
                 raise SignInError("you are no longer on this hub; ask the admin")
             if (row["name"], row["role"]) == (MANAGER_ACCOUNT, "manager"):
                 raise SignInError("the manager account cannot sign in with GitLab")
+            if row["team"]:
+                raise SignInError("a team machine cannot sign in with GitLab")
             if row["gitlab_user"]:
                 if row["gitlab_user"].lower() == user["username"].lower() \
                         and row["gitlab_id"] in (None, user["id"]):
@@ -388,6 +390,8 @@ def set_user(store, si: Optional[SignIn], name: str, username: str, by: Principa
             raise KaptyorkaError(f"no person named {name.strip()}")
         if (row["name"], row["role"]) == (MANAGER_ACCOUNT, "manager"):
             raise KaptyorkaError("the manager account cannot sign in with GitLab")
+        if row["team"]:
+            raise KaptyorkaError("a team machine cannot sign in with GitLab")
         if username:
             other = store.db.execute(
                 "SELECT name FROM people WHERE removed_at IS NULL AND id<>?"
@@ -430,8 +434,10 @@ def can_connect(store, principal: Principal) -> bool:
             or (principal.person_name, principal.role) == (MANAGER_ACCOUNT, "manager"):
         return False
     with store.lock:
-        row = store.db.execute("SELECT gitlab_user FROM people WHERE id=?",
+        row = store.db.execute("SELECT gitlab_user, team FROM people WHERE id=?",
                                (principal.person_id,)).fetchone()
+        if row is not None and row["team"]:
+            return False
     return row is not None and not row["gitlab_user"] and status(store) is None
 
 

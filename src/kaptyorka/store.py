@@ -126,6 +126,8 @@ ADDED_COLUMNS = [
     ("devices", "label", "TEXT NOT NULL DEFAULT ''"),
     ("people", "gitlab_user", "TEXT"),  # the GitLab username a person signs in with
     ("people", "gitlab_id", "INTEGER"),  # that GitLab user's id, kept at their first sign-in
+    # 1: a team machine, not a person: a shared OS account everyone logs into (team_machine_add)
+    ("people", "team", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -353,9 +355,23 @@ class Store:
 
     def people(self) -> List[dict]:
         with self.lock:
-            rows = self.db.execute("SELECT id, name, role, created, gitlab_user FROM people"
+            rows = self.db.execute("SELECT id, name, role, created, gitlab_user, team FROM people"
                                    " WHERE removed_at IS NULL ORDER BY id")
-            return [dict(r) for r in rows]
+            return [{**dict(r), "team": bool(r["team"])} for r in rows]
+
+    def team_machine_add(self, name: str, by: str) -> Tuple[int, str]:
+        """A team machine: a row in people marked `team`, owned by the team and not by anyone,
+        and an invite for it. Run on the shared account, `kaptyorka join <link>` makes its
+        device. Its sessions are seen and messaged by everyone with a role in their project.
+        Returns (its id, the invite code)."""
+        name = _person(name)
+        with self.lock:
+            if self.db.execute("SELECT 1 FROM people WHERE name=?", (name,)).fetchone():
+                raise KaptyorkaError(f"the name {name} is taken")
+            pid = self.db.execute("INSERT INTO people (name, role, created, team)"
+                                  " VALUES (?, 'member', ?, 1)", (name, self.clock())).lastrowid
+        self.log_add(by, "team_machine", name)
+        return pid, self.invite_create(pid, by=by)
 
     def devices(self, person_id: int) -> List[dict]:
         with self.lock:
@@ -525,6 +541,45 @@ class Store:
             self.db.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
                             " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(now)))
         self.log_add(principal.person_name, "page_login", principal.device_name)
+
+    def device_move(self, device_id: int, to_name: str, by: str) -> dict:
+        """Give a joined machine (device) to another person, without joining again: its token
+        keeps working and now speaks for them. Its sessions move with it; session doors of
+        those sessions close; the old person's ownership of the host follows when this was
+        their last device there. Returns {"device", "from", "to"}."""
+        with self.lock:
+            d = self.db.execute(
+                "SELECT d.*, p.name AS person, p.role FROM devices d JOIN people p"
+                " ON p.id=d.person_id WHERE d.id=? AND d.revoked_at IS NULL", (device_id,)).fetchone()
+            if d is None or d["expires"] is not None or d["host"] == "":
+                raise KaptyorkaError("no such machine")
+            if d["legacy"]:
+                raise KaptyorkaError("the old shared token cannot move; assign its machine instead")
+            if (d["person"], d["role"]) == (MANAGER_ACCOUNT, "manager"):
+                raise KaptyorkaError("the manager's machine cannot move")
+            to = self.db.execute("SELECT id, name, role FROM people WHERE name=? AND"
+                                 " removed_at IS NULL", (to_name.strip(),)).fetchone()
+            if to is None:
+                raise KaptyorkaError(f"no person named {to_name.strip()}")
+            if (to["name"], to["role"]) == (MANAGER_ACCOUNT, "manager"):
+                raise KaptyorkaError("the manager account cannot take a machine")
+            if to["id"] == d["person_id"]:
+                raise KaptyorkaError(f"it is already {to['name']}'s")
+            old, new, now = d["person_id"], to["id"], self.clock()
+            keys = [r["key"] for r in self.db.execute("SELECT key FROM agents WHERE device_id=?",
+                                                      (device_id,))]
+            self.db.execute("UPDATE devices SET person_id=?, label='' WHERE id=?", (new, device_id))
+            for k in keys:
+                self.db.execute("UPDATE agents SET person_id=? WHERE key=?", (new, k))
+                self.db.execute("UPDATE doors SET closed_at=? WHERE closed_at IS NULL AND"
+                                " (a_key=? OR b_key=?)", (now, k, k))
+            if self.db.execute("SELECT 1 FROM devices WHERE person_id=? AND host=? AND"
+                               " revoked_at IS NULL", (old, d["host"])).fetchone() is None:
+                self.db.execute("UPDATE machines SET owner_person_id=? WHERE host=? AND"
+                                " owner_person_id=?", (None if self._is_team(new) else new,
+                                                       d["host"], old))
+        self.log_add(by, "machine_move", f"{d['name']}: {d['person']} -> {to['name']}")
+        return {"device": d["name"], "from": d["person"], "to": to["name"]}
 
     def device_revoke(self, device_id: int, by: str = "") -> None:
         with self.lock:
@@ -1295,7 +1350,8 @@ class Store:
         ask waits for the admin's Yes, once. The manager account never owns or asks. Returns
         the log rows to write once the lock is let go."""
         who = self.db.execute("SELECT name, role FROM people WHERE id=?", (person_id,)).fetchone()
-        if who is None or (who["name"], who["role"]) == (MANAGER_ACCOUNT, "manager"):
+        if who is None or (who["name"], who["role"]) == (MANAGER_ACCOUNT, "manager") \
+                or self._is_team(person_id):
             return []
         m = self.db.execute("SELECT owner_person_id FROM machines WHERE host=?", (host,)).fetchone()
         if m is None:
@@ -1303,7 +1359,7 @@ class Store:
         if m["owner_person_id"] is None:
             others = self.db.execute(
                 "SELECT 1 FROM devices d JOIN people p ON p.id=d.person_id WHERE d.host=?"
-                " AND d.person_id!=? AND d.revoked_at IS NULL AND d.legacy=0"
+                " AND d.person_id!=? AND d.revoked_at IS NULL AND d.legacy=0 AND p.team=0"
                 " AND NOT (p.name=? AND p.role='manager') LIMIT 1",
                 (host, person_id, MANAGER_ACCOUNT)).fetchone()
             if others is not None:  # two people already: who came first is unknown
@@ -1441,12 +1497,41 @@ class Store:
             return True
         if pid is not None and self._role_of(pid) == "manager":
             return True
+        if pid is not None and self._is_team(pid):  # a team machine: by the session's project
+            return self._team_reach(row, viewer)
+        if self._is_team(viewer) and pid is not None:  # the team machine looking out: the
+            # sessions of people with a role in a project it works in, in that project
+            project = self.db.execute("SELECT project FROM agents WHERE key=?",
+                                      (row["key"],)).fetchone()
+            if project is not None and self._role(project["project"], pid) is not None \
+                    and self.db.execute("SELECT 1 FROM agents WHERE person_id=? AND project=?",
+                                        (viewer, project["project"])).fetchone():
+                return True
         return self.db.execute(
             "SELECT 1 FROM doors WHERE closed_at IS NULL AND ("
             "(scope='session' AND ((a_key=? AND b_person=?) OR (b_key=? AND a_person=?))) OR"
             " (scope='group' AND ((a_person=? AND b_person=?) OR (a_person=? AND b_person=?))))",
             (row["key"], viewer, row["key"], viewer, pid, viewer, viewer, pid)
         ).fetchone() is not None
+
+    def is_team(self, person_id) -> bool:
+        with self.lock:
+            return self._is_team(person_id)
+
+    def _is_team(self, person_id) -> bool:
+        """Lock held. True for a team machine's row in people."""
+        row = self.db.execute("SELECT team FROM people WHERE id=?", (person_id,)).fetchone()
+        return row is not None and bool(row["team"])
+
+    def _team_reach(self, session, person_id) -> bool:
+        """Lock held. True when the person has a role in the project of the team machine's
+        session `session` (a row with its key, and its project when known)."""
+        project = session["project"] if "project" in session.keys() else None
+        if project is None:
+            row = self.db.execute("SELECT project FROM agents WHERE key=?",
+                                  (session["key"],)).fetchone()
+            project = row["project"] if row else None
+        return bool(project) and person_id is not None and self._role(project, person_id) is not None
 
     def listed(self, viewer: Optional[int], key: str, person_id: Optional[int]) -> bool:
         """Whether person `viewer` may see the session `key` of `person_id` (see `_listed`)."""
@@ -1784,6 +1869,13 @@ class Store:
             return True
         if sp is None or tp is None:
             return False
+        # a team machine's session and anyone with a role in its project, both ways
+        if self._is_team(tp) and not target["key"].startswith("web:") \
+                and self._team_reach(target, sp):
+            return True
+        if self._is_team(sp) and not sender["key"].startswith("web:") \
+                and self._team_reach(sender, tp):
+            return True
         return self.db.execute(
             "SELECT 1 FROM doors WHERE closed_at IS NULL AND ("
             "(scope='session' AND ((a_key=? AND b_key=?) OR (a_key=? AND b_key=?))) OR"
