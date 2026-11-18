@@ -751,6 +751,18 @@ def test_cli_page_on_a_member_machine_says_sign_in_with_gitlab(hub, capsys, monk
     paths.save_config({"hub": hub.url, "token": admin})
     cli._page(None)
     assert f"{hub.url}/#t={admin}" in capsys.readouterr().out
+    # the hub machine joined again with an invite: its config holds a member device, but the
+    # admin token file still gives the emergency link
+    _, rejoined = person(hub.store, "frank")
+    paths.save_config({"hub": hub.url, "token": rejoined})
+    cli._page(None)
+    assert f"{hub.url}/#t={admin}" in capsys.readouterr().out
+    # a stale admin token file is ignored
+    (paths.home() / "admin-token").write_text("not-a-token\n")
+    paths.save_config({"hub": hub.url, "token": hub.tokens["bob"]})
+    cli._page(None)
+    assert capsys.readouterr().out.strip() == f"open {hub.url} and sign in with GitLab"
+    (paths.home() / "admin-token").unlink()
     # sign-in off: every machine's link opens the page
     os.unlink(paths.home() / "gitlab-oauth")
     paths.save_config({"hub": hub.url, "token": hub.tokens["bob"]})

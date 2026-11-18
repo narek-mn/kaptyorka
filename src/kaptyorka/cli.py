@@ -258,19 +258,35 @@ def _page(args) -> int:
         print("not joined: kaptyorka join <invite link>")
         return 1
     hub = cfg["hub"].rstrip("/")
-    url = f"{hub}/#t={cfg['token']}"
-    try:  # with sign-in with GitLab on, only the admin token (the hub machine's) opens the page
-        got = http.request("GET", hub + "/api/me", cfg["token"], timeout=5)
-    except http.HubUnreachable:
-        got = None
-    me = got[1] if got and got[0] == 200 and isinstance(got[1], dict) else {}
+
+    def ask(token: str) -> dict:
+        try:
+            got = http.request("GET", hub + "/api/me", token, timeout=5)
+        except http.HubUnreachable:
+            return {}
+        return got[1] if got and got[0] == 200 and isinstance(got[1], dict) else {}
+
+    # with sign-in with GitLab on, only the admin token opens the page: on the hub machine it is
+    # in admin-token, even when this machine was joined again with an invite of its own
+    token, me = cfg["token"], None
+    try:
+        admin = (paths.home() / "admin-token").read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        admin = ""
+    if admin and admin != token:
+        got = ask(admin)
+        if got.get("page") is True:
+            token, me = admin, got
+    if me is None:
+        me = ask(token)
+    url = f"{hub}/#t={token}"
     if me.get("page") is False and not me.get("gitlab_connect"):
         url = hub
         print(f"open {hub} and sign in with GitLab")
     elif me.get("page") is False:  # not linked yet: the link's Sign in with GitLab links them
         print(f"open this link and sign in with GitLab, which links your account: {url}")
     else:
-        print(PAGE_LINK.format(url=hub, token=cfg["token"]))
+        print(PAGE_LINK.format(url=hub, token=token))
     # with no screen (ssh), a text browser would take over the terminal: only print then
     screen = sys.platform == "darwin" or bool(os.environ.get("DISPLAY")
                                               or os.environ.get("WAYLAND_DISPLAY"))
