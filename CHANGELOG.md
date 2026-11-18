@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.15
+
+- **Pictures open full screen, and videos play in the chat.** A click (or Enter) on a picture opens it large on a dark backdrop; click outside, Esc or the close button shuts it, and a quiet **Download** sits in the corner. Videos (mp4, webm, mov, m4v, ogg) can now be sent, up to the same 5 MB, and play inline with the browser's own controls and seeking (the hub answers `Range` requests). Other files are still a download button.
+
 ## 0.9.14
 
 - **The hub knows who uses a shared machine, and how much.** Each bridge reports, once a minute, CPU cores, memory and (with `nvidia-smi`) GPU busy %, GPU memory and GPU holders per OS user. Numbers only: no process names or command lines. The hub maps each OS user to its person and ignores reports older than 3 minutes. Only the admin and the manager see them.

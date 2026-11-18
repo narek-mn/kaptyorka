@@ -223,6 +223,19 @@ section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .sentence code { font: 12px var(--mono); color: var(--ink); }
 .hint { font-size: 12px; color: var(--faint); }
 .att { display: block; max-width: min(360px, 100%); max-height: 260px; margin-top: 7px; border: 1px solid var(--line); background: var(--bg); }
+.att.zoom { cursor: zoom-in; }
+.att.zoom:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.vid .att { background: #000; }
+.lightbox { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  padding: 56px 16px 16px; background: rgba(8, 8, 6, .96); animation: lb-in .15s ease-out; }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.lb-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+.lb-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--muted); }
+.lb-close { display: inline-flex; padding: 8px; color: var(--ink); background: none; border: 1px solid var(--line-ctl); cursor: pointer; }
+.lb-close:hover { background: var(--hover); }
+.lb-close:focus-visible, .lightbox .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lightbox .btn.failed { color: var(--danger); }
+@keyframes lb-in { from { opacity: 0; } to { opacity: 1; } }
 .file { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--accent); font-size: 12px; text-decoration: none; }
 .file:hover { text-decoration: underline; }
 .file.failed { color: var(--danger); }
@@ -974,26 +987,72 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     return m.fromMgr || sessionKey(m.sender) === "mgr" ? "manager" : labelOf(m.fromId || m.sender) || shortName(m.sender);
   }
 
-  /* an <img> cannot send a header, so images take ?t=; any other file is fetched with the
-     header and saved from a blob, so no link carrying the token can be copied */
-  function attachment(f) {
-    if (/\.(png|jpe?g|gif|webp|svg)$/i.test(f.name)) {
-      return el("img", { "class": "att", src: "/api/files/" + f.id + "?t=" + encodeURIComponent(token),
-                         alt: f.name, title: f.name + " (" + size(f.size) + ")", loading: "lazy" });
-    }
-    var b = el("button", { "class": "file", type: "button", title: "Download " + f.name },
+  /* an <img> or <video> cannot send a header, so they take ?t=; any other file is fetched with
+     the header and saved from a blob, so no link carrying the token can be copied */
+  function download(f, onFail) {
+    fetch("/api/files/" + f.id, { cache: "no-store", headers: { Authorization: "Bearer " + token } })
+      .then(checked).then(function (r) { return r.blob(); })
+      .then(function (blob) {
+        var url = URL.createObjectURL(blob), a = el("a", { href: url, download: f.name });
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      })
+      .catch(function (e) { onFail(e.message); });
+  }
+  function downloadButton(f, cls) {
+    var b = el("button", { "class": cls, type: "button", title: "Download " + f.name },
                [icon("i-clip", 13), f.name, el("small", { text: size(f.size) })]);
     b.addEventListener("click", function () {
-      fetch("/api/files/" + f.id, { cache: "no-store", headers: { Authorization: "Bearer " + token } })
-        .then(checked).then(function (r) { return r.blob(); })
-        .then(function (blob) {
-          var url = URL.createObjectURL(blob), a = el("a", { href: url, download: f.name });
-          document.body.appendChild(a); a.click(); a.remove();
-          setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-        })
-        .catch(function (e) { b.title = e.message; b.classList.add("failed"); });
+      download(f, function (msg) { b.title = msg; b.classList.add("failed"); });
     });
     return b;
+  }
+  /* a click on a picture opens it over the page: backdrop, Esc or the close button shuts it */
+  var lightbox = null;
+  function closeLightbox() {
+    if (!lightbox) return;
+    var box = lightbox; lightbox = null;
+    box.node.remove();
+    if (box.from && box.from.focus) box.from.focus();
+  }
+  function openImage(f, from) {
+    closeLightbox();
+    var src = "/api/files/" + f.id + "?t=" + encodeURIComponent(token);
+    var dl = el("button", { "class": "btn", type: "button" }, [icon("i-clip", 13), "Download"]);
+    dl.addEventListener("click", function () {
+      download(f, function (msg) { dl.title = msg; dl.classList.add("failed"); });
+    });
+    var x = el("button", { "class": "lb-close", type: "button", title: "Close", "aria-label": "Close" }, [icon("i-x", 16)]);
+    x.addEventListener("click", closeLightbox);
+    var node = el("div", { "class": "lightbox", role: "dialog", "aria-modal": "true", "aria-label": f.name }, [
+      el("img", { src: src, alt: f.name }),
+      el("div", { "class": "lb-bar" }, [el("span", { "class": "lb-name", text: f.name }), dl, x])]);
+    node.addEventListener("click", function (e) { if (e.target === node) closeLightbox(); });
+    document.body.appendChild(node);
+    lightbox = { node: node, from: from };
+    x.focus();
+  }
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && lightbox) { e.stopPropagation(); closeLightbox(); }
+  }, true);
+  function attachment(f) {
+    var src = "/api/files/" + f.id + "?t=" + encodeURIComponent(token);
+    if (/\.(png|jpe?g|gif|webp|svg)$/i.test(f.name)) {
+      var img = el("img", { "class": "att zoom", src: src, alt: f.name, tabindex: "0", role: "button",
+                            title: f.name + " (" + size(f.size) + ")", loading: "lazy" });
+      img.addEventListener("click", function () { openImage(f, img); });
+      img.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openImage(f, img); }
+      });
+      return img;
+    }
+    if (/\.(mp4|webm|mov|m4v|ogg)$/i.test(f.name)) {
+      return el("div", { "class": "vid" }, [
+        el("video", { "class": "att", src: src, controls: "", preload: "metadata", playsinline: "",
+                      controlsList: "nodownload", title: f.name }),
+        downloadButton(f, "file")]);
+    }
+    return downloadButton(f, "file");
   }
 
   /* Home, right: the open chat. Messages in full (very long ones folded at 12 lines),

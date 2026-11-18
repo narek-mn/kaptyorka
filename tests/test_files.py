@@ -189,3 +189,35 @@ def test_attachment_line_and_fetch_by_message_id(hub, home):
     run(call(hub, ident("claude:adm"), "send", to=bname, text="plain"))
     [item] = [o for o in hub.store.offer("pc") if o["kind"] == "message"]
     assert "[attached" not in item["text"]
+
+
+def test_video_upload_and_range(hub, home):
+    pid, tok = person(hub.store, "ann", "admin")
+    data = bytes(range(100))
+    fid = hub.store.file_add("clip.mp4", data, pid)
+
+    def get(rng=None, t=tok, query=""):
+        import urllib.error
+        import urllib.request
+        h = {"Range": rng} if rng else {}
+        if t:
+            h["Authorization"] = f"Bearer {t}"
+        try:
+            with urllib.request.urlopen(urllib.request.Request(f"{hub.url}/api/files/{fid}{query}", headers=h)) as r:
+                return r.status, r.read(), r.headers
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), e.headers
+
+    status, body, h = get()
+    assert (status, body, h["Content-Type"], h["Accept-Ranges"]) == (200, data, "video/mp4", "bytes")
+    status, body, h = get("bytes=10-19")
+    assert (status, body, h["Content-Range"]) == (206, data[10:20], "bytes 10-19/100")
+    assert get("bytes=90-")[1:2] == (data[90:],) and get("bytes=-5")[1] == data[95:]
+    assert get("bytes=50-5000")[1] == data[50:]
+    status, _, h = get("bytes=100-")
+    assert (status, h["Content-Range"]) == (416, "bytes */100")
+    assert get("bytes=abc")[0] == 200  # not a single range: the whole file
+    # a player cannot send a header: ?t= works for a video as for a picture
+    assert get(t=None, query=f"?t={tok}")[0] == 200
+    assert get("bytes=0-3", t=None, query=f"?t={tok}")[1] == data[:4]
+    assert get(t=None, query="?t=bad")[0] == 401

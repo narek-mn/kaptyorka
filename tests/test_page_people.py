@@ -350,7 +350,7 @@ def test_page_broadcast_opens_no_doors(app):
 def test_page_downloads_files_without_token_links(app):
     status, html = http.request("GET", app.url + "/", "")
     assert "URL.createObjectURL" in html and "revokeObjectURL" in html
-    assert html.count('?t=" + encodeURIComponent(token)') == 1  # images only
+    assert html.count('?t=" + encodeURIComponent(token)') == 2  # the viewer and the thumbnails/videos only
 
 
 def page_html() -> str:

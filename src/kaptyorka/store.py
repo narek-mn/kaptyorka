@@ -20,7 +20,8 @@ MAX_TEXT = 32_000
 MAX_ABOUT = 500
 MAX_LABEL = 40
 MAX_FILE = 5_000_000
-FILE_TYPES = ("png", "jpg", "jpeg", "gif", "webp", "svg", "txt", "md", "log", "json", "csv", "pdf")
+FILE_TYPES = ("png", "jpg", "jpeg", "gif", "webp", "svg", "txt", "md", "log", "json", "csv", "pdf",
+              "mp4", "webm", "mov", "m4v", "ogg")
 RATE = (30, 60)
 SCHEMA_VERSION = 2
 INVITE_TTL_S = 7 * 86400

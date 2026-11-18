@@ -1037,10 +1037,23 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         except (KaptyorkaError, ValueError):
             return PlainTextResponse("no such file", status_code=404)
         safe = re.sub(r"[^A-Za-z0-9._-]", "", info["name"].replace("\\", "/").rsplit("/", 1)[-1])
-        return Response(data, media_type=mimetypes.guess_type(info["name"])[0]
-                        or "application/octet-stream",
-                        headers={"Content-Disposition": f'attachment; filename="{safe or "file"}"',
-                                 "X-Content-Type-Options": "nosniff"})
+        headers = {"Content-Disposition": f'attachment; filename="{safe or "file"}"',
+                   "X-Content-Type-Options": "nosniff", "Accept-Ranges": "bytes"}
+        ctype = mimetypes.guess_type(info["name"])[0] or "application/octet-stream"
+        # a video player seeks with one Range header: bytes=a-b, bytes=a- or bytes=-n
+        m = re.fullmatch(r"bytes=(\d*)-(\d*)", request.headers.get("range", "").strip())
+        if m and (m.group(1) or m.group(2)):
+            size = len(data)
+            if m.group(1):
+                start = int(m.group(1))
+                end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+            else:
+                start, end = max(size - int(m.group(2)), 0), size - 1
+            if start >= size or start > end:
+                return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
+            return Response(data[start:end + 1], status_code=206, media_type=ctype,
+                            headers={**headers, "Content-Range": f"bytes {start}-{end}/{size}"})
+        return Response(data, media_type=ctype, headers=headers)
 
     @server.custom_route("/api/send", methods=["POST"])
     @_bad_request

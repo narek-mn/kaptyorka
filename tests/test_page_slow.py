@@ -809,3 +809,50 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
         stop()
         store.close()
         lab.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 780)])
+def test_image_opens_large_and_video_plays(tmp_path, w, h):
+    import os
+    shots = os.environ.get("KAPTYORKA_SHOTS")
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    alice, token = person(store, "alice", "admin")
+    # a 1x1 png is enough to open; a real picture for the screenshot
+    import base64
+    import struct
+    import zlib
+    W, H = 640, 400
+    rows = b"".join(b"\x00" + bytes(v for x in range(W) for v in (40 + x * 200 // W, 90 + y * 120 // H, 160)) for y in range(H))
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+    pic = store.file_add("photo.png", png, alice)
+    vid = store.file_add("clip.mp4", b"not really a video", alice)
+    store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(token))
+    store.send_from_web("alice", "box-1/codex/proj-a", "a picture", person_id=alice, file_id=pic)
+    store.send_from_web("alice", "box-1/codex/proj-a", "a video", person_id=alice, file_id=vid)
+    try:
+        with chrome(w, h) as page:
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+            page.wait('[...document.querySelectorAll("#agents .row")].some(r => r.querySelector(".name")?.textContent === "proj-a")')
+            page.js('[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name").textContent === "proj-a").click()')
+            page.wait('document.querySelector("#log img.att.zoom")?.complete && document.querySelector("#log img.att.zoom").naturalWidth')
+            assert page.js('document.querySelector("#log video.att").controls')
+            assert page.js('document.querySelector("#log video.att").preload') == "metadata"
+            assert page.js('document.querySelector("#log .vid .file")') is not None
+            page.js('document.querySelector("#log img.att.zoom").click()')
+            page.wait('document.querySelector(".lightbox img")?.naturalWidth')
+            if shots:
+                time.sleep(0.4)
+                page.screenshot(Path(shots) / f"viewer-{w}.png")
+            page.js('document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}))')
+            assert page.js('!document.querySelector(".lightbox")')
+            page.js('document.querySelector("#log img.att.zoom").dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", bubbles: true}))')
+            assert page.js('!!document.querySelector(".lightbox")')
+            page.js('document.querySelector(".lightbox").click()')  # the backdrop
+            assert page.js('!document.querySelector(".lightbox")')
+    finally:
+        stop()
+        store.close()
