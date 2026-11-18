@@ -75,6 +75,16 @@ def test_home_warns_only_what_blocks(hub):
     assert 'id="warns"' in html and 'id="warn-banner"' not in html
 
 
+def test_no_function_name_is_declared_twice(hub):
+    """A second declaration silently replaces the first (both hoist): two `tick`s once made every
+    poll throw, so the live dot said the hub was unreachable."""
+    import collections
+    import re
+
+    names = collections.Counter(re.findall(r"\bfunction ([A-Za-z_$][\w$]*)\(", page(hub)))
+    assert [n for n, c in names.items() if c > 1] == []
+
+
 def test_member_page_makes_no_admin_fetch(hub):
     html = page(hub)
     for fn in ("loadWarnings", "loadProposals", "loadGitlab"):

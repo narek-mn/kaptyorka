@@ -1207,10 +1207,10 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       }
       last = { k: k, t: o.created };
       group.appendChild(el("div", { "class": "msg out " + o.state, "data-out": String(o.lid) }, [el("div", { "class": "text", text: o.text }),
-        o.sent ? el("span", { "class": "att-out" }, [icon("i-clip", 12), el("span", { text: o.sent.file.name })]) : null, tick(o)]));
+        o.sent ? el("span", { "class": "att-out" }, [icon("i-clip", 12), el("span", { text: o.sent.file.name })]) : null, sendMark(o)]));
     });
     /* only my last message, while nothing came after it: Sent, then Delivered once the session has it */
-    if (!act && !outs.length && mineLast) mineLast.body.appendChild(tick({ state: mineLast.m.read ? "delivered" : "sent" }));
+    if (!act && !outs.length && mineLast) mineLast.body.appendChild(sendMark({ state: mineLast.m.read ? "delivered" : "sent" }));
     var bg = (entryOf[conv] || {}).bg;
     if (!shown.length && !outs.length) log.appendChild(el("div", { "class": "blank", text: bg ? BG_EMPTY : "No messages yet." }));
     var t = $("notices-toggle");
@@ -1227,7 +1227,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   /* under my message: where it is, quietly */
   var TICKS = { sending: ["Sending\u2026", "On its way to the hub"], sent: ["Sent", "The hub has it; the session has not picked it up yet"],
                 delivered: ["Delivered", "The session has it"], failed: ["Not sent", ""] };
-  function tick(o) {
+  function sendMark(o) {
     var t = TICKS[o.state], kids = [o.state === "sending" ? el("span", { "class": "spin", "aria-hidden": "true" }) : icon(o.state === "failed" ? "i-warn" : "i-check", 11), t[0]];
     if (o.state === "failed") {
       var retry = el("button", { type: "button", title: "Send it again", text: "Retry" }), edit = el("button", { type: "button", title: "Put it back in the box below", text: "Edit" });

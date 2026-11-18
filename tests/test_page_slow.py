@@ -130,6 +130,7 @@ def test_member_sees_only_home(member_page):
     assert page.js('document.querySelector("#agents .mgr .n").textContent') == "off"
     assert page.js('document.getElementById("text").placeholder') == "Message manager"
     time.sleep(2.5)  # a poll or two
+    assert page.js('document.getElementById("live").className') == "live"  # the hub answers
     fetched = page.js('[...new Set(performance.getEntriesByType("resource").map(e => new URL(e.name).pathname))]')
     assert set(fetched) <= {"/api/me", "/api/feed", "/fonts/archivo-latin.woff2", "/favicon.ico"}, fetched
 
@@ -1081,6 +1082,7 @@ def test_account_panel_add_machine_and_new_invite_link(tmp_path, w, h):
             page.wait('document.getElementById("viewer-name")?.textContent === "alice"')
             page.js('document.getElementById("tab-team").click()')
             page.wait('!!document.querySelector("#people-rows [data-person=bob] .new-link")')
+            page.wait('document.getElementById("live").className === "live"')
             row = 'document.querySelector("#people-rows [data-person=bob]")'
             page.call("Browser.grantPermissions", permissions=["clipboardReadWrite", "clipboardSanitizedWrite"],
                       origin=base)
