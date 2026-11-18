@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.20 (unreleased)
+## 0.9.20
 
 - **The hub key.** The device token in `~/.kaptyorka/admin-token` on the hub machine has every admin right whatever its person's role: the emergency link opens the page, and the admin commands on the hub machine work, even after its person is demoted or when nobody is an admin. Lost every admin? On the hub machine run `kaptyorka people role <you> admin`. `kaptyorka start` keeps the key while its device is live (it no longer makes a new one for the oldest admin), writes it 0600, and fixes the mode of an existing one. A copied token stops working once its device is revoked, and the key still cannot be removed from the page. The manager also runs through the hub key's bridge whatever its person's role.
 - The hub machine's person can be demoted like anyone else. While sign-in with GitLab is on, the hub refuses to demote the last admin linked to GitLab ("bob is the last admin who signs in with GitLab; make someone with GitLab an admin first"), so the page stays usable.
