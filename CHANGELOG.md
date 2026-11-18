@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.11
+
+**Upgrade note: register your team folders before you update the hub.** The first start of the 0.9.11 hub permanently deletes what it kept from every session whose folder is not a registered team project: those sessions, the messages to and from them with their files, their knocks, doors, connection requests and done checks, and the git history, state writes, conflicts, finished workers and work requests of folders that are no project at all. It cannot be undone. Register each team folder first (`kaptyorka project add <name>`), then update. Notes are kept. Update the hub before the members: a 0.9.11 bridge talking to an older hub reports no sessions, and its tools say the hub has not sent its team project list yet.
+
+- Only team projects reach the hub. A session whose folder is not a registered project (a `<folder>--N` worktree counts as its project) is personal, as if it typed `/hub off`. No presence, folder name, status, git activity, notes, messages or files leave the machine. Its kaptyorka tools refuse with "this folder is not a team project, so nothing from it goes to the hub. Ask the admin to add it as a team project." and its hooks print nothing. Registering a project brings its sessions in within about 10 seconds; removing it takes them out again and deletes their data as above. The manager session and workers the hub started are always on the hub.
+- The bridge decides from the list of team projects the hub sends with each heartbeat. It keeps the last list across failed heartbeats and restarts (`~/.kaptyorka/team.json`), and the hub checks again, so an older or changed bridge cannot leak.
+- Members no longer see other people's sessions: the **Others** list, **Request connection** and `who(others=true)` are gone, with no person, machine or label left. To reach someone else, message the manager with whom and why. The manager tells the admin, and only the admin opens a door. `request_access(kind="session")` now says to ask the manager. A request made before 0.9.11 can still be decided on the Team page.
+- `kaptyorka page` opens your own page in a browser (where there is a screen) and prints its private link. `join` says to keep that link private and how to open it again; `kaptyorka status` ends with "open your page: kaptyorka page".
+- A pushed message now ends with how to answer, for example `Answer with send(to="alice"); text written only in your terminal is not seen by them.`, so an agent replies through the hub instead of in its own terminal.
+- The hub answers WebSocket requests (it serves none) with a plain 400. It writes one line per client and path an hour, naming the client, path and user agent, instead of two uvicorn warnings per request.
+
 ## 0.9.10
 
 - A message with a picture or file now says so to the session that gets it: one line after the text, `[attached: name (size) - get it with fetch_file(id)]`, in pushed messages, hook injections, the brief and `inbox`. `fetch_file` also accepts the message id, and its description says so.
