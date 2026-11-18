@@ -100,7 +100,7 @@ class Bridge:
                 skills_sync.applied_version(paths.home()) == self._skills_version
             self._facts = {**identity.facts(), **facts.machine(self.adapters, self.runner, skills_current=current), "git": repos}
             try:  # use per OS user: numbers only; never stops the heartbeat
-                self._facts["use"] = self._usage.read(self.runner)
+                self._facts["use"] = self._usage.read()
             except Exception as e:
                 self._report("use", f"reading machine use failed: {e}")
             self._facts_at = time.monotonic()

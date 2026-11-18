@@ -287,10 +287,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     def arrivals(now: float) -> None:
         """A person's first own session on a host (none there for ARRIVAL_GAP_S) while someone
-        else uses it heavily: the manager warns them and tells the admin. Never held."""
-        if not mm.enabled():
-            return
-        warn = now >= ws.started + STARTUP_S  # just started: bridges have not all reported
+        else uses it heavily: the manager warns them and tells the admin. Never held.
+        Arrivals are recorded with the manager off too, so switching it on warns no one."""
+        warn = now >= ws.started + STARTUP_S and mm.enabled()  # just started: bridges have not all reported
         done = set()
         for s in ws.direct_sessions(now):
             pair = (s["host"], s["person_id"])

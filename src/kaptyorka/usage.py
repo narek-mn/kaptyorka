@@ -59,8 +59,11 @@ def parse_apps(text: str) -> List[Tuple[str, int, float]]:
 class Sampler:
     """Keeps the last CPU ticks per pid, so CPU is the average since the previous read."""
 
-    def __init__(self, proc: Path = Path("/proc"), clock: Callable[[], float] = time.monotonic):
+    def __init__(self, proc: Path = Path("/proc"), clock: Callable[[], float] = time.monotonic,
+                 popen=None):
         self.proc, self.clock = Path(proc), clock
+        self.popen = popen or subprocess.Popen
+        self._stuck: list = []  # killed nvidia-smi children not yet exited
         self._ticks: Dict[int, int] = {}
         self._at: Optional[float] = None
         self._smi_off_until = 0.0
@@ -102,25 +105,44 @@ class Sampler:
             out.append((int(name), self._user(uid), int(rest[11]) + int(rest[12]), int(rest[21])))
         return out
 
-    def _gpus(self, run) -> Optional[Tuple[List[dict], list]]:
+    def _reap(self) -> None:
+        """Drop the nvidia-smi children that exited since; never wait on one."""
+        self._stuck = [p for p in self._stuck if p.poll() is None]
+
+    def _gpus(self) -> Optional[Tuple[List[dict], list]]:
+        """Both queries at once, within one SMI_TIMEOUT_S. On a hung driver nvidia-smi can sit
+        where a kill does nothing: it is killed and left, never waited on (reaped on a later
+        read), so the heartbeat never blocks past the timeout."""
+        self._reap()
         exe = _nvidia_smi()
         if not exe or self.clock() < self._smi_off_until:
             return None
+        deadline = time.monotonic() + SMI_TIMEOUT_S
+        procs, outs = [], []
         try:
-            g = run([exe, "--query-gpu=index,uuid,utilization.gpu,memory.used,memory.total",
-                     "--format=csv,noheader,nounits"],
-                    capture_output=True, text=True, timeout=SMI_TIMEOUT_S)
-            a = run([exe, "--query-compute-apps=gpu_uuid,pid,used_memory",
-                     "--format=csv,noheader,nounits"],
-                    capture_output=True, text=True, timeout=SMI_TIMEOUT_S)
-            if g.returncode != 0 or a.returncode != 0:
-                raise OSError("nvidia-smi failed")
+            for query in ("--query-gpu=index,uuid,utilization.gpu,memory.used,memory.total",
+                          "--query-compute-apps=gpu_uuid,pid,used_memory"):
+                procs.append(self.popen([exe, query, "--format=csv,noheader,nounits"],
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                        stdin=subprocess.DEVNULL, text=True))
+            for p in procs:
+                out, _ = p.communicate(timeout=max(deadline - time.monotonic(), 0.01))
+                if p.returncode != 0:
+                    raise OSError("nvidia-smi failed")
+                outs.append(out or "")
         except (subprocess.TimeoutExpired, OSError):
+            for p in procs:
+                if p.poll() is None:
+                    try:
+                        p.kill()
+                    except OSError:
+                        pass
+                    self._stuck.append(p)
             self._smi_off_until = self.clock() + SMI_RETRY_S
             return None
-        return parse_gpus(g.stdout or ""), parse_apps(a.stdout or "")
+        return parse_gpus(outs[0]), parse_apps(outs[1])
 
-    def read(self, run=subprocess.run) -> dict:
+    def read(self) -> dict:
         now = self.clock()
         procs = self._procs()
         page = os.sysconf("SC_PAGE_SIZE") / 1048576
@@ -135,7 +157,7 @@ class Sampler:
         self._ticks, self._at = {pid: t for pid, _, t, _ in procs}, now
         out: dict = {"read_at": time.time(), "cpus": os.cpu_count() or 1,
                      "mem_mb": _mem_total(self.proc)}
-        smi = self._gpus(run)
+        smi = self._gpus()
         if smi is not None:
             gpus, apps = smi
             index = {g["uuid"]: g["index"] for g in gpus}

@@ -11,7 +11,7 @@ from kaptyorka import usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES
 from kaptyorka.orders import sign
 from kaptyorka.secrets_check import check_secrets
-from kaptyorka.store import ONLINE_S, PROJECT_NAME, KaptyorkaError, Principal, Store, _check_length, _person
+from kaptyorka.store import MANAGER_ACCOUNT, ONLINE_S, PROJECT_NAME, KaptyorkaError, Principal, Store, _check_length, _person
 
 MAX_FACT = 200
 MAX_ERROR = 500  # a no-show error names the folder and the log
@@ -608,7 +608,8 @@ class WorkerStore:
             for d in self.db.execute(
                     "SELECT DISTINCT d.os_user, p.name FROM devices d JOIN people p"
                     " ON p.id=d.person_id WHERE d.host=? AND d.revoked_at IS NULL AND d.legacy=0"
-                    " AND p.role!='manager' AND d.os_user!=''", (host,)):
+                    " AND NOT (p.name=? AND p.role='manager') AND d.os_user!=''",
+                    (host, MANAGER_ACCOUNT)):
                 owners.setdefault(d["os_user"], []).append(d["name"])
         if best is None:
             return None
@@ -628,8 +629,8 @@ class WorkerStore:
         with self.lock:
             rows = self.db.execute(
                 "SELECT p.name AS person, a.name FROM agents a JOIN people p ON p.id=a.person_id"
-                " WHERE a.host=? AND a.last_seen>? AND p.role!='manager'"
-                " ORDER BY a.last_seen DESC", (host, now - ONLINE_S)).fetchall()
+                " WHERE a.host=? AND a.last_seen>? AND NOT (p.name=? AND p.role='manager')"
+                " ORDER BY a.last_seen DESC", (host, now - ONLINE_S, MANAGER_ACCOUNT)).fetchall()
         out: dict = {}
         for r in rows:
             out.setdefault(r["person"], r["name"])
@@ -643,7 +644,8 @@ class WorkerStore:
             rows = self.db.execute(
                 "SELECT a.key, a.name, a.host, a.person_id, p.name AS person FROM agents a"
                 " JOIN people p ON p.id=a.person_id WHERE a.host!='' AND a.last_seen>?"
-                " AND p.role!='manager' ORDER BY a.started, a.key", (now - ONLINE_S,)).fetchall()
+                " AND NOT (p.name=? AND p.role='manager') ORDER BY a.started, a.key",
+                (now - ONLINE_S, MANAGER_ACCOUNT)).fetchall()
         return [{"host": r["host"], "person_id": r["person_id"], "person": r["person"],
                  "session": r["name"]} for r in rows if r["key"] not in live]
 

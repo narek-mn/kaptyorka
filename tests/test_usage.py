@@ -1,6 +1,8 @@
 """Machine use per OS user: /proc and nvidia-smi parsing (from fixtures), and the heavy rule."""
 import os
 import subprocess
+import threading
+import time
 from types import SimpleNamespace
 
 from kaptyorka import usage
@@ -34,17 +36,42 @@ def fake_proc(tmp_path, procs):
     return proc
 
 
+class FakeProc:
+    """A fake nvidia-smi child. hang: it ignores the kill and never exits during the test."""
+
+    def __init__(self, out, code=0, hang=False):
+        self.out, self.code, self.hang = out, code, hang
+        self.returncode, self.killed, self.waited = None, False, False
+
+    def communicate(self, timeout=None):
+        if self.hang:
+            time.sleep(timeout)
+            raise subprocess.TimeoutExpired("nvidia-smi", timeout)
+        self.returncode = self.code
+        return self.out, ""
+
+    def poll(self):
+        return None if self.hang else self.returncode
+
+    def kill(self):
+        self.killed = True  # in D state a kill does nothing
+
+    def wait(self, timeout=None):
+        self.waited = True
+        threading.Event().wait()  # would block for ever
+
+
 class SMI:
     def __init__(self, gpus=GPUS, apps=APPS, hang=False, code=0):
-        self.gpus, self.apps, self.hang, self.code, self.calls = gpus, apps, hang, code, []
+        self.gpus, self.apps, self.hang, self.code = gpus, apps, hang, code
+        self.calls, self.procs = [], []
 
     def __call__(self, argv, **kw):
         self.calls.append(argv)
-        assert kw["timeout"] == usage.SMI_TIMEOUT_S
-        if self.hang:
-            raise subprocess.TimeoutExpired(argv, kw["timeout"])
         out = self.gpus if any("query-gpu" in a for a in argv) else self.apps
-        return SimpleNamespace(returncode=self.code, stdout=out, stderr="")
+        p = FakeProc(out, self.code, self.hang)
+        self.procs.append(p)
+        return p
 
 
 def test_parse_gpus_and_apps():
@@ -63,20 +90,20 @@ def test_cpu_and_memory_per_user_from_proc(tmp_path):
     proc = fake_proc(tmp_path, {11: (0, 0, 1048576 * 200 // page)})
     s = usage.Sampler(proc, clock=lambda: clock[0])
     s._user = lambda uid: "alice"
-    first = s.read(run=None)
+    first = s.read()
     assert first["mem_mb"] == 64000 and "gpus" not in first  # no nvidia-smi: CPU and memory only
     assert first["users"] == {"alice": {"mem": 200, "gpus": {}}}  # no CPU before a window
     clock[0] += 10
     fake_proc(tmp_path, {11: (15 * hz, 5 * hz, 1048576 * 200 // page)})
-    assert s.read(run=None)["users"]["alice"]["cpu"] == 2.0  # 20 s of cpu in 10 s
+    assert s.read()["users"]["alice"]["cpu"] == 2.0  # 20 s of cpu in 10 s
 
 
 def test_gpu_holders_mapped_to_os_users(tmp_path, monkeypatch):
     monkeypatch.setattr(usage, "_nvidia_smi", lambda: "/x/nvidia-smi")
-    s = usage.Sampler(fake_proc(tmp_path, {}))
+    s = usage.Sampler(fake_proc(tmp_path, {}), popen=SMI())
     owners = {101: "alice", 202: "bob"}
     s._owner = lambda pid: owners.get(pid)
-    out = s.read(run=SMI())
+    out = s.read()
     assert len(out["gpus"]) == 4 and "uuid" not in out["gpus"][0]
     assert out["users"]["alice"]["gpus"] == {"0": 29000, "1": 27000}
     assert out["users"]["bob"]["gpus"] == {"2": 400}
@@ -88,17 +115,40 @@ def test_gpu_holders_mapped_to_os_users(tmp_path, monkeypatch):
 def test_hung_nvidia_smi_is_left_out_for_ten_minutes(tmp_path, monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(usage, "_nvidia_smi", lambda: "/x/nvidia-smi")
-    s = usage.Sampler(fake_proc(tmp_path, {}), clock=lambda: clock[0])
+    monkeypatch.setattr(usage, "SMI_TIMEOUT_S", 0.3)
     smi = SMI(hang=True)
-    assert "gpus" not in s.read(run=smi) and len(smi.calls) == 1
+    s = usage.Sampler(fake_proc(tmp_path, {}), clock=lambda: clock[0], popen=smi)
+    assert "gpus" not in s.read() and len(smi.calls) == 2
+    assert all(p.killed and not p.waited for p in smi.procs)  # killed, never waited on
     clock[0] += 60
-    assert "gpus" not in s.read(run=smi) and len(smi.calls) == 1  # not asked again yet
+    assert "gpus" not in s.read() and len(smi.calls) == 2  # not asked again yet
     clock[0] += usage.SMI_RETRY_S
     smi.hang = False
-    assert len(s.read(run=smi)["gpus"]) == 4
-    failed = SMI(code=9)
+    assert len(s.read()["gpus"]) == 4
+    s.popen = SMI(code=9)
     clock[0] += usage.SMI_RETRY_S
-    assert "gpus" not in s.read(run=failed)
+    assert "gpus" not in s.read()
+
+
+def test_a_hung_nvidia_smi_never_holds_the_heartbeat(tmp_path, monkeypatch):
+    """The facts build (in the heartbeat thread) returns within the one 5 s timeout although
+    the child ignores the kill and never exits."""
+    from kaptyorka.bridge import Bridge
+
+    assert usage.SMI_TIMEOUT_S == 5
+    monkeypatch.setattr(usage, "_nvidia_smi", lambda: "/x/nvidia-smi")
+    smi = SMI(hang=True)
+    b = Bridge({"hub": "http://127.0.0.1:9", "token": "t", "machine": "box-1"}, [],
+               lambda line: None, run=lambda *a, **k: None)
+    b._usage = usage.Sampler(fake_proc(tmp_path, {}), popen=smi)
+    started = time.monotonic()
+    out = b._machine_facts([])
+    took = time.monotonic() - started
+    assert 4.9 <= took < 6.5 and "gpus" not in out["use"]
+    assert all(p.killed and not p.waited for p in smi.procs)
+    assert len(b._usage._stuck) == 2
+    b._usage._reap()  # still running: kept, not waited on
+    assert len(b._usage._stuck) == 2
 
 
 USE = {"cpus": 32, "mem_mb": 65536,

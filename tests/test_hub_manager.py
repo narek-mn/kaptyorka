@@ -1136,3 +1136,45 @@ def test_use_numbers_only_for_the_admin(hub):
         return [d["facts"].get("use") for m in rows for d in m["devices"]]
     assert any(u and u["users"] for u in uses(admin_token))
     assert all(u is None for u in uses(alice_token.token))
+
+
+def test_a_real_person_with_the_manager_role_counts(hub, clock):
+    """Only the hub's own manager account is nobody; a person with the role is a person."""
+    mgr, me, a, d = arrival_setup(hub, clock, use={**HEAVY, "users": {}})
+    carol_id, _ = person(hub.store, "carol", "manager")
+    c = device(hub, carol_id, "carol")
+    carol_use = {**HEAVY, "users": {"carol": HEAVY["users"]["u"]}}
+    use_beat(hub, a, carol_use)  # every bridge on a machine reports the same numbers
+    use_beat(hub, c, carol_use)
+    use_beat(hub, d, sessions=BOB_SESSION)
+    hub.tick()
+    line = ALICE_LINE.replace("alice", "carol", 1)
+    name = hub.store.agent("claude:b1").name
+    assert arrival_texts(mgr, me) == [manager.text_arrival("bob", name, HOST, [line])]
+    use_beat(hub, c, {**HEAVY, "users": {"carol": HEAVY["users"]["u"]}},
+             [{"key": "claude:c1", "tool": "claude-code", "project": "proj-a", "cwd": "/w/c"}])
+    assert hub.ws.host_people(HOST, clock[0]).keys() >= {"carol", "bob"}
+    assert any(s["person"] == "carol" for s in hub.ws.direct_sessions(clock[0]))
+
+
+def test_switching_the_manager_on_warns_no_one_already_there(hub, clock):
+    mgr, me, a, d = arrival_setup(hub, clock)
+    hub.mm.set_enabled(False, "test")
+    use_beat(hub, d, sessions=BOB_SESSION)
+    hub.tick()  # recorded while off
+    hub.mm.set_enabled(True, "test")
+    clock[0] += 15
+    run(call(mgr, me, "inbox"))
+    use_beat(hub, a, HEAVY)
+    use_beat(hub, d, sessions=BOB_SESSION)
+    hub.tick()
+    assert arrival_texts(mgr, me) == []
+
+
+def test_machine_in_use_log_sentence():
+    from kaptyorka import admin_ops
+
+    row = {"person": "hub", "kind": "machine_in_use", "detail": f"bob on box-1: {ALICE_LINE}"}
+    assert admin_ops.log_sentence(row) == (
+        f"bob opened a session on box-1, which someone else uses heavily: {ALICE_LINE}")
+    assert "machine_in_use" in dict(admin_ops.LOG_GROUPS)["machines"]
