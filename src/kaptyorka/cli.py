@@ -957,7 +957,8 @@ def _join(args) -> int:
             return 1
         hub, token, secret, person = got
         if old.get("hub") and old.get("token"):
-            print(f"moved from {old['hub']} to {hub}")
+            same = old["hub"].rstrip("/").lower() == hub.rstrip("/").lower()
+            print(f"rejoined {hub}" if same else f"moved from {old['hub']} to {hub}")
         # the invite is spent: keep the token so a plain `kaptyorka join` can retry
         cfg = {"hub": hub, "token": token, "machine": args.name, "secret": secret}
         if person:

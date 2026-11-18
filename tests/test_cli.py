@@ -1195,3 +1195,18 @@ def test_cli_machine_team_and_move(admin_hub, capsys):
     assert "2 machines are named twin; use the id: 8 (bob), 9 (carol)" in capsys.readouterr().err
     assert entry_with_exit(["machine", "move", "nope", "carol"]) == 1
     assert capsys.readouterr().err.strip() == "no machine named nope"
+
+
+def test_join_invite_same_hub_says_rejoined(monkeypatch, home, capsys):
+    from kaptyorka import join
+
+    paths.save_config({"hub": "http://h:2/", "token": "old", "machine": "pc"})
+
+    def fake(method, url, token, body=None, **kw):
+        if url.endswith("/api/feed"):
+            return 401, "no"  # the old token no longer works: the invite is used
+        return 200, {"token": "tok", "secret": "sec", "hub": "http://h:2"}
+    monkeypatch.setattr(http, "request", fake)
+    monkeypatch.setattr(join, "main", lambda *a, **k: print("joined") or 0)
+    assert entry_with_exit(["join", "http://h:2/i/CODE123", "--name", "pc"]) in (0, None)
+    assert capsys.readouterr().out.splitlines() == ["rejoined http://h:2", "joined"]

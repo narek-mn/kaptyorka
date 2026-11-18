@@ -296,3 +296,13 @@ def test_remove_pipx_missing_says_what_to_run(home, tmp_path, monkeypatch, capsy
         return subprocess.CompletedProcess(cmd, 0, "", "")
     assert remove.main([], run=run, platform="linux") == 1
     assert "pipx uninstall kaptyorka" in capsys.readouterr().err
+
+
+def test_leave_with_only_the_saved_token_says_how_join_and_remove_differ(home, capsys):
+    paths.save_config({"hub": "http://h:1", "token": "t", "machine": "pc"})
+    assert remove.leave([], run=fake_run([]), platform="linux") == 0
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("the bridge and tool settings are already off here; this machine still"
+                          " keeps its token for http://h:1.")
+    assert "kaptyorka join turns them back on; kaptyorka remove forgets the token too" in out
+    assert paths.load_config()["token"] == "t"  # kept: forgetting it would need a new invite

@@ -44,6 +44,12 @@ def leave(adapters: Optional[list] = None, run: Callable = subprocess.run,
     more, failed = _remove_skills()
     lines, rc = lines + more, rc or failed
     if not lines and not rc:
+        cfg = paths.load_config()
+        if cfg.get("hub") and cfg.get("token"):  # join would say "already joined": say why
+            print(f"the bridge and tool settings are already off here; this machine still keeps"
+                  f" its token for {cfg['hub']}. kaptyorka join turns them back on;"
+                  " kaptyorka remove forgets the token too")
+            return 0
         print("this machine is not joined; nothing to undo")
         return 0
     for line in lines:
