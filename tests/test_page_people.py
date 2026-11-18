@@ -43,7 +43,7 @@ def post(app, who, path, body):
 def test_me(app):
     assert get(app, "ann", "/api/me") == {"person": "ann", "role": "member",
                                           "device": "ann-laptop", "person_id": app.ids["ann"],
-                                          "gitlab_connect": False}
+                                          "gitlab_connect": False, "page": True}
     assert get(app, "boss", "/api/me")["role"] == "admin"
 
 
@@ -392,12 +392,12 @@ def test_page_login_and_sign_out():
     assert "That token did not work." in html and 'id="lock-err"' in html
     unlock = html[html.index('$("unlock").addEventListener'):html.index('$("signout")')]
     assert "location.reload" not in unlock and 'get("/api/me")' in unlock
-    assert 'id="signout"' in html and 'title="Sign out"' in html and "lock(false)" in html
-    # Sign out sits under the person's name: on hover, or a click on the name (Esc or a click
-    # outside closes it)
-    assert 'id="viewer-name" aria-haspopup="true"' in html
-    assert ".viewer:hover .vmenu, .viewer.open .vmenu { display: flex; }" in html
-    assert 'if (!$("viewer").contains(e.target)) viewerOpen(false);' in html
+    assert 'id="signout"' in html and ">Sign out</button>" in html and "lock(false)" in html
+    # Sign out sits at the bottom of the Account page, which the person's name opens as a view
+    # with its own address (no popover)
+    assert 'id="viewer-name" data-view="account"' in html and 'var VIEWS = ["home", "account"]' in html
+    assert html.index('id="a-projects"') < html.index('id="signout"') < html.index('<section id="team"')
+    assert "vmenu" not in html and "accountOpen" not in html
 
 
 def test_page_empty_states():

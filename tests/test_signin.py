@@ -722,12 +722,80 @@ def test_the_account_panel_holds_only_your_own_data(hub, lab):
     assert status == 200
     assert (acc["person"], acc["role"], acc["gitlab_user"], acc["add_machine"]) == ("bob", "member", "bob-gl", True)
     # his two machines, not alice's, and not this GitLab sign-in
-    assert [(m["name"], m["os_user"], m["online"]) for m in acc["machines"]] == [
-        ("bob-laptop", "bob", True), ("bob@box-2", "", False)]
+    assert [(m["name"], m["os_user"], m["online"], m["current"]) for m in acc["machines"]] == [
+        ("bob-laptop", "bob", True, False), ("bob@box-2", "", False, False)]
     assert acc["machines"][0]["last_seen"] == hub.now[0] - 5 and ONLINE_S > 5
     assert acc["projects"] == [{"name": "proj-a", "role": "read"}]
-    assert set(acc) == {"person", "role", "gitlab_user", "machines", "projects", "add_machine"}
+    assert [b["current"] for b in acc["browsers"]] == [True]
+    assert set(acc) == {"person", "role", "gitlab_user", "machines", "browsers", "projects", "add_machine"}
     assert "alice" not in json.dumps(acc)
+
+
+def bob_signed_in(hub, lab):
+    lab.who = "bob-gl"
+    return token_of(sign_in(hub)[0])
+
+
+def machine_ids(hub, pid):
+    return {d["name"]: d["id"] for d in hub.store.devices(pid) if d["expires"] is None}
+
+
+def test_rename_your_own_machine_only(hub, lab):
+    bob = bob_signed_in(hub, lab)
+    mine, alices = machine_ids(hub, hub.ids["bob"])["bob-laptop"], machine_ids(hub, hub.ids["alice"])["alice-laptop"]
+    assert call(hub, "POST", f"/api/me/machines/{mine}/label", bob, {"label": "  work   box "}) == (200, {"name": "work box"})
+    acc = call(hub, "GET", "/api/me/account", bob)[1]
+    assert (acc["machines"][0]["name"], acc["machines"][0]["machine"]) == ("work box", "bob-laptop")
+    # only the label changed: the machine name the bridge and sessions use stays
+    assert hub.store.authenticate(hub.tokens["bob"]).device_name == "bob-laptop"
+    assert "bob renamed their machine bob-laptop to work box" in sentences(hub)
+    assert call(hub, "POST", f"/api/me/machines/{mine}/label", bob, {"label": "x" * 81})[0] == 400
+    assert call(hub, "POST", f"/api/me/machines/{mine}/label", bob, {"label": ""}) == (200, {"name": "bob-laptop"})
+    # someone else's machine reads as missing, and stays as it was
+    assert call(hub, "POST", f"/api/me/machines/{alices}/label", bob, {"label": "mine now"}) == (404, "no such machine of yours")
+    with hub.store.lock:
+        assert hub.store.db.execute("SELECT label FROM devices WHERE id=?", (alices,)).fetchone()[0] == ""
+
+
+def test_remove_your_own_machine_only(hub, lab):
+    bob = bob_signed_in(hub, lab)
+    box2 = hub.store.device_add(hub.ids["bob"], "bob@box-2")
+    ids = machine_ids(hub, hub.ids["bob"])
+    alices = machine_ids(hub, hub.ids["alice"])["alice-laptop"]
+    assert call(hub, "POST", f"/api/me/machines/{alices}/remove", bob)[0] == 404
+    assert hub.store.authenticate(hub.tokens["alice"]) is not None
+    # a GitLab sign-in is not a machine to remove here
+    session = [d["id"] for d in hub.store.devices(hub.ids["alice"]) if d["name"] == "gitlab-web"]
+    assert call(hub, "POST", f"/api/me/machines/{ids['bob@box-2']}/remove", bob)[0] == 204
+    assert hub.store.authenticate(box2) is None
+    assert "bob turned off bob's device bob@box-2" in sentences(hub)
+    assert [m["name"] for m in call(hub, "GET", "/api/me/account", bob)[1]["machines"]] == ["bob-laptop"]
+    assert session == []
+    # the admin token cannot remove the machine whose token opened the page
+    admin = hub.store.device_add(hub.ids["alice"], "hub")
+    (paths.home() / "admin-token").write_text(admin + "\n")
+    hub_id = machine_ids(hub, hub.ids["alice"])["hub"]
+    status, why = call(hub, "POST", f"/api/me/machines/{hub_id}/remove", admin)
+    assert status == 400 and "signed in with that machine" in why
+    assert hub.store.authenticate(admin) is not None
+
+
+def test_sign_out_everywhere_else_ends_only_your_other_browsers(hub, lab):
+    first, second = bob_signed_in(hub, lab), bob_signed_in(hub, lab)
+    lab.who = "alice-gl"
+    alices = token_of(sign_in(hub)[0])
+    acc = call(hub, "GET", "/api/me/account", second)[1]
+    assert sorted(b["current"] for b in acc["browsers"]) == [False, True]
+    assert call(hub, "DELETE", "/api/me/browsers/others", second) == (200, {"ended": 1})
+    assert me(hub, first)[0] == 401 and me(hub, second)[0] == 200
+    assert me(hub, alices)[0] == 200  # nobody else's
+    assert hub.store.authenticate(hub.tokens["bob"]) is not None  # machines stay
+    assert "bob signed out their other browsers (1)" in sentences(hub)
+    assert call(hub, "DELETE", "/api/me/browsers/others", second) == (200, {"ended": 0})
+    # a device token reaches none of this with sign-in on
+    for method, path in (("DELETE", "/api/me/browsers/others"), ("POST", "/api/me/machines/1/label"),
+                         ("POST", "/api/me/machines/1/remove")):
+        assert call(hub, method, path, hub.tokens["bob"], {"label": "x"})[0] == 403
 
 
 def test_cli_page_on_a_member_machine_says_sign_in_with_gitlab(hub, capsys, monkeypatch):

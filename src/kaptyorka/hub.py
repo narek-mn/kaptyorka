@@ -1078,6 +1078,32 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         return JSONResponse(admin_ops.account(store, request.scope["state"]["principal"]),
                             headers=NO_STORE)
 
+    @server.custom_route("/api/me/machines/{device_id:int}/label", methods=["POST"])
+    @_bad_request
+    async def api_me_machine_label(request: Request) -> Response:
+        body = await request.json()
+        try:
+            name = admin_ops.machine_label(store, request.scope["state"]["principal"],
+                                           request.path_params["device_id"], str(body["label"]))
+        except KaptyorkaError as e:
+            return admin_error(e)
+        return JSONResponse({"name": name})
+
+    @server.custom_route("/api/me/machines/{device_id:int}/remove", methods=["POST"])
+    async def api_me_machine_remove(request: Request) -> Response:
+        try:
+            admin_ops.machine_remove(store, request.scope["state"]["principal"],
+                                     request.path_params["device_id"])
+        except KaptyorkaError as e:
+            return admin_error(e)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/me/browsers/others", methods=["DELETE"])
+    async def api_me_browsers_others(request: Request) -> Response:
+        """Sign out everywhere else: your other GitLab sign-ins end; this one stays."""
+        n = admin_ops.browsers_other(store, si, request.scope["state"]["principal"])
+        return JSONResponse({"ended": n})
+
     @server.custom_route("/api/me/invite", methods=["POST"])
     async def api_me_invite(request: Request) -> Response:
         """Add a machine: a fresh invite for yourself, with the command that uses it."""

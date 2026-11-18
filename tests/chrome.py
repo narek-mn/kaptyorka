@@ -99,7 +99,12 @@ class Page:
         """Poll a JS expression until it is truthy; return its value."""
         end = time.monotonic() + timeout
         while True:
-            v = self.js(expr)
+            try:
+                v = self.js(expr)
+            except RuntimeError:  # the page is between two documents: ask again
+                if time.monotonic() > end:
+                    raise
+                v = None
             if v:
                 return v
             if time.monotonic() > end:

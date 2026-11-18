@@ -202,24 +202,83 @@ def invite_self(store, principal: Principal) -> str:
                                limit=SELF_INVITES)
 
 
+_MACHINE = "revoked_at IS NULL AND expires IS NULL AND legacy=0"  # a joined machine, still in
+_BROWSER = ("revoked_at IS NULL AND id IN (SELECT device_id FROM gitlab_sessions)")  # a GitLab sign-in
+
+
 def account(store, principal: Principal) -> dict:
-    """The account panel: the caller's own person, machines and projects, nothing of anyone
-    else's. A machine is a joined device; GitLab page sign-ins and the old shared token are not."""
+    """The account page: the caller's own person, machines, browsers signed in with GitLab and
+    projects, nothing of anyone else's. `current` marks the device this page signed in with."""
     now = store.clock()
     with store.lock:
         p = store.db.execute("SELECT name, role, gitlab_user FROM people WHERE id=?",
                              (principal.person_id,)).fetchone()
         devices = store.db.execute(
-            "SELECT name, os_user, last_used FROM devices WHERE person_id=? AND revoked_at IS NULL"
-            " AND expires IS NULL AND legacy=0 ORDER BY name", (principal.person_id,)).fetchall()
+            f"SELECT id, name, label, os_user, last_used FROM devices WHERE person_id=? AND {_MACHINE}"
+            " ORDER BY name", (principal.person_id,)).fetchall()
+        browsers = store.db.execute(
+            f"SELECT id, created, last_used FROM devices WHERE person_id=? AND {_BROWSER}"
+            " AND (expires IS NULL OR expires>?) ORDER BY created DESC",
+            (principal.person_id, now)).fetchall()
     return {
         "person": p["name"], "role": p["role"], "gitlab_user": p["gitlab_user"],
-        "machines": [{"name": d["name"], "os_user": d["os_user"], "last_seen": d["last_used"],
-                      "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S}
+        "machines": [{"id": d["id"], "name": d["label"] or d["name"], "machine": d["name"],
+                      "os_user": d["os_user"], "last_seen": d["last_used"],
+                      "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S,
+                      "current": d["id"] == principal.device_id}
                      for d in devices],
+        "browsers": [{"id": b["id"], "created": b["created"], "last_used": b["last_used"],
+                      "current": b["id"] == principal.device_id} for b in browsers],
         "projects": [{"name": x["name"], "role": x["role"]} for x in store.projects_for(principal)],
         "add_machine": can_add_machine(principal),
     }
+
+
+def _own_machine(store, principal: Principal, device_id: int):
+    """One of the caller's own joined machines; anyone else's reads as missing."""
+    row = store.db.execute(f"SELECT * FROM devices WHERE id=? AND person_id=? AND {_MACHINE}",
+                           (device_id, principal.person_id)).fetchone()
+    if row is None:
+        raise KaptyorkaError("no such machine of yours")
+    return row
+
+
+def machine_label(store, principal: Principal, device_id: int, label: str) -> str:
+    """Rename one of your machines on the page ("" goes back to its own name). Only the label
+    changes: the machine name its sessions and bridge use stays."""
+    label = " ".join(label.split())
+    if len(label) > 80:
+        raise KaptyorkaError("a machine name is at most 80 characters")
+    with store.lock:
+        row = _own_machine(store, principal, device_id)
+        store.db.execute("UPDATE devices SET label=? WHERE id=?", (label, device_id))
+    shown = row["label"] or row["name"]
+    store.log_add(principal.person_name, "machine_label", f"{shown} -> {label or row['name']}")
+    return label or row["name"]
+
+
+def machine_remove(store, principal: Principal, device_id: int) -> None:
+    """Remove one of your machines: its token stops working until it joins again. Not the one
+    this page signed in with (the admin token): that would lock the page out."""
+    if device_id == principal.device_id:
+        raise KaptyorkaError("this page is signed in with that machine's token; remove it from"
+                             " another sign-in")
+    with store.lock:
+        _own_machine(store, principal, device_id)
+    store.device_revoke(device_id, by=principal.person_name)
+
+
+def browsers_other(store, si, principal: Principal) -> int:
+    """Sign out everywhere else: every GitLab sign-in of yours but this page's ends."""
+    with store.lock:
+        ids = [r["id"] for r in store.db.execute(
+            f"SELECT id FROM devices WHERE person_id=? AND {_BROWSER} AND id<>?",
+            (principal.person_id, principal.device_id))]
+    for d in ids:
+        si._end(d, "signed out from another browser")
+    if ids:
+        store.log_add(principal.person_name, "browsers_out", str(len(ids)))
+    return len(ids)
 
 
 # projects
@@ -571,6 +630,8 @@ SENTENCES = {
     "invite": _match(r"invite for (.+)", "{0} made an invite link for {1}"),
     "invite_new": _match(r"invite for (.+)", "{0} made a new invite link for {1}; the old ones"
                                               " no longer work"),
+    "machine_label": _match(r"(.+) -> (.+)", "{0} renamed their machine {1} to {2}"),
+    "browsers_out": lambda who, d: f"{who} signed out their other browsers ({d})",
     "invite_self": _match(r"invite for (.+)", "{0} made a link to add a machine"),
     "invite_cancel": _match(r"invite for (.+)", "{0} cancelled the invite link for {1}"),
     "device_shared": _device_shared,
@@ -628,6 +689,7 @@ KNOWN_KINDS = tuple(SENTENCES)
 # the plain groups of the log page, in order, and the raw kinds each covers
 LOG_GROUPS = [
     ("people", ["person", "person_removed", "role", "invite", "invite_new", "invite_self",
+                "machine_label", "browsers_out",
                 "invite_cancel", "device",
                 "device_shared", "join", "gitlab_user", "gitlab_link"]),
     ("access", ["grant", "revoke", "request", "request_decided", "connect_request",

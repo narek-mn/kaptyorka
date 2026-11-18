@@ -864,7 +864,8 @@ def test_people_link_their_own_gitlab(tmp_path, w, h):
             assert [p["gitlab_user"] for p in store.people() if p["name"] == "dave"] == ["dave-gl"]
             assert store.invite_valid(code)  # join still works on his machine
             page.js('document.getElementById("viewer-name").click()')
-            assert page.js('document.getElementById("connect-gitlab").hidden')
+            page.wait('document.getElementById("a-profile").textContent.includes("@dave-gl")')
+            assert "Connect GitLab" not in page.js('document.getElementById("account").innerText')
         with chrome(w, h) as page:
             page.go(f"{base}/#t={erin_t}")
             page.wait('!document.getElementById("lock-note").hidden')
@@ -877,7 +878,8 @@ def test_people_link_their_own_gitlab(tmp_path, w, h):
                       ' && localStorage.getItem("kaptyorka.token") !== null')
             assert [p["gitlab_user"] for p in store.people() if p["name"] == "erin"] == ["erin-gl"]
             page.js('document.getElementById("viewer-name").click()')
-            assert page.js('document.getElementById("connect-gitlab").hidden')
+            page.wait('document.getElementById("a-profile").textContent.includes("@erin-gl")')
+            assert "Connect GitLab" not in page.js('document.getElementById("account").innerText')
             page.screenshot(shots / f"connected-{tag}.png")
     finally:
         stop()
@@ -987,9 +989,10 @@ def test_viewer_keeps_focus_on_its_two_buttons(tmp_path):
 
 
 @pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
-def test_account_panel_add_machine_and_new_invite_link(tmp_path, w, h):
-    """bob signs in with GitLab and opens his name: his machines (online or when last seen, and
-    the OS user), his projects, Add a machine with the join command and Copy, Sign out. The admin's
+def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
+    """bob signs in with GitLab and opens his name: the Account page (its own address; Back and
+    reload work) with his profile, machines (rename, remove, online or when last seen, the OS
+    user), this browser, his projects, Add a machine with the join command and Copy, Sign out. The admin's
     Team row has New invite link, which copies a fresh link and kills the old one. Screenshots to
     KAPTYORKA_SHOTS."""
     import os
@@ -1035,29 +1038,45 @@ def test_account_panel_add_machine_and_new_invite_link(tmp_path, w, h):
             page.wait('document.getElementById("lock").dataset.mode === "gitlab"')
             page.js('document.getElementById("gitlab-signin").click()')
             page.wait('document.getElementById("viewer-name")?.textContent === "bob"')
+            # the name opens the Account page in the main area, with its own address
             page.js('document.getElementById("viewer-name").click()')
-            page.wait('document.querySelectorAll("#acct-machines .acct-row").length === 2')
+            page.wait('document.querySelectorAll("#a-machines .a-row").length === 2')
+            assert page.js("location.hash") == "#view=account"
+            assert page.js('document.getElementById("home").hidden')
+            assert page.js('document.getElementById("viewer-name").getAttribute("aria-selected")') == "true"
             text = page.js(f"{acct}.innerText")
-            for want in ("bob", "Member", "GitLab @bob-gl", "bob@box-1", "as bob", "online", "bob@box-2",
-                         "3h ago", "proj-a", "write", "proj-b", "read", "Add a machine", "Sign out"):
+            for want in ("Profile", "bob", "Member", "@bob-gl", "The admin can change these.", "Machines",
+                         "bob@box-1", "as bob", "online", "bob@box-2", "3h ago", "Rename", "Remove",
+                         "Signed-in browsers", "This browser", "Projects", "proj-a", "write", "proj-b", "read",
+                         "Add a machine", "Sign out"):
                 assert want in text, want
             assert "alice" not in text and "gitlab-web" not in text
+            assert "Sign out everywhere else" not in text  # one browser: nothing else to sign out
             assert page.js(wide)
             page.screenshot(shots / f"account-{tag}.png")
-            # a second click closes it; so do Esc and a click outside
-            page.js('document.getElementById("viewer-name").click()')
-            assert page.js(f"{acct}.hidden")
-            page.js('document.getElementById("viewer-name").click()')
-            page.js('document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape"}))')
-            assert page.js(f"{acct}.hidden")
-            page.js('document.getElementById("viewer-name").click()')
-            page.js('document.querySelector("main").click()')
-            assert page.js(f"{acct}.hidden")
+            # Back returns Home; Forward and a reload come back to Account
+            page.js("history.back()")
+            page.wait('!document.getElementById("home").hidden && document.getElementById("account").hidden')
+            page.js("history.forward()")
+            page.wait('!document.getElementById("account").hidden')
+            page.js("location.reload()")
+            page.wait('!document.getElementById("account").hidden && document.querySelectorAll("#a-machines .a-row").length === 2')
+            # rename a machine inline
+            box2 = 'document.querySelector("#a-machines [data-machine]:nth-child(2)")'
+            click(page, "#a-machines [data-machine]:nth-child(2)", "Rename")
+            page.wait('!!document.querySelector("#a-machines .confirm input")')
+            page.js('document.querySelector("#a-machines .confirm input").value = "build box"')
+            click(page, "#a-machines .confirm", "Save")
+            page.wait(f'{box2} && {box2}.querySelector("b").textContent === "build box"')
+            # remove asks first
+            click(page, "#a-machines [data-machine]:nth-child(2)", "Remove")
+            q = page.wait('document.querySelector("#a-machines .confirm") && document.querySelector("#a-machines .confirm").innerText')
+            assert "Remove build box? It stops reaching the hub until it joins again." in q
+            page.screenshot(shots / f"account-remove-{tag}.png")
+            click(page, "#a-machines .confirm", "Cancel")
             # Add a machine: the join command with a fresh invite for bob
-            page.js('document.getElementById("viewer-name").click()')
-            page.wait(f"!{acct}.hidden")
             page.js('document.getElementById("add-machine").click()')
-            cmd = page.wait('!document.getElementById("acct-join").hidden && document.getElementById("join-cmd").textContent')
+            cmd = page.wait('!document.getElementById("a-join").hidden && document.getElementById("join-cmd").textContent')
             assert cmd.startswith(f"kaptyorka join {base}/i/")
             assert signin.invite_person(store, cmd.rsplit("/", 1)[1])["name"] == "bob"
             page.call("Browser.grantPermissions", permissions=["clipboardReadWrite", "clipboardSanitizedWrite"],
@@ -1071,7 +1090,7 @@ def test_account_panel_add_machine_and_new_invite_link(tmp_path, w, h):
             page.js('document.getElementById("add-machine").click()')
             page.js('document.getElementById("add-machine").click()')
             assert page.js('document.getElementById("join-cmd").textContent') == cmd
-            # Sign out from the panel
+            # Sign out, at the bottom of the page
             page.js('document.getElementById("signout").click()')
             page.wait('!document.getElementById("lock").hidden')
         with chrome(w, h) as page:

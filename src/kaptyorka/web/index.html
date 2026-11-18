@@ -73,36 +73,35 @@ nav { display: flex; align-items: stretch; gap: 20px; }
 .viewer { position: relative; margin-left: auto; display: flex; align-items: center; }
 #viewer-name { color: var(--muted); height: 100%; }
 #viewer-name:hover, .viewer.open #viewer-name { color: var(--ink); }
-#viewer-name { display: flex; align-items: center; gap: 6px; }
-#viewer-name > svg { color: var(--faint); transition: transform var(--ease); }
-.viewer.open #viewer-name > svg { transform: rotate(180deg); color: var(--ink); }
-/* the account panel under the name: who you are, your machines, your projects, Sign out */
-.acct { position: absolute; top: 100%; right: -8px; z-index: 30; width: 340px; max-height: calc(100vh - 64px);
-  overflow-y: auto; background: var(--surface2); border: 1px solid var(--line-strong); animation: acct-in 120ms cubic-bezier(.2, .7, .3, 1); }
-@keyframes acct-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
-.acct-sec { padding: 14px 16px; border-bottom: 1px solid var(--line); }
-.acct-who b { display: block; font-size: 16px; font-weight: 650; color: var(--ink); }
-.acct-who span { display: block; margin-top: 2px; font-size: 13px; color: var(--muted); }
-.acct-who .btn { margin-top: 10px; }
-.acct-cap { margin-bottom: 8px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
-.acct-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; min-height: 40px; }
-.acct-row.pj { grid-template-columns: minmax(0, 1fr) auto; min-height: 30px; }
-.acct-row b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--ink); }
-.acct-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--faint); }
-.acct-row > time, .acct-row > .seen { font-size: 12px; color: var(--faint); white-space: nowrap; }
-.acct-row > .seen.on { color: var(--ok); }
-.acct-none { font-size: 13px; color: var(--faint); padding: 2px 0 4px; }
-.acct .add-machine { margin-top: 8px; }
-.acct-join { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
-.acct-join .cmd { display: flex; align-items: stretch; border: 1px solid var(--line-ctl); background: var(--bg); }
-.acct-join code { flex: 1; min-width: 0; padding: 8px 10px; font: 12px/1.45 var(--mono); color: var(--ink); word-break: break-all; user-select: all; }
-.acct-join .cmd .btn { height: auto; border: 0; border-left: 1px solid var(--line-ctl); }
-.acct-join small { font-size: 12px; color: var(--faint); }
-.acct .err { padding: 8px 0 0; }
-.acct-foot { padding: 6px; }
-.acct-foot button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px; color: var(--ink); transition: background-color var(--ease); }
-.acct-foot button:hover, .acct-foot button:focus-visible { background: var(--hover); }
-.acct-foot button:active { background: var(--surface); }
+#viewer-name { gap: 8px; }
+#viewer-name > svg { color: var(--faint); }
+#viewer-name[aria-selected="true"] > svg, #viewer-name:hover > svg { color: var(--ink); }
+/* Account: one column in the Team page's style. Profile, machines, browsers, projects, Sign out */
+#account { overflow-y: auto; }
+.a-sec { margin-top: 32px; }
+.a-sec:first-child { margin-top: 0; }
+.a-profile { display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: 32px; row-gap: 10px; padding: 16px; }
+.a-profile dt { color: var(--muted); }
+.a-profile dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.a-note { margin-top: 8px; font-size: 12px; color: var(--faint); }
+.a-row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 10px 8px 16px; border-bottom: 1px solid var(--line); }
+.a-row:last-child { border-bottom: 0; }
+.a-row.pj { min-height: 44px; }
+.a-text { flex: 1; min-width: 0; }
+.a-text b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--ink); }
+.a-text small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--faint); }
+.a-text small .on { color: var(--ok); }
+.a-acts { flex: none; display: flex; gap: 6px; align-items: center; }
+.a-acts .confirm { max-width: 600px; }
+.a-acts:has(.confirm) > .btn { display: none; }  /* one question at a time on a row */
+.a-none { padding: 14px 16px; font-size: 13px; color: var(--faint); }
+.a-join { display: flex; flex-direction: column; gap: 8px; padding: 14px; margin-bottom: 10px; }
+.a-join .cmd { display: flex; align-items: stretch; border: 1px solid var(--line-ctl); background: var(--bg); }
+.a-join code { flex: 1; min-width: 0; padding: 9px 12px; font: 13px/1.45 var(--mono); color: var(--ink); word-break: break-all; user-select: all; }
+.a-join .cmd .btn { height: auto; border: 0; border-left: 1px solid var(--line-ctl); }
+.a-join small { font-size: 12px; color: var(--faint); }
+.a-tag { flex: none; }
+.a-out { margin-top: 36px; align-self: flex-start; }
 #lock-note { text-align: center; margin: -10px 0 0; width: min(360px, calc(100vw - 32px)); font-size: 14px; color: var(--muted); }
 .live { display: flex; align-items: center; flex: none; margin-left: -12px; }
 .live i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
@@ -478,7 +477,10 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   .mine-rows { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .mine-rows > span:not(:first-child) { margin-top: 6px; }
   #lock .hint { margin-top: -8px; }
-  .acct { position: fixed; top: 48px; left: 0; right: 0; width: auto; max-height: calc(100dvh - 48px); border-width: 1px 0; }
+  .a-row { flex-wrap: wrap; row-gap: 8px; padding-left: 14px; }
+  .a-row:has(.confirm) .a-acts { flex-basis: 100%; }
+  .a-acts .confirm { max-width: 100%; justify-content: flex-start; }
+  .a-profile { column-gap: 20px; }
   .p-act .new-link { min-width: 0; }
   .p-act .new-link .lbl { display: none; }
 }
@@ -502,7 +504,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="1.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v3"/></symbol>
   <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></symbol>
-  <symbol id="i-chev-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c.9-3.6 3.9-5.5 7.5-5.5s6.6 1.9 7.5 5.5"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
   <symbol id="i-status" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
   <symbol id="i-person" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.2 3.6-7 8-7s8 2.8 8 7"/></symbol>
@@ -544,29 +546,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       <button class="tab admin-only" role="tab" data-view="team" id="tab-team" hidden>Team<span class="count" id="n-team" hidden>0</span></button>
     </nav>
     <div class="viewer" id="viewer">
-      <button type="button" id="viewer-name" aria-haspopup="dialog" aria-expanded="false" aria-controls="account"><span id="viewer-label"></span><svg width="11" height="11"><use href="#i-chev-down"/></svg></button>
-      <div class="acct" id="account" role="dialog" aria-label="Account" hidden>
-        <div class="acct-sec acct-who">
-          <b id="acct-name"></b><span id="acct-sub"></span>
-          <button id="connect-gitlab" class="btn small" type="button" title="Sign in with GitLab from now on" hidden><svg width="13" height="13"><use href="#i-link"/></svg>Connect GitLab</button>
-          <div class="err" id="connect-err" role="alert" hidden></div>
-        </div>
-        <div class="acct-sec">
-          <div class="acct-cap">Your machines</div>
-          <div id="acct-machines"></div>
-          <button type="button" class="btn small add-machine" id="add-machine" aria-expanded="false" aria-controls="acct-join"><svg width="13" height="13"><use href="#i-plus"/></svg>Add a machine</button>
-          <div class="acct-join" id="acct-join" hidden>
-            <div class="cmd"><code id="join-cmd"></code><button type="button" class="btn small" id="join-copy" title="Copy"><svg width="13" height="13"><use href="#i-copy"/></svg>Copy</button></div>
-            <small>Run it on the new machine. Works once, for 24 hours.</small>
-          </div>
-          <div class="err" id="add-machine-err" role="alert" hidden></div>
-        </div>
-        <div class="acct-sec">
-          <div class="acct-cap">Projects</div>
-          <div id="acct-projects"></div>
-        </div>
-        <div class="acct-foot"><button class="signout" id="signout" type="button"><svg width="15" height="15"><use href="#i-signout"/></svg>Sign out</button></div>
-      </div>
+      <button type="button" class="tab" id="viewer-name" data-view="account" aria-selected="false" title="Your account"><svg width="15" height="15"><use href="#i-user"/></svg><span id="viewer-label"></span></button>
     </div>
     <div class="live" id="live" title="Connecting"><i></i></div>
   </header>
@@ -613,6 +593,40 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         </form>
         <div class="err" id="send-err" hidden></div>
         <div class="read-only" id="read-only" hidden><svg width="14" height="14"><use href="#i-door"/></svg><span>Connected to one of your sessions, not this page. Write to it from that session.</span></div>
+      </div>
+    </section>
+    <section id="account" role="tabpanel" aria-label="Account" hidden>
+      <div class="team">
+        <div class="a-sec">
+          <div class="t-bar"><h2 class="t-head">Profile</h2></div>
+          <dl class="panel a-profile" id="a-profile"></dl>
+          <div class="a-note">The admin can change these.</div>
+        </div>
+        <div class="a-sec">
+          <div class="t-bar">
+            <h2 class="t-head">Machines</h2>
+            <button type="button" class="btn small primary" id="add-machine" aria-expanded="false" aria-controls="a-join"><svg width="13" height="13"><use href="#i-plus"/></svg>Add a machine</button>
+          </div>
+          <div class="panel a-join" id="a-join" hidden>
+            <div class="cmd"><code id="join-cmd"></code><button type="button" class="btn small" id="join-copy" title="Copy"><svg width="13" height="13"><use href="#i-copy"/></svg>Copy</button></div>
+            <small>Run it on the new machine. Works once, for 24 hours.</small>
+          </div>
+          <div class="panel t-list" id="a-machines"></div>
+          <div class="err" id="a-machines-err" role="alert" hidden></div>
+        </div>
+        <div class="a-sec" id="a-browsers-sec" hidden>
+          <div class="t-bar">
+            <h2 class="t-head">Signed-in browsers</h2>
+            <button type="button" class="btn small" id="browsers-out" hidden>Sign out everywhere else</button>
+          </div>
+          <div class="panel t-list" id="a-browsers"></div>
+          <div class="err" id="a-browsers-err" role="alert" hidden></div>
+        </div>
+        <div class="a-sec">
+          <div class="t-bar"><h2 class="t-head">Projects</h2></div>
+          <div class="panel t-list" id="a-projects"></div>
+        </div>
+        <button type="button" class="btn small a-out" id="signout"><svg width="13" height="13"><use href="#i-signout"/></svg>Sign out</button>
       </div>
     </section>
     <section id="team" role="tabpanel" hidden>
@@ -666,7 +680,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   "use strict";
   var KEY = "kaptyorka.token";
   /* Home for everyone; Team for the admin only */
-  var VIEWS = ["home"], ADMIN_VIEWS = ["team"];
+  var VIEWS = ["home", "account"], ADMIN_VIEWS = ["team"];
   var token = null, view = "home";
   var feed = null, seen = {}, timer = null, expanded = {}, me = null;
   var conv = "mgr", phoneOpen = false, showNotices = false, askOpen = false;  /* the open chat; a phone shows it over the list; hub notices shown in Activity; the ask form open */
@@ -676,7 +690,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   var bgOpen = store(function (s) { return s.getItem("kaptyorka.bg-open"); }) === "1";  /* this viewer's Background group, open or folded */
   var bgFolded = null, bgEnter = false;  /* the open background chat the viewer folded away anyway; rows fade in once on opening */
   var openPerson = null, addOpen = false, added = null, cue = null;  /* Team: the person shown open, Add person, its link, "Saved" */
-  var account = null, joinCmd = null, linkToken = null;  /* the account panel's data; its Add a machine command; a device link kept only to link GitLab */
+  var account = null, accountAt = 0, joinCmd = null, linkToken = null;  /* the Account page's data; its Add a machine command; a device link kept only to link GitLab */
   var myAccess = null;
   var attached = null;  /* the file waiting in the compose bar {file, id} */
 
@@ -840,26 +854,35 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   }
   /* after a confirm closes: draw what the refreshes skipped while it was open */
   function redrawAdmin() {
-    ["team", "projects", "messages"].forEach(function (k) { seen[k] = null; });
+    ["team", "projects", "messages", "account"].forEach(function (k) { seen[k] = null; });
     if (feed) render();
+    if (account) renderAccount();
   }
   document.addEventListener("keydown", function (e) { if (e.key === "Escape" && holdClose) holdClose(); });
   function quiet(p) { p.catch(function () {}); }
   function isAdmin() { return !!me && me.role === "admin"; }
 
-  function show(v) {
+  /* Home, Team or Account in the main area. push: a new history entry, so Back returns */
+  function show(v, push) {
     if (ADMIN_VIEWS.indexOf(v) >= 0 && !isAdmin()) v = "home";
+    if (VIEWS.concat(ADMIN_VIEWS).indexOf(v) < 0) v = "home";
     if (holdClose && v !== view) holdClose();  /* a confirm does not wait on a tab nobody sees */
     view = v;
-    var team = v === "team";
-    $("tab-home").setAttribute("aria-selected", team ? "false" : "true");
-    $("tab-team").setAttribute("aria-selected", team ? "true" : "false");
-    $("home").hidden = team;
-    $("team").hidden = !team;
-    history.replaceState(null, "", location.pathname + (team ? "#view=team" : ""));
+    [["home", "tab-home"], ["team", "tab-team"], ["account", "viewer-name"]].forEach(function (x) {
+      $(x[0]).hidden = v !== x[0];
+      $(x[1]).setAttribute("aria-selected", v === x[0] ? "true" : "false");
+    });
+    var url = location.pathname + (v === "home" ? "" : "#view=" + v);
+    if (push && location.pathname + location.hash !== url) history.pushState(null, "", url);
+    else history.replaceState(null, "", url);
     if (v === "home") { toBottom(); loadAccess(); }
-    if (team) { loadProposals(true); loadGitlab(); }
+    if (v === "team") { loadProposals(true); loadGitlab(); }
+    if (v === "account") { accountAt = 0; loadAccount(); }
   }
+  window.addEventListener("popstate", function () {
+    if (!me) return;
+    show(new URLSearchParams(location.hash.slice(1)).get("view") || "home");
+  });
 
   function labelOf(name) {
     var a = (feed.agents || []).filter(function (x) { return x.id === name || x.name === name; })[0];
@@ -1878,6 +1901,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         loadWarnings();
         loadProposals();
         if (view === "team") loadGitlab();
+        if (view === "account") loadAccount();
         loadAccess();
         clearTimeout(timer);
         timer = setTimeout(poll, 2000);
@@ -1919,19 +1943,12 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     if (token) fetch("/api/me/signout", { method: "POST", cache: "no-store", headers: { Authorization: "Bearer " + token } }).catch(function () {});
     lock(false);
   });
-  /* Connect GitLab: the same sign-in, bound to this person on the hub; GitLab sends them back signed in */
-  $("connect-gitlab").addEventListener("click", function () {
-    $("connect-err").hidden = true;
-    api("/api/me/gitlab").then(function (r) { return r.json(); })
-      .then(function (x) { location.assign(x.url); })
-      .catch(function (x) { if (x.message === "unauthorized") return; $("connect-err").hidden = false; $("connect-err").textContent = x.message; });
-  });
   function enter() {
     $("lock").hidden = true;
     $("app").hidden = false;
   }
   document.querySelectorAll(".tab").forEach(function (b) {
-    b.addEventListener("click", function () { show(b.dataset.view); });
+    b.addEventListener("click", function () { show(b.dataset.view, true); });
   });
   $("notices-toggle").addEventListener("click", function () { showNotices = !showNotices; renderHome(true); });
   /* a phone: a chat slides in from the right, Back slides it out */
@@ -1963,57 +1980,112 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     if (askOpen) loadAccess(); else $("my-access").hidden = true;
     if (feed) renderHome(!askOpen);
   });
-  /* the name opens the account panel; a second click, a click outside or Esc closes it */
-  function accountOpen(open) {
-    $("viewer").classList.toggle("open", open);
-    $("account").hidden = !open;
-    $("viewer-name").setAttribute("aria-expanded", open ? "true" : "false");
-    if (!open) { $("acct-join").hidden = true; $("add-machine").setAttribute("aria-expanded", "false"); $("add-machine-err").hidden = true; return; }
-    $("connect-err").hidden = true;
-    if (account) renderAccount();
-    get("/api/me/account").then(function (a) { account = a; renderAccount(); }, function () {});
+  /* Account: your profile (read only), machines (rename, remove, add), browsers signed in with
+     GitLab (sign out the others), projects, Sign out. Every change is checked on the hub too */
+  function loadAccount() {
+    if (Date.now() - accountAt < 10000) return;
+    accountAt = Date.now();
+    get("/api/me/account").then(function (a) { account = a; renderAccount(); }, function () { accountAt = 0; });
+  }
+  function accErr(id, msg) { $(id).hidden = !msg; $(id).textContent = msg || ""; }
+  function connectGitlab(b) {
+    b.setAttribute("aria-busy", "true");
+    api("/api/me/gitlab").then(function (r) { return r.json(); })
+      .then(function (x) { location.assign(x.url); })
+      .catch(function (x) { b.removeAttribute("aria-busy"); if (x.message !== "unauthorized") accErr("a-machines-err", x.message); });
+  }
+  function seenText(d) {
+    if (d.online) return el("span", { "class": "on", text: "online" });
+    return d.last_seen ? el("span", null, ["seen ", timeEl(d.last_seen)]) : "not seen yet";
+  }
+  function machineRow(d) {
+    var acts = el("span", { "class": "a-acts" });
+    var sub = el("small", null, [d.os_user ? "as " + d.os_user + " \u00b7 " : "", seenText(d)]);
+    var rename = button("Rename", "", function () {
+      confirmInline(rename, null, "Save", function (text) {
+        return api("/api/me/machines/" + d.id + "/label", { label: text })
+          .then(function () { accErr("a-machines-err", ""); accountAt = 0; loadAccount(); },
+                function (e) { accErr("a-machines-err", e.message); throw e; });
+      }, { ask: "Machine name", value: d.name, edit: true, max: "80" });
+    }, { "aria-label": "Rename " + d.name });
+    acts.appendChild(rename);
+    if (!d.current) {  /* the machine whose token opened this page cannot remove itself */
+      var rm = button("Remove", "quiet-danger", function () {
+        confirmInline(rm, "Remove " + d.name + "? It stops reaching the hub until it joins again.", "Remove", function () {
+          return api("/api/me/machines/" + d.id + "/remove")
+            .then(function () { accErr("a-machines-err", ""); accountAt = 0; loadAccount(); },
+                  function (e) { accErr("a-machines-err", e.message); throw e; });
+        });
+      }, { "aria-label": "Remove " + d.name });
+      acts.appendChild(rm);
+    }
+    return el("div", { "class": "a-row", "data-machine": String(d.id) }, [
+      el("span", { "class": "dot" + (d.online ? " on" : ""), title: d.online ? "online" : "offline" }),
+      el("div", { "class": "a-text" }, [el("b", { text: d.name, title: d.name === d.machine ? d.name : d.name + " (" + d.machine + ")" }), sub]),
+      acts]);
   }
   function renderAccount() {
     var a = account, roles = { admin: "Admin", member: "Member", manager: "Manager" };
-    $("acct-name").textContent = a.person;
-    $("acct-sub").textContent = (roles[a.role] || a.role) + " \u00b7 " + (a.gitlab_user ? "GitLab @" + a.gitlab_user : "No GitLab account linked");
-    $("connect-gitlab").hidden = !me || !me.gitlab_connect;
-    var box = $("acct-machines");
-    box.textContent = "";
-    if (!a.machines.length) box.appendChild(el("div", { "class": "acct-none", text: "No machines yet" }));
-    a.machines.forEach(function (d) {
-      box.appendChild(el("div", { "class": "acct-row" }, [
-        el("span", { "class": "dot" + (d.online ? " on" : ""), title: d.online ? "online" : "offline" }),
-        el("div", null, [el("b", { text: d.name, title: d.name }), d.os_user ? el("small", { text: "as " + d.os_user }) : null]),
-        d.online ? el("span", { "class": "seen on", text: "online" })
-                 : d.last_seen ? timeEl(d.last_seen) : el("span", { "class": "seen", text: "not seen yet" })]));
+    if (!a || (holding && holding.isConnected && $("account").contains(holding))) return;  /* an edit is open */
+    if (!changed("account", [a, me && me.gitlab_connect])) return;
+    var prof = $("a-profile"), gl = [a.gitlab_user ? "@" + a.gitlab_user : el("span", { "class": "quiet", text: "Not linked" })];
+    if (me && me.gitlab_connect) {
+      var c = button([icon("i-link", 13), "Connect GitLab"], "", function () { connectGitlab(c); }, { title: "Sign in with GitLab from now on" });
+      gl.push(" ", c);
+    }
+    prof.textContent = "";
+    [["Name", [a.person]], ["Role", [roles[a.role] || a.role]], ["GitLab", gl]].forEach(function (r) {
+      prof.appendChild(el("dt", { text: r[0] }));
+      prof.appendChild(el("dd", null, r[1]));
     });
-    $("add-machine").hidden = !a.add_machine;
-    box = $("acct-projects");
+    var box = $("a-machines");
     box.textContent = "";
-    if (!a.projects.length) box.appendChild(el("div", { "class": "acct-none", text: "No projects yet" }));
+    if (!a.machines.length) box.appendChild(el("div", { "class": "a-none", text: "No machines yet" }));
+    a.machines.forEach(function (d) { box.appendChild(machineRow(d)); });
+    $("add-machine").hidden = !a.add_machine;
+    $("a-browsers-sec").hidden = !a.browsers.length;
+    $("browsers-out").hidden = !a.browsers.some(function (b) { return !b.current; });
+    box = $("a-browsers");
+    box.textContent = "";
+    a.browsers.forEach(function (b) {
+      box.appendChild(el("div", { "class": "a-row" }, [
+        el("div", { "class": "a-text" }, [el("b", { text: b.current ? "This browser" : "Another browser" }),
+          el("small", null, ["signed in ", timeEl(b.created), b.last_used ? " \u00b7 last used " : "", b.last_used ? timeEl(b.last_used) : null])])]));
+    });
+    box = $("a-projects");
+    box.textContent = "";
+    if (!a.projects.length) box.appendChild(el("div", { "class": "a-none", text: "No projects yet" }));
     a.projects.forEach(function (p) {
-      box.appendChild(el("div", { "class": "acct-row pj" }, [el("b", { text: p.name, title: p.name }), el("span", { "class": "state", text: p.role })]));
+      box.appendChild(el("div", { "class": "a-row pj" }, [el("div", { "class": "a-text" }, [el("b", { text: p.name, title: p.name })]),
+                                                         el("span", { "class": "state a-tag", text: p.role })]));
     });
   }
+  $("browsers-out").addEventListener("click", function () {
+    var b = $("browsers-out");
+    confirmInline(b, "Sign out every other browser? This one stays signed in.", "Sign out", function () {
+      return api("/api/me/browsers/others", null, "DELETE")
+        .then(function () { accErr("a-browsers-err", ""); accountAt = 0; loadAccount(); },
+              function (e) { accErr("a-browsers-err", e.message); throw e; });
+    });
+  });
   /* Add a machine: a fresh invite for yourself as the join command. The same one is shown again
      until a machine joins or it ends, so opening it twice does not use up the limit */
   function showJoin() {
     $("join-cmd").textContent = joinCmd.command;
-    $("acct-join").hidden = false;
+    $("a-join").hidden = false;
     $("add-machine").setAttribute("aria-expanded", "true");
     $("join-copy").focus();
   }
   $("add-machine").addEventListener("click", function () {
     var b = $("add-machine");
-    if (!$("acct-join").hidden) { $("acct-join").hidden = true; b.setAttribute("aria-expanded", "false"); return; }
-    $("add-machine-err").hidden = true;
+    if (!$("a-join").hidden) { $("a-join").hidden = true; b.setAttribute("aria-expanded", "false"); return; }
+    accErr("a-machines-err", "");
     var n = account ? account.machines.length : -1;
     if (joinCmd && joinCmd.machines === n && joinCmd.expires > Date.now() / 1000 + 60) { showJoin(); return; }
     b.setAttribute("aria-busy", "true");
     api("/api/me/invite").then(function (r) { return r.json(); })
       .then(function (x) { joinCmd = { command: x.command, expires: x.expires, machines: n }; showJoin(); })
-      .catch(function (x) { if (x.message === "unauthorized") return; $("add-machine-err").hidden = false; $("add-machine-err").textContent = x.message; })
+      .catch(function (x) { if (x.message !== "unauthorized") accErr("a-machines-err", x.message); })
       .then(function () { b.removeAttribute("aria-busy"); });
   });
   $("join-copy").addEventListener("click", function () {
@@ -2024,11 +2096,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       b.classList.add("copied"); b.lastChild.textContent = "Copied"; b.replaceChild(icon("i-check", 13), was);
       setTimeout(function () { b.classList.remove("copied"); b.lastChild.textContent = "Copy"; b.replaceChild(was, b.firstChild); }, 1500);
     });
-  });
-  $("viewer-name").addEventListener("click", function () { accountOpen($("account").hidden); });
-  document.addEventListener("click", function (e) { if (!$("viewer").contains(e.target) && !$("account").hidden) accountOpen(false); });
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && !$("account").hidden) { accountOpen(false); $("viewer-name").focus(); }
   });
   $("compose").addEventListener("submit", function (e) { e.preventDefault(); send(); });
   $("text").addEventListener("input", grow);
@@ -2098,9 +2165,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     readMap = store(function (s) { var r = JSON.parse(s.getItem("kaptyorka.read." + m.person) || "null"); return r && typeof r === "object" ? r : null; });
     fleet = { warnings: [] }; fleetAt = 0; proposals = []; proposalsAt = 0; openPerson = null; gitlab = null; gitlabAt = 0;
     $("viewer-label").textContent = m.person;
-    accountOpen(false);
-    $("connect-gitlab").hidden = !m.gitlab_connect;
-    $("connect-err").hidden = true;
+    $("a-join").hidden = true;
     $("viewer-name").title = "Signed in as " + m.person + (m.role === "admin" ? " (admin)" : "") + " on " + m.device;
     document.querySelectorAll(".admin-only").forEach(function (n) { n.hidden = m.role !== "admin"; });
     $("ask-link").hidden = m.role === "admin";
