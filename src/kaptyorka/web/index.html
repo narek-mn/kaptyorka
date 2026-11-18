@@ -53,6 +53,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #lock[data-mode="wait"] #unlock, #lock[data-mode="wait"] .hint, #lock[data-mode="wait"] #gitlab-signin { visibility: hidden; }
 #lock[data-mode="gitlab"] #unlock, #lock[data-mode="gitlab"] .hint, #lock:not([data-mode="gitlab"]) #gitlab-signin { display: none; }
 #gitlab-signin { display: inline-flex; align-items: center; justify-content: center; height: 40px; padding: 0 22px; font-size: 14px; text-decoration: none; width: min(360px, calc(100vw - 32px)); }
+#lock .lock-name { margin-top: -8px; font-weight: 650; font-size: 18px; color: var(--ink); }
 #lock-err { text-align: center; margin-top: -14px; width: min(360px, calc(100vw - 32px)); padding: 0; font-size: 13px; }
 
 /* top bar: the mark, Home and Admin, the person */
@@ -302,7 +303,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .p-act { display: flex; gap: 6px; align-items: center; }
 .btn.p-gl { color: var(--muted); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; line-height: 26px; }
 .btn.p-gl.unset { color: var(--faint); border-style: dashed; }
-.btn.p-gl:hover { color: var(--text); }
+.btn.p-gl:hover { color: var(--ink); }
 .p-main > svg { color: var(--faint); transition: transform var(--ease), color var(--ease); }
 .p-main:hover > svg { color: var(--muted); }
 .p-main[aria-expanded="true"] > svg { transform: rotate(90deg); color: var(--ink); }
@@ -476,6 +477,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 </svg>
 
 <div id="lock" data-mode="wait"><svg width="56" height="56" aria-label="Locked"><use href="#i-lock"/></svg>
+  <div class="lock-name">kaptyorka</div>
   <a class="btn primary" id="gitlab-signin" href="/auth/gitlab/start">Sign in with GitLab</a>
   <form id="unlock"><input id="unlock-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your token" aria-label="Token"><button class="btn primary" type="submit">Open</button></form>
   <p class="hint">Use the link from kaptyorka start, or ask your admin for an invite.</p>
@@ -1454,7 +1456,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   }
   /* one person as the row shows them; redrawn only when this changes */
   function personView(p) {
-    var now = Date.now() / 1000, live = p.devices.filter(function (d) { return d.revoked_at == null; });
+    /* machines only: a GitLab page sign-in (a device that ends) is not a joined machine */
+    var now = Date.now() / 1000, live = p.devices.filter(function (d) { return d.revoked_at == null && d.expires == null; });
     var inv = invites.filter(function (v) { return v.person === p.name; }).pop() || null;
     var held = heldBy(p.name), names = knownProjects();
     Object.keys(pending).forEach(function (k) {

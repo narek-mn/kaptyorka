@@ -13,12 +13,11 @@ their own sessions, which is enough) is cached in ~/.kaptyorka/hub-state.json fo
 of the machine and refreshed in a background process when it is older than FRESH_S.
 
 `kaptyorka statusline [-- <command>]` is what `join` puts in the status line: it runs the
-person's own status line command (if any) with the same input and a time limit, prints its
-output, and appends the field.
+person's own status line command (if any) with the same input, prints its output, and appends
+the field.
 """
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -32,7 +31,6 @@ FRESH_S = 30  # the cache is refreshed when older than this
 STALE_S = 300  # older than this, the cache cannot vouch for anything: lost
 REFRESH_LOCK_S = 20  # a refresh that left its lock behind this long ago has died
 GRACE_S = 45  # a new session reaches the hub's list within a heartbeat and a refresh
-COMMAND_S = 3.0  # the person's own status line command gets this long
 
 FIELDS = {"on": "\033[1;38;5;48mhub\033[0m",
           "off": "\033[38;5;231mhub off\033[0m",
@@ -158,25 +156,12 @@ def main_state(args) -> int:
 
 
 def _run(command: str, stdin: str):
-    """(stdout, exit status) of the person's own status line command, given COMMAND_S."""
-    p = subprocess.Popen(command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, text=True, start_new_session=True)
-    try:
-        out, err = p.communicate(stdin, timeout=COMMAND_S)
-        rc = p.returncode
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(p.pid, signal.SIGKILL)
-        except OSError:
-            pass
-        try:
-            out, err = p.communicate(timeout=0.5)
-        except subprocess.TimeoutExpired:
-            out, err = "", ""
-        rc = 0  # their line was too slow this time: show what it had, and the field
-    if err:
-        sys.stderr.write(err)
-    return out or "", rc
+    """(stdout, exit status) of the person's own status line command. It runs as long as it
+    did before join; only our field must never wait."""
+    p = subprocess.run(command, shell=True, input=stdin, capture_output=True, text=True)
+    if p.stderr:
+        sys.stderr.write(p.stderr)
+    return p.stdout or "", p.returncode
 
 
 def statusline(command: str, stdin: str) -> int:

@@ -184,13 +184,10 @@ def test_statusline_wraps_their_command(joined, capsys):
     assert capsys.readouterr().out == hubstate.FIELDS["on"] + "\n"
 
 
-def test_statusline_never_waits_long_on_their_command(joined, monkeypatch, capsys):
+def test_statusline_lets_a_slow_command_finish(joined, capsys):
     put_cache([handle_of(KEY)])
-    monkeypatch.setattr(hubstate, "COMMAND_S", 0.3)
-    t0 = time.perf_counter()
-    assert hubstate.statusline("echo early; sleep 10", json.dumps({"session_id": SID})) == 0
-    assert time.perf_counter() - t0 < 2
-    assert capsys.readouterr().out == "early " + hubstate.FIELDS["on"] + "\n"
+    assert hubstate.statusline("echo early; sleep 1; echo late", json.dumps({"session_id": SID})) == 0
+    assert capsys.readouterr().out == "early\nlate " + hubstate.FIELDS["on"] + "\n"
 
 
 def test_statusline_survives_a_broken_field(joined, monkeypatch, capsys):

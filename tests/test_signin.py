@@ -287,6 +287,34 @@ def test_secret_never_shows(hub, lab, caplog, capsys, monkeypatch):
     assert all(code not in text for code in lab.codes)  # no code is ever echoed
 
 
+def test_the_manager_account_cannot_be_linked(hub, capsys):
+    from test_cli import entry_with_exit
+
+    person(hub.store, "manager", "manager")
+    person(hub.store, "carol", "manager")  # a person with the manager role is not the account
+    assert khttp.request("POST", hub.url + "/api/people/manager/gitlab", hub.tokens["alice"],
+                         {"username": "mgr-gl"}) == (400, "the manager account cannot sign in with GitLab")
+    assert khttp.request("POST", hub.url + "/api/people/carol/gitlab", hub.tokens["alice"],
+                         {"username": "carol-gl"})[0] == 200
+    paths.save_config({"hub": hub.url, "token": hub.tokens["alice"], "machine": "box-1"})
+    assert entry_with_exit(["people", "gitlab", "manager", "mgr-gl"]) == 1
+    assert capsys.readouterr().err.strip() == "the manager account cannot sign in with GitLab"
+
+
+def test_cli_people_counts_live_machines_only(hub, lab, capsys):
+    from test_cli import entry_with_exit
+
+    lab.who = "bob-gl"
+    token_of(sign_in(hub)[0])  # bob's page sign-in is not a machine
+    hub.store.device_add(hub.ids["bob"], "old-box")
+    old = [d for d in hub.store.devices(hub.ids["bob"]) if d["name"] == "old-box"][0]
+    hub.store.device_revoke(old["id"])
+    paths.save_config({"hub": hub.url, "token": hub.tokens["alice"], "machine": "box-1"})
+    assert entry_with_exit(["people"]) == 0
+    bob = [l for l in capsys.readouterr().out.splitlines() if l.startswith("bob ")][0]
+    assert bob.split()[:4] == ["bob", "member", "bob-gl", "1"]
+
+
 def test_cli_people_gitlab(hub, capsys):
     from test_cli import entry_with_exit
 

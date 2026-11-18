@@ -28,7 +28,7 @@ from urllib.parse import urlencode
 
 from kaptyorka import paths
 from kaptyorka.gitlab import settings, shown
-from kaptyorka.store import KaptyorkaError, Principal
+from kaptyorka.store import MANAGER_ACCOUNT, KaptyorkaError, Principal
 
 APP_FILE = "gitlab-oauth"
 CALLBACK = "/auth/gitlab/callback"
@@ -344,6 +344,8 @@ def set_user(store, si: Optional[SignIn], name: str, username: str, by: Principa
                                (name.strip(),)).fetchone()
         if row is None:
             raise KaptyorkaError(f"no person named {name.strip()}")
+        if (row["name"], row["role"]) == (MANAGER_ACCOUNT, "manager"):
+            raise KaptyorkaError("the manager account cannot sign in with GitLab")
         if username:
             other = store.db.execute(
                 "SELECT name FROM people WHERE removed_at IS NULL AND id<>?"

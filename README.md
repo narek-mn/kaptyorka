@@ -292,7 +292,7 @@ A session that started less than a minute ago shows nothing until the hub has se
 How `join` sets it up, in `~/.claude/settings.json`:
 
 - With no status line of your own, the status line shows only this field.
-- With one, `join` keeps it: the status line command becomes `kaptyorka statusline -- <your command>`. That runs your command with the same input, prints its output, and adds the field after it. Your command gets 3 seconds; if it takes longer, its line shows what it printed so far. Its exit status is passed on. `join` says in one line what it added.
+- With one, `join` keeps it: the status line command becomes `kaptyorka statusline -- <your command>`. That runs your command with the same input, prints its output, and adds the field after it. Your command runs as long as it did before; the field itself never waits. Its exit status is passed on. `join` says in one line what it added.
 - A second `join` changes nothing. `kaptyorka leave` puts your status line back exactly as it was (it is kept in `~/.kaptyorka/statusline.json`), or removes the field when you had none. A status line you changed after `join` is left alone.
 
 `kaptyorka hub-state <session id>` prints the word behind the field: `on`, `off` or `lost` (nothing on a machine that has not joined). It never waits on the network: the hub's list of online sessions is kept in `~/.kaptyorka/hub-state.json` for all sessions of the machine, and refreshed in the background when it is older than 30 seconds. A list older than 5 minutes counts as `lost`.

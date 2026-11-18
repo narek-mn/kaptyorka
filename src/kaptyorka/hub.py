@@ -47,9 +47,9 @@ ASK_MANAGER = ("to reach another person's session, message the manager: say whom
 ON_SHARED = "a worker on a shared account cannot start, adopt or close workers; ask your boss"
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
        "style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'")
-FONTS = ("archivo-latin.woff2",)
+FONTS = ("archivo-latin.woff2",)  # the page's font files (web/fonts/, SIL OFL 1.1)
 NO_STORE = {"Cache-Control": "no-store"}
-CLEAR_COOKIE = "kaptyorka_signin=; Path=/auth/gitlab; HttpOnly; SameSite=Lax; Max-Age=0"  # the page's font files (web/fonts/, SIL OFL 1.1)
+CLEAR_COOKIE = "kaptyorka_signin=; Path=/auth/gitlab; HttpOnly; SameSite=Lax; Max-Age=0"
 
 INVITE_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
                "<title>kaptyorka</title><style>body{{background:#111418;color:#e6e8eb;"

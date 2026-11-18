@@ -733,7 +733,17 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
     stop = start_hub(store)
     _, admin_t = person(store, "alice", "admin")
     person(store, "bob")
+    carol = store.person_create("carol", by="alice")  # invited; signed in on the page before any join
+    lab.users["carol-gl"] = {"id": 55, "state": "active"}
     signin.set_user(store, None, "alice", "alice-gl", store.authenticate(admin_t))
+    signin.set_user(store, None, "carol", "carol-gl", store.authenticate(admin_t))
+    lab.who = "carol-gl"
+    with chrome(w, h) as page:
+        page.go(f"http://127.0.0.1:{stop.port}/")
+        page.wait('document.getElementById("lock").dataset.mode === "gitlab"')
+        page.js('document.getElementById("gitlab-signin").click()')
+        page.wait('document.getElementById("viewer-name")?.textContent === "carol"')
+    lab.who = "alice-gl"
     base = f"http://127.0.0.1:{stop.port}"
     wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
     gl = 'document.querySelector("#people-rows [data-person={}] .p-gl")'.format
@@ -743,6 +753,7 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
             page.wait('document.getElementById("lock").dataset.mode === "gitlab"')
             assert page.js('getComputedStyle(document.getElementById("unlock")).display') == "none"
             assert page.js('document.getElementById("gitlab-signin").textContent') == "Sign in with GitLab"
+            assert page.js('document.querySelector("#lock .lock-name").textContent') == "kaptyorka"
             assert page.js(wide)
             page.screenshot(shots / f"signin-{tag}.png")
             page.js('document.getElementById("gitlab-signin").click()')
@@ -752,6 +763,10 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
             # Team: each row has the GitLab username, or a quiet way to add one
             page.js('document.getElementById("tab-team").click()')
             page.wait(f'!!{gl("bob")}')
+            carol_row = 'document.querySelector("#people-rows [data-person=carol]")'
+            assert page.js(f'{carol_row}.querySelector(".p-sum").textContent') == "hasn't joined yet"
+            assert "Copy invite link" in page.js(f'{carol_row}.querySelector(".p-act").textContent')
+            assert carol
             assert page.js(f'{gl("alice")}.textContent') == "@alice-gl"
             assert page.js(f'{gl("bob")}.textContent') == "GitLab name"
             assert page.js(wide)
@@ -779,8 +794,8 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
             page.wait('!document.getElementById("lock").hidden && document.getElementById("lock").dataset.mode === "gitlab"')
             assert not [d for d in store.devices(1) if d["name"] == "gitlab-web" and d["revoked_at"] is None]
             # an unknown GitLab user is told plainly
-            lab.who = "carol-gl"
-            lab.users["carol-gl"] = {"id": 55, "state": "active"}
+            lab.who = "erin-gl"
+            lab.users["erin-gl"] = {"id": 66, "state": "active"}
             page.js('document.getElementById("gitlab-signin").click()')
             text = page.wait('document.querySelector("h1") && document.querySelector("h1").textContent === "Sign in"'
                              ' && document.body.innerText')
