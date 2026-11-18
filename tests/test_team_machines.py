@@ -183,3 +183,17 @@ def test_routes(tmp_path):
     finally:
         stop()
         s.close()
+
+
+def test_account_lists_the_team_machines_you_can_use(store, team):
+    """The Machines page: a member sees a team machine when it has a session in a project they
+    have a role in, with only those projects; nobody else sees it there."""
+    def tm(name):
+        return [(m["name"], m["os_user"], m["projects"])
+                for m in admin_ops.account(store, who(store, name))["team_machines"]]
+    assert tm("bob") == [("jet-1", "nvidia", ["proj-a"])]  # not proj-b: no role there
+    assert tm("carol") == []
+    assert tm("alice") == [("jet-1", "nvidia", ["proj-a", "proj-b"])]
+    assert admin_ops.account(store, team[1])["team_machines"] == []  # not itself
+    store.grant_project("proj-b", who(store, "carol").person_id, "read", "alice")
+    assert tm("carol") == [("jet-1", "nvidia", ["proj-b"])]

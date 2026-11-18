@@ -162,8 +162,9 @@ def team_code(html):
 def test_settings_split_account_and_team(hub):
     """The top bar keeps Home; the account button opens a menu (Account settings, Team settings
     for an admin, Sign out). Settings is one area with a sidebar: Your account (Profile,
-    Machines, Signed-in browsers) and Team (People with the waiting count, Projects, All
-    machines), each at its own address. What left the page long ago stays gone."""
+    Machines, Signed-in browsers) and Team (People with the waiting count, Projects), each at
+    its own address. One Machines page: an admin switches Mine / Everyone there, and the old
+    All machines address lands on it. What left the page long ago stays gone."""
     html = page(hub)
     top = re.search(r'<nav role="tablist">.*?</nav>', html, re.S).group(0)
     assert re.findall(r'data-view="(\w+)"', top) == ["home"]
@@ -174,7 +175,12 @@ def test_settings_split_account_and_team(hub):
     nav = re.search(r'<nav class="set-nav".*?</nav>', html, re.S).group(0)
     assert re.findall(r'href="#settings/([a-z/]+)"', nav) == [
         "account/profile", "account/machines", "account/browsers",
-        "team/people", "team/projects", "team/machines"]
+        "team/people", "team/projects"]
+    assert 'id="pane-team-machines"' not in html and ">All machines<" not in html
+    pane = re.search(r'id="pane-account-machines".*?id="machines-err"', html, re.S).group(0)
+    assert 'id="m-scope"' in pane and ">Mine<" in pane and ">Everyone<" in pane
+    assert 'id="add-team-btn"' in pane and 'id="team-machine-rows"' in pane
+    assert '{ mScope = "everyone"; return ["settings", "account/machines"]; }' in html
     assert 'id="n-team"' in nav and 'id="n-acct"' in html  # the waiting count, twice in sight
     people = re.search(r'id="pane-team-people".*?id="team-err"', html, re.S).group(0)
     assert people.index("Waiting for you") < people.index('id="people-rows"')

@@ -284,6 +284,7 @@ def account(store, principal: Principal) -> dict:
             f"SELECT id, created, last_used FROM devices WHERE person_id=? AND {_BROWSER}"
             " AND (expires IS NULL OR expires>?) ORDER BY created DESC",
             (principal.person_id, now)).fetchall()
+        team = _team_machines(store, principal.person_id)
     return {
         "person": p["name"], "role": p["role"], "gitlab_user": p["gitlab_user"],
         "machines": [{"id": d["id"], "name": d["label"] or d["name"], "machine": d["name"],
@@ -294,9 +295,31 @@ def account(store, principal: Principal) -> dict:
                      for d in devices],
         "browsers": [{"id": b["id"], "created": b["created"], "last_used": b["last_used"],
                       "current": b["id"] == principal.device_id} for b in browsers],
+        "team_machines": [{"name": d["label"] or d["name"], "os_user": d["os_user"],
+                           "last_seen": d["last_used"], "projects": d["projects"],
+                           "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S}
+                          for d in team],
         "projects": [{"name": x["name"], "role": x["role"]} for x in store.projects_for(principal)],
         "add_machine": can_add_machine(principal) and not store.is_team(principal.person_id),
     }
+
+
+def _team_machines(store, person_id: int) -> List[dict]:
+    """Lock held. The team machines the person may use: those with a session in a project they
+    have a role in, the rule that shows them those sessions (Store._team_reach). Each joined
+    machine with the projects of theirs it works in."""
+    out = []
+    for d in store.db.execute(
+            "SELECT d.id, d.name, d.label, d.os_user, d.last_used, d.person_id FROM devices d"
+            " JOIN people p ON p.id=d.person_id WHERE p.team=1 AND p.removed_at IS NULL"
+            f" AND d.host!='' AND d.person_id!=? AND {_MACHINE} ORDER BY d.name",
+            (person_id,)).fetchall():
+        projects = [r["project"] for r in store.db.execute(
+            "SELECT DISTINCT project FROM agents WHERE person_id=? ORDER BY project", (d["person_id"],))
+            if store._role(r["project"], person_id) is not None]
+        if projects:
+            out.append({**dict(d), "projects": projects})
+    return out
 
 
 def _own_machine(store, principal: Principal, device_id: int):

@@ -229,6 +229,14 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 .a-join .cmd .btn { height: auto; border: 0; border-left: 1px solid var(--line-ctl); border-radius: 0; }
 .a-join small { font-size: var(--fs-sm); color: var(--faint); }
 .a-tag { flex: none; text-transform: capitalize; }
+/* Machines: Mine / Everyone for an admin, one switch of two joined buttons */
+.seg { display: inline-flex; align-self: flex-start; margin: calc(-1 * var(--s-2)) 0 var(--s-4); }
+.seg .btn { border-radius: 0; }
+.seg .btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.seg .btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
+.seg .btn[aria-pressed="true"] { position: relative; }
+.seg .btn[aria-pressed="false"] { color: var(--muted); }
+.seg + .a-sec { margin-top: 0; }
 .a-name { display: flex; align-items: center; gap: 10px; }
 
 .live { display: flex; align-items: center; flex: none; margin-left: -32px; }
@@ -693,6 +701,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   .set-nav a[aria-current="page"]::before { display: none; }
   .set-nav a > svg { display: none; }
   .set-title { flex-wrap: wrap; margin-bottom: var(--s-4); }
+  .set-title:has(.btn:not([hidden]) ~ .btn:not([hidden])) > div { flex-basis: 100%; }  /* two buttons: under the title */
   .menu { position: fixed; top: calc(var(--row) + 6px); right: 8px; left: auto; }
   .w-row { flex-wrap: wrap; row-gap: var(--s-2); padding-left: 14px; }
   .w-text { flex-basis: 100%; flex-wrap: wrap; white-space: normal; }
@@ -869,7 +878,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         <div class="set-group admin-only" hidden>Team</div>
         <a href="#settings/team/people" data-sec="team/people" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-team"/></svg><span>People</span><span class="count" id="n-team" hidden>0</span></a>
         <a href="#settings/team/projects" data-sec="team/projects" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-folder"/></svg><span>Projects</span></a>
-        <a href="#settings/team/machines" data-sec="team/machines" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-monitor"/></svg><span>All machines</span></a>
       </nav>
       <div class="set-main" id="set-main">
         <div class="set-pane" id="pane-account-profile" data-sec="account/profile" hidden>
@@ -883,14 +891,26 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         </div>
         </div>
         <div class="set-pane" id="pane-account-machines" data-sec="account/machines" hidden>
-          <div class="set-title"><div><h1>Machines</h1><p>The computers you joined from.</p></div><button type="button" class="btn small primary" id="add-machine" aria-expanded="false" aria-controls="a-join"><svg width="14" height="14"><use href="#i-plus"/></svg>Add a machine</button></div>
+          <div class="set-title"><div><h1>Machines</h1><p id="m-sub">The computers you joined from, and the team machines you can use.</p></div><button type="button" class="btn small" id="add-team-btn" aria-expanded="false" aria-controls="add-team-box" hidden><svg width="14" height="14"><use href="#i-plus"/></svg>Add team machine</button><button type="button" class="btn small primary" id="add-machine" aria-expanded="false" aria-controls="a-join"><svg width="14" height="14"><use href="#i-plus"/></svg>Add a machine</button></div>
+          <div class="seg admin-only" id="m-scope" role="group" aria-label="Show machines" hidden><button type="button" class="btn small" data-scope="mine" aria-pressed="true">Mine</button><button type="button" class="btn small" data-scope="everyone" aria-pressed="false">Everyone</button></div>
         <div class="a-sec">
           <div class="panel a-join" id="a-join" hidden>
             <div class="cmd"><code id="join-cmd"></code><button type="button" class="btn small" id="join-copy" title="Copy"><svg width="14" height="14"><use href="#i-copy"/></svg>Copy</button></div>
             <small>Run it on the new machine. Works once, for 24 hours.</small>
           </div>
+          <div class="panel add-box" id="add-team-box" hidden>
+            <form class="add-form" id="add-team" autocomplete="off">
+              <input id="new-team" placeholder="Name, for example jetson-1" aria-label="Team machine name" maxlength="40" required>
+              <button type="submit" class="btn small primary">Add</button>
+              <button type="button" class="btn small" id="add-team-cancel">Cancel</button>
+            </form>
+            <div class="add-link" id="add-team-link" hidden></div>
+            <div class="err" id="add-team-err" hidden></div>
+          </div>
           <div class="panel t-list" id="a-machines"><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div></div>
+          <div class="panel t-list" id="team-machine-rows" hidden><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div></div>
           <div class="err" id="a-machines-err" role="alert" hidden></div>
+          <div class="err" id="machines-err" hidden></div>
         </div>
         </div>
         <div class="set-pane" id="pane-account-browsers" data-sec="account/browsers" hidden>
@@ -937,22 +957,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
           <div class="err" id="projects-err" hidden></div>
         </div>
         </div>
-        <div class="set-pane" id="pane-team-machines" data-sec="team/machines" hidden>
-          <div class="set-title"><div><h1>All machines</h1><p>Every computer on the hub: who uses it and how busy it is.</p></div><button type="button" class="btn small" id="add-team-btn" aria-expanded="false" aria-controls="add-team-box"><svg width="14" height="14"><use href="#i-plus"/></svg>Add team machine</button></div>
-        <div id="machines-sec" hidden>
-          <div class="panel add-box" id="add-team-box" hidden>
-            <form class="add-form" id="add-team" autocomplete="off">
-              <input id="new-team" placeholder="Name, for example jetson-1" aria-label="Team machine name" maxlength="40" required>
-              <button type="submit" class="btn small primary">Add</button>
-              <button type="button" class="btn small" id="add-team-cancel">Cancel</button>
-            </form>
-            <div class="add-link" id="add-team-link" hidden></div>
-            <div class="err" id="add-team-err" hidden></div>
-          </div>
-          <div class="panel t-list" id="team-machine-rows"><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div></div>
-          <div class="err" id="machines-err" hidden></div>
-        </div>
-        </div>
       </div>
       </div>
     </section>
@@ -965,7 +969,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   var KEY = "kaptyorka.token";
   /* Home (sessions and chat) for everyone; Settings: your account, and the team for an admin */
   var ACCOUNT_SECS = ["account/profile", "account/machines", "account/browsers"];
-  var TEAM_SECS = ["team/people", "team/projects", "team/machines"];
+  var TEAM_SECS = ["team/people", "team/projects"];
   var token = null, view = "home", sec = "account/profile";
   var feed = null, seen = {}, timer = null, expanded = {}, me = null;
   var conv = "mgr", phoneOpen = false, showNotices = false, askOpen = false;  /* the open chat; a phone shows it over the list; hub notices shown in Activity; the ask form open */
@@ -977,6 +981,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   var openPerson = null, addOpen = false, added = null, cue = null;  /* Team: the person shown open, Add person, its link, "Saved" */
   var account = null, accountAt = 0, joinCmd = null, linkToken = null;  /* the Account page's data; its Add a machine command; a device link kept only to link GitLab */
   var myAccess = null;
+  var mScope = "mine";  /* Machines: an admin's Mine or Everyone */
   var attached = null;  /* the file waiting in the compose bar {file, id} */
 
   function store(fn) { try { return fn(window.localStorage); } catch (e) { return null; } }
@@ -992,11 +997,13 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
      link, #view=people and the like) still land in the right section */
   function parseHash(h) {
     var m = /^#?settings\/((?:account|team)\/[a-z]+)/.exec(h || "");
+    if (m && m[1] === "team/machines") m = null;  /* the old All machines: Machines, Everyone */
     if (m) return ["settings", m[1]];
     var v = new URLSearchParams((h || "").replace(/^#/, "")).get("view");
+    if (/^#?settings\/team\/machines/.test(h || "") || v === "machines") { mScope = "everyone"; return ["settings", "account/machines"]; }
     if (!v || v === "home") return ["home", null];
     if (v === "account") return ["settings", "account/profile"];
-    if (v === "projects" || v === "machines") return ["settings", "team/" + v];
+    if (v === "projects") return ["settings", "team/" + v];
     return ["settings", "team/people"];
   }
   (function () { var r = parseHash(location.hash); view = r[0]; if (r[1]) sec = r[1]; })();
@@ -1186,6 +1193,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 
   function inTeam() { return view === "settings" && sec.indexOf("team/") === 0; }
   function inAccount() { return view === "settings" && sec.indexOf("account/") === 0; }
+  function inMachines() { return view === "settings" && sec === "account/machines"; }
   /* Home or one Settings section in the main area. push: a new history entry, so Back returns */
   function show(v, push, s) {
     var was = view + sec;
@@ -1211,8 +1219,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     if (push && location.pathname + location.hash !== url) history.pushState(null, "", url);
     else history.replaceState(null, "", url);
     if (v === "home") { toBottom(); loadAccess(); }
-    if (inTeam()) { loadProposals(true); loadGitlab(); loadMachines(true); if (feed) { seen = {}; render(); } }
+    if (inTeam()) { loadProposals(true); loadGitlab(); if (feed) { seen = {}; render(); } }
     if (inAccount()) { accountAt = 0; loadAccount(); }
+    if (inMachines()) { loadMachines(true); machineScope(); }
   }
   window.addEventListener("popstate", function () {
     if (!me) return;
@@ -2157,8 +2166,29 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         .then(function (f) { feed = f; }, function (e) { teamErr("machines-err", e.message); throw e; });
     }, { edit: true, parts: devs.length > 1 ? [dev, to] : [to] });
   }
+  /* Machines: Mine (your own and the team machines you can use) or, for an admin, Everyone */
+  function machineScope() {
+    var all = isAdmin() && mScope === "everyone";
+    [].forEach.call($("m-scope").querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", b.dataset.scope === (all ? "everyone" : "mine") ? "true" : "false");
+    });
+    $("m-sub").textContent = all ? "Every computer on the hub: who uses it and how busy it is."
+                                 : "The computers you joined from, and the team machines you can use.";
+    $("a-machines").hidden = all;
+    $("team-machine-rows").hidden = !all;
+    $("add-team-btn").hidden = !isAdmin() || !$("add-team-box").hidden;
+    if (!all && !$("add-team-box").hidden) teamBox(false, true);
+    $("machines-err").hidden = !all || !$("machines-err").textContent;
+  }
+  $("m-scope").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b || b.dataset.scope === mScope) return;
+    if (holdClose) holdClose();
+    mScope = b.dataset.scope;
+    machineScope();
+    if (mScope === "everyone") loadMachines(true);
+  });
   function renderMachines() {
-    $("machines-sec").hidden = false;
     if (!machines) return;
     if (holding && holding.isConnected && $("team-machine-rows").contains(holding)) return;
     if (!changed("hosts", [machines, Object.keys(cues).filter(function (k) { return cueOn(k) && /^moved:/.test(k); })])) return;
@@ -2166,15 +2196,16 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     drawRows(box, machines.length ? machines.map(hostRow)
                                   : [el("div", { "class": "blank" }, [icon("i-monitor", 20), el("span", { text: "No machines yet" }),
                                      button([icon("i-plus", 14), "Add team machine"], "", function () { $("add-team-btn").click(); })])], "data-host");
+    machineScope();
   }
-  function teamBox(open) {
+  function teamBox(open, away) {
     $("add-team-box").hidden = !open;
-    $("add-team-btn").hidden = open;
+    $("add-team-btn").hidden = open || !isAdmin();
     $("add-team-btn").setAttribute("aria-expanded", open ? "true" : "false");
     $("add-team").hidden = !!teamAdded;
     $("add-team-link").hidden = !teamAdded;
     teamErr("add-team-err", "");
-    if (!open) { teamAdded = null; $("add-team").reset(); $("add-team").hidden = false; $("add-team-link").hidden = true; $("add-team-btn").focus(); return; }
+    if (!open) { teamAdded = null; $("add-team").reset(); $("add-team").hidden = false; $("add-team-link").hidden = true; if (!away) $("add-team-btn").focus(); return; }
     if (!teamAdded) $("new-team").focus();
   }
   function showTeamAdded() {
@@ -2380,8 +2411,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         render();
         loadWarnings();
         loadProposals();
-        if (inTeam()) { loadGitlab(); loadMachines(); }
+        if (inTeam()) loadGitlab();
         if (inAccount()) loadAccount();
+        if (inMachines()) loadMachines();
         loadAccess();
         clearTimeout(timer);
         timer = setTimeout(poll, 2000);
@@ -2534,9 +2566,17 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       el("div", { "class": "a-text" }, [el("b", { text: d.name, title: d.name === d.machine ? d.name : d.name + " (" + d.machine + ")" }), sub]),
       acts]);
   }
+  /* a team machine you can use: shared by the team, so no Rename or Remove here */
+  function teamMachineRow(d) {
+    var sub = el("small", null, [d.os_user ? "as " + d.os_user + " \u00b7 " : "", d.projects.join(", ") + " \u00b7 ", seenText(d)]);
+    return el("div", { "class": "a-row", "data-team-machine": d.name, title: "A team machine: everyone with a role in " + d.projects.join(", ") + " uses it" }, [
+      avatar("machine", d.name, { dot: !!d.online }),
+      el("div", { "class": "a-text" }, [el("b", { text: d.name }), sub]),
+      chip("Team", "active", "a-tag")]);
+  }
   function renderAccount() {
     var a = account, roles = { admin: "Admin", member: "Member", manager: "Manager" };
-    if (!a || (holding && holding.isConnected && $("settings").contains(holding) && !$("pane-team-people").contains(holding) && !$("pane-team-projects").contains(holding) && !$("pane-team-machines").contains(holding))) return;  /* an edit is open */
+    if (!a || (holding && holding.isConnected && $("settings").contains(holding) && !$("pane-team-people").contains(holding) && !$("pane-team-projects").contains(holding) && !$("team-machine-rows").contains(holding))) return;  /* an edit is open */
     if (!changed("account", [a, me && me.gitlab_connect])) return;
     var prof = $("a-profile"), gl = [a.gitlab_user ? "@" + a.gitlab_user : el("span", { "class": "quiet", text: "Not linked" })];
     if (me && me.gitlab_connect) {
@@ -2550,8 +2590,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     });
     var box = $("a-machines");
     box.textContent = "";
-    if (!a.machines.length) box.appendChild(el("div", { "class": "a-none" }, [icon("i-monitor", 14), el("span", { text: "No machines yet" })]));
+    if (!a.machines.length && !a.team_machines.length)
+      box.appendChild(el("div", { "class": "a-none" }, [icon("i-monitor", 14), el("span", { text: a.add_machine
+        ? "No machines yet. Click Add a machine and run the command on your computer." : "No machines yet" })]));
     a.machines.forEach(function (d) { box.appendChild(machineRow(d)); });
+    a.team_machines.forEach(function (d) { box.appendChild(teamMachineRow(d)); });
     $("add-machine").hidden = !a.add_machine;
     $("a-browsers-sec").hidden = !a.browsers.length;
     $("nav-browsers").hidden = !a.browsers.length;
@@ -2613,7 +2656,10 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   $("text").addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
   });
-  $("add-team-btn").addEventListener("click", function () { teamAdded = null; teamBox(true); });
+  $("add-team-btn").addEventListener("click", function () {  /* a team machine shows under Everyone */
+    if (mScope !== "everyone") { mScope = "everyone"; machineScope(); loadMachines(true); }
+    teamAdded = null; teamBox(true);
+  });
   $("add-team-cancel").addEventListener("click", function () { teamBox(false); });
   $("add-team-box").addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); teamBox(false); } });
   $("add-team").addEventListener("submit", function (e) {

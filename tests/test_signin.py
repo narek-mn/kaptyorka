@@ -727,7 +727,8 @@ def test_the_account_panel_holds_only_your_own_data(hub, lab):
     assert acc["machines"][0]["last_seen"] == hub.now[0] - 5 and ONLINE_S > 5
     assert acc["projects"] == [{"name": "proj-a", "role": "read"}]
     assert [b["current"] for b in acc["browsers"]] == [True]
-    assert set(acc) == {"person", "role", "gitlab_user", "machines", "browsers", "projects", "add_machine"}
+    assert set(acc) == {"person", "role", "gitlab_user", "machines", "team_machines", "browsers", "projects", "add_machine"}
+    assert acc["team_machines"] == []
     assert "alice" not in json.dumps(acc)
 
 
