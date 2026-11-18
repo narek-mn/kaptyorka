@@ -630,12 +630,13 @@ def _invites(args) -> int:
         print("no open invites")
         return 0
     now = time.time()
-    table = [("PERSON", "EXPIRES IN", "CODE")]
-    for r in rows:
-        table.append((r["person"], f"{max(0, round((r['expires'] - now) / 3600))}h", r["code"]))
-    w = [max(len(r[i]) for r in table) for i in range(2)]
+    table = [("PERSON", "EXPIRES IN", "STATE", "CODE")]
+    for r in rows:  # a used invite can still link its person's GitLab until they link one
+        table.append((r["person"], f"{max(0, round((r['expires'] - now) / 3600))}h",
+                      "used" if r.get("used") else "open", r["code"]))
+    w = [max(len(r[i]) for r in table) for i in range(3)]
     for r in table:
-        print("  ".join(c.ljust(n) for c, n in zip(r, w)) + "  " + r[2])
+        print("  ".join(c.ljust(n) for c, n in zip(r, w)) + "  " + r[3])
     return 0
 
 

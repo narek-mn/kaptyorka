@@ -382,6 +382,7 @@ def dave(hub, lab):
 def test_invite_link_signs_in_and_links_then_join_still_works(hub, lab, dave):
     page = get(f"{hub.url}/i/{dave}")
     assert page.status == 200 and f"action='/i/{dave}/gitlab'" in page.body
+    assert page.body.index("This invite is for dave.") < page.body.index("Sign in with GitLab")
     assert "Sign in with GitLab" in page.body and f"kaptyorka join {hub.url}/i/{dave}" in page.body
     assert "Open the page as this person" not in page.body  # that one would use the invite up
     (done, back), = [link_invite(hub, dave)]
@@ -406,6 +407,7 @@ def test_join_first_then_the_invite_link_still_links(hub, lab, dave):
     assert redeem(hub, dave)[0] == 200
     page = get(f"{hub.url}/i/{dave}")
     assert page.status == 200 and "Sign in with GitLab" in page.body and "kaptyorka join" not in page.body
+    assert "This invite is for dave." in page.body
     assert redeem(hub, dave) == (400, "invite already used")  # join still works once only
     done, _ = link_invite(hub, dave)
     assert me(hub, token_of(done))[1]["person"] == "dave" and linked(hub, "dave") == ("dave-gl", 44)
@@ -527,3 +529,23 @@ def test_link_state_cannot_be_tampered_with(hub, lab, dave):
     # GitLab is only ever sent the state; the invite code never leaves the hub
     link = post(f"{hub.url}/i/{dave}/gitlab")
     assert dave not in link.headers["Location"] and dave not in link.headers["Set-Cookie"]
+
+
+def test_the_admin_cancels_a_used_invite_so_it_can_no_longer_link(hub, lab, dave):
+    """A leaked invite that join already used can link GitLab while its person is unlinked: the
+    admin can close it, from the list, the command or the API."""
+    assert redeem(hub, dave)[0] == 200
+    rows = khttp.request("GET", hub.url + "/api/invites", hub.tokens["alice"])[1]
+    assert [(r["person"], r["used"]) for r in rows] == [("dave", True)]
+    start = post(f"{hub.url}/i/{dave}/gitlab")  # begun before the cancel
+    assert start.status == 303
+    assert khttp.request("DELETE", f"{hub.url}/api/invites/{dave}", hub.tokens["alice"])[0] == 204
+    assert khttp.request("GET", hub.url + "/api/invites", hub.tokens["alice"])[1] == []
+    page = get(f"{hub.url}/i/{dave}")
+    assert page.status == 404 and "This invite is not valid." in page.body  # dave is still unlinked
+    late = post(f"{hub.url}/i/{dave}/gitlab")
+    assert late.status == 404 and "no longer valid" in late.body
+    done, _ = finish(start)
+    assert done.status == 403 and "This invite link is no longer valid" in done.body
+    assert linked(hub, "dave") == (None, None)
+    assert "alice cancelled the invite link for dave" in sentences(hub)

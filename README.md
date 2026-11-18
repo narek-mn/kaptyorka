@@ -372,7 +372,7 @@ People can open the page with their GitLab account instead of a private link: no
 2. On the hub machine, put the application id on line 1 and the secret on line 2 of `~/.kaptyorka/gitlab-oauth`, then `chmod 600 ~/.kaptyorka/gitlab-oauth`. The hub refuses a file other users can open, and says so. The secret is never logged, shown or sent anywhere but GitLab.
 3. Link yourself: on the Team page, click **GitLab name** on your row, or run `kaptyorka people gitlab alice alice-gl`. `kaptyorka gitlab status` then says `sign-in: on`.
 
-Everyone else links themselves: **Sign in with GitLab** on their invite link page, or, for someone who joined before, **Connect GitLab** under their name on their own page (`kaptyorka page`). Only a person's own invite link or device token can link them, only while they are not linked yet, and the first link wins. A GitLab account already linked to someone else, a person already linked to another account, and the `manager` account are refused. The admin can still set, change or clear anyone's link with **GitLab name** or `kaptyorka people gitlab bob bob-gl`. A leaked invite link that was already used can link someone's GitLab only until they link theirs or the link expires (7 days).
+Everyone else links themselves: **Sign in with GitLab** on their invite link page, or, for someone who joined before, **Connect GitLab** under their name on their own page (`kaptyorka page`). Only a person's own invite link or device token can link them, only while they are not linked yet, and the first link wins. A GitLab account already linked to someone else, a person already linked to another account, and the `manager` account are refused. The admin can still set, change or clear anyone's link with **GitLab name** or `kaptyorka people gitlab bob bob-gl`. A leaked invite link that was already used can link someone's GitLab only until they link theirs or the link expires (7 days); `kaptyorka invites` lists it as `used` until then, and `kaptyorka invites --cancel <code>` closes it. The invite page says whose invite it is ("This invite is for bob") above the button.
 
 How it works:
 
@@ -394,7 +394,7 @@ Everything else stays in the command line. Every command prints one plain senten
 
 ```bash
 kaptyorka invite bob                   # adds bob if new, prints the link
-kaptyorka invites                      # open links; --cancel <code> stops one
+kaptyorka invites                      # open links (and used ones that can still link GitLab); --cancel <code> stops one
 kaptyorka people                       # people, roles, devices, last use
 kaptyorka people revoke bob laptop     # sign out one lost device; bob stays
 kaptyorka people role bob manager      # or member
@@ -498,7 +498,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka start` | Run the hub on this machine; `--no-manager` keeps no manager session, `--manager` switches it back on |
 | `kaptyorka join <invite-link>` | Join this machine as the invited person |
 | `kaptyorka invite <person>` | Admin: make an invite link, 7 days, one use (creates the person if new) |
-| `kaptyorka invites` | Admin: list open invite links; `--cancel <code>` stops one |
+| `kaptyorka invites` | Admin: list open invite links, and used ones that can still link GitLab (`used`); `--cancel <code>` stops one |
 | `kaptyorka people` | Admin: list people, roles, device counts and last use |
 | `kaptyorka people role <person> member\|manager` | Admin: change a person's role |
 | `kaptyorka people remove <person>` | Admin: take a person off the team (asks first; `--yes` skips it) |

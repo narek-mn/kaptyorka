@@ -1529,7 +1529,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   function personView(p) {
     /* machines only: a GitLab page sign-in (a device that ends) is not a joined machine */
     var now = Date.now() / 1000, live = p.devices.filter(function (d) { return d.revoked_at == null && d.expires == null; });
-    var inv = invites.filter(function (v) { return v.person === p.name; }).pop() || null;
+    var inv = invites.filter(function (v) { return v.person === p.name && !v.used; }).pop() || null;
     var held = heldBy(p.name), names = knownProjects();
     Object.keys(pending).forEach(function (k) {
       var i = k.indexOf("\n");

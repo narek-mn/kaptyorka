@@ -148,20 +148,25 @@ def invite_expires(store, code: str) -> Optional[float]:
 
 
 def invites_open(store) -> List[dict]:
-    """Unused, unexpired invites of people still on the team, oldest first."""
+    """Unexpired invites of people still on the team that can still do something, oldest first:
+    unused ones (they join a machine), and used ones while their person has no GitLab link (they
+    can still link one). `used` tells them apart."""
     with store.lock:
         rows = store.db.execute(
-            "SELECT i.code, p.name AS person, i.created, i.expires FROM invites i"
-            " JOIN people p ON p.id=i.person_id WHERE i.used_at IS NULL AND i.expires>?"
-            " AND p.removed_at IS NULL ORDER BY i.created", (store.clock(),)).fetchall()
-    return [dict(r) for r in rows]
+            "SELECT i.code, p.name AS person, i.created, i.expires, i.used_at IS NOT NULL AS used"
+            " FROM invites i JOIN people p ON p.id=i.person_id WHERE i.expires>?"
+            " AND p.removed_at IS NULL AND (i.used_at IS NULL OR p.gitlab_user IS NULL)"
+            " ORDER BY i.created", (store.clock(),)).fetchall()
+    return [{**dict(r), "used": bool(r["used"])} for r in rows]
 
 
 def invite_cancel(store, code: str, by: Principal) -> None:
+    """Delete an unexpired invite, used or not: a used one may still link a GitLab account, and
+    has no other job, so deleting it costs nothing."""
     _admin(by)
     with store.lock:
         row = store.db.execute("SELECT p.name FROM invites i JOIN people p ON p.id=i.person_id"
-                               " WHERE i.code=? AND i.used_at IS NULL", (code,)).fetchone()
+                               " WHERE i.code=? AND i.expires>?", (code, store.clock())).fetchone()
         if row is None:
             raise KaptyorkaError("no open invite with that code")
         store.db.execute("DELETE FROM invites WHERE code=?", (code,))

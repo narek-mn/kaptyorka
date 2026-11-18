@@ -3,7 +3,7 @@
 ## 0.9.16
 
 - **People link their own GitLab account.** The admin no longer types usernames. The invite link page has **Sign in with GitLab**: it links the invite's person to the GitLab account that signs in and opens their page. It does not use the invite up, so `kaptyorka join <link>` still works, before or after. Someone who joined before finds **Connect GitLab** under their name on their own page (opened with their device token, for example from `kaptyorka page`); it goes away once linked. Only the person's own invite link or device token can link them, only while they are unlinked, and the first link wins. A GitLab account linked to someone else, a person already linked to another account, and the `manager` account are refused, each with one plain sentence. GitLab users nobody added still cannot get in. The log says "bob linked the GitLab user bob-gl (from the invite)" or "(from their page)".
-- A leaked invite link that was already used can link a GitLab account only until its person links theirs or the link expires (7 days).
+- A leaked invite link that was already used can link a GitLab account only until its person links theirs or the link expires (7 days). Until then `kaptyorka invites` lists it as `used`, and `kaptyorka invites --cancel <code>` closes it. The invite page says whose invite it is: "This invite is for bob".
 - Add person on the Team page is just a name again; the admin can still set, change or clear a link with **GitLab name** on the row or `kaptyorka people gitlab`.
 - With sign-in with GitLab on, the invite page shows **Sign in with GitLab** in place of the button that opened the page and used the invite up.
 

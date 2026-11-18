@@ -206,14 +206,26 @@ def test_invites_list_and_cancel(store, ws, ids, clock):
     store.invite_redeem(used, "pc")
     clock[0] += 20
     rows = admin_ops.invites_open(store)
-    assert [(r["code"], r["person"]) for r in rows] == [(code, "bob")]
+    # a used invite stays listed while its person has no GitLab link: it can still link one
+    assert [(r["code"], r["person"], r["used"]) for r in rows] == [(code, "bob", False), (used, "carol", True)]
     assert rows[0]["expires"] == 1_000_000.0 + 7 * 86400
     admin_ops.invite_cancel(store, code, who(store, "alice"))
-    assert admin_ops.invites_open(store) == [] and not store.invite_valid(code)
+    assert [r["code"] for r in admin_ops.invites_open(store)] == [used] and not store.invite_valid(code)
     with pytest.raises(KaptyorkaError, match="no open invite"):
         admin_ops.invite_cancel(store, code, who(store, "alice"))
+    admin_ops.invite_cancel(store, used, who(store, "alice"))  # used, not expired: it can go
+    assert admin_ops.invites_open(store) == []
     with pytest.raises(KaptyorkaError, match="no open invite"):
         admin_ops.invite_cancel(store, used, who(store, "alice"))
+    # once its person is linked, a used invite has no job left and is not listed
+    again = store.invite_create(ids["carol"])
+    store.invite_redeem(again, "pc2")
+    with store.lock:
+        store.db.execute("UPDATE people SET gitlab_user='carol-gl' WHERE id=?", (ids["carol"],))
+    assert admin_ops.invites_open(store) == []
+    clock[0] += 7 * 86400  # expired: nothing to cancel
+    with pytest.raises(KaptyorkaError, match="no open invite"):
+        admin_ops.invite_cancel(store, again, who(store, "alice"))
 
 
 def test_project_update_and_remove_keeps_notes(store, ws, ids):

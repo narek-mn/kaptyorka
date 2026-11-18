@@ -844,6 +844,7 @@ def test_people_link_their_own_gitlab(tmp_path, w, h):
             page.go(f"{base}/i/{code}")
             page.wait('!!document.querySelector("form button")')
             assert page.js('document.querySelector("form button").textContent') == "Sign in with GitLab"
+            assert "This invite is for dave." in page.js("document.body.innerText")
             assert f"kaptyorka join {base}/i/{code}" in page.js("document.body.innerText")
             assert page.js(wide)
             page.screenshot(shots / f"invite-gitlab-{tag}.png")

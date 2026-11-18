@@ -1926,11 +1926,14 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 return HTMLResponse(INVITE_PAGE.format(body="<p>This invite is not valid.</p>"),
                                     status_code=404, headers=headers)
             body = ("<h1>Join the team hub</h1>"
+                    + f"<p>This invite is for {html.escape(who['name'])}.</p>"
                     + INVITE_GITLAB.format(action=html.escape(f"/i/{code}/gitlab")))
             return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)
         cmd = html.escape(f"kaptyorka join {hub_url(request)}/i/{code}")
         if on:  # sign in first; the join command still works afterwards
+            who = signin.invite_person(store, code)
             body = ("<h1>Join the team hub</h1>"
+                    + (f"<p>This invite is for {html.escape(who['name'])}.</p>" if who else "")
                     + INVITE_GITLAB.format(action=html.escape(f"/i/{code}/gitlab"))
                     + "<p>Then, on your computer, run this or paste the link to your agent:</p>"
                     f"<pre>{cmd}</pre><p>This link works for 7 days and joins one machine.</p>")

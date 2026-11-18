@@ -539,11 +539,13 @@ def test_cli_people_still_lists(admin_hub, capsys):
 def test_cli_invites_table_and_cancel(admin_hub, monkeypatch, capsys):
     monkeypatch.setattr("time.time", lambda: 0.0)
     admin_hub["answers"][("GET", "/api/invites")] = (200, [
-        {"code": "C" * 22, "person": "bob", "created": 0.0, "expires": 7 * 86400.0}])
+        {"code": "C" * 22, "person": "bob", "created": 0.0, "expires": 7 * 86400.0, "used": False},
+        {"code": "D" * 22, "person": "carol", "created": 0.0, "expires": 3600.0, "used": True}])
     assert entry_with_exit(["invites"]) == 0
     out = capsys.readouterr().out.splitlines()
-    assert out[0].split() == ["PERSON", "EXPIRES", "IN", "CODE"]
-    assert out[1].split() == ["bob", "168h", "C" * 22]
+    assert out[0].split() == ["PERSON", "EXPIRES", "IN", "STATE", "CODE"]
+    assert out[1].split() == ["bob", "168h", "open", "C" * 22]
+    assert out[2].split() == ["carol", "1h", "used", "D" * 22]
     assert entry_with_exit(["invites", "--cancel", "C" * 22]) == 0
     assert admin_hub["calls"][-1] == ("DELETE", "/api/invites/" + "C" * 22, None)
     admin_hub["answers"][("DELETE", "/api/invites/x")] = (404, "no open invite with that code")
