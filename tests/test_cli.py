@@ -136,14 +136,14 @@ def test_cli_invite_not_admin(monkeypatch, home, capsys):
 def test_cli_people_table(monkeypatch, home, capsys):
     paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
     rows = [{"name": "ann", "role": "admin", "devices": [{"last_used": 100.0}, {"last_used": 200.0}]},
-            {"name": "ben", "role": "member", "devices": []}]
+            {"name": "ben", "role": "member", "devices": [], "gitlab_user": "ben-gl"}]
     monkeypatch.setattr(http, "request", lambda *a, **k: (200, rows))
     monkeypatch.setattr("time.time", lambda: 260.0)
     assert entry_with_exit(["people"]) == 0
     out = capsys.readouterr().out.splitlines()
-    assert out[0].split() == ["NAME", "ROLE", "DEVICES", "LAST", "SEEN"]
-    assert out[1].split()[:3] == ["ann", "admin", "2"] and "60s ago" in out[1]
-    assert out[2].split() == ["ben", "member", "0", "never"]
+    assert out[0].split() == ["NAME", "ROLE", "GITLAB", "DEVICES", "LAST", "SEEN"]
+    assert out[1].split()[:4] == ["ann", "admin", "-", "2"] and "60s ago" in out[1]
+    assert out[2].split() == ["ben", "member", "ben-gl", "0", "never"]
 
 
 def test_cli_join_invite_keeps_token_when_join_fails(monkeypatch, home):
@@ -533,7 +533,7 @@ def test_cli_people_still_lists(admin_hub, capsys):
     admin_hub["answers"][("GET", "/api/people")] = (200, [{"name": "alice", "role": "admin",
                                                            "devices": []}])
     assert entry_with_exit(["people"]) == 0
-    assert capsys.readouterr().out.splitlines()[1].split() == ["alice", "admin", "0", "never"]
+    assert capsys.readouterr().out.splitlines()[1].split() == ["alice", "admin", "-", "0", "never"]
 
 
 def test_cli_invites_table_and_cancel(admin_hub, monkeypatch, capsys):

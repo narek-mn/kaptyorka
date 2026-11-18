@@ -5,6 +5,7 @@ import functools
 import html
 import importlib.resources
 import inspect
+import json
 import math
 import mimetypes
 import re
@@ -22,7 +23,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from kaptyorka import __version__, admin_ops, brief, identity, manager, paths
+from kaptyorka import __version__, admin_ops, brief, identity, manager, paths, signin
 from kaptyorka.gitlab import GitLabError, GitLabSource
 from kaptyorka import rules as rules_mod
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
@@ -46,7 +47,9 @@ ASK_MANAGER = ("to reach another person's session, message the manager: say whom
 ON_SHARED = "a worker on a shared account cannot start, adopt or close workers; ask your boss"
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
        "style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'")
-FONTS = ("archivo-latin.woff2",)  # the page's font files (web/fonts/, SIL OFL 1.1)
+FONTS = ("archivo-latin.woff2",)
+NO_STORE = {"Cache-Control": "no-store"}
+CLEAR_COOKIE = "kaptyorka_signin=; Path=/auth/gitlab; HttpOnly; SameSite=Lax; Max-Age=0"  # the page's font files (web/fonts/, SIL OFL 1.1)
 
 INVITE_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
                "<title>kaptyorka</title><style>body{{background:#111418;color:#e6e8eb;"
@@ -136,6 +139,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     cs = ConnectStore(store, lambda key, text: ws.notify(key, text), mm.person_id)
     brief_cache: dict = {}  # per session key; see brief.cached
     gl = GitLabSource(store)  # the GitLab group's project list: names only, never access
+    si = signin.SignIn(store)  # sign in to the page with GitLab
     decide_lock = threading.Lock()
     work_decide_lock = threading.Lock()  # one decision per request, even when two race
     started = {"first": True}  # the first tick closes a manager left running while off
@@ -1274,13 +1278,34 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if denied:
             return denied
         body = await request.json()
+        principal = request.scope["state"]["principal"]
         try:
+            username = str(body.get("gitlab") or "").strip()
+            if username:  # checked first, so a taken username adds nobody
+                signin.check_free(store, username)
             pid = store.person_create(str(body["name"]), str(body.get("role", "member")),
-                                      by=request.scope["state"]["principal"].person_name)
+                                      by=principal.person_name)
+            if username:
+                signin.set_user(store, si, str(body["name"]), username, principal)
         except KaptyorkaError as e:
             status = 409 if "already exists" in str(e) else 400
             return PlainTextResponse(str(e), status_code=status)
         return JSONResponse({"id": pid})
+
+    @server.custom_route("/api/people/{name}/gitlab", methods=["POST"])
+    @_bad_request
+    async def api_person_gitlab(request: Request) -> Response:
+        """Link a person to their GitLab username ("" unlinks); a change ends their GitLab sign-ins."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        try:
+            kept = signin.set_user(store, si, request.path_params["name"], str(body.get("username") or ""),
+                                   request.scope["state"]["principal"])
+        except KaptyorkaError as e:
+            return admin_error(e)
+        return JSONResponse({"gitlab_user": kept})
 
     @server.custom_route("/api/invites", methods=["POST"])
     @_bad_request
@@ -1655,7 +1680,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         denied = admin_only(request)
         if denied:
             return denied
-        return JSONResponse(await asyncio.to_thread(gl.status))
+        return JSONResponse({**await asyncio.to_thread(gl.status), "signin": signin.status(store)})
 
     @server.custom_route("/api/gitlab", methods=["POST"])
     @_bad_request
@@ -1668,7 +1693,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             gl.set(str(body["url"]), str(body["group"]), request.scope["state"]["principal"].person_name)
         except GitLabError as e:
             return PlainTextResponse(str(e), status_code=400)
-        return JSONResponse(await asyncio.to_thread(gl.status))
+        return JSONResponse({**await asyncio.to_thread(gl.status), "signin": signin.status(store)})
 
     @server.custom_route("/api/gitlab", methods=["DELETE"])
     async def api_gitlab_off(request: Request) -> Response:
@@ -1829,6 +1854,53 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return Response(status_code=303, headers={**headers, "Location": f"/#t={token}"})
         return JSONResponse({"token": token}, headers=headers)
 
+    def signin_page(text: str, status_code: int) -> Response:
+        body = (f"<h1>Sign in</h1><p>{html.escape(text[:1].upper() + text[1:])}.</p>"
+                "<p><a href='/' style='color:#8fb3ff'>Back to the sign-in page</a></p>")
+        return HTMLResponse(INVITE_PAGE.format(body=body), status_code=status_code,
+                            headers={**NO_STORE, "Set-Cookie": CLEAR_COOKIE})
+
+    @server.custom_route("/auth/gitlab", methods=["GET"])
+    async def auth_gitlab(request: Request) -> Response:
+        """For the lock screen: whether to show Sign in with GitLab."""
+        return JSONResponse({"on": signin.status(store) is None}, headers=NO_STORE)
+
+    @server.custom_route("/auth/gitlab/start", methods=["GET"])
+    async def auth_gitlab_start(request: Request) -> Response:
+        # GitLab sends the browser back to the address it reached the hub on
+        try:
+            to, state = si.start(hub_url(request) + signin.CALLBACK)
+        except KaptyorkaError as e:
+            return signin_page(str(e), 404)
+        cookie = (f"{signin.COOKIE}={state}; Path=/auth/gitlab; HttpOnly; SameSite=Lax;"
+                  f" Max-Age={signin.STATE_S}")
+        return Response(status_code=302, headers={**NO_STORE, "Location": to, "Set-Cookie": cookie})
+
+    @server.custom_route(signin.CALLBACK, methods=["GET"])
+    async def auth_gitlab_callback(request: Request) -> Response:
+        q = request.query_params
+        if q.get("error"):
+            return signin_page("sign-in was cancelled", 400)
+        try:
+            token, _ = await asyncio.to_thread(si.finish, q.get("state", ""), q.get("code", ""),
+                                               request.cookies.get(signin.COOKIE, ""))
+        except KaptyorkaError as e:
+            return signin_page(str(e), 403)
+        # the page keeps the token like a #t= link; it never shows in the address bar
+        t = json.dumps(token)
+        script = (f"<!doctype html><meta charset=utf-8><title>kaptyorka</title><script>"
+                  f"try{{localStorage.setItem(\"kaptyorka.token\",{t});location.replace(\"/\")}}"
+                  f"catch(e){{location.replace(\"/#t=\"+encodeURIComponent({t}))}}</script>")
+        return HTMLResponse(script, headers={**NO_STORE, "Set-Cookie": CLEAR_COOKIE,
+                                             "Content-Security-Policy": CSP,
+                                             "Referrer-Policy": "no-referrer"})
+
+    @server.custom_route("/api/me/signout", methods=["POST"])
+    async def api_signout(request: Request) -> Response:
+        """Sign out: a GitLab sign-in ends on the hub too; a device token stays good."""
+        si.signout(request.scope["state"]["principal"])
+        return Response(status_code=204)
+
     @server.custom_route("/", methods=["GET"])
     async def page(request: Request) -> Response:
         html = (importlib.resources.files("kaptyorka") / "web/index.html").read_text("utf-8")
@@ -1843,6 +1915,14 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         return Response(data, media_type="font/woff2",
                         headers={"Cache-Control": "public, max-age=86400"})
 
+    async def signin_loop() -> None:
+        while True:
+            await asyncio.sleep(60)
+            try:
+                await asyncio.to_thread(si.recheck)
+            except Exception as e:  # one bad check must not stop the next
+                print(f"kaptyorka: GitLab sign-in check failed: {type(e).__name__}", flush=True)
+
     async def tick_loop() -> None:
         while True:
             try:
@@ -1856,15 +1936,18 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     app.add_middleware(NoWebSocket)  # outside Auth: a stray WebSocket client is not a failed login
     quiet_upgrade_warnings()
     app.state.tick = tick  # tests run a tick by hand
+    app.state.signin = si
     inner = app.router.lifespan_context
 
     @contextlib.asynccontextmanager
     async def lifespan(a):
         async with inner(a) as state:
             loop = asyncio.create_task(tick_loop())
+            checks = asyncio.create_task(signin_loop())
             try:
                 yield state
             finally:
                 loop.cancel()
+                checks.cancel()
     app.router.lifespan_context = lifespan
     return app

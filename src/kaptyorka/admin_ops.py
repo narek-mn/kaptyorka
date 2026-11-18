@@ -524,6 +524,11 @@ SENTENCES = {
     "gitlab": lambda who, d: (f"{who} turned the GitLab project list off" if d == "off" else
                               _match(r"(\S+) (\S+)", "{0} set the GitLab project list to the"
                                                        " group {2} on {1}")(who, d)),
+    "gitlab_user": lambda who, d: (_match(r"(.+) unlinked", "{0} unlinked {1} from GitLab")(who, d)
+                                   if d.endswith(" unlinked") else
+                                   _match(r"(.+) -> (.+)", "{0} linked {1} to the GitLab user {2}")(who, d)),
+    "gitlab_signin": _match(r"(.+)", "{0} signed in to the page with GitLab ({1})"),
+    "gitlab_signout": _match(r"(.+)", "{0}'s GitLab sign-in ended: {1}"),
     "person_removed": _match(r"(.+)", "{0} removed {1} from the team"),
     "role": _match(r"(.+) -> (\w+)", "{0} made {1} a {2}"),
     "page_login": _match(r"(.*)", "{0} opened the page ({1})"),
@@ -562,7 +567,7 @@ KNOWN_KINDS = tuple(SENTENCES)
 # the plain groups of the log page, in order, and the raw kinds each covers
 LOG_GROUPS = [
     ("people", ["person", "person_removed", "role", "invite", "invite_cancel", "device",
-                "device_shared", "join"]),
+                "device_shared", "join", "gitlab_user"]),
     ("access", ["grant", "revoke", "request", "request_decided", "connect_request",
                 "connect_decided"]),
     ("projects", ["project_register", "project_updated", "project_removed", "gitlab"]),
@@ -572,7 +577,7 @@ LOG_GROUPS = [
     ("messages", ["settings", "retention", "door_open", "door_close", "knock", "knock_answer"]),
     ("rules", ["rules", "skills", "propose", "proposal", "conflict"]),
     ("workers", ["manager", "work_decide"]),
-    ("sign-ins", ["page_login"]),
+    ("sign-ins", ["page_login", "gitlab_signin", "gitlab_signout"]),
 ]
 
 

@@ -119,6 +119,9 @@ ADDED_COLUMNS = [
     ("agents", "cwd", "TEXT NOT NULL DEFAULT ''"),
     ("requests", "role", "TEXT NOT NULL DEFAULT 'read'"),
     ("agents", "background", "INTEGER NOT NULL DEFAULT 0"),
+    ("devices", "expires", "REAL"),  # a GitLab sign-in's page device ends then (signin.py)
+    ("people", "gitlab_user", "TEXT"),  # the GitLab username a person signs in with
+    ("people", "gitlab_id", "INTEGER"),  # that GitLab user's id, kept at their first sign-in
 ]
 
 
@@ -289,8 +292,9 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
-        from kaptyorka import admin_ops, connects, manager, memory, rules, workers  # they import this module
+        from kaptyorka import admin_ops, connects, manager, memory, rules, signin, workers  # they import this module
         workers.ensure_schema(self.db)
+        signin.ensure_schema(self.db)
         memory.ensure_schema(self.db)
         rules.ensure_schema(self.db)
         manager.ensure_schema(self.db)
@@ -345,7 +349,7 @@ class Store:
 
     def people(self) -> List[dict]:
         with self.lock:
-            rows = self.db.execute("SELECT id, name, role, created FROM people"
+            rows = self.db.execute("SELECT id, name, role, created, gitlab_user FROM people"
                                    " WHERE removed_at IS NULL ORDER BY id")
             return [dict(r) for r in rows]
 
@@ -364,8 +368,9 @@ class Store:
         machine = clean(machine, MAX_IDENT) or None
         used, confirmed = False, False
         with self.lock:
-            dev = self.db.execute("SELECT * FROM devices WHERE token_hash=? AND revoked_at IS NULL",
-                                  (digest,)).fetchone()
+            dev = self.db.execute("SELECT * FROM devices WHERE token_hash=? AND revoked_at IS NULL"
+                                  " AND (expires IS NULL OR expires > ?)",
+                                  (digest, self.clock())).fetchone()
             if dev is None:
                 return None
             if dev["legacy"]:

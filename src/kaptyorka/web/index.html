@@ -50,6 +50,9 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #unlock { display: flex; gap: 8px; width: min(360px, calc(100vw - 32px)); }
 #unlock input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; font-family: var(--mono); font-size: 13px; }
 #lock .hint { text-align: center; margin: -10px 0 0; width: min(360px, calc(100vw - 32px)); font-size: 13px; color: var(--muted); }
+#lock[data-mode="wait"] #unlock, #lock[data-mode="wait"] .hint, #lock[data-mode="wait"] #gitlab-signin { visibility: hidden; }
+#lock[data-mode="gitlab"] #unlock, #lock[data-mode="gitlab"] .hint, #lock:not([data-mode="gitlab"]) #gitlab-signin { display: none; }
+#gitlab-signin { display: inline-flex; align-items: center; justify-content: center; height: 40px; padding: 0 22px; font-size: 14px; text-decoration: none; width: min(360px, calc(100vw - 32px)); }
 #lock-err { text-align: center; margin-top: -14px; width: min(360px, calc(100vw - 32px)); padding: 0; font-size: 13px; }
 
 /* top bar: the mark, Home and Admin, the person */
@@ -296,6 +299,10 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .p-name { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .p-sum { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; }
 .p-sum.quiet { color: var(--faint); }
+.p-act { display: flex; gap: 6px; align-items: center; }
+.btn.p-gl { color: var(--muted); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; line-height: 26px; }
+.btn.p-gl.unset { color: var(--faint); border-style: dashed; }
+.btn.p-gl:hover { color: var(--text); }
 .p-main > svg { color: var(--faint); transition: transform var(--ease), color var(--ease); }
 .p-main:hover > svg { color: var(--muted); }
 .p-main[aria-expanded="true"] > svg { transform: rotate(90deg); color: var(--ink); }
@@ -382,6 +389,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 #ask-err { padding: 0 14px 10px; }
 
 @media (max-width: 720px) {
+  .btn.p-gl { max-width: 104px; }
+  .p-line .p-main { min-width: 92px; }
   header { gap: 16px; padding: 0 16px; }
   .brand span { display: none; }
   /* Home: one column. The list first; a row opens its chat, Back returns */
@@ -466,7 +475,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></symbol>
 </svg>
 
-<div id="lock"><svg width="56" height="56" aria-label="Locked"><use href="#i-lock"/></svg>
+<div id="lock" data-mode="wait"><svg width="56" height="56" aria-label="Locked"><use href="#i-lock"/></svg>
+  <a class="btn primary" id="gitlab-signin" href="/auth/gitlab/start">Sign in with GitLab</a>
   <form id="unlock"><input id="unlock-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your token" aria-label="Token"><button class="btn primary" type="submit">Open</button></form>
   <p class="hint">Use the link from kaptyorka start, or ask your admin for an invite.</p>
   <div class="err" id="lock-err" role="alert" hidden>That token did not work.</div></div>
@@ -551,6 +561,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         <div class="panel add-box" id="add-box" hidden>
           <form class="add-form" id="add-person" autocomplete="off">
             <input id="new-name" placeholder="Name" aria-label="Name" maxlength="40" required>
+            <input id="new-gitlab" placeholder="GitLab username (optional)" aria-label="GitLab username, optional" maxlength="255" hidden>
             <button type="submit" class="btn small primary">Add</button>
             <button type="button" class="btn small" id="add-person-cancel">Cancel</button>
           </form>
@@ -670,6 +681,17 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     document.querySelectorAll("time[data-t]").forEach(function (n) { n.textContent = ago(now - n.dataset.t, !!n.dataset.short); });
   }
 
+  /* the lock screen offers Sign in with GitLab when the hub has it set up, else the private link */
+  var gitlabSignin = false;
+  function lockMode() {
+    fetch("/auth/gitlab", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : { on: false }; })
+      .then(function (x) { gitlabSignin = !!x.on; }, function () { gitlabSignin = false; })
+      .then(function () {
+        $("lock").dataset.mode = gitlabSignin ? "gitlab" : "token";
+        if (!$("lock-err").hidden && gitlabSignin) $("lock-err").textContent = "You are signed out. Sign in again.";
+        if (!gitlabSignin && !$("lock").hidden) $("unlock-token").focus();
+      });
+  }
   /* refused: the token did not work (a 401), as against signing out */
   function lock(refused) {
     clearTimeout(timer);
@@ -679,9 +701,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     $("app").hidden = true;
     $("lock").hidden = false;
     $("lock-err").hidden = !refused;
-    $("lock-err").textContent = "That token did not work.";
+    $("lock-err").textContent = gitlabSignin ? "You are signed out. Sign in again." : "That token did not work.";
     $("unlock-token").value = "";
-    $("unlock-token").focus();
+    lockMode();
   }
 
   function checked(r) {
@@ -1443,7 +1465,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
              online: live.some(function (d) { return d.last_used != null && now - d.last_used < 30; }) ||
                      feed.agents.some(function (a) { return a.person === p.name; }),
              joined: live.some(function (d) { return d.last_used != null; }),
-             invite: inv ? inv.url : null, held: held, projects: names };
+             invite: inv ? inv.url : null, held: held, projects: names,
+             gitlab: gitlabOn() ? p.gitlab_user || "" : null };
   }
   function setProject(v, project, on) {
     var k = v.name + "\n" + project, reg = feed.projects.some(function (p) { return p.name === project; });
@@ -1480,6 +1503,14 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       }, function (e) { teamErr("team-err", e.message); throw e; });
     });
   }
+  function gitlabOn() { return !!(gitlab && gitlab.on); }
+  function editGitlab(v, b) {
+    confirmInline(b, null, "Save", function (text) {
+      return api(apiPath("/api/people/", v.name, "/gitlab"), { username: text })
+        .then(function () { return get("/api/feed"); })
+        .then(function (f) { feed = f; teamErr("team-err", ""); }, function (e) { teamErr("team-err", e.message); throw e; });
+    }, { ask: "GitLab username", value: v.gitlab, edit: true, max: "255" });
+  }
   function personRow(v) {
     var open = !v.admin && openPerson === v.name, id = "pp-" + v.name.replace(/[^A-Za-z0-9_-]/g, "_");
     var held = v.projects.filter(function (n) { return v.held[n]; });
@@ -1502,8 +1533,16 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     } else if (!v.admin) {
       act = button("Remove", "quiet-danger", function () { removePerson(v, act); }, { "aria-label": "Remove " + v.name });
     }
+    var gl = null;
+    if (v.gitlab != null) {  /* the GitLab username they sign in with; set once GitLab is set up */
+      gl = button(v.gitlab ? "@" + v.gitlab : "GitLab name", "p-gl" + (v.gitlab ? "" : " unset"),
+                  function () { editGitlab(v, gl); },
+                  { title: v.gitlab ? "Signs in with GitLab as " + v.gitlab + ". Click to change" : "Add their GitLab username so they can sign in with GitLab",
+                    "aria-label": (v.gitlab ? "Change" : "Add") + " " + v.name + "'s GitLab username" });
+    }
+    var acts = [gl, act].filter(Boolean);
     var row = el("div", { "class": "person" + (open ? " open" : ""), "data-person": v.name }, [
-      el("div", { "class": "p-line" }, [main, act ? el("span", { "class": "p-act" }, [act]) : null])]);
+      el("div", { "class": "p-line" }, [main, acts.length ? el("span", { "class": "p-act" }, acts) : null])]);
     if (linkFor && linkFor.name === v.name) {
       var input = el("input", { readonly: "", value: linkFor.url, "aria-label": "Invite link for " + v.name });
       row.appendChild(el("div", { "class": "p-link" }, [icon("i-link", 13), input]));
@@ -1660,6 +1699,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     $("add-person-btn").setAttribute("aria-expanded", open ? "true" : "false");
     $("add-person").hidden = !!added;
     $("add-link").hidden = !added;
+    $("new-gitlab").hidden = !gitlabOn();
     teamErr("add-err", "");
     if (!open) { added = null; $("add-person").reset(); $("add-person").hidden = false; $("add-link").hidden = true; $("add-person-btn").focus(); return; }
     if (!added) $("new-name").focus();
@@ -1741,7 +1781,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       $("lock-err").textContent = "The hub did not answer. Try again.";
     });
   });
-  $("signout").addEventListener("click", function () { lock(false); });
+  $("signout").addEventListener("click", function () {
+    /* a GitLab sign-in ends on the hub too; a device token stays good */
+    if (token) fetch("/api/me/signout", { method: "POST", cache: "no-store", headers: { Authorization: "Bearer " + token } }).catch(function () {});
+    lock(false);
+  });
   function enter() {
     $("lock").hidden = true;
     $("app").hidden = false;
@@ -1800,7 +1844,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     var name = $("new-name").value.trim(), btn = $("add-person").querySelector("button[type=submit]");
     if (!name || btn.getAttribute("aria-busy") === "true") return;
     btn.setAttribute("aria-busy", "true");
-    api("/api/people", { name: name })
+    var gl = gitlabOn() ? $("new-gitlab").value.trim() : "";
+    api("/api/people", gl ? { name: name, gitlab: gl } : { name: name })
       .then(function () { return api("/api/invites", { person: name }); })
       .then(function (r) { return r.json(); })
       .then(function (x) {
@@ -1863,7 +1908,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     show(view);
     poll();
   }
-  if (token) { enter(); boot(); }
+  if (token) { enter(); boot(); } else lockMode();
 })();
 </script>
 </body>

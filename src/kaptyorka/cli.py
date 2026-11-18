@@ -387,14 +387,25 @@ def _people(args) -> int:
         print(_problem(got), file=sys.stderr)
         return 1
     now = time.time()
-    rows = [("NAME", "ROLE", "DEVICES", "LAST SEEN")]
+    rows = [("NAME", "ROLE", "GITLAB", "DEVICES", "LAST SEEN")]
     for p in got[1]:
         used = [d["last_used"] for d in p["devices"] if d.get("last_used")]
-        rows.append((p["name"], p["role"], str(len(p["devices"])),
+        rows.append((p["name"], p["role"], p.get("gitlab_user") or "-", str(len(p["devices"])),
                      f"{round(now - max(used))}s ago" if used else "never"))
-    w = [max(len(r[i]) for r in rows) for i in range(3)]
+    w = [max(len(r[i]) for r in rows) for i in range(4)]
     for r in rows:
-        print("  ".join(c.ljust(n) for c, n in zip(r, w)) + "  " + r[3])
+        print("  ".join(c.ljust(n) for c, n in zip(r, w)) + "  " + r[4])
+    return 0
+
+
+def _people_gitlab(args) -> int:
+    done = _admin_json("POST", f"/api/people/{quote(args.name, safe='')}/gitlab",
+                       {"username": args.username})
+    if done is None:
+        return 1
+    kept = done.get("gitlab_user")
+    print(f"{args.name} signs in with the GitLab user {kept}" if kept
+          else f"{args.name} is no longer linked to GitLab")
     return 0
 
 
@@ -651,11 +662,17 @@ def _gitlab_print(st: dict) -> int:
     print(f"GitLab:     {st['url']}")
     print(f"group:      {st['group']}")
     print(f"token file: {st['token_file']}: {st['token']}")
+    rc = 0
     if st.get("error"):
         print(f"projects:   none listed: {st['error']}")
-        return 1
-    print(f"projects:   {st['count']}")
-    return 0
+        rc = 1
+    else:
+        print(f"projects:   {st['count']}")
+    if "signin" in st:  # an older hub has no sign-in
+        hub = paths.load_config().get("hub", "http://<hub>").rstrip("/")
+        print("sign-in:    on" if st["signin"] is None else f"sign-in:    off: {st['signin']}")
+        print(f"            GitLab app redirect URI: {hub}/auth/gitlab/callback (scope read_user)")
+    return rc
 
 
 def _gitlab_set(args) -> int:
@@ -1014,6 +1031,11 @@ def entry() -> None:
     pl.add_argument("name", help="the person's name")
     pl.add_argument("role", choices=("member", "manager"), help="the new role")
     pl.set_defaults(run=_people_role)
+    pg = ps.add_parser("gitlab", help="link a person to their GitLab username, for Sign in with GitLab"
+                       " ('' unlinks)")
+    pg.add_argument("name", help="the person's name")
+    pg.add_argument("username", help="their GitLab username, or '' to unlink")
+    pg.set_defaults(run=_people_gitlab)
     iv = sub.add_parser("invites", help="list the invite links nobody has used yet; --cancel stops one")
     iv.add_argument("--cancel", metavar="code", help="cancel the invite with this code (see the CODE column)")
     iv.set_defaults(run=_invites)

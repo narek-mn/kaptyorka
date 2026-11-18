@@ -85,7 +85,7 @@ The hub address uses the machine's IP. Use `--host` to set another one, and `--p
 
 `join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart, and only for tools that changed: when nothing did, it says `already joined to <hub>; all set`. `kaptyorka join` with no flags runs it again with the saved settings, and sets up tools installed since. `kaptyorka join <invite link>` on a machine already joined to that hub does nothing and says so (the link is not used up); for another hub it prints `moved from <old hub> to <new hub>` and goes on. `kaptyorka join --hub <hub> --token <token>` still works, for a token you already have. On a first join it ends with this machine's `page` link.
 
-The page asks for a device token: open a link ending in `#t=<token>`, paste the token on the lock screen, or use an invite link. On the LAN, links to images on the page carry the token in the URL, since there is no reverse proxy; do not paste such links elsewhere.
+The page asks for a device token: open a link ending in `#t=<token>`, paste the token on the lock screen, or use an invite link. When the admin has set up sign-in with GitLab (see "Sign in with GitLab"), the lock screen shows only **Sign in with GitLab**; the `#t=` link and `kaptyorka page` still work. On the LAN, links to images on the page carry the token in the URL, since there is no reverse proxy; do not paste such links elsewhere.
 
 ## For agents
 
@@ -339,6 +339,22 @@ GitLab only supplies the list of projects: name, description and repo address. I
 
 The hub asks GitLab for the list at most every 5 minutes. If GitLab cannot be asked (no token, a refused token, no answer), the Projects section says so in one line and still lists the projects on the hub. The token stays in the hub process: it is never logged, shown on the page or put in an error. `kaptyorka gitlab status` shows the address, the group, whether the token file is fine and how many projects GitLab lists. `kaptyorka gitlab off` stops the list; the projects on the hub stay.
 
+#### Sign in with GitLab
+
+People can open the page with their GitLab account instead of a private link: no new password, and blocking someone in GitLab ends their sign-in. The hub uses the GitLab set with `kaptyorka gitlab set` (OAuth 2 with PKCE, scope `read_user`). Being the admin stays a hub role: the admin signs in like anyone else, and the hub person linked to their GitLab user has the admin role.
+
+1. In GitLab, make an application (in the Admin area under Applications, or in a group's settings): scope `read_user`, confidential. Its redirect URI is the hub address people open plus `/auth/gitlab/callback`, for example `http://<hub>:8765/auth/gitlab/callback`. `kaptyorka gitlab status` prints it. If people open the hub under more than one address, put each on its own line.
+2. On the hub machine, put the application id on line 1 and the secret on line 2 of `~/.kaptyorka/gitlab-oauth`, then `chmod 600 ~/.kaptyorka/gitlab-oauth`. The hub refuses a file other users can open, and says so. The secret is never logged, shown or sent anywhere but GitLab.
+3. Link each person to their GitLab username: on the Team page, click **GitLab name** on their row (or type it when adding them), or run `kaptyorka people gitlab bob bob-gl`. Link yourself too. `kaptyorka gitlab status` then says `sign-in: on`.
+
+How it works:
+
+- GitLab sends the browser back to the address the person reached the hub on. GitLab accepts only the redirect URIs registered in step 1, so nothing else can be used.
+- The hub asks GitLab who signed in. A linked person gets a page sign-in of their own (a device named `gitlab-web`). Someone GitLab knows but nobody linked is told to ask the admin to add them. The GitLab account's id is kept at the first sign-in, so a username that later moves to another account is refused.
+- A sign-in lasts 7 days, then the page asks again. Every 15 minutes the hub asks GitLab whether the person may still come in: a blocked or deactivated account, a refused grant or a changed link signs them out within about 15 minutes. While GitLab cannot be reached, sign-ins keep working until their 7 days end.
+- **Sign out** on the page ends a GitLab sign-in on the hub too. Changing or clearing a person's GitLab name ends their GitLab sign-ins. Removing a person ends everything.
+- The private `#t=` link keeps working, so the admin can still get in when GitLab is down. Members keep `kaptyorka page` too.
+
 What the hub decides by itself:
 
 - **Machines**: the first person to join from a machine owns it and may use it. Someone else on the same machine name gets no use until the admin says Yes to "carol wants to use box-1"; a No is not asked again. The name is what the machine reports, so it is not proof on its own.
@@ -355,6 +371,7 @@ kaptyorka invites                      # open links; --cancel <code> stops one
 kaptyorka people                       # people, roles, devices, last use
 kaptyorka people revoke bob laptop     # sign out one lost device; bob stays
 kaptyorka people role bob manager      # or member
+kaptyorka people gitlab bob bob-gl     # bob signs in with the GitLab user bob-gl; '' unlinks
 kaptyorka people remove bob            # asks first; --yes skips it
 kaptyorka grant bob proj-a:read        # read, write or manage; or machine:box-1
 kaptyorka revoke bob proj-a            # or machine:box-1

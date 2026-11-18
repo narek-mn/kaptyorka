@@ -706,3 +706,91 @@ def test_team_projects_gitlab_refuses(tmp_path, monkeypatch):
         stop()
         store.close()
         lab.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_sign_in_with_gitlab(tmp_path, w, h):
+    """Sign in with GitLab, as a first-time person: the lock screen has one button; GitLab sends
+    the browser back signed in. The admin sets a GitLab username on a person's row and when adding
+    one; an unknown GitLab user is told to ask the admin; Sign out shows the button again; the
+    admin's private link still works. Screenshots to KAPTYORKA_SHOTS."""
+    import os
+    from helpers import FakeGitLabOAuth
+    from kaptyorka import paths, signin
+    from kaptyorka.gitlab import GitLabSource
+
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    lab = FakeGitLabOAuth(users={"alice-gl": {"id": 11, "state": "active"},
+                                 "dave-gl": {"id": 44, "state": "active"}})
+    app_file = paths.home() / "gitlab-oauth"
+    app_file.write_text("app-id\napp-secret-value\n")
+    os.chmod(app_file, 0o600)
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    GitLabSource(store).set(lab.url, "team", "alice")
+    stop = start_hub(store)
+    _, admin_t = person(store, "alice", "admin")
+    person(store, "bob")
+    signin.set_user(store, None, "alice", "alice-gl", store.authenticate(admin_t))
+    base = f"http://127.0.0.1:{stop.port}"
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    gl = 'document.querySelector("#people-rows [data-person={}] .p-gl")'.format
+    try:
+        with chrome(w, h) as page:
+            page.go(base + "/")
+            page.wait('document.getElementById("lock").dataset.mode === "gitlab"')
+            assert page.js('getComputedStyle(document.getElementById("unlock")).display') == "none"
+            assert page.js('document.getElementById("gitlab-signin").textContent') == "Sign in with GitLab"
+            assert page.js(wide)
+            page.screenshot(shots / f"signin-{tag}.png")
+            page.js('document.getElementById("gitlab-signin").click()')
+            page.wait('document.getElementById("viewer-name")?.textContent === "alice"')
+            assert "t=" not in page.js("location.href")
+            assert page.js('localStorage.getItem("kaptyorka.token")')
+            # Team: each row has the GitLab username, or a quiet way to add one
+            page.js('document.getElementById("tab-team").click()')
+            page.wait(f'!!{gl("bob")}')
+            assert page.js(f'{gl("alice")}.textContent') == "@alice-gl"
+            assert page.js(f'{gl("bob")}.textContent') == "GitLab name"
+            assert page.js(wide)
+            page.screenshot(shots / f"team-gitlab-{tag}.png")
+            page.js(f'{gl("bob")}.click()')
+            page.wait('!!document.querySelector("#people-rows .confirm input")')
+            assert page.js('document.activeElement.placeholder') == "GitLab username"
+            page.js('document.querySelector("#people-rows .confirm input").value = "bob-gl"')
+            page.screenshot(shots / f"team-gitlab-edit-{tag}.png")
+            click(page, "#people-rows .confirm", "Save")
+            page.wait(f'{gl("bob")} && {gl("bob")}.textContent === "@bob-gl"')
+            assert store.person_by_name("bob") and [p["gitlab_user"] for p in store.people()
+                                                    if p["name"] == "bob"] == ["bob-gl"]
+            # Add person takes an optional GitLab username
+            page.js('document.getElementById("add-person-btn").click()')
+            assert not page.js('document.getElementById("new-gitlab").hidden')
+            page.js('document.getElementById("new-name").value = "dave"')
+            page.js('document.getElementById("new-gitlab").value = "dave-gl"')
+            page.screenshot(shots / f"team-add-gitlab-{tag}.png")
+            page.js('document.querySelector("#add-person button[type=submit]").click()')
+            page.wait('!document.getElementById("add-link").hidden')
+            assert [p["gitlab_user"] for p in store.people() if p["name"] == "dave"] == ["dave-gl"]
+            # Sign out ends this sign-in; the button is back
+            page.js('document.getElementById("signout").click()')
+            page.wait('!document.getElementById("lock").hidden && document.getElementById("lock").dataset.mode === "gitlab"')
+            assert not [d for d in store.devices(1) if d["name"] == "gitlab-web" and d["revoked_at"] is None]
+            # an unknown GitLab user is told plainly
+            lab.who = "carol-gl"
+            lab.users["carol-gl"] = {"id": 55, "state": "active"}
+            page.js('document.getElementById("gitlab-signin").click()')
+            text = page.wait('document.querySelector("h1") && document.querySelector("h1").textContent === "Sign in"'
+                             ' && document.body.innerText')
+            assert "ask the admin to add you" in text
+            page.screenshot(shots / f"signin-unknown-{tag}.png")
+            # the admin's private link still works
+            lab.down = True
+            page.go(f"{base}/#t={admin_t}")
+            page.wait('document.getElementById("viewer-name")?.textContent === "alice"')
+    finally:
+        stop()
+        store.close()
+        lab.close()

@@ -145,3 +145,107 @@ def gitlab_project(path: str, description: str = "", group: str = "team") -> dic
     return {"path": path, "description": description, "path_with_namespace": f"{group}/{path}",
             "ssh_url_to_repo": f"ssh://git@gitlab.example:2222/{group}/{path}.git",
             "http_url_to_repo": f"https://gitlab.example/{group}/{path}.git"}
+
+
+class FakeGitLabOAuth:
+    """A GitLab OAuth 2 provider on 127.0.0.1, for Sign in with GitLab.
+
+    GET /oauth/authorize signs in as `who` at once and sends the browser back with a code;
+    POST /oauth/token swaps a code (checking the app's id and secret, the redirect URI and the
+    PKCE verifier) or a refresh token for new tokens, refusing a `blocked` user's refresh;
+    GET /api/v4/user names the token's user. `users` maps username -> {"id", "state"}.
+    `down` makes every request fail with 503. `seen` keeps every request path and form."""
+
+    def __init__(self, client_id="app-id", secret="app-secret-value", users=None):
+        import base64
+        import hashlib
+        import http.server
+        import json
+        import secrets
+        import threading
+        from urllib.parse import parse_qs, urlencode, urlparse
+
+        self.client_id, self.secret = client_id, secret
+        self.users = users if users is not None else {"alice-gl": {"id": 11, "state": "active"}}
+        self.who, self.down, self.seen = "alice-gl", False, []
+        self.codes, self.access, self.refresh = {}, {}, {}  # code -> (user, challenge, redirect)
+        fake = self
+
+        def b64(raw):
+            return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def answer(self, code, body=None, headers=()):
+                self.send_response(code)
+                for k, v in headers:
+                    self.send_header(k, v)
+                data = json.dumps(body).encode() if body is not None else b""
+                if body is not None:
+                    self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                u = urlparse(self.path)
+                fake.seen.append((u.path, dict(parse_qs(u.query))))
+                if fake.down:
+                    return self.answer(503, {"message": "down"})
+                if u.path == "/oauth/authorize":
+                    q = {k: v[0] for k, v in parse_qs(u.query).items()}
+                    if q.get("client_id") != fake.client_id or q.get("scope") != "read_user" \
+                            or q.get("code_challenge_method") != "S256":
+                        return self.answer(400, {"error": "invalid_request"})
+                    code = secrets.token_urlsafe(12)
+                    fake.codes[code] = (fake.who, q["code_challenge"], q["redirect_uri"])
+                    back = q["redirect_uri"] + "?" + urlencode({"code": code, "state": q["state"]})
+                    return self.answer(302, headers=[("Location", back)])
+                if u.path == "/api/v4/user":
+                    auth = self.headers.get("Authorization", "")
+                    user = fake.access.get(auth[7:]) if auth.startswith("Bearer ") else None
+                    if user is None:
+                        return self.answer(401, {"message": "401 Unauthorized"})
+                    info = fake.users[user]
+                    if info["state"] == "blocked":
+                        return self.answer(403, {"message": "403 Forbidden"})
+                    return self.answer(200, {"id": info["id"], "username": user, "state": info["state"]})
+                self.answer(404, {"message": "404"})
+
+            def do_POST(self):
+                u = urlparse(self.path)
+                n = int(self.headers.get("Content-Length") or 0)
+                form = {k: v[0] for k, v in parse_qs(self.rfile.read(n).decode()).items()}
+                fake.seen.append((u.path, form))
+                if fake.down:
+                    return self.answer(503, {"message": "down"})
+                if u.path != "/oauth/token":
+                    return self.answer(404, {"message": "404"})
+                if form.get("client_id") != fake.client_id or form.get("client_secret") != fake.secret:
+                    return self.answer(401, {"error": "invalid_client"})
+                if form.get("grant_type") == "authorization_code":
+                    got = fake.codes.pop(form.get("code", ""), None)
+                    if got is None or got[2] != form.get("redirect_uri") or \
+                            b64(hashlib.sha256(form.get("code_verifier", "").encode()).digest()) != got[1]:
+                        return self.answer(400, {"error": "invalid_grant"})
+                    user = got[0]
+                elif form.get("grant_type") == "refresh_token":
+                    user = fake.refresh.pop(form.get("refresh_token", ""), None)
+                    if user is None or fake.users[user]["state"] == "blocked":
+                        return self.answer(400, {"error": "invalid_grant"})
+                else:
+                    return self.answer(400, {"error": "unsupported_grant_type"})
+                access, refresh = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
+                fake.access[access], fake.refresh[refresh] = user, user
+                self.answer(200, {"access_token": access, "refresh_token": refresh,
+                                  "token_type": "Bearer", "expires_in": 7200})
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()

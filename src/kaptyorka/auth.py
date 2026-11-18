@@ -58,7 +58,7 @@ class Auth:
     """ASGI wrapper: open routes pass; everything else needs a device token, whose
     principal goes into scope["state"]["principal"]."""
 
-    def __init__(self, app, store, open_paths=("/",), open_prefixes=("/i/", "/fonts/"),
+    def __init__(self, app, store, open_paths=("/",), open_prefixes=("/i/", "/fonts/", "/auth/"),
                  limiter: "RateLimiter | None" = None):
         self.app, self.store = app, store
         self.open_paths, self.open_prefixes = tuple(open_paths), tuple(open_prefixes)

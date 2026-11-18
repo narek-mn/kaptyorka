@@ -202,7 +202,7 @@ def test_cli_gitlab_commands(app, fake, capsys, monkeypatch):
     put_token()
     assert entry_with_exit(["gitlab", "status"]) == 0
     out = capsys.readouterr().out
-    assert ": ok\n" in out and out.rstrip().endswith("projects:   150")
+    assert ": ok\n" in out and "projects:   150\n" in out
     put_token(mode=0o644)
     assert entry_with_exit(["gitlab", "status"]) == 1
     out = capsys.readouterr()
