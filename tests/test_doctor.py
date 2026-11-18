@@ -283,3 +283,29 @@ def test_doctor_skips_hub_service_on_member(home, unit, answer):
     cfg = {"hub": "http://10.0.0.9:8765", "token": "t"}
     res = by_name(doctor.checks(cfg, [], home, Run(active=False), "linux"))
     assert "hub service" not in res
+
+
+class NoBus(Run):
+    """A sudo or su shell on a headless board: systemctl --user reaches no user session."""
+    def __call__(self, cmd, **kw):
+        self.calls.append(cmd)
+        if cmd[:2] == ["systemctl", "--user"]:
+            return SimpleNamespace(returncode=1, stdout="",
+                                   stderr="Failed to connect to bus: No medium found")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+
+def test_no_user_session_says_how_to_log_in(home, unit, answer):
+    from kaptyorka import service
+    res = by_name(doctor.checks(CFG, [], home, NoBus(), "linux"))
+    assert res["bridge service"].detail == "no systemd user session in this shell (as after sudo or su)"
+    assert res["bridge service"].fix.startswith("log in as this user directly")
+    with pytest.raises(service.ServiceError, match="this shell has no systemd user session"):
+        service.install("kaptyorka-bridge", ["/k", "bridge"], run=NoBus(), platform="linux")
+
+
+def test_jetson_without_nvidia_smi_or_tmux(home, unit, answer):
+    """A Jetson: no nvidia-smi, tmux not installed, systemd user services present."""
+    res = by_name(doctor.checks(CFG, [], home, Run(tmux=False), "linux"))
+    assert res["bridge service"].ok and res["tmux"].fix == "sudo apt install -y tmux"
+    assert not any("nvidia" in (c.detail or "") + (c.fix or "") for c in res.values())

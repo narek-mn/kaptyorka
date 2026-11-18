@@ -52,6 +52,8 @@ pipx install kaptyorka
 kaptyorka start
 ```
 
+kaptyorka needs Python 3.10 or newer. On an older Python, `pip` and `pipx` only say `No matching distribution found for kaptyorka`; see "Jetson and older Linux" below.
+
 It prints:
 
 ```
@@ -87,6 +89,17 @@ The hub address uses the machine's IP. Use `--host` to set another one, and `--p
 `join` finds the agent tools you have and sets them up. To set up only some, add `--only <tool>`. It prints what it changed and what to restart, and only for tools that changed: when nothing did, it says `already joined to <hub>; all set`. `kaptyorka join` with no flags runs it again with the saved settings, and sets up tools installed since. `kaptyorka join <invite link>` on a machine already joined to that hub does nothing and says so (the link is not used up); for another hub it prints `moved from <old hub> to <new hub>` and goes on. `kaptyorka join --hub <hub> --token <token>` still works, for a token you already have. On a first join it ends with this machine's `page` link.
 
 The page asks for a device token: open a link ending in `#t=<token>`, paste the token on the lock screen, or use an invite link. When the admin has set up sign-in with GitLab (see "Sign in with GitLab"), the lock screen shows only **Sign in with GitLab**, and the page opens only with it: a `#t=` link from a member's machine says to sign in with GitLab instead. The one exception is the admin token on the hub machine (see "Sign in with GitLab"). On the LAN, links to images on the page carry the token in the URL, since there is no reverse proxy; do not paste such links elsewhere.
+
+### Jetson and older Linux
+
+Jetsons run ARM64 Ubuntu. JetPack 6 is Ubuntu 22.04 with Python 3.10: `pipx install kaptyorka` works as above. JetPack 5 is Ubuntu 20.04 with Python 3.8, below kaptyorka's floor. Check with `python3 --version` and `cat /etc/nv_tegra_release` (`R35` is JetPack 5, `R36` is JetPack 6). On Python 3.8, install with uv, which brings its own Python:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install kaptyorka
+```
+
+On a Jetson the bridge reads GPU use from the board itself (no `nvidia-smi` needed), `tmux` may need `sudo apt install -y tmux` for workers, and the bridge runs as a systemd user service like on any Ubuntu. On a headless board, log in as the user over SSH (not through `sudo` or `su`, which have no user session) before `kaptyorka join`, and run the `sudo loginctl enable-linger <user>` line `join` prints, so the bridge starts at boot without a login. `kaptyorka doctor` says when the shell has no user session.
 
 ## For agents
 

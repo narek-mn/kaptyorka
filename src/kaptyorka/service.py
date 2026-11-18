@@ -1,5 +1,6 @@
 import getpass
 import os
+import re
 import plistlib
 import shlex
 import subprocess
@@ -152,6 +153,23 @@ def install_timer(name: str, argv: List[str], run: Callable = subprocess.run,
     return [f"installed {svc}", f"installed {tim}", f"{name}: runs every day at 03:00"]
 
 
+# `systemctl --user` with no user session (a sudo or su shell, some headless boards): say what to do
+NO_BUS = re.compile(r"Failed to connect to (the )?bus|XDG_RUNTIME_DIR|DBUS_SESSION_BUS_ADDRESS",
+                    re.I)
+NO_USER_SYSTEMD = ("this shell has no systemd user session (as after sudo or su), so the service"
+                   " cannot be installed; log in as this user directly (SSH or the desktop) and"
+                   " run the command again")
+
+
+def user_bus_ok(run: Callable = subprocess.run) -> bool:
+    """False when `systemctl --user` cannot reach a user session from this shell."""
+    try:
+        r = run(["systemctl", "--user", "show-environment"], capture_output=True, text=True)
+    except OSError:
+        return True  # no systemctl at all: not this problem
+    return not (r.returncode != 0 and NO_BUS.search(r.stderr or ""))
+
+
 def _runner(run: Callable) -> Callable:
     def sh(*cmd: str, must: bool = False) -> bool:
         try:
@@ -159,7 +177,10 @@ def _runner(run: Callable) -> Callable:
         except FileNotFoundError:
             raise ServiceError(f"{cmd[0]} not found") from None
         if r.returncode != 0 and must:
-            raise ServiceError((r.stderr or "").strip() or f"{' '.join(cmd)} failed")
+            err = (r.stderr or "").strip()
+            if cmd[:2] == ("systemctl", "--user") and NO_BUS.search(err):
+                raise ServiceError(NO_USER_SYSTEMD)
+            raise ServiceError(err or f"{' '.join(cmd)} failed")
         return r.returncode == 0
     return sh
 

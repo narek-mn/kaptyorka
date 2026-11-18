@@ -95,6 +95,9 @@ def _service(name: str, label: str, run: Callable, platform: str) -> Check:
     active = service.is_active(name, run=run, platform=platform)
     if active:
         return Check(label, True)
+    if platform != "darwin" and not service.user_bus_ok(run):
+        return Check(label, False, "no systemd user session in this shell (as after sudo or su)",
+                     "log in as this user directly (SSH or the desktop), then kaptyorka doctor")
     if active is None:
         return Check(label, False, "not installed", "kaptyorka join" if name == BRIDGE else "kaptyorka start")
     return Check(label, False, "stopped", "kaptyorka doctor --fix" if name == BRIDGE else "kaptyorka start")
