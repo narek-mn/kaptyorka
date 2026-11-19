@@ -341,7 +341,7 @@ def test_chat_shows_sending_sent_delivered_and_working(hub):
     assert 'o.state = "sent"' in html and 'o.state = "failed"' in html
     assert '"Sending\\u2026"' in html and '"Delivered"' in html and '"Not sent"' in html
     assert 'text: "Retry"' in html and 'text: "Edit"' in html
-    assert 'read: !!m.read' in html and 'mineLast.m.read ? "delivered" : "sent"' in html
+    assert 'read: !!m.read' in html and 'mineLast.m.read ? "delivered" : mineLast.m.failed ? "undelivered" : "sent"' in html
     assert 'a.activity === "busy" ? "is working"' in html and 'more: a.status' in html
     assert '"waking the manager\\u2026"' in html
     # no moving dots for those who asked for less motion

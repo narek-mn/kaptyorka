@@ -15,6 +15,7 @@ from mcp.server.stdio import stdio_server
 from urllib.parse import quote
 
 from kaptyorka import http, identity, offhub, optin, paths
+from kaptyorka.adapters.opencode import valid_id as opencode_id
 from kaptyorka.store import MAX_FILE
 
 TIMEOUT_S = 4.5  # whole call, connection included: the agent hears back within 5 s
@@ -109,6 +110,17 @@ async def _heartbeat(cfg: dict, first: identity.Identity) -> None:
         await anyio.sleep(HEARTBEAT_S)
 
 
+def _machine(cfg: dict) -> str:
+    """This machine's name as its config says now: a shim lives as long as its tool (OpenCode's
+    for days), and a machine that joined again under a new name names its sessions so, like
+    the bridge and the hooks do. The manager's shim keeps its own config's name."""
+    try:
+        now = paths.load_config().get("machine")
+    except (OSError, ValueError, AttributeError):
+        now = None
+    return now if isinstance(now, str) and now else cfg.get("machine", "")
+
+
 def _headers(cfg: dict, ident: Optional[identity.Identity]) -> dict:
     return {"Authorization": f"Bearer {cfg['token']}", **(ident.headers() if ident else {})}
 
@@ -182,10 +194,11 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
             # Retried on each call until found: Claude Code may start the shim before it
             # writes its session file.
             # Claude Code rewrites its session id on /clear and /resume, so it is re-read each call.
-            if found["ident"] and found["ident"].tool != "claude-code":
+            if found["ident"] and found["ident"].tool != "claude-code" \
+                    and found["ident"].machine == _machine(cfg):  # a new name: found again
                 return
             ident = await anyio.to_thread.run_sync(
-                lambda: identity.identify(cfg.get("machine", ""), workspace=workspace))
+                lambda: identity.identify(_machine(cfg), workspace=workspace))
             if ident and paths.in_manager_folder(ident.cwd):  # only the manager's config
                 own = await anyio.to_thread.run_sync(paths.load_config, ident.cwd)
                 found["off"] = not (own.get("hub") and own.get("token"))
@@ -237,7 +250,7 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
 
         def meta_ident(sid: str) -> identity.Identity:
             return optin.apply(identity.Identity(
-                f"opencode:{sid}", cfg.get("machine", ""), "opencode",
+                f"opencode:{sid}", _machine(cfg), "opencode",
                 identity.project_of(os.getcwd()), os.getcwd(),
                 int(os.environ.get("OPENCODE_PID") or os.getppid())))
 
@@ -264,7 +277,7 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
 
         async def call_tool(ctx, params) -> types.CallToolResult:
             sid = (params.meta or {}).get(OPENCODE_META)
-            if sid and isinstance(sid, str):
+            if sid and isinstance(sid, str) and opencode_id(sid):
                 who = meta_ident(sid)
                 use = session_relay(sid, who)
             else:

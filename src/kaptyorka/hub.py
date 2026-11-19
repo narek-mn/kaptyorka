@@ -1019,7 +1019,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                           principal.device_id):
                 return PlainTextResponse("no such launch", status_code=404)
             return Response(status_code=204)
-        if not store.ack(int(body["id"]), body["ok"] is True, principal):
+        if not store.ack(int(body["id"]), body["ok"] is True, principal,
+                         str(body.get("error") or "")):
             return PlainTextResponse("no such message", status_code=404)
         return Response(status_code=204)
 

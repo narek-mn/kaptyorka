@@ -1,6 +1,9 @@
 """OpenCode: sessions and push through its local server.
 
-V1: each TUI runs its own server (started with `--port 0`).
+V1: each TUI runs its own server, but only when started with `--port` (OpenCode 1.19 reads
+`server.port` from opencode.json for `opencode serve` and `web` only, never for the TUI). So
+kaptyorka installs a small `opencode` wrapper in ~/.local/bin, ahead of the real binary on
+PATH, that adds `--port 0`; where it cannot, the older shell alias does it for new terminals.
 V2: one shared background service, found through its service.json.
 """
 import base64
@@ -8,6 +11,7 @@ import re
 import http.client
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -18,10 +22,39 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from kaptyorka.adapters.base import DeliveryError, Session, add_alias, login_output, merge_json, remove_alias
+from kaptyorka.adapters.base import (DeliveryError, Session, add_alias, login_output, merge_json,
+                                     remove_alias, write_atomic)
 
 TIMEOUT_S = 5
 ALIAS = "alias opencode='opencode --port 0'"
+SESSION_ID = re.compile(r"^ses_[A-Za-z0-9]+$")  # OpenCode's own ids: "ses_" + base62
+WRAPPER_MARK = "kaptyorka-opencode-wrapper"
+WRAPPER = """#!/bin/sh
+# %(mark)s: starts the OpenCode TUI with its local server (--port 0), so the kaptyorka hub
+# can reach its sessions. Written by `kaptyorka join`; `kaptyorka leave` removes it.
+real=%(real)s
+if [ ! -x "$real" ]; then  # moved or reinstalled: the next opencode on PATH that is not this
+  real=""
+  here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+  old_ifs=$IFS; IFS=:
+  for d in $PATH; do
+    [ -n "$d" ] && [ -x "$d/opencode" ] || continue
+    [ "$(CDPATH= cd -- "$d" 2>/dev/null && pwd -P)" = "$here" ] && continue
+    grep -q %(mark)s "$d/opencode" 2>/dev/null && continue
+    real="$d/opencode"; break
+  done
+  IFS=$old_ifs
+  [ -n "$real" ] || { echo "opencode: not found (kaptyorka's wrapper in $here)" >&2; exit 127; }
+fi
+case "${1-}" in
+  ""|-*) ;;
+  *) [ -d "$1" ] || exec "$real" "$@" ;;  # a subcommand (run, serve, auth...): as it is
+esac
+for a in "$@"; do
+  case "$a" in --port|--port=*|--hostname|--hostname=*|--mini) exec "$real" "$@" ;; esac
+done
+exec "$real" --port 0 "$@"
+"""
 PLUGIN = """\
 // kaptyorka: adds the team brief to every OpenCode chat. Written by `kaptyorka join`.
 import { execFile } from "node:child_process";
@@ -80,6 +113,12 @@ export default {
   },
 };
 """
+
+
+def valid_id(sid: object) -> bool:
+    """An OpenCode session id as OpenCode makes them (ses_...); anything else (a made-up
+    KAPTYORKA_OPENCODE_SESSION) never becomes an identity no server could deliver to."""
+    return isinstance(sid, str) and SESSION_ID.match(sid) is not None
 
 
 def major() -> int:
@@ -205,6 +244,38 @@ def _opencode_pids() -> List[int]:
     return [int(p) for p in r.stdout.split()]
 
 
+def deaf_tuis() -> List[int]:
+    """Running OpenCode TUIs the hub cannot reach: no V2 service and no listening port (started
+    without --port, e.g. from a terminal opened before kaptyorka joined)."""
+    if service():
+        return []
+    return [pid for pid in _tuis() if not _listen_ports(pid)]
+
+
+def _path_dirs(path: str) -> List[str]:
+    return [os.path.realpath(d) for d in path.split(os.pathsep) if d]
+
+
+def login_path(run: Callable = subprocess.run) -> str:
+    """PATH as a login shell of this user sets it (what a new terminal gets), else ours."""
+    shell = os.environ.get("SHELL") or "/bin/sh"
+    try:
+        r = run([shell, "-lc", 'printf %s "$PATH"'], capture_output=True, text=True,
+                timeout=TIMEOUT_S, stdin=subprocess.DEVNULL)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip().splitlines()[-1]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return os.environ.get("PATH", "")
+
+
+def _ours(path: Path) -> bool:
+    try:
+        return WRAPPER_MARK in path.read_text(errors="replace")[:400]
+    except OSError:
+        return False
+
+
 def find_ports() -> Dict[int, int]:
     """pid -> server port of every running OpenCode TUI that listens (started with --port 0)."""
     out = {}
@@ -305,10 +376,11 @@ class OpenCodeAdapter:
 
     def __init__(self, home: Optional[Path] = None,
                  find_ports: Callable[[], Dict[int, int]] = find_ports,
-                 log: Callable[[str], None] = print):
+                 log: Callable[[str], None] = print, run: Callable = subprocess.run):
         self.home = home or Path.home()
         self.find_ports = find_ports
         self.log = log
+        self.run = run
         self._locked: set = set()  # ports already logged as needing a password
 
     def _skip(self, e: NeedsPassword, port: int) -> None:
@@ -320,9 +392,21 @@ class OpenCodeAdapter:
         return shutil.which("opencode") is not None
 
     def logged_in(self, run: Callable) -> Optional[bool]:
+        """True when OpenCode has a credential: its auth.json ($XDG_DATA_HOME/opencode, which
+        `opencode auth login` writes in 1.x), else what `opencode auth list` counts ("N
+        credentials", then "M environment variables" for provider keys in the environment).
+        Never False: OpenCode also runs free models and providers set in opencode.json with no
+        login, so finding none is "unknown", not "not logged in"."""
+        data = Path(os.environ.get("XDG_DATA_HOME") or self.home / ".local" / "share")
+        try:
+            auth = json.loads((data / "opencode" / "auth.json").read_text())
+            if isinstance(auth, dict) and auth:
+                return True
+        except (OSError, ValueError):
+            pass
         out = re.sub(r"\x1b\[[0-9;]*m", "", login_output("opencode", ["auth", "list"], run) or "")
-        found = re.search(r"(\d+)\s+credentials", out)  # its list ends with "N credentials"
-        return int(found.group(1)) > 0 if found else None
+        counts = [int(n) for n in re.findall(r"(\d+)\s+(?:credentials?|environment variables?)\b", out)]
+        return True if any(counts) else None
 
     def sessions(self) -> List[Session]:
         from kaptyorka.identity import proc_cwd
@@ -363,8 +447,8 @@ class OpenCodeAdapter:
 
     def deliver(self, key: str, text: str) -> None:
         sid = key.partition(":")[2]
-        if not sid:
-            raise DeliveryError(f"not an opencode session key: {key}")
+        if not valid_id(sid):
+            raise DeliveryError(f"not an OpenCode session id: {key}")
         svc = service()
         if svc:
             try:
@@ -422,12 +506,64 @@ class OpenCodeAdapter:
             plugin.write_text(text)
             lines.append(f"OpenCode: kaptyorka plugin written to {plugin}")
 
-        if v2:  # V2 has no --port flag: the V1 alias would stop it starting
-            return lines + remove_alias(self.home, ALIAS, "OpenCode")
+        return lines + self._server_on(v2)
+
+    def install_command(self, kaptyorka: str) -> List[str]:
+        """At bridge start: the wrapper for a machine that joined before it existed, or that
+        changed OpenCode's version since. Only when OpenCode is joined (its plugin is there)."""
+        if not (self.home / ".config" / "opencode" / "plugins" / "kaptyorka.js").exists():
+            return []
+        return self._server_on(major() >= 2)
+
+    def wrapper(self) -> Path:
+        return self.home / ".local" / "bin" / "opencode"
+
+    def _server_on(self, v2: bool) -> List[str]:
+        """Make every new V1 TUI listen: the wrapper when ~/.local/bin comes before the real
+        opencode on a login shell's PATH, else the alias. V2 has no --port flag: neither."""
+        w = self.wrapper()
+        if v2:
+            return self._drop_wrapper() + remove_alias(self.home, ALIAS, "OpenCode")
+        path = login_path(self.run)
+        dirs = _path_dirs(path)
+        here = os.path.realpath(w.parent)
+        if w.exists() and not _ours(w):
+            why = f"{w} is OpenCode itself (or not ours)"
+        elif here not in dirs:
+            why = f"{w.parent} is not on PATH"
+        else:
+            rest = os.pathsep.join(d for d in path.split(os.pathsep)
+                                   if d and os.path.realpath(d) != here)
+            real = shutil.which("opencode", path=rest)
+            if real is None:
+                why = "no opencode found on PATH"
+            else:
+                real_dir = os.path.realpath(os.path.dirname(real))
+                if real_dir in dirs and dirs.index(real_dir) < dirs.index(here):
+                    why = f"{os.path.dirname(real)} comes before {w.parent} on PATH"
+                else:
+                    text = WRAPPER % {"mark": WRAPPER_MARK, "real": shlex.quote(real)}
+                    lines = []
+                    if not w.exists() or w.read_text(errors="replace") != text:
+                        w.parent.mkdir(parents=True, exist_ok=True)
+                        write_atomic(w, text)
+                        os.chmod(w, 0o755)
+                        lines.append(f"OpenCode: wrapper written to {w}: new OpenCode windows"
+                                     " start with their local server, so kaptyorka can push")
+                    return lines + remove_alias(self.home, ALIAS, "OpenCode")
+        lines = self._drop_wrapper()
         line = add_alias(self.home, ALIAS, "OpenCode", self.log)
         if line:
+            self.log(f"OpenCode: no wrapper ({why}); using the shell alias instead")
             lines.append(line)
         return lines
+
+    def _drop_wrapper(self) -> List[str]:
+        w = self.wrapper()
+        if (w.exists() or w.is_symlink()) and _ours(w):
+            w.unlink()
+            return [f"OpenCode: wrapper removed ({w})"]
+        return []
 
     def unconfigure(self) -> List[str]:
         lines = []
@@ -451,4 +587,4 @@ class OpenCodeAdapter:
         if plugin.exists() or plugin.is_symlink():
             plugin.unlink()
             lines.append(f"OpenCode: kaptyorka plugin removed ({plugin})")
-        return lines + remove_alias(self.home, ALIAS, "OpenCode")
+        return lines + self._drop_wrapper() + remove_alias(self.home, ALIAS, "OpenCode")

@@ -402,6 +402,8 @@ class Bridge:
         url, body = self.cfg["hub"] + "/bridge/ack", {"id": msg_id, "ok": ok}
         if launch:
             body.update(launch=True, error=error)
+        elif error:
+            body["error"] = error  # shown with the message: why it was not pushed
         try:
             status, _ = http.request("POST", url, self.cfg["token"], body)
         except http.HubUnreachable:
@@ -457,8 +459,10 @@ class Bridge:
                 ok = True
             except Exception as e:  # any failure leaves the message for pull
                 self.log(f"push to {key} failed: {e}; message {m['id']} left for pull")
-                ok = False
-            self._ack(m["id"], ok)
+                ok, error = False, str(e)
+            else:
+                error = ""
+            self._ack(m["id"], ok, error=error)
             delivered += ok
         return delivered
 

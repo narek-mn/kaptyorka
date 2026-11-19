@@ -113,7 +113,13 @@ class Launcher:
         if tool == "codex":
             return [*tmux, "codex", *(["resume", resume] if resume else []), first]
         if tool == "opencode":
-            return [*tmux, "opencode", *(["--session", resume] if resume else []),
+            # the wrapper when kaptyorka installed one: tmux's PATH may not have it, and a V1
+            # TUI started without it never listens, so the bridge would never see the worker
+            from kaptyorka.adapters.opencode import OpenCodeAdapter, _ours
+
+            w = OpenCodeAdapter(home=self.home).wrapper()
+            exe = str(w) if _ours(w) else "opencode"
+            return [*tmux, exe, *(["--session", resume] if resume else []),
                     "--prompt", first]
         raise LaunchError(f"no worker support for {tool}")
 

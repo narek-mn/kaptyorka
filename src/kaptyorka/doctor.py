@@ -135,7 +135,27 @@ def checks(cfg: dict, adapters: list, home: Path, run: Callable = subprocess.run
             ok = tool_configured(a, home)
             out.append(Check(f"tool: {a.tool}", ok, "" if ok else "not wired to kaptyorka",
                              None if ok else "kaptyorka join"))
+            if a.tool == "opencode":
+                out.append(_opencode_server())
     return out
+
+
+def _opencode_server() -> Check:
+    """A running OpenCode TUI with no local server (no --port, no V2 service) is invisible to
+    the bridge: nothing reaches it. Only the person can restart it; --fix never kills it."""
+    from kaptyorka.adapters.opencode import deaf_tuis
+
+    try:
+        deaf = deaf_tuis()
+    except Exception:
+        deaf = []
+    if not deaf:
+        return Check("opencode server", True)
+    n = len(deaf)
+    return Check("opencode server", False,
+                 "OpenCode is running without its local server, so the hub can't reach it"
+                 + (f" ({n} windows)" if n > 1 else ""),
+                 "close it and start it again from a new terminal")
 
 
 def _show(results: List[Check]) -> None:

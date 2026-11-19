@@ -131,6 +131,10 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
     # set by the OpenCode plugin; OPENCODE_SESSION_ID by some OpenCode V2 builds
     sid = os.environ.get("KAPTYORKA_OPENCODE_SESSION") or os.environ.get("OPENCODE_SESSION_ID")
     if sid:
+        from kaptyorka.adapters.opencode import valid_id
+
+        if not valid_id(sid):
+            return None  # made up (a manual run): no OpenCode server could ever deliver to it
         project = project_of(os.getcwd())
         tool_pid = int(os.environ.get("OPENCODE_PID") or os.getppid())
         return Identity(f"opencode:{sid}", machine, "opencode", project,

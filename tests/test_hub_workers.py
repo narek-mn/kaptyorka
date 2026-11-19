@@ -112,7 +112,7 @@ def test_heartbeat_answers_json_with_projects_and_version(hub, alice):
                              sessions=[{"key": "claude:1", "tool": "claude-code",
                                         "project": "proj-a", "cwd": "/w/proj-a"}])
     assert status == 200
-    assert body == {"version": kaptyorka.__version__, "auto_update": True,
+    assert body == {"version": kaptyorka.__version__, "auto_update": True, "repos": {},
                     "projects": ["proj-a"], "team": ["proj-a", "proj-b"], "keep": [],
                     "you": "alice", "shared": False, "skills_version": "",
                     "gpu_queue": None}

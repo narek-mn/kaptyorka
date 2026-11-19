@@ -134,6 +134,7 @@ ADDED_COLUMNS = [
     ("people", "gitlab_id", "INTEGER"),  # that GitLab user's id, kept at their first sign-in
     # 1: a team machine, not a person: a shared OS account everyone logs into (team_machine_add)
     ("people", "team", "INTEGER NOT NULL DEFAULT 0"),
+    ("messages", "push_error", "TEXT NOT NULL DEFAULT ''"),  # why the bridge's push failed
 ]
 
 
@@ -287,6 +288,7 @@ class Message:
     kind: str = "message"
     file: Optional[dict] = None  # {id, name, size} of the attachment
     reply_to: str = ""  # the sender's handle when its name is shown with the project hidden
+    failed: str = ""  # unread, and the bridge could not push it: why (pull still works)
 
 
 @dataclass
@@ -1256,7 +1258,10 @@ class Store:
                 self.db.execute("UPDATE agents SET title=? WHERE key=?", (title, key))
             return
         name = row["name"]
-        if now - row["last_seen"] >= ONLINE_S:  # was offline: its name may have been taken
+        if project and project != row["project"]:  # /hub team, or found by its git remote
+            self.db.execute("UPDATE agents SET project=? WHERE key=?", (project, key))
+            name = self._free_name(key, row["machine"], row["tool"], project, now)
+        elif now - row["last_seen"] >= ONLINE_S:  # was offline: its name may have been taken
             name = self._free_name(key, row["machine"], row["tool"], row["project"], now)
         if activity is None:
             self.db.execute("UPDATE agents SET name=?, last_seen=? WHERE key=?", (name, now, key))
@@ -1271,6 +1276,15 @@ class Store:
             self.db.execute("UPDATE agents SET background=? WHERE key=?", (int(background), key))
         if title is not None:
             self.db.execute("UPDATE agents SET title=? WHERE key=?", (title, key))
+
+    def _machine_now(self, key, machine, now) -> None:
+        """A session kept across a machine's new name (OpenCode keeps its session ids for
+        good) takes the name the machine has now, as a new session would. Lock held."""
+        row = self.db.execute("SELECT machine, tool, project FROM agents WHERE key=?",
+                              (key,)).fetchone()
+        if row is not None and machine and row["machine"] != machine:
+            self.db.execute("UPDATE agents SET machine=?, name=? WHERE key=?", (
+                machine, self._free_name(key, machine, row["tool"], row["project"], now), key))
 
     def _host_of_device(self, device_id) -> str:
         row = self.db.execute("SELECT host FROM devices WHERE id=?", (device_id,)).fetchone()
@@ -1324,6 +1338,8 @@ class Store:
                         and not self._manager_takes(principal, held, now):
                     raise KaptyorkaError("session key in use by another person")
             self._touch(key, machine, tool, project, now)
+            if principal is not None and self._role_of(principal.person_id) != "manager":
+                self._machine_now(key, machine, now)
             if principal is not None:
                 # every call, so a legacy machine handed to another person moves at once
                 dev = self.db.execute("SELECT host, os_user FROM devices WHERE id=?",
@@ -1380,6 +1396,8 @@ class Store:
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],
                             s["label"], s["cwd"], s["background"], s["title"])
+                if not manager_held:  # the manager's own shim names its machine
+                    self._machine_now(s["key"], machine, now)
                 if host:
                     self.db.execute("UPDATE agents SET host=?, os_user=? WHERE key=?",
                                     (host, os_user, s["key"]))
@@ -1844,9 +1862,10 @@ class Store:
                     out.append({"kind": "message", "id": m["id"], "key": t["key"], "text": text})
             return out
 
-    def ack(self, msg_id: int, ok: bool, principal: Optional[Principal] = None) -> bool:
-        """Mark a pushed message done or failed. With `principal`, only a message to one of the
-        caller's own sessions; False (nothing changed) otherwise."""
+    def ack(self, msg_id: int, ok: bool, principal: Optional[Principal] = None,
+            error: str = "") -> bool:
+        """Mark a pushed message done or failed (with the bridge's reason). With `principal`,
+        only a message to one of the caller's own sessions; False (nothing changed) otherwise."""
         with self.lock:
             if principal is not None:
                 row = self.db.execute("SELECT a.key, a.person_id, a.device_id FROM messages m JOIN agents a"
@@ -1858,7 +1877,8 @@ class Store:
                 self.db.execute("UPDATE messages SET read_at=?, push_state='pushed' WHERE id=?",
                                 (self.clock(), msg_id))
             else:
-                self.db.execute("UPDATE messages SET push_state='failed' WHERE id=?", (msg_id,))
+                self.db.execute("UPDATE messages SET push_state='failed', push_error=? WHERE id=?",
+                                (clean(error, 300) or "the push failed", msg_id))
             return True
 
     def messages_for(self, principal: Principal, limit: int = 500) -> List[dict]:
@@ -1888,7 +1908,9 @@ class Store:
                                    m["created"], m["read_at"] is not None,
                                    m["sender_key"].startswith("web:"),
                                    (m["to_key"] or "").startswith("web:"), m["kind"],
-                                   self._file_info(m["file_id"])))
+                                   self._file_info(m["file_id"]),
+                                   failed=m["push_error"] if m["push_state"] == "failed"
+                                   and m["read_at"] is None else ""))
                 for k, p in (("_from", "s_"), ("_to", "r_")):
                     d[k] = None if m[p + "machine"] is None else {
                         "key": m[p + "key"], "person_id": m[p + "pid"], "machine": m[p + "machine"],
