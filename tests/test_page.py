@@ -160,8 +160,8 @@ def team_code(html):
 
 
 def test_settings_one_flat_sidebar(hub):
-    """The top bar keeps Home; the account button opens a menu (Account settings, Team settings
-    for an admin, Sign out). Settings is one area with one flat sidebar, no headings: Profile,
+    """The top bar keeps Home; the name button goes straight to Settings (no menu). Sign out is
+    at the bottom of the Settings sidebar, and at the end of Profile on a phone. Settings is one area with one flat sidebar, no headings: Profile,
     Machines, Signed-in browsers, then People (with the waiting count) and Projects for an
     admin, each at its own address; the old #settings/account/... and #settings/team/...
     addresses still land there. One Machines page: an admin switches Mine / Everyone there, and
@@ -169,11 +169,12 @@ def test_settings_one_flat_sidebar(hub):
     html = page(hub)
     top = re.search(r'<nav role="tablist">.*?</nav>', html, re.S).group(0)
     assert re.findall(r'data-view="(\w+)"', top) == ["home"]
-    menu = re.search(r'<div class="menu" id="acct-menu".*?id="signout"[^\n]*', html, re.S).group(0)
-    assert 'role="menu"' in menu and 'aria-haspopup="menu"' in html
-    assert re.findall(r'data-go="([a-z/]+)"', menu) == ["profile", "people"]
-    assert ">Account settings<" in menu and ">Team settings<" in menu and 'id="signout"' in menu
+    btn = re.search(r'<button type="button" class="acct" id="viewer-name"[^\n]*', html).group(0)
+    assert 'aria-label="Settings"' in btn and "aria-haspopup" not in btn and 'id="n-acct"' in btn
+    assert 'id="acct-menu"' not in html and 'role="menu' not in html and "menuitem" not in html
+    assert '$("viewer-name").addEventListener("click", function () { show("settings", true, "profile"); });' in html
     nav = re.search(r'<nav class="set-nav".*?</nav>', html, re.S).group(0)
+    assert nav.index('class="set-out"') > nav.index('href="#settings/projects"') and 'id="signout"' in nav
     assert re.findall(r'href="#settings/([a-z/]+)"', nav) == ["profile", "machines", "browsers", "people", "projects"]
     assert "set-group" not in nav and "Your account" not in nav and ">Team<" not in nav
     for old, new in (("account/profile", "profile"), ("account/machines", "machines"), ("account/browsers", "browsers"),
@@ -190,9 +191,6 @@ def test_settings_one_flat_sidebar(hub):
     assert ">Add person<" in people and "<select" not in people  # no role picker
     assert 'return ["settings", "people"];' in html  # an old #view=team link
     assert 'if (v === "account") return ["settings", "profile"];' in html
-    # the menu: arrows, Esc and a click outside
-    assert 'e.key === "ArrowDown"' in html and 'e.key === "Escape"' in html
-    assert '!$("acct-menu").contains(e.target)' in html
     for gone in ('id="people"', 'id="access"', 'id="rules"', 'id="notes"', 'id="audit"',
                  'id="legacy-panel"', 'id="doors"', '"Revoke"', '"/api/legacy', '"/api/doors',
                  '"/api/log', '"/api/settings"', '"/api/workers', '"/auto_update"', '"/shared"', '"/owner"',

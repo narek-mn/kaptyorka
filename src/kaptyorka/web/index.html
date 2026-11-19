@@ -144,26 +144,10 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 .count { min-width: 18px; padding: 0 6px; border-radius: var(--pill); font-size: var(--fs-xs); font-weight: var(--fw-semi); line-height: 16px; text-align: center;
   color: var(--bg); background: var(--accent); }
 .viewer { position: relative; margin-left: auto; display: flex; align-items: center; }
-/* the account button and its menu (Account settings, Team settings, Sign out) */
+/* the account button: your name, straight to Settings */
 .acct { display: flex; align-items: center; gap: var(--s-2); height: 34px; margin: auto 0; padding: 0 var(--s-2) 0 5px; border-radius: var(--pill);
   color: var(--muted); font-weight: var(--fw-medium); border: 1px solid transparent; transition: background-color var(--ease), color var(--ease), border-color var(--ease); }
-.acct:hover, .acct[aria-expanded="true"], .acct.on { color: var(--ink); background: var(--surface2); border-color: var(--line); }
-.acct .acct-chev { color: var(--faint); transform: rotate(90deg); transition: transform var(--dur-2) var(--ease-out); }
-.acct[aria-expanded="true"] .acct-chev { transform: rotate(-90deg); }
-.menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; min-width: 232px; padding: 6px; border: 1px solid var(--line);
-  border-radius: var(--radius-lg); background: var(--raised); box-shadow: var(--shadow-2), 0 12px 32px rgba(0, 0, 0, .35);
-  transform-origin: top right; animation: menu-in var(--dur-2) var(--ease-out); }
-@keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
-.menu-who { display: flex; flex-direction: column; gap: 2px; padding: var(--s-2) 10px 10px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
-.menu-who b { color: var(--ink); font-weight: var(--fw-semi); }
-.menu-who small { color: var(--faint); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
-.menu [role=menuitem] { display: flex; align-items: center; gap: 10px; width: 100%; height: 34px; padding: 0 10px; border-radius: var(--radius);
-  color: var(--muted); text-align: left; transition: background-color var(--ease), color var(--ease); }
-.menu [role=menuitem] > svg { color: var(--faint); }
-.menu [role=menuitem]:hover, .menu [role=menuitem]:focus-visible { background: var(--surface2); color: var(--ink); outline: none; }
-.menu [role=menuitem]:hover > svg, .menu [role=menuitem]:focus-visible > svg { color: var(--ink); }
-.menu [role=menuitem] .count { margin-left: auto; }
-.menu-sep { height: 1px; margin: 6px 4px; background: var(--line); }
+.acct:hover, .acct.on { color: var(--ink); background: var(--surface2); border-color: var(--line); }
 
 /* Settings: a sidebar of sections, one section at a time beside it */
 #settings { overflow-y: auto; }
@@ -177,6 +161,11 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 .set-nav a[aria-current="page"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--accent); }
 .set-nav a[aria-current="page"] > svg { color: var(--accent); }
 .set-nav a .count { margin-left: auto; }
+.set-out { margin-top: var(--s-4); padding-top: var(--s-3); border-top: 1px solid var(--line); }
+.set-out button, .set-out-phone { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--radius);
+  color: var(--faint); font-weight: var(--fw-medium); transition: background-color var(--ease), color var(--ease); }
+.set-out button:hover, .set-out button:focus-visible, .set-out-phone:hover, .set-out-phone:focus-visible { background: var(--surface2); color: var(--ink); }
+.set-out-phone { display: none; margin-top: var(--s-8); }
 .set-main { min-width: 0; }
 .set-pane { display: flex; flex-direction: column; }
 .set-pane.enter { animation: rise var(--dur-2) var(--ease-out); }
@@ -739,7 +728,8 @@ a.p-main { color: inherit; text-decoration: none; }
   .pp-acts .p-rm { margin-left: 0; }
   .set-title { flex-wrap: wrap; margin-bottom: var(--s-4); }
   .set-title:has(.btn:not([hidden]) ~ .btn:not([hidden])) > div { flex-basis: 100%; }  /* two buttons: under the title */
-  .menu { position: fixed; top: calc(var(--row) + 6px); right: 8px; left: auto; }
+  .set-out { display: none; }
+  .set-out-phone { display: flex; }
   .w-row { flex-wrap: wrap; row-gap: var(--s-2); padding-left: 14px; }
   .w-text { flex-basis: 100%; flex-wrap: wrap; white-space: normal; }
   .w-row > .av { display: none; }
@@ -837,14 +827,7 @@ a.p-main { color: inherit; text-decoration: none; }
       <button class="tab" role="tab" data-view="home" id="tab-home"><svg width="16" height="16" aria-hidden="true"><use href="#i-home"/></svg>Home</button>
     </nav>
     <div class="viewer" id="viewer">
-      <button type="button" class="acct" id="viewer-name" aria-haspopup="menu" aria-expanded="false" aria-controls="acct-menu" title="Your account"><span class="av av-person sm" id="viewer-av" aria-hidden="true"></span><span id="viewer-label"></span><span class="count" id="n-acct" hidden></span><svg class="acct-chev" width="12" height="12" aria-hidden="true"><use href="#i-chev"/></svg></button>
-      <div class="menu" id="acct-menu" role="menu" aria-labelledby="viewer-name" hidden>
-        <div class="menu-who"><b id="menu-name"></b><small id="menu-role"></small></div>
-        <button type="button" role="menuitem" data-go="profile"><svg width="16" height="16" aria-hidden="true"><use href="#i-user"/></svg>Account settings</button>
-        <button type="button" role="menuitem" data-go="people" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-team"/></svg>Team settings<span class="count" id="n-menu" hidden>0</span></button>
-        <div class="menu-sep" role="separator"></div>
-        <button type="button" role="menuitem" id="signout"><svg width="16" height="16" aria-hidden="true"><use href="#i-signout"/></svg>Sign out</button>
-      </div>
+      <button type="button" class="acct" id="viewer-name" aria-label="Settings" title="Settings"><span class="av av-person sm" id="viewer-av" aria-hidden="true"></span><span id="viewer-label"></span><span class="count" id="n-acct" hidden></span></button>
     </div>
     <div class="live" id="live" title="Connecting"><i></i></div>
   </header>
@@ -906,6 +889,7 @@ a.p-main { color: inherit; text-decoration: none; }
         <a href="#settings/browsers" data-sec="browsers" id="nav-browsers" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-lock"/></svg><span>Signed-in browsers</span></a>
         <a href="#settings/people" data-sec="people" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-team"/></svg><span>People</span><span class="count" id="n-team" hidden>0</span></a>
         <a href="#settings/projects" data-sec="projects" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-folder"/></svg><span>Projects</span></a>
+        <div class="set-out"><button type="button" class="signout" id="signout"><svg width="16" height="16" aria-hidden="true"><use href="#i-signout"/></svg>Sign out</button></div>
       </nav>
       <div class="set-main" id="set-main">
         <div class="set-pane" id="pane-profile" data-sec="profile" hidden>
@@ -917,6 +901,7 @@ a.p-main { color: inherit; text-decoration: none; }
           <h2 class="set-sub">Your projects</h2>
           <div class="panel t-list" id="a-projects"><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div></div>
         </div>
+        <button type="button" class="signout set-out-phone"><svg width="16" height="16" aria-hidden="true"><use href="#i-signout"/></svg>Sign out</button>
         </div>
         <div class="set-pane" id="pane-machines" data-sec="machines" hidden>
           <div class="set-title"><div><h1>Machines</h1><p id="m-sub">The computers you joined from, and the team machines you can use.</p></div><button type="button" class="btn small primary" id="add-machine" aria-expanded="false" aria-controls="a-join"><svg width="14" height="14"><use href="#i-plus"/></svg>Add machine</button></div>
@@ -2206,8 +2191,8 @@ a.p-main { color: inherit; text-decoration: none; }
   function renderTeam() {
     if (!isAdmin() || !feed || !feed.people) return;
     var items = waiting();
-    ["n-team", "n-acct", "n-menu"].forEach(function (id) { $(id).textContent = items.length || ""; $(id).hidden = !items.length; });
-    $("viewer-name").title = items.length ? items.length + " waiting for your answer" : "Your account";
+    ["n-team", "n-acct"].forEach(function (id) { $(id).textContent = items.length || ""; $(id).hidden = !items.length; });
+    $("viewer-name").title = items.length ? "Settings \u00b7 " + items.length + " waiting for your answer" : "Settings";
     var people = feed.people.filter(function (p) { return !isManagerAccount(p) && !p.team; })
       .sort(function (a, b) { return (b.role === "admin") - (a.role === "admin"); }).map(personView);
     if (changed("waiting", [items.map(function (w) { return [w.key, w.who, plain(w.what), w.why]; }), answering])) renderWaiting(items);
@@ -2678,12 +2663,11 @@ a.p-main { color: inherit; text-decoration: none; }
       .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
       .then(function (x) { location.assign(x.url); }, function () { location.assign("/auth/gitlab/start"); });
   });
-  $("signout").addEventListener("click", function () {
+  document.querySelectorAll(".signout").forEach(function (b) { b.addEventListener("click", function () {
     /* a GitLab sign-in ends on the hub too; a device token stays good */
     if (token) fetch("/api/me/signout", { method: "POST", cache: "no-store", headers: { Authorization: "Bearer " + token } }).catch(function () {});
-    menu(false);
     lock(false);
-  });
+  }); });
   function enter() {
     $("lock").hidden = true;
     $("app").hidden = false;
@@ -2694,32 +2678,7 @@ a.p-main { color: inherit; text-decoration: none; }
   document.querySelectorAll("#set-nav a").forEach(function (a) {
     a.addEventListener("click", function (e) { e.preventDefault(); show("settings", true, a.dataset.sec); });
   });
-  /* the account menu: a click or Enter opens it, arrows move, Esc or a click outside closes */
-  function menuItems() { return [].filter.call($("acct-menu").querySelectorAll("[role=menuitem]"), function (b) { return !b.hidden; }); }
-  function menu(open, focusFirst) {
-    $("acct-menu").hidden = !open;
-    $("viewer-name").setAttribute("aria-expanded", open ? "true" : "false");
-    if (open && focusFirst) menuItems()[0].focus();
-  }
-  $("viewer-name").addEventListener("click", function (e) { e.stopPropagation(); menu($("acct-menu").hidden, e.detail === 0); });
-  $("viewer-name").addEventListener("keydown", function (e) {
-    if (e.key === "ArrowDown") { e.preventDefault(); menu(true, true); }
-  });
-  $("acct-menu").addEventListener("keydown", function (e) {
-    var items = menuItems(), i = items.indexOf(document.activeElement);
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus();
-    } else if (e.key === "Home" || e.key === "End") { e.preventDefault(); items[e.key === "Home" ? 0 : items.length - 1].focus(); }
-    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); menu(false); $("viewer-name").focus(); }
-    else if (e.key === "Tab") menu(false);
-  });
-  $("acct-menu").querySelectorAll("[data-go]").forEach(function (b) {
-    b.addEventListener("click", function () { menu(false); show("settings", true, b.dataset.go); });
-  });
-  document.addEventListener("click", function (e) {
-    if (!$("acct-menu").hidden && !$("acct-menu").contains(e.target)) menu(false);
-  });
+  $("viewer-name").addEventListener("click", function () { show("settings", true, "profile"); });
   $("notices-toggle").addEventListener("click", function () { showNotices = !showNotices; renderHome(true); });
   /* a phone: a chat slides in from the right, Back slides it out */
   function slideIn() {
@@ -2976,8 +2935,6 @@ a.p-main { color: inherit; text-decoration: none; }
     $("viewer-av").className = "av av-person sm tint-" + tintOf(m.person);
     $("viewer-av").setAttribute("data-i", initials(m.person));
     addPanels(null);
-    $("menu-name").textContent = m.person;
-    $("menu-role").textContent = (m.role === "admin" ? "Admin" : m.role === "manager" ? "Manager" : "Member") + " \u00b7 " + m.device;
     document.querySelectorAll(".admin-only").forEach(function (n) { n.hidden = m.role !== "admin"; });
     $("ask-link").hidden = m.role === "admin";
     $("side-foot").hidden = m.role === "admin";

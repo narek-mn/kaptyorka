@@ -84,7 +84,7 @@ def test_member_asks_for_access(tmp_path):
             assert [(r["person"], r["target"], r["role"], r["why"]) for r in store.requests()] == \
                 [("bob", "proj-a", "write", "to review")]
             # the admin-only parts stay away
-            assert page.js('document.querySelector("[data-go=\\"people\\"]").hidden')
+            assert page.js('document.querySelector("#set-nav [data-sec=\\"people\\"]").hidden')
     finally:
         stop()
         store.close()
@@ -129,7 +129,7 @@ def test_member_sees_only_home(member_page):
     store.seen("b1", "box-1", "codex", "proj-a", principal=bob)
     page.go(url + "&view=notes")
     page.wait('document.querySelectorAll("#agents .row").length === 2')
-    assert page.js('document.querySelector("[data-go=\\"people\\"]").hidden') and page.js('document.getElementById("settings").hidden')
+    assert page.js('document.querySelector("#set-nav [data-sec=\\"people\\"]").hidden') and page.js('document.getElementById("settings").hidden')
     assert page.js('[...document.querySelectorAll("#agents .row .name")].map(n => n.textContent)') == ["manager", "proj-a"]
     assert page.js('document.querySelector("#agents .mgr .n").textContent') == "off"
     assert page.js('document.getElementById("text").placeholder') == "Message manager"
@@ -693,7 +693,7 @@ def test_team_projects_from_gitlab(tmp_path, w, h):
             page.go(f"http://127.0.0.1:{stop.port}/#t={bob_t}&view=team")
             page.wait('document.getElementById("viewer-name").textContent === "bob"')
             time.sleep(1)
-            assert page.js('document.querySelector("[data-go=\\"people\\"]").hidden && !document.querySelector("#project-rows .pj-row")')
+            assert page.js('document.querySelector("#set-nav [data-sec=\\"people\\"]").hidden && !document.querySelector("#project-rows .pj-row")')
     finally:
         stop()
         store.close()
@@ -786,7 +786,7 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
             assert "t=" not in page.js("location.href")
             assert page.js('localStorage.getItem("kaptyorka.token")')
             # People, then each person's page: the GitLab username, or a quiet way to add one
-            page.js('document.querySelector("[data-go=\\"people\\"]").click()')
+            page.js('document.querySelector("#set-nav [data-sec=\\"people\\"]").click()')
             carol_row = 'document.querySelector("#people-rows [data-person=carol]")'
             page.wait(f'!!{carol_row}')
             assert page.js(f'{carol_row}.querySelector(".p-sum").textContent') == "hasn't joined yet"
@@ -894,7 +894,7 @@ def test_people_link_their_own_gitlab(tmp_path, w, h):
             page.wait('document.getElementById("viewer-name")?.textContent === "dave"')
             assert [p["gitlab_user"] for p in store.people() if p["name"] == "dave"] == ["dave-gl"]
             assert store.invite_valid(code)  # join still works on his machine
-            page.js('document.querySelector("[data-go=\\"profile\\"]").click()')
+            page.js('document.getElementById("viewer-name").click()')
             page.wait('document.getElementById("a-profile").textContent.includes("@dave-gl")')
             assert "Connect GitLab" not in page.js('document.getElementById("settings").innerText')
         with chrome(w, h) as page:
@@ -908,7 +908,7 @@ def test_people_link_their_own_gitlab(tmp_path, w, h):
             page.wait('document.getElementById("viewer-name")?.textContent === "erin"'
                       ' && localStorage.getItem("kaptyorka.token") !== null')
             assert [p["gitlab_user"] for p in store.people() if p["name"] == "erin"] == ["erin-gl"]
-            page.js('document.querySelector("[data-go=\\"profile\\"]").click()')
+            page.js('document.getElementById("viewer-name").click()')
             page.wait('document.getElementById("a-profile").textContent.includes("@erin-gl")')
             assert "Connect GitLab" not in page.js('document.getElementById("settings").innerText')
             page.screenshot(shots / f"connected-{tag}.png")
@@ -1069,18 +1069,13 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             page.wait('document.getElementById("lock").dataset.mode === "gitlab"')
             page.js('document.getElementById("gitlab-signin").click()')
             page.wait('document.getElementById("viewer-name")?.textContent === "bob"')
-            # the name opens a menu; Account settings opens Profile, with its own address
-            assert page.js('document.querySelector("[data-go=\\"people\\"]").hidden')  # a member
+            # the name goes straight to Settings > Profile, with its own address; no menu
+            assert page.js('document.getElementById("viewer-name").getAttribute("aria-label")') == "Settings"
+            assert page.js('document.querySelector("#set-nav [data-sec=\\"people\\"]").hidden')  # a member
             page.js('document.getElementById("viewer-name").click()')
-            page.wait('!document.getElementById("acct-menu").hidden')
-            assert page.js('document.getElementById("acct-menu").innerText').split("\n")[:2] == ["bob", "Member \u00b7 gitlab-web"]
-            page.js('document.body.click()')  # a click outside closes it
-            page.wait('document.getElementById("acct-menu").hidden')
-            page.js('document.getElementById("viewer-name").click()')
-            page.js('document.querySelector("[data-go=\\"profile\\"]").click()')
             page.wait('!document.getElementById("pane-profile").hidden && document.querySelectorAll("#a-projects .a-row").length === 2')
             assert page.js("location.hash") == "#settings/profile"
-            assert page.js('document.getElementById("home").hidden && document.getElementById("acct-menu").hidden')
+            assert page.js('document.getElementById("home").hidden && !document.getElementById("acct-menu")')
             text = page.js(f"{acct}.innerText")
             for want in ("Profile", "bob", "Member", "@bob-gl", "Only an admin changes your role.", "proj-a", "Write",
                          "proj-b", "Read", "Machines", "Signed-in browsers"):
@@ -1142,9 +1137,10 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             page.js('document.getElementById("add-machine").click()')
             page.js('document.getElementById("add-machine").click()')
             assert page.js('document.getElementById("join-cmd").textContent') == cmd
-            # Sign out, the menu's last item
+            # Sign out: the visible one (sidebar on desktop, end of Profile on a phone)
             page.js('document.getElementById("viewer-name").click()')
-            page.js('document.getElementById("signout").click()')
+            page.wait('!document.getElementById("pane-profile").hidden')
+            page.js('[...document.querySelectorAll(".signout")].find(b => b.offsetParent).click()')
             page.wait('!document.getElementById("lock").hidden')
         with chrome(w, h) as page:
             lab.who = "alice-gl"
@@ -1152,7 +1148,7 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             page.wait('document.getElementById("lock").dataset.mode === "gitlab"')
             page.js('document.getElementById("gitlab-signin").click()')
             page.wait('document.getElementById("viewer-name")?.textContent === "alice"')
-            page.js('document.querySelector("[data-go=\\"people\\"]").click()')
+            page.js('document.querySelector("#set-nav [data-sec=\\"people\\"]").click()')
             page.wait(f'!!{team_row("bob")}')
             page.wait('document.getElementById("live").className === "live"')
             open_person(page, "bob")
@@ -1320,8 +1316,8 @@ def test_team_machines_add_list_move(tmp_path, w, h):
 
 
 @pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
-def test_settings_sections_and_account_menu(tmp_path, w, h):
-    """The account menu opens with the mouse and the keyboard and closes on Esc; each Settings
+def test_settings_sections_and_account_button(tmp_path, w, h):
+    """The name button opens Settings > Profile (no menu); Sign out sits under the sidebar (end of Profile on a phone); each Settings
     section opens from the sidebar at its own address, with the waiting count on People and
     on the account button. Screenshots of each to KAPTYORKA_SHOTS."""
     import json as _json
@@ -1358,20 +1354,17 @@ def test_settings_sections_and_account_menu(tmp_path, w, h):
         with chrome(w, h) as page:
             page.go(f"{base}/#t={token}")
             page.wait('document.getElementById("n-acct").textContent === "1"')  # one request waits
-            # the menu, by keyboard: ArrowDown opens it on the first item; Esc closes it
-            page.js('document.getElementById("viewer-name").focus()')
-            page.js('document.getElementById("viewer-name").dispatchEvent(new KeyboardEvent("keydown", {key: "ArrowDown", bubbles: true}))')
-            page.wait('!document.getElementById("acct-menu").hidden')
-            assert page.js('document.activeElement.textContent') == "Account settings"
-            page.js('document.activeElement.dispatchEvent(new KeyboardEvent("keydown", {key: "ArrowDown", bubbles: true}))')
-            assert page.js('document.activeElement.textContent') == "Team settings1"
+            assert page.js('document.getElementById("viewer-name").getAttribute("aria-label")') == "Settings"
+            page.js('document.getElementById("viewer-name").click()')
+            page.wait('!document.getElementById("pane-profile").hidden')
+            assert page.js("location.hash") == "#settings/profile"
             assert page.js(wide)
-            time.sleep(0.3)  # the menu's fade-in has ended
-            page.screenshot(shots / f"menu-open-{tag}.png")
-            page.js('document.activeElement.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}))')
-            page.wait('document.getElementById("acct-menu").hidden')
-            assert page.js('document.activeElement.id') == "viewer-name"
-            page.js('document.querySelector("[data-go=\\"people\\"]").click()')
+            # Sign out: one visible, quiet; under the sidebar on desktop, at the end of Profile on a phone
+            assert page.js('[...document.querySelectorAll(".signout")].filter(b => b.offsetParent).length') == 1
+            sel = '.set-out-phone' if w < 720 else '.set-out button'
+            assert page.js(f'!!document.querySelector("{sel}").offsetParent')
+            time.sleep(0.4)
+            page.screenshot(shots / f"topbar-settings-signout-{tag}.png")
             # one flat sidebar: no headings
             assert page.js('document.querySelectorAll("#set-nav .set-group").length') == 0
             assert page.js('[...document.querySelectorAll("#set-nav a")].filter(a => !a.hidden).map(a => a.textContent)') == \

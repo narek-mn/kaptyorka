@@ -390,12 +390,13 @@ def test_page_login_and_sign_out():
     html = page_html()
     assert "Use the link from kaptyorka start, or ask your admin for an invite." in html
     assert "That token did not work." in html and 'id="lock-err"' in html
-    unlock = html[html.index('$("unlock").addEventListener'):html.index('$("signout")')]
+    unlock = html[html.index('$("unlock").addEventListener'):html.index('document.querySelectorAll(".signout")')]
     assert "location.reload" not in unlock and 'get("/api/me")' in unlock
     assert 'id="signout"' in html and ">Sign out</button>" in html and "lock(false)" in html
-    # Sign out is the last item of the account menu that the person's name opens
-    assert 'id="viewer-name" aria-haspopup="menu"' in html
-    assert html.index('id="viewer-name"') < html.index('id="signout"') < html.index('<section id="settings"')
+    # Sign out is at the bottom of the Settings sidebar, with a second one at the end of Profile for a phone
+    assert 'id="viewer-name" aria-label="Settings"' in html
+    assert html.index('<section id="settings"') < html.index('id="signout"') < html.index('id="pane-profile"')
+    assert html.count('class="signout') == 2 and "set-out-phone" in html
 
 
 def test_page_empty_states():

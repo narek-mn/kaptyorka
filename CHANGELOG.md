@@ -2,6 +2,7 @@
 
 ## 0.9.23
 
+- **No account menu.** Your name at the top right goes straight to Settings (Profile); the waiting count stays on it. **Sign out** moved to the bottom of the Settings sidebar, and to the end of Profile on a phone.
 - **GPU queue on Machines.** `kaptyorka machine gpu-queue <machine> <lock file> [--shares N]` (10 by default; `--off`) tells the hub where a computer's flock share queue is. One bridge on that computer reads it about once a minute from `/proc/locks`, never taking a lock or trusting the files' text, and maps each job to its OS user. The computer's rows on Machines show `GPU queue: bob 4/10 · carol 6/10 · 1 waiting`, `GPU queue: free` or `GPU queue: taken whole by bob` for admins, and counts only (`GPU queue: 10/10 in use · 1 waiting`) for everyone else. Missing files or no permission read `GPU queue: unknown`.
 - **A full GPU queue is heavy.** Every share held, the GPU taken whole, or a job waiting: hub-started work on that computer waits for the manager, the person is told why in counts, and the manager's notice has the queue line with names.
 
