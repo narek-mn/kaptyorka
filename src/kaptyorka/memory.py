@@ -85,8 +85,15 @@ class MemoryStore:
     @classmethod
     def session_project(cls, cwd: str, project: str, folders: dict) -> str:
         """A session's project: from its folder when the device's folders are known, else the
-        name its identity gave. The brief and the done check both use this."""
-        return cls.project_of(cwd, folders) if folders and cwd else project
+        name its identity gave. The brief and the done check both use this. A folder the
+        device never named (a copy found by its git remote) keeps its identity's project."""
+        if not (folders and cwd):
+            return project
+        bare = cwd.rstrip("/") or cwd
+        known = {f.rstrip("/") for f in folders.values()}
+        if bare in known or _WORKTREE.sub("", bare) in known:
+            return cls.project_of(cwd, folders)
+        return _WORKTREE.sub("", project or os.path.basename(bare))
 
     def _session(self, key: str):
         return self.db.execute("SELECT project, started, last_seen, person_id, host, os_user, cwd"
@@ -252,7 +259,11 @@ class MemoryStore:
                 if last is not None and (last["branch"], last["dirty"], last["subject"]) == (
                         branch, dirty, subject):
                     continue
-                project = self.project_of(cwd, folders)
+                held = self.db.execute(  # a copy found by its git remote: its session's project
+                    "SELECT project FROM agents WHERE device_id=? AND cwd=? ORDER BY last_seen"
+                    " DESC LIMIT 1", (device_id, cwd)).fetchone()
+                project = self.session_project(cwd, held["project"], folders) if held \
+                    else self.project_of(cwd, folders)
                 self.db.execute(
                     "INSERT INTO git_facts (project, host, os_user, person_id, cwd, branch,"
                     " dirty, subject, time, read_at) VALUES (?,?,?,?,?,?,?,?,?,?)",

@@ -27,11 +27,12 @@ class Identity:
     tool: str
     project: str
     cwd: str = field(default="", compare=False)  # the session's folder; never sent
+    pid: int = field(default=0, compare=False)  # the tool's process; never sent
 
     def headers(self) -> dict:
         """Percent-encoded, since header values must be ASCII; the hub unquotes them."""
         return {f"X-Kaptyorka-{k.capitalize()}": quote(v, safe="")
-                for k, v in asdict(self).items() if k != "cwd"}
+                for k, v in asdict(self).items() if k not in ("cwd", "pid")}
 
 
 def _ps(pid: int) -> Optional[Tuple[int, str]]:
@@ -88,6 +89,18 @@ RESOLVERS: Dict[str, Callable[[int, str], Optional[str]]] = {
 }
 
 
+def project_of(cwd: str) -> str:
+    """A session's project from its folder: the folder's name, or the registered project its git
+    remote names when the name is no team project (repos.resolve, from the bridge's list)."""
+    from kaptyorka import offhub, repos
+
+    name = os.path.basename(cwd.rstrip("/"))
+    if not name:
+        return ""
+    team, _ = offhub.load_team()
+    return repos.resolve(name, cwd, team, offhub.load_repos())
+
+
 def _tool(pid: int, comm: str) -> Optional[str]:
     if _session_file(pid).exists():
         return "claude-code"
@@ -101,12 +114,15 @@ def _tool(pid: int, comm: str) -> Optional[str]:
 
 def identify(machine: str, pid: Optional[int] = None,
              workspace: Optional[str] = None) -> Optional[Identity]:
-    """The session this process belongs to, or None (not in a tool, or not detectable yet)."""
+    """The session this process belongs to, or None (not in a tool, or not detectable yet).
+    A session that joined the team (/hub team) carries the project it chose."""
+    from kaptyorka import optin
+
     test = os.environ.get("KAPTYORKA_TEST_IDENTITY")
     if test:
-        return Identity(**json.loads(test))
+        return optin.apply(Identity(**json.loads(test)))
     try:
-        return _identify(machine, os.getpid() if pid is None else pid, workspace)
+        return optin.apply(_identify(machine, os.getpid() if pid is None else pid, workspace))
     except (OSError, ValueError, KeyError, StopIteration):
         return None  # e.g. a half-written session file or a process that just exited
 
@@ -115,9 +131,14 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
     # set by the OpenCode plugin; OPENCODE_SESSION_ID by some OpenCode V2 builds
     sid = os.environ.get("KAPTYORKA_OPENCODE_SESSION") or os.environ.get("OPENCODE_SESSION_ID")
     if sid:
-        project = os.path.basename(os.getcwd().rstrip("/"))
+        from kaptyorka.adapters.opencode import valid_id
+
+        if not valid_id(sid):
+            return None  # made up (a manual run): no OpenCode server could ever deliver to it
+        project = project_of(os.getcwd())
+        tool_pid = int(os.environ.get("OPENCODE_PID") or os.getppid())
         return Identity(f"opencode:{sid}", machine, "opencode", project,
-                        os.getcwd()) if project else None
+                        os.getcwd(), tool_pid) if project else None
     for tool_pid, comm in ancestors(pid):
         tool = _tool(tool_pid, comm)
         if tool:
@@ -141,10 +162,10 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
     else:
         resolve = RESOLVERS.get(tool)
         key = resolve(tool_pid, cwd) if resolve else None
-    project = os.path.basename(cwd.rstrip("/"))
+    project = project_of(cwd)
     if not key or not project:
         return None
-    return Identity(key, machine, tool, project, cwd)
+    return Identity(key, machine, tool, project, cwd, tool_pid)
 
 
 def facts() -> dict:

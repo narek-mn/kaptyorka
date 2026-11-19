@@ -472,10 +472,12 @@ def purge_personal(store) -> Dict[str, int]:
             if "workers" in tables else set()
 
         def no_project(p) -> bool:  # neither a team project nor a removed one: a personal folder
-            return p is not None and p != MANAGER and paths.team_name(p) not in known
+            return p is not None and p not in (MANAGER, paths.COORDINATOR) \
+                and paths.team_name(p) not in known
 
         keys = [r["key"] for r in db.execute("SELECT key, project, person_id FROM agents")
                 if paths.team_name(r["project"]) not in team and r["key"] not in keep
+                and r["project"] != paths.COORDINATOR  # joined with /hub team: kept
                 and (mid is None or r["person_id"] != mid)]
 
         def by_keys(table: str, *cols: str) -> int:

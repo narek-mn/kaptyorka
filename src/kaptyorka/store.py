@@ -24,6 +24,7 @@ MAX_FILE = 5_000_000
 FILE_TYPES = ("png", "jpg", "jpeg", "gif", "webp", "svg", "txt", "md", "log", "json", "csv", "pdf",
               "mp4", "webm", "mov", "m4v", "ogg")
 RATE = (30, 60)
+REPLY_S = 86400  # a session may answer one that messaged it this recently, whoever it is
 SCHEMA_VERSION = 2
 INVITE_TTL_S = 7 * 86400
 LEGACY_IDLE_S = 7 * 86400  # the shared token switches itself off after this long unused
@@ -133,6 +134,7 @@ ADDED_COLUMNS = [
     ("people", "gitlab_id", "INTEGER"),  # that GitLab user's id, kept at their first sign-in
     # 1: a team machine, not a person: a shared OS account everyone logs into (team_machine_add)
     ("people", "team", "INTEGER NOT NULL DEFAULT 0"),
+    ("messages", "push_error", "TEXT NOT NULL DEFAULT ''"),  # why the bridge's push failed
 ]
 
 
@@ -286,6 +288,7 @@ class Message:
     kind: str = "message"
     file: Optional[dict] = None  # {id, name, size} of the attachment
     reply_to: str = ""  # the sender's handle when its name is shown with the project hidden
+    failed: str = ""  # unread, and the bridge could not push it: why (pull still works)
 
 
 @dataclass
@@ -821,6 +824,21 @@ class Store:
             return [r["name"] for r in self.db.execute(
                 "SELECT name FROM projects WHERE archived_at IS NULL ORDER BY name")]
 
+    def team_repos(self) -> Dict[str, str]:
+        """{fingerprint of the repo: project} of the registered projects with a repo: bridges
+        match their sessions' git remotes against it (repos.py), never sending their own."""
+        from kaptyorka.repos import fingerprint
+
+        with self.lock:
+            rows = self.db.execute("SELECT name, repo FROM projects WHERE archived_at IS NULL"
+                                   " AND repo != ''").fetchall()
+        out: Dict[str, str] = {}
+        for r in rows:
+            f = fingerprint(r["repo"])
+            if f:
+                out[f] = r["name"]
+        return out
+
     def team_project(self, project: str) -> bool:
         """A session folder of a registered project (or a `--N` worktree of one)."""
         with self.lock:
@@ -833,7 +851,10 @@ class Store:
     def _may(self, project, principal, write) -> bool:
         """A registered project goes by role. An unregistered one is only a folder name, which
         two people can share by chance: it belongs to whoever has a session in it. A removed
-        (archived) project is the admin's alone, read-only."""
+        (archived) project is the admin's alone, read-only. A coordinator's "(team)" is no
+        project at all."""
+        if project == paths.COORDINATOR:
+            return False
         if self._archived(project):
             return principal.is_admin() and not write
         if principal.is_admin():
@@ -1240,7 +1261,10 @@ class Store:
                 self.db.execute("UPDATE agents SET title=? WHERE key=?", (title, key))
             return
         name = row["name"]
-        if now - row["last_seen"] >= ONLINE_S:  # was offline: its name may have been taken
+        if project and project != row["project"]:  # /hub team, or found by its git remote
+            self.db.execute("UPDATE agents SET project=? WHERE key=?", (project, key))
+            name = self._free_name(key, row["machine"], row["tool"], project, now)
+        elif now - row["last_seen"] >= ONLINE_S:  # was offline: its name may have been taken
             name = self._free_name(key, row["machine"], row["tool"], row["project"], now)
         if activity is None:
             self.db.execute("UPDATE agents SET name=?, last_seen=? WHERE key=?", (name, now, key))
@@ -1255,6 +1279,15 @@ class Store:
             self.db.execute("UPDATE agents SET background=? WHERE key=?", (int(background), key))
         if title is not None:
             self.db.execute("UPDATE agents SET title=? WHERE key=?", (title, key))
+
+    def _machine_now(self, key, machine, now) -> None:
+        """A session kept across a machine's new name (OpenCode keeps its session ids for
+        good) takes the name the machine has now, as a new session would. Lock held."""
+        row = self.db.execute("SELECT machine, tool, project FROM agents WHERE key=?",
+                              (key,)).fetchone()
+        if row is not None and machine and row["machine"] != machine:
+            self.db.execute("UPDATE agents SET machine=?, name=? WHERE key=?", (
+                machine, self._free_name(key, machine, row["tool"], row["project"], now), key))
 
     def _host_of_device(self, device_id) -> str:
         row = self.db.execute("SELECT host FROM devices WHERE id=?", (device_id,)).fetchone()
@@ -1308,6 +1341,8 @@ class Store:
                         and not self._manager_takes(principal, held, now):
                     raise KaptyorkaError("session key in use by another person")
             self._touch(key, machine, tool, project, now)
+            if principal is not None and self._role_of(principal.person_id) != "manager":
+                self._machine_now(key, machine, now)
             if principal is not None:
                 # every call, so a legacy machine handed to another person moves at once
                 dev = self.db.execute("SELECT host, os_user FROM devices WHERE id=?",
@@ -1364,6 +1399,8 @@ class Store:
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],
                             s["label"], s["cwd"], s["background"], s["title"])
+                if not manager_held:  # the manager's own shim names its machine
+                    self._machine_now(s["key"], machine, now)
                 if host:
                     self.db.execute("UPDATE agents SET host=?, os_user=? WHERE key=?",
                                     (host, os_user, s["key"]))
@@ -1665,6 +1702,10 @@ class Store:
         online = [r for r in self._online_rows(now) if not limited or self._listed(viewer, r)]
         if to == "all":
             return [r for r in online if r["key"] != sender_key]
+        if limited:  # by name only, never in a listing: the sessions that wrote to this one
+            seen = {r["key"] for r in online}
+            online += [r for r in self._online_rows(now) if r["key"] not in seen
+                       and self._answers(sender_key, viewer, r)]
         match = self._named(online, to, viewer)
         match = match or [r for r in self.db.execute(
             "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1", (to,)).fetchall()
@@ -1824,9 +1865,10 @@ class Store:
                     out.append({"kind": "message", "id": m["id"], "key": t["key"], "text": text})
             return out
 
-    def ack(self, msg_id: int, ok: bool, principal: Optional[Principal] = None) -> bool:
-        """Mark a pushed message done or failed. With `principal`, only a message to one of the
-        caller's own sessions; False (nothing changed) otherwise."""
+    def ack(self, msg_id: int, ok: bool, principal: Optional[Principal] = None,
+            error: str = "") -> bool:
+        """Mark a pushed message done or failed (with the bridge's reason). With `principal`,
+        only a message to one of the caller's own sessions; False (nothing changed) otherwise."""
         with self.lock:
             if principal is not None:
                 row = self.db.execute("SELECT a.key, a.person_id, a.device_id FROM messages m JOIN agents a"
@@ -1838,7 +1880,8 @@ class Store:
                 self.db.execute("UPDATE messages SET read_at=?, push_state='pushed' WHERE id=?",
                                 (self.clock(), msg_id))
             else:
-                self.db.execute("UPDATE messages SET push_state='failed' WHERE id=?", (msg_id,))
+                self.db.execute("UPDATE messages SET push_state='failed', push_error=? WHERE id=?",
+                                (clean(error, 300) or "the push failed", msg_id))
             return True
 
     def messages_for(self, principal: Principal, limit: int = 500) -> List[dict]:
@@ -1868,7 +1911,9 @@ class Store:
                                    m["created"], m["read_at"] is not None,
                                    m["sender_key"].startswith("web:"),
                                    (m["to_key"] or "").startswith("web:"), m["kind"],
-                                   self._file_info(m["file_id"])))
+                                   self._file_info(m["file_id"]),
+                                   failed=m["push_error"] if m["push_state"] == "failed"
+                                   and m["read_at"] is None else ""))
                 for k, p in (("_from", "s_"), ("_to", "r_")):
                     d[k] = None if m[p + "machine"] is None else {
                         "key": m[p + "key"], "person_id": m[p + "pid"], "machine": m[p + "machine"],
@@ -1976,12 +2021,43 @@ class Store:
             return True
         if (self._is_team(tp) and self._hidden(tp, sp)) or (self._is_team(sp) and self._hidden(sp, tp)):
             return False  # hidden stays hidden, even behind an open door
+        if self._wrote_to(target["key"], sender["key"]):
+            return True  # one hop back: the answer to a session that wrote to this one
         return self.db.execute(
             "SELECT 1 FROM doors WHERE closed_at IS NULL AND ("
             "(scope='session' AND ((a_key=? AND b_key=?) OR (a_key=? AND b_key=?))) OR"
             " (scope='group' AND ((a_person=? AND b_person=?) OR (a_person=? AND b_person=?))))",
             (sender["key"], target["key"], target["key"], sender["key"],
              sp, tp, tp, sp)).fetchone() is not None
+
+    def _wrote_to(self, from_key, to_key) -> bool:
+        """Lock held. True when the session `from_key` sent a message to `to_key` within
+        REPLY_S: `to_key` may answer it, even when it could not reach it otherwise. A door
+        closed between them since then ends it: closing a door still closes the way back."""
+        if from_key.startswith("web:") or to_key.startswith("web:"):
+            return False  # a person's page has its own reply door
+        people = [r["person_id"] for r in self.db.execute(
+            "SELECT person_id FROM agents WHERE key IN (?,?)", (from_key, to_key))]
+        fp, tp = (people + [None, None])[:2]
+        closed = self.db.execute(
+            "SELECT MAX(closed_at) FROM doors WHERE closed_at IS NOT NULL AND ("
+            "(scope='session' AND ((a_key=? AND b_key=?) OR (a_key=? AND b_key=?))) OR"
+            " (scope='group' AND ((a_person=? AND b_person=?) OR (a_person=? AND b_person=?))))",
+            (from_key, to_key, to_key, from_key, fp, tp, tp, fp)).fetchone()[0]
+        since = max(self.clock() - REPLY_S, closed or 0)
+        return self.db.execute(
+            "SELECT 1 FROM messages WHERE sender_key=? AND to_key=? AND kind='message'"
+            " AND created > ? LIMIT 1", (from_key, to_key, since)
+        ).fetchone() is not None
+
+    def _answers(self, sender_key, viewer, row) -> bool:
+        """Lock held. True when the session `row` wrote to `sender_key` recently and no hidden
+        team machine stands between them: `send` may then name it, though `_listed` hides it."""
+        pid = row["person_id"]
+        if viewer is None or pid is None or not self._wrote_to(row["key"], sender_key):
+            return False
+        return not ((self._is_team(pid) and self._hidden(pid, viewer))
+                    or (self._is_team(viewer) and self._hidden(viewer, pid)))
 
     def page_may_message(self, person: str, person_id: int, key: str,
                          target_person: Optional[int]) -> bool:

@@ -5,7 +5,7 @@ import pytest
 from helpers import person
 from kaptyorka import admin_ops, usage
 from kaptyorka.hub_feed import feed
-from kaptyorka.store import KaptyorkaError, Principal, Store
+from kaptyorka.store import KaptyorkaError, Principal, Store, session_id
 from kaptyorka.workers import WorkerStore
 
 
@@ -554,3 +554,48 @@ def test_title_shows_only_to_those_who_may_see_the_session(store, team):
     assert titles("bob") == ["Secret plan"]  # proj-a only
     assert titles("carol") == []
     assert titles("alice") == ["Other plan", "Secret plan"]
+
+
+def test_a_team_session_answers_one_that_wrote_to_it(store, team, monkeypatch):
+    """bob's session in proj-c writes to the team session in proj-a (bob has a role there).
+    The team session may answer it for a day, though it cannot list or reach it otherwise;
+    a hidden team machine blocks it both ways."""
+    from kaptyorka.store import REPLY_S
+    jet, p = team
+    bob = who(store, "bob")
+    store.project_register("proj-c", by="alice")
+    store.grant_project("proj-c", bob.person_id, "write", "alice")
+    bp = store.authenticate(store.device_add(bob.person_id, "pc-b"))
+    store.seen("b-c", "pc-b", "codex", "proj-c", principal=bp)
+    name = store.agent("b-c").name
+    assert not store.listed(jet, "b-c", bob.person_id)
+    with pytest.raises(KaptyorkaError, match="that you can reach"):
+        store.send("t-a", name, "unasked")
+    store.send("b-c", store.agent("t-a").name, "please run the tests")
+    assert store.may_message("t-a", "b-c")  # by project role already; the name was the gap
+    assert store.send("t-a", name, "done") == 1
+    assert store.send("t-a", session_id("b-c"), "by id too") == 1
+    assert [m.text for m in store.inbox("b-c")] == ["done", "by id too"]
+    # no listing change: the team session's who still leaves bob's proj-c session out
+    assert not store.listed(jet, "b-c", bob.person_id)
+    assert "b-c" not in [t["key"] for t in store_targets_all(store, "t-a", jet)]
+    with pytest.raises(KaptyorkaError, match="that you can reach"):
+        store.send("t-b", name, "only the session it wrote to answers")
+    # hidden wins
+    store.team_machine_set_visible("jet-1", "bob", False, "alice")
+    assert not store.may_message("t-a", "b-c")
+    with pytest.raises(KaptyorkaError, match="that you can reach"):
+        store.send("t-a", name, "hidden")
+    store.team_machine_set_visible("jet-1", "bob", True, "alice")
+    # after the window
+    later = store.clock() + REPLY_S + 1
+    monkeypatch.setattr(store, "clock", lambda: later)
+    store.seen("t-a", "jet-1", "claude", "proj-a", principal=p)
+    store.seen("b-c", "pc-b", "codex", "proj-c", principal=bp)
+    with pytest.raises(KaptyorkaError, match="that you can reach"):
+        store.send("t-a", name, "too late")
+
+
+def store_targets_all(store, key, viewer):
+    with store.lock:
+        return store._targets(key, "all", store.clock(), viewer)

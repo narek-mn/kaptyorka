@@ -458,7 +458,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .att-out { display: inline-flex; align-items: center; gap: 5px; margin-top: var(--s-1); font-size: var(--fs-sm); color: var(--muted); }
 .tick { display: flex; align-items: center; gap: 5px; margin-top: 3px; font-size: var(--fs-xs); color: var(--faint); animation: fade-in var(--dur-2) var(--ease-out); }
 .tick.delivered { color: var(--muted); }
-.tick.failed { color: var(--danger); }
+.tick.failed, .tick.undelivered { color: var(--danger); }
 .tick button { padding: 2px 0; border: 0; background: none; font: inherit; font-weight: var(--fw-semi); color: var(--accent); cursor: pointer; }
 .tick button:hover { text-decoration: underline; }
 .tick .spin { width: 9px; height: 9px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: var(--round); animation: spin .7s linear infinite; }
@@ -1536,7 +1536,7 @@ a.p-main { color: inherit; text-decoration: none; }
       } else {
         rows.push({ id: m.id, sender: m.sender, web: !!m.from_web, toWeb: !!m.to_web, to: [m.to], text: m.text,
                     fromMgr: !!m.from_manager, toMgr: [!!m.to_manager], fromId: m.sender_id || "", toId: [m.to_id || ""],
-                    created: m.created, kind: m.kind || "message", file: m.file, read: !!m.read });
+                    created: m.created, kind: m.kind || "message", file: m.file, read: !!m.read, failed: m.failed || "" });
       }
     });
     return rows;
@@ -1734,7 +1734,7 @@ a.p-main { color: inherit; text-decoration: none; }
         o.sent ? el("span", { "class": "att-out" }, [icon("i-clip", 12), el("span", { text: o.sent.file.name })]) : null, sendMark(o)]));
     });
     /* only my last message, while nothing came after it: Sent, then Delivered once the session has it */
-    if (!act && !outs.length && mineLast) mineLast.body.appendChild(sendMark({ state: mineLast.m.read ? "delivered" : "sent" }));
+    if (!act && !outs.length && mineLast) mineLast.body.appendChild(sendMark({ state: mineLast.m.read ? "delivered" : mineLast.m.failed ? "undelivered" : "sent", err: mineLast.m.failed || "" }));
     var bg = (entryOf[conv] || {}).bg;
     if (!shown.length && !outs.length) log.appendChild(el("div", { "class": "blank" }, [icon("i-chat", 20), el("span", { text: bg ? BG_EMPTY : emptyText(entryOf[conv]) })]));
     var t = $("notices-toggle");
@@ -1750,9 +1750,10 @@ a.p-main { color: inherit; text-decoration: none; }
   }
   /* under my message: where it is, quietly */
   var TICKS = { sending: ["Sending\u2026", "On its way to the hub"], sent: ["Sent", "The hub has it; the session has not picked it up yet"],
-                delivered: ["Delivered", "The session has it"], failed: ["Not sent", ""] };
+                delivered: ["Delivered", "The session has it"], failed: ["Not sent", ""],
+                undelivered: ["Not delivered", "The hub has it, but could not push it to the session; it can still read it"] };
   function sendMark(o) {
-    var t = TICKS[o.state], kids = [o.state === "sending" ? el("span", { "class": "spin", "aria-hidden": "true" }) : icon(o.state === "failed" ? "i-warn" : "i-check", 11), t[0]];
+    var t = TICKS[o.state], kids = [o.state === "sending" ? el("span", { "class": "spin", "aria-hidden": "true" }) : icon(o.state === "failed" || o.state === "undelivered" ? "i-warn" : "i-check", 11), t[0]];
     if (o.state === "failed") {
       var retry = el("button", { type: "button", title: "Send it again", text: "Retry" }), edit = el("button", { type: "button", title: "Put it back in the box below", text: "Edit" });
       retry.addEventListener("click", function () { sendErr(""); deliver(o); renderMessages(); });

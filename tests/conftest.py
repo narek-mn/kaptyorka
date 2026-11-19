@@ -19,6 +19,8 @@ def opencode_v1(monkeypatch):
 
     monkeypatch.setattr(opencode, "major", lambda: 1)
     monkeypatch.setattr(opencode, "service", lambda: None)
+    # no login shell of the real user: PATH as the test has it (tests of the wrapper set one)
+    monkeypatch.setattr(opencode, "login_path", lambda run=None: os.environ.get("PATH", ""))
 
 
 @pytest.fixture(autouse=True)

@@ -12,8 +12,22 @@ MANAGER_CONFIG = "manager-config.json"  # its config, under home(): outside its 
 MANAGER_SETTINGS = "settings.json"  # in its folder, passed with --settings
 MANAGER_MCP = "mcp.json"  # in its folder, passed with --mcp-config
 WORKTREE = re.compile(r"--\d+$")  # a `<folder>--N` worktree belongs to its base folder's project
-NOT_TEAM = ("this folder is not a team project, so nothing from it goes to the hub."
-            " Ask the admin to add it as a team project.")
+NOT_TEAM = "This folder isn't a team project, so nothing from it goes to the hub."
+COORDINATOR = "(team)"  # the project of a session that joined with /hub team: no project
+# (never a registered name: PROJECT_NAME has no brackets)
+
+
+def not_team_help(projects) -> str:
+    """The refusal a tool call outside a team folder gets: how to join, for the agent to
+    offer, never to do on its own. `projects`: the person's team projects, None when unknown."""
+    have = (f" (you have: {', '.join(projects)})" if projects
+            else " (you have no role in a team project yet; the admin gives roles)"
+            if projects is not None else "")
+    return (NOT_TEAM + " If this session works for the team, run /hub team (to coordinate"
+            " across projects) or /hub team <project>" + have + ", or open the agent in your"
+            " copy of that project. Agent: offer this to the user and wait for their answer;"
+            " never switch on your own. With their yes you may call join_team(project) instead"
+            " (project \"\" to coordinate).")
 NO_TEAM_LIST = ("the hub has not sent its team project list yet, so nothing goes to it;"
                 " if this lasts, the hub needs updating.")
 

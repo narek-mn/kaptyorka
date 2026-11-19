@@ -44,7 +44,7 @@ def test_tools_refuse_a_personal_folder_and_store_nothing(team):  # noqa: F811
                        ("notes_list", {}), ("decide", {"project": "", "text": "x"}),
                        ("send", {"to": team.names["bob"], "text": "hi"}),
                        ("state_write", {"project": "diary", "text": "x"}), ("inbox", {})):
-        assert call_error(client(team, "alice"), diary, tool, **args).endswith(NOT_TEAM), tool
+        assert call_error(client(team, "alice"), diary, tool, **args).startswith("Error executing tool " + tool + ": " + NOT_TEAM), tool
     assert team.store.agent("k:diary") is None
     assert all(n["topic"] != "diary" for n in team.store.notes_list())
     assert team.store.inbox(team.keys["bob"]) == []
@@ -95,7 +95,7 @@ def test_brief_and_upload_refuse_a_personal_folder(team):  # noqa: F811
          for k, v in ident("k:diary", "box-1", project="diary").items()}
     status, body = http.request("GET", team.hub.url + "/api/brief?event=start",
                                 team.tokens["alice"], headers=h)
-    assert status == 400 and body == NOT_TEAM
+    assert status == 400 and body.startswith(NOT_TEAM) and "/hub team" in body
     status, body, _ = http.request_raw("POST", team.hub.url + "/api/files", team.tokens["alice"],
                                        b"secret", {**h, "X-File-Name": "a.txt"})
     assert status == 403
@@ -276,7 +276,7 @@ def test_shim_refuses_a_personal_folder_locally(hub, home, monkeypatch):
     async def go():
         async with shim(home, hub.url, diary) as c:
             tools = (await c.list_tools()).tools
-            assert tools and all(t.description == NOT_TEAM for t in tools)
+            assert tools and all(t.description == NOT_TEAM for t in tools if t.name != "join_team")
             r = await c.call_tool("notes_write", {"topic": "t", "text": "x"})
             assert r.is_error and NOT_TEAM in text(r)
     anyio.run(go)
