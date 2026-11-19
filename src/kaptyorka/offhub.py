@@ -344,9 +344,16 @@ def session_key(environ: Mapping) -> str:
     return key if key.split(":", 1)[0] in ("opencode", "codex", "cursor") and ":" in key else ""
 
 
+def come_back(key: str) -> str:
+    """COME_BACK as that tool types the command ($hub in Codex)."""
+    return COME_BACK.replace("/hub", _where(key))
+
+
 def _where(key: str) -> str:
     """How the person types the command in that tool: Codex runs skills with $."""
-    return "$hub" if key.startswith("codex:") else "/hub"
+    from kaptyorka import optin
+
+    return optin.command(key)
 
 
 def command(words: List[str], environ: Mapping = os.environ, cwd: str = "") -> Tuple[int, str]:

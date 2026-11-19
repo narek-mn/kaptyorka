@@ -267,7 +267,7 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
             if paths.in_manager_folder(who.cwd):
                 return _error("kaptyorka: the manager session is on the hub already")
             if await anyio.to_thread.run_sync(offhub.off, who.key):
-                return _error(f"kaptyorka: {offhub.COME_BACK}")
+                return _error(f"kaptyorka: {offhub.come_back(who.key)}")
             project = args.get("project") if isinstance(args.get("project"), str) else ""
             ok, line = await anyio.to_thread.run_sync(optin.join, cfg, who.key, who.pid, project)
             if ok and found["ident"] is not None and found["ident"].key == who.key:
@@ -290,12 +290,13 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 return await join(who, dict(params.arguments or {}))
             why = await personal(who)
             if why == paths.NOT_TEAM:
-                why = paths.not_team_help(await anyio.to_thread.run_sync(offhub.load_mine))
+                why = paths.not_team_help(await anyio.to_thread.run_sync(offhub.load_mine),
+                                         optin.command(who.key) if who else "/hub")
             if why:
                 return _error(f"kaptyorka: {why}")
             if (await hidden() if use is relay
                     else await anyio.to_thread.run_sync(offhub.off, who.key)):
-                return _error(f"kaptyorka: {offhub.COME_BACK}")
+                return _error(f"kaptyorka: {offhub.come_back(who.key if who else '')}")
             args = dict(params.arguments or {})
             f = args.get("file")
             try:

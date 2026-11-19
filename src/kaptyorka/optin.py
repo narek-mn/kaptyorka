@@ -21,6 +21,7 @@ from kaptyorka import paths
 
 DIR = "team"
 LABEL = "coordinator"  # how a coordinator shows on Home when it has no name of its own
+JOIN_S = 4  # the hub's role check; below the hooks' limit for `hub team` (hook.HUB_TEAM_S)
 
 
 def _dir() -> Path:
@@ -121,6 +122,11 @@ def describe(project: Optional[str]) -> str:
     return f"this session is on the hub for project {project}"
 
 
+def command(key: str) -> str:
+    """How the person types /hub in the session's tool: Codex runs skills with $."""
+    return "$hub" if key.startswith("codex:") else "/hub"
+
+
 def join(cfg: dict, key: str, pid: int, project: str) -> Tuple[bool, str]:
     """Ask the hub, then save the choice. project "" joins as a coordinator, "off" leaves.
     (ok, the line to show)."""
@@ -139,7 +145,7 @@ def join(cfg: dict, key: str, pid: int, project: str) -> Tuple[bool, str]:
         return False, "kaptyorka: could not find this session's process; try again"
     try:
         status, answer = http.request("POST", cfg["hub"] + "/bridge/join-team", cfg["token"],
-                                      {"project": project}, timeout=4)
+                                      {"project": project}, timeout=JOIN_S)
     except http.HubUnreachable:
         return False, f"kaptyorka hub unreachable at {cfg['hub']}"
     if status != 200 or not isinstance(answer, dict):
@@ -148,7 +154,7 @@ def join(cfg: dict, key: str, pid: int, project: str) -> Tuple[bool, str]:
     save(key, project, pid)
     return True, (describe(project or paths.COORDINATOR)
                   + ("; name a project for notes and work" if not project else "")
-                  + ". /hub team off (or join_team(\"off\")) leaves it")
+                  + f". {command(key)} team off (or join_team(\"off\")) leaves it")
 
 
 def tell_gone(cfg: dict, key: str) -> None:

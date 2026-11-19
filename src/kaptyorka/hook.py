@@ -14,6 +14,7 @@ from kaptyorka.identity import Identity, identify, project_of
 
 TIMEOUT_S = 3
 GIT_S = 1  # the stop hook's own git read, inside TIMEOUT_S
+HUB_TEAM_S = 8  # `hub team ...` asks the hub to check the role (optin.JOIN_S) before it saves
 
 # (event, brief) -> what the tool expects on stdout
 FORMATTERS: Dict[str, Callable[[str, str], str]] = {
@@ -51,13 +52,18 @@ def _exe() -> str:
     return me if os.path.basename(me) == "kaptyorka" else shutil.which("kaptyorka") or "kaptyorka"
 
 
+def hub_timeout(words: List[str]) -> float:
+    """How long `kaptyorka hub <words>` may take: a join waits for the hub, on/off/status not."""
+    return HUB_TEAM_S if words and words[0].lower() == "team" else TIMEOUT_S
+
+
 def _hub_line(ident: Identity, words: List[str], run) -> str:
     """What `kaptyorka hub <words>` prints for this session: the same command /hub runs in
     Claude Code and OpenCode, so every tool answers alike. "" when it did not run."""
     env = {k: v for k, v in os.environ.items()
            if k not in ("CLAUDE_CODE_SESSION_ID", offhub.OPENCODE_SESSION)}  # this key decides
     try:
-        r = run([_exe(), "hub", *words], capture_output=True, text=True, timeout=TIMEOUT_S,
+        r = run([_exe(), "hub", *words], capture_output=True, text=True, timeout=hub_timeout(words),
                 cwd=ident.cwd or None, env={**env, offhub.SESSION_KEY: ident.key})
     except Exception:
         return ""

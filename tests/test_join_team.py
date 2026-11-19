@@ -285,6 +285,39 @@ def test_hub_team_in_opencode_codex_and_cursor(home, monkeypatch):
         offhub.switch_key(key, False)
 
 
+def test_hub_team_gets_more_time_than_on_and_off(home, monkeypatch):
+    assert hook.hub_timeout(["team", "proj-a"]) == hook.hub_timeout(["team"]) == hook.HUB_TEAM_S
+    assert hook.hub_timeout([]) == hook.hub_timeout(["off"]) == hook.TIMEOUT_S
+    assert optin.JOIN_S < hook.HUB_TEAM_S  # the hub's answer comes before the hook gives up
+    seen = []
+
+    def run(argv, **kw):
+        seen.append((argv[2:], kw["timeout"]))
+        return subprocess.CompletedProcess(argv, 0, "ok\n", "")
+    who = hook.Identity("codex:t-1", "box-1", "codex", "diary", "/w/diary")
+    hook._hub_line(who, ["team", "proj-a"], run)
+    hook._hub_line(who, ["on"], run)
+    assert seen == [(["team", "proj-a"], hook.HUB_TEAM_S), (["on"], hook.TIMEOUT_S)]
+    timeouts = []
+    monkeypatch.setattr(http, "request", lambda *a, **kw: timeouts.append(kw["timeout"]) or (
+        200, {"project": "", "projects": []}))
+    optin.join({"hub": "http://h", "token": "t"}, "codex:t-1", os.getpid(), "")
+    assert timeouts == [optin.JOIN_S]
+
+
+def test_codex_lines_say_dollar_hub_team(home, monkeypatch):
+    paths.save_config({"hub": "http://h", "token": "t", "machine": "box-1"})
+    _join_hub(monkeypatch)
+    monkeypatch.setattr(offhub, "_tool_pid", lambda key: os.getpid())
+    code, line = offhub.command(["team"], {offhub.SESSION_KEY: "codex:t-1"}, cwd="/w/diary")
+    assert code == 0 and line.endswith("$hub team off (or join_team(\"off\")) leaves it")
+    code, line = offhub.command(["team"], {offhub.OPENCODE_SESSION: "ses_1"}, cwd="/w/diary")
+    assert code == 0 and line.endswith("/hub team off (or join_team(\"off\")) leaves it")
+    assert "run $hub team (to coordinate" in paths.not_team_help(["proj-a"], "$hub")
+    assert offhub.come_back("codex:t-1").endswith("type $hub on to come back")
+    assert offhub.come_back("claude:c1") == offhub.COME_BACK
+
+
 def test_a_join_needs_the_tools_process(home, monkeypatch):
     paths.save_config({"hub": "http://h", "token": "t", "machine": "box-1"})
     _join_hub(monkeypatch)

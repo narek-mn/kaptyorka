@@ -63,8 +63,8 @@ const exec = promisify(execFile);
 const KAPTYORKA = %s;
 export const Kaptyorka = async ({ directory, client }) => {
   const brief = {};
-  const run = async (sessionID, args) => {
-    const p = exec(KAPTYORKA, args, { cwd: directory, timeout: 4000,
+  const run = async (sessionID, args, ms = 4000) => {
+    const p = exec(KAPTYORKA, args, { cwd: directory, timeout: ms,
       env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } });
     p.child.stdin.end();
     return (await p).stdout.trim();
@@ -80,7 +80,7 @@ export const Kaptyorka = async ({ directory, client }) => {
   const hub = async (sessionID, words) => {
     let line, ok = true;
     try {
-      line = await run(sessionID, ["hub", ...words]);
+      line = await run(sessionID, ["hub", ...words], words[0] === "team" ? 8000 : 4000);  // a join waits for the hub
     } catch (e) {
       line = String(e.stdout || "").trim() || "kaptyorka: /hub did not run";
       ok = false;

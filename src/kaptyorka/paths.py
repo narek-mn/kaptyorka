@@ -17,14 +17,14 @@ COORDINATOR = "(team)"  # the project of a session that joined with /hub team: n
 # (never a registered name: PROJECT_NAME has no brackets)
 
 
-def not_team_help(projects) -> str:
+def not_team_help(projects, hub: str = "/hub") -> str:
     """The refusal a tool call outside a team folder gets: how to join, for the agent to
     offer, never to do on its own. `projects`: the person's team projects, None when unknown."""
     have = (f" (you have: {', '.join(projects)})" if projects
             else " (you have no role in a team project yet; the admin gives roles)"
             if projects is not None else "")
-    return (NOT_TEAM + " If this session works for the team, run /hub team (to coordinate"
-            " across projects) or /hub team <project>" + have + ", or open the agent in your"
+    return (NOT_TEAM + f" If this session works for the team, run {hub} team (to coordinate"
+            f" across projects) or {hub} team <project>" + have + ", or open the agent in your"
             " copy of that project. Agent: offer this to the user and wait for their answer;"
             " never switch on your own. With their yes you may call join_team(project) instead"
             " (project \"\" to coordinate).")
