@@ -38,7 +38,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.9.20" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.9.21" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
@@ -136,7 +136,8 @@ def test_cli_invite_not_admin(monkeypatch, home, capsys):
 def test_cli_people_table(monkeypatch, home, capsys):
     paths.save_config({"hub": "http://h:1", "token": "adm", "machine": "pc"})
     rows = [{"name": "ann", "role": "admin", "devices": [{"last_used": 100.0}, {"last_used": 200.0}]},
-            {"name": "ben", "role": "member", "devices": [], "gitlab_user": "ben-gl"}]
+            {"name": "ben", "role": "member", "devices": [], "gitlab_user": "ben-gl"},
+            {"name": "box-1", "role": "member", "devices": [], "team": True}]
     monkeypatch.setattr(http, "request", lambda *a, **k: (200, rows))
     monkeypatch.setattr("time.time", lambda: 260.0)
     assert entry_with_exit(["people"]) == 0
@@ -144,6 +145,7 @@ def test_cli_people_table(monkeypatch, home, capsys):
     assert out[0].split() == ["NAME", "ROLE", "GITLAB", "DEVICES", "LAST", "SEEN"]
     assert out[1].split()[:4] == ["ann", "admin", "-", "2"] and "60s ago" in out[1]
     assert out[2].split() == ["ben", "member", "ben-gl", "0", "never"]
+    assert out[3].split() == ["box-1", "team", "-", "0", "never"]
 
 
 def test_cli_join_invite_keeps_token_when_join_fails(monkeypatch, home):

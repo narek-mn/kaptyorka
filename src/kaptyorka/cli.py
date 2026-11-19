@@ -462,7 +462,7 @@ def _people(args) -> int:
         # live machines only: no revoked devices and no GitLab page sign-ins (those end)
         machines = [d for d in p["devices"] if d.get("revoked_at") is None and d.get("expires") is None]
         used = [d["last_used"] for d in machines if d.get("last_used")]
-        rows.append((p["name"], p["role"], p.get("gitlab_user") or "-", str(len(machines)),
+        rows.append((p["name"], "team" if p.get("team") else p["role"], p.get("gitlab_user") or "-", str(len(machines)),
                      f"{round(now - max(used))}s ago" if used else "never"))
     w = [max(len(r[i]) for r in rows) for i in range(4)]
     for r in rows:

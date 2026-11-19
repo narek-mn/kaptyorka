@@ -229,6 +229,7 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 .a-join .cmd .btn { height: auto; border: 0; border-left: 1px solid var(--line-ctl); border-radius: 0; }
 .a-join small { font-size: var(--fs-sm); color: var(--faint); }
 .a-tag { flex: none; text-transform: capitalize; }
+.a-hub { flex: none; align-self: flex-start; margin: 2px 0; }
 /* Machines: Mine / Everyone for an admin, one switch of two joined buttons */
 .seg { display: inline-flex; align-self: flex-start; margin: calc(-1 * var(--s-2)) 0 var(--s-4); }
 .seg .btn { border-radius: 0; }
@@ -1971,7 +1972,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
                      feed.agents.some(function (a) { return a.person === p.name; }),
              joined: live.some(function (d) { return d.last_used != null; }),
              held: held, projects: names,
-             gitlab: gitlabOn() ? p.gitlab_user || "" : null };
+             gitlab: gitlabOn() ? p.gitlab_user || "" : null, linked: !!p.gitlab_user,
+             manager: isManagerAccount(p), team: !!p.team };
   }
   function setProject(v, project, on) {
     var k = v.name + "\n" + project, reg = feed.projects.some(function (p) { return p.name === project; });
@@ -2025,6 +2027,21 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         }, function (e) { teamErr("team-err", e.message); throw e; });
     }, on ? { edit: true } : null);
   }
+  /* Make team machine: a person with no GitLab link becomes a shared team machine (the hub refuses if it cannot) */
+  function makeTeam(v, b) {
+    confirmInline(b, v.name + " becomes a shared team machine: it leaves People, loses admin, and its sessions are visible to everyone with access to the project.",
+                  "Make team machine", function () {
+      return api(apiPath("/api/people/", v.name, "/team")).then(function (r) { return r.json(); })
+        .then(function () {
+          if (openPerson === v.name) openPerson = null;
+          teamErr("team-err", "");
+          var ok = $("team-ok");
+          ok.hidden = false; ok.textContent = v.name + " is now a team machine.";
+          clearTimeout(ok._t); ok._t = setTimeout(function () { ok.hidden = true; }, 8000);
+          return get("/api/feed").then(function (f) { feed = f; });
+        }, function (e) { teamErr("team-err", e.message); throw e; });
+    });
+  }
   function gitlabOn() { return !!(gitlab && gitlab.on); }
   function editGitlab(v, b) {
     confirmInline(b, null, "Save", function (text) {
@@ -2070,7 +2087,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     if (!v.admin) role = button("Make admin", "", function () { setAdmin(v, role, true); }, { "aria-label": "Make " + v.name + " an admin" });
     else if (!v.self || v.admins > 1) role = button("Remove admin", "quiet-danger", function () { setAdmin(v, role, false); },
                                                    { "aria-label": v.self ? "Remove your own admin role" : "Remove " + v.name + "'s admin role" });
-    var acts = [gl, invite, role, act].filter(Boolean);
+    var tm = null;  /* admin only (this list is); not the manager, a team machine, yourself, or anyone with a GitLab link */
+    if (!v.self && !v.manager && !v.team && !v.linked) tm = button("Make team machine", "", function () { makeTeam(v, tm); }, { "aria-label": "Make " + v.name + " a team machine" });
+    var acts = [gl, invite, role, tm, act].filter(Boolean);
     var row = el("div", { "class": "person" + (open ? " open" : ""), "data-person": v.name }, [
       el("div", { "class": "p-line" }, [main, acts.length ? el("span", { "class": "p-act" }, acts) : null])]);
     if (linkFor && linkFor.name === v.name) {
@@ -2563,7 +2582,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     }
     return el("div", { "class": "a-row", "data-machine": String(d.id) }, [
       avatar("machine", d.name, { dot: !!d.online }),
-      el("div", { "class": "a-text" }, [el("b", { text: d.name, title: d.name === d.machine ? d.name : d.name + " (" + d.machine + ")" }), sub]),
+      el("div", { "class": "a-text" }, [el("b", { text: d.name, title: d.name === d.machine ? d.name : d.name + " (" + d.machine + ")" }), d.emergency ? chip("This hub", "idle", "a-hub") : null, sub]),
       acts]);
   }
   /* a team machine you can use: shared by the team, so no Rename or Remove here */

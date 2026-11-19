@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.21
+
+- **Team machines on the page and in the list.** Settings → People has **Make team machine** on a row (admin only, asked first; not for yourself, the manager, a team machine or anyone linked to GitLab). The hub's refusal shows on the page. `kaptyorka people` shows "team" in the ROLE column for team machines. The Machines page marks the hub key's device **This hub**.
+
 ## 0.9.20
 
 - **The hub key.** The device token in `~/.kaptyorka/admin-token` on the hub machine has every admin right whatever its person's role: the emergency link opens the page, and the admin commands on the hub machine work, even after its person is demoted or when nobody is an admin. Lost every admin? On the hub machine run `kaptyorka people role <you> admin --hub-key`. `kaptyorka start` keeps the key while its device is live (it no longer makes a new one for the oldest admin), writes it 0600, and fixes the mode of an existing one. A copied token stops working once its device is revoked. The Account page's **Remove** refuses the hub key, but an admin can still revoke its device from Team settings or with `kaptyorka people revoke`; the next `kaptyorka start` then makes a new key for the oldest admin. Anyone logged in as the hub's OS account, including any agent session running there, can read the hub key and so has every admin right. Keep that account to the people who manage the hub. The manager also runs through the hub key's bridge whatever its person's role.

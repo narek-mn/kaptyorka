@@ -228,6 +228,17 @@ def test_team_people_rows(hub):
     assert 'document.execCommand("copy")' in code and "window.isSecureContext" in code
 
 
+def test_team_machine_button_and_hub_label(hub):
+    html = page(hub)
+    code = team_code(html)
+    assert 'button("Make team machine"' in code and "!v.self && !v.manager && !v.team && !v.linked" in code
+    assert 'api(apiPath("/api/people/", v.name, "/team"))' in code and "teamErr(\"team-err\", e.message)" in code
+    assert (" becomes a shared team machine: it leaves People, loses admin, and its sessions are"
+            " visible to everyone with access to the project.") in code
+    assert "confirm(" not in code
+    assert 'd.emergency ? chip("This hub"' in html
+
+
 def test_old_admin_links_open_team(hub):
     html = page(hub)
     assert 'return ["settings", "team/people"];' in html

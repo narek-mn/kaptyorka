@@ -1441,3 +1441,43 @@ def test_one_machines_page_for_members_and_admins(tmp_path, w, h):
     finally:
         stop()
         store.close()
+
+
+def test_make_team_machine_button_and_this_hub(tmp_path):
+    """Make team machine shows on a plain member's row only (asked first, refusal shown); the hub
+    key's device on the Machines page says This hub. Screenshots to KAPTYORKA_SHOTS."""
+    import os
+    from kaptyorka import paths
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    _, token = person(store, "alice", "admin")
+    (paths.home() / "admin-token").write_text(token + "\n")  # alice's device is the hub key
+    bob, bob_t = person(store, "bob")
+    person(store, "carol")
+    store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(bob_t))
+    row = 'document.querySelector("#people-rows [data-person=\\"{}\\"]")'.format
+    try:
+        with chrome(1440, 900) as page:
+            page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=team")
+            page.wait(f'!!{row("bob")}')
+            assert "Make team machine" in page.js(f'{row("bob")}.textContent')
+            assert "Make team machine" not in page.js(f'{row("alice")}.textContent')
+            page.screenshot(shots / "people-team-button-desktop.png")
+            click(page, '#people-rows [data-person="bob"]', "Make team machine")
+            page.wait(f'!!{row("bob")}.querySelector(".confirm")')
+            assert page.js(f'{row("bob")}.querySelector(".confirm span").textContent') == (
+                "bob becomes a shared team machine: it leaves People, loses admin, and its sessions"
+                " are visible to everyone with access to the project.")
+            click(page, '#people-rows [data-person="bob"] .confirm', "Make team machine")
+            page.wait(f'!{row("bob")}')
+            assert [p for p in store.people() if p["name"] == "bob"][0]["team"]
+            page.js('location.hash = "#settings/account/machines"')
+            page.wait('!!document.querySelector("#a-machines .a-hub")')
+            assert page.js('document.querySelector("#a-machines .a-hub").textContent') == "This hub"
+            page.screenshot(shots / "machines-this-hub-desktop.png")
+    finally:
+        stop()
+        store.close()
