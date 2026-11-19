@@ -2051,7 +2051,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     }, { ask: "GitLab username", value: v.gitlab, edit: true, max: "255" });
   }
   function personRow(v) {
-    var open = !v.admin && openPerson === v.name, id = "pp-" + v.name.replace(/[^A-Za-z0-9_-]/g, "_");
+    var canTeam = !v.self && !v.manager && !v.team && !v.linked;  /* Make team machine: in the detail view */
+    var expands = !v.admin || canTeam;
+    var open = expands && openPerson === v.name, id = "pp-" + v.name.replace(/[^A-Za-z0-9_-]/g, "_");
     var held = v.projects.filter(function (n) { return v.held[n]; });
     var summary = v.self ? "you" : v.admin ? "every project" : !v.joined ? "hasn't joined yet" : held.length ? held.join(", ") : "no projects";
     var lead = avatar("person", v.name, { dot: v.online });
@@ -2060,7 +2062,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     var parts = [lead, who,
                  el("span", { "class": "p-sum" + (v.joined && held.length ? "" : " quiet"), title: summary, text: summary })];
     var main;
-    if (v.admin) main = el("div", { "class": "p-main still" }, parts);
+    if (!expands) main = el("div", { "class": "p-main still" }, parts);
     else {
       main = el("button", { type: "button", "class": "p-main", "aria-expanded": open ? "true" : "false", "aria-controls": id,
                             title: open ? "Hide projects" : "Projects" }, parts.concat([icon("i-chev", 14)]));
@@ -2087,9 +2089,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     if (!v.admin) role = button("Make admin", "", function () { setAdmin(v, role, true); }, { "aria-label": "Make " + v.name + " an admin" });
     else if (!v.self || v.admins > 1) role = button("Remove admin", "quiet-danger", function () { setAdmin(v, role, false); },
                                                    { "aria-label": v.self ? "Remove your own admin role" : "Remove " + v.name + "'s admin role" });
-    var tm = null;  /* admin only (this list is); not the manager, a team machine, yourself, or anyone with a GitLab link */
-    if (!v.self && !v.manager && !v.team && !v.linked) tm = button("Make team machine", "", function () { makeTeam(v, tm); }, { "aria-label": "Make " + v.name + " a team machine" });
-    var acts = [gl, invite, role, tm, act].filter(Boolean);
+    var acts = [gl, invite, role, act].filter(Boolean);
     var row = el("div", { "class": "person" + (open ? " open" : ""), "data-person": v.name }, [
       el("div", { "class": "p-line" }, [main, acts.length ? el("span", { "class": "p-act" }, acts) : null])]);
     if (linkFor && linkFor.name === v.name) {
@@ -2099,8 +2099,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     }
     if (open) {
       var list = el("div", { "class": "p-projects", id: id, role: "group", "aria-label": v.name + "'s projects" });
-      if (!v.projects.length) list.appendChild(el("span", { "class": "quiet", text: "No projects yet" }));
-      v.projects.forEach(function (n) {
+      if (!v.admin && !v.projects.length) list.appendChild(el("span", { "class": "quiet", text: "No projects yet" }));
+      (v.admin ? [] : v.projects).forEach(function (n) {
         var k = v.name + "\n" + n, box = el("input", { type: "checkbox", "data-k": k });
         box.checked = !!v.held[n];
         box.disabled = pending[k] !== undefined;
@@ -2111,6 +2111,10 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       if (!v.joined) {  /* a name typed wrong: it can go before they ever join */
         var rm = button("Remove", "quiet-danger", function () { removePerson(v, rm); }, { "aria-label": "Remove " + v.name });
         list.appendChild(el("span", { "class": "p-rm" }, [rm]));
+      }
+      if (canTeam) {  /* a one-off action for the hub's own account: quiet, at the bottom */
+        var tm = button("Make team machine", "", function () { makeTeam(v, tm); }, { "aria-label": "Make " + v.name + " a team machine" });
+        list.appendChild(el("span", { "class": "p-rm" }, [tm]));
       }
       row.appendChild(list);
     }

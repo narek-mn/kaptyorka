@@ -231,7 +231,7 @@ def test_team_people_rows(hub):
 def test_team_machine_button_and_hub_label(hub):
     html = page(hub)
     code = team_code(html)
-    assert 'button("Make team machine"' in code and "!v.self && !v.manager && !v.team && !v.linked" in code
+    assert 'button("Make team machine", ""' in code and code.index("if (canTeam) {") > code.index("p-projects") and "var canTeam = !v.self && !v.manager && !v.team && !v.linked;" in code
     assert 'api(apiPath("/api/people/", v.name, "/team"))' in code and "teamErr(\"team-err\", e.message)" in code
     assert (" becomes a shared team machine: it leaves People, loses admin, and its sessions are"
             " visible to everyone with access to the project.") in code

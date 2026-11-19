@@ -1463,9 +1463,14 @@ def test_make_team_machine_button_and_this_hub(tmp_path):
         with chrome(1440, 900) as page:
             page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=team")
             page.wait(f'!!{row("bob")}')
-            assert "Make team machine" in page.js(f'{row("bob")}.textContent')
+            assert "Make team machine" not in page.js(f'{row("bob")}.querySelector(".p-act").textContent')
+            page.screenshot(shots / "people-rows-desktop.png")
+            page.js(f'{row("alice")}.querySelector(".p-main").click()')  # yourself: nothing to open
             assert "Make team machine" not in page.js(f'{row("alice")}.textContent')
-            page.screenshot(shots / "people-team-button-desktop.png")
+            page.js(f'{row("bob")}.querySelector(".p-main").click()')
+            page.wait(f'!!{row("bob")}.querySelector(".p-projects")')
+            assert "Make team machine" in page.js(f'{row("bob")}.querySelector(".p-projects").textContent')
+            page.screenshot(shots / "people-detail-team-button-desktop.png")
             click(page, '#people-rows [data-person="bob"]', "Make team machine")
             page.wait(f'!!{row("bob")}.querySelector(".confirm")')
             assert page.js(f'{row("bob")}.querySelector(".confirm span").textContent') == (
