@@ -532,16 +532,16 @@ def test_a_session_on_a_visible_team_machine_still_needs_its_project_role(store)
     person(store, "alice", "admin")
     bob, _ = person(store, "bob")
     carol, _ = person(store, "carol")
-    store.project_register("gros", by="alice")
-    store.grant_project("gros", carol, "write", "alice")
+    store.project_register("proj-b", by="alice")
+    store.grant_project("proj-b", carol, "write", "alice")
     _, code = store.team_machine_add("jet-1", "alice")
     token, _ = store.invite_redeem(code, "jet-1", host="jet-1", os_user="nvidia")
-    store.seen("t-g", "jet-1", "claude", "gros", principal=store.authenticate(token))
+    store.seen("t-g", "jet-1", "claude", "proj-b", principal=store.authenticate(token))
     sessions = lambda n: [a for a in feed(store, who(store, n))["agents"] if a["person"] == "jet-1 (team)"]
     assert sessions("bob") == [] and len(sessions("carol")) == 1
     [m] = admin_ops.account(store, who(store, "bob"))["team_machines"]  # the machine shows to both
-    assert m["projects"] == [] and "gros" not in repr(WorkerStore(store).machine_rows(who(store, "bob")))
-    assert admin_ops.account(store, who(store, "carol"))["team_machines"][0]["projects"] == ["gros"]
+    assert m["projects"] == [] and "proj-b" not in repr(WorkerStore(store).machine_rows(who(store, "bob")))
+    assert admin_ops.account(store, who(store, "carol"))["team_machines"][0]["projects"] == ["proj-b"]
 
 
 def test_title_shows_only_to_those_who_may_see_the_session(store, team):
