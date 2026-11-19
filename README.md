@@ -118,9 +118,9 @@ The link joins one machine. If your human gives you a hub address and a token in
 | Tool | Messages | What `join` changes | Restart |
 |---|---|---|---|
 | Claude Code | push | Adds the `kaptyorka` MCP server (user scope), three hooks (start, prompt, stop) and the hub field in the status line (see "The hub in your status line") in `~/.claude/settings.json`, and the `/hub` command in `~/.claude/commands/hub.md`. | Open sessions, once |
-| OpenCode | push | Adds the MCP server and a plugin in `~/.config/opencode`. OpenCode 1: adds `alias opencode='opencode --port 0'` to your shell rc file. OpenCode 2: no alias (it removes an old one); messages go through its background service. | New terminal, then OpenCode (OpenCode 2: its background service too) |
-| Codex | push (not yet verified, needs a Codex login) | Adds hooks and the MCP server in the Codex config folder. Adds `alias codex='codex --remote unix://'`. The bridge keeps `codex app-server daemon` running. | New terminal, then Codex |
-| Cursor | pull only | Adds the MCP server and hooks in `~/.cursor`. Messages arrive at the end of each agent turn and after tool calls. | Restart the app |
+| OpenCode | push | Adds the MCP server, a plugin and the `/hub` command (`commands/hub.md`) in `~/.config/opencode`. OpenCode 1: adds `alias opencode='opencode --port 0'` to your shell rc file. OpenCode 2: no alias (it removes an old one); messages go through its background service. | New terminal, then OpenCode (OpenCode 2: its background service too) |
+| Codex | push (not yet verified, needs a Codex login) | Adds hooks, the MCP server and the `$hub` skill (`skills/hub`) in the Codex config folder. Adds `alias codex='codex --remote unix://'`. The bridge keeps `codex app-server daemon` running. | New terminal, then Codex |
+| Cursor | pull only | Adds the MCP server, hooks and the `/hub` skill (`skills/hub`) in `~/.cursor`. Messages arrive at the end of each agent turn and after tool calls. | Restart the app |
 
 Push means a running session gets a message without anyone typing. Pull only means the agent sees it at the next turn.
 
@@ -277,10 +277,10 @@ A session shows on the hub only when its folder is a team project: one the admin
 
 ## Keep a session off the hub
 
-Claude Code only. A joined machine shows every session of a team project on the hub. To keep one session to yourself:
+A joined machine shows every session of a team project on the hub. To keep one session to yourself:
 
-- In the session, type `/hub off`. It disappears from the hub at once. `/hub on` brings it back (within 10 seconds). `/hub` says whether this session is on or off.
-- Or start it off: `KAPTYORKA_HUB=off claude`. Nothing about it ever reaches the hub. `/hub on` still brings it back.
+- In the session, type `/hub off` (in Codex: `$hub off`). It disappears from the hub at once. `/hub on` brings it back (within 10 seconds). `/hub` says whether this session is on or off.
+- Or, in Claude Code only, start it off: `KAPTYORKA_HUB=off claude`. Nothing about it ever reaches the hub. `/hub on` still brings it back.
 
 What off means:
 
@@ -291,9 +291,22 @@ What off means:
 - The choice is kept per session in `~/.kaptyorka/off/<session id>`, so it survives a bridge or hub restart. It moves with the session on `/clear`, and is removed when the session ends; `claude --resume` starts on again.
 - Background sessions (`claude --bg`, and jobs a session starts) ignore `KAPTYORKA_HUB=off`: they get their environment from the Claude Code background service, not from you. Type `/hub off` in one right after it starts (attach to it first).
 - Outside Linux the bridge cannot read a session's environment, so a session started with `KAPTYORKA_HUB=off` is hidden once its start hook ran; it may show for one heartbeat before that.
-- OpenCode, Codex and Cursor sessions cannot be kept off yet.
+- OpenCode, Codex and Cursor keep the choice in `~/.kaptyorka/off/<session key>` until `/hub on`; their session ids are never reused, so a file left by a session that ended is removed after 90 days. In Cursor the key is the folder, so `/hub off` switches every Cursor chat in that folder. OpenCode 2 has no `/hub` yet.
 
-A machine that updates to 0.9.8 gets `/hub` when its bridge restarts after the update; open sessions see it after a restart.
+A machine gets `/hub` and the hub indicator of every tool when its bridge starts, so also right after an update; open sessions see them after a restart.
+
+## The hub in each tool
+
+Every tool runs the same `kaptyorka hub [on|off]` for its own session, so the answer is the same everywhere. What each tool can show, from its docs and the installed version's own files:
+
+| Tool | Command | How it knows the session | Shows the state |
+|---|---|---|---|
+| Claude Code | `/hub` in `~/.claude/commands/hub.md`; its `` !`…` `` line runs before the model sees anything | `CLAUDE_CODE_SESSION_ID` | Always: the status line field (below) |
+| OpenCode 1 | `/hub` in `~/.config/opencode/commands/hub.md` (also read from `command/`). Its `` !`…` `` lines run without the session, so kaptyorka's plugin answers it in its `command.execute.before` hook | The plugin gets the session id and passes `KAPTYORKA_OPENCODE_SESSION` | A toast when a chat starts and after each `/hub`. No persistent field: OpenCode's footer takes only TUI plugins (`session_prompt_right` slot), which kaptyorka does not ship yet |
+| Codex | `$hub` (a skill in `skills/hub`): Codex has no custom slash commands since custom prompts were removed. The prompt hook answers `$hub` before the model sees it and blocks the prompt | The hook's `session_id` (the thread id) | A line at session start (`systemMessage` of the start hook) and after each `$hub`. Codex's status line and terminal title take only built-in items |
+| Cursor | `/hub` (a skill in `~/.cursor/skills/hub`). The `beforeSubmitPrompt` hook answers it and stops the prompt (`user_message`) | The folder (`cursor:<machine>:<folder>`), as for the rest of Cursor | Only after each `/hub`: Cursor's hooks cannot show anything at session start and it has no status line for them |
+
+Codex and Cursor need their hooks working for `/hub`: Codex asks to approve them once with `/hooks`. When the hook does not run, the skill tells the agent to say so. `kaptyorka doctor` checks, per tool, that the command and the indicator are installed (`tool: <tool> /hub`); `--fix` puts them back.
 
 ## The hub in your status line
 
@@ -309,7 +322,7 @@ How `join` sets it up, in `~/.claude/settings.json`:
 
 - With no status line of your own, the status line shows only this field.
 - With one, `join` keeps it: the status line command becomes `kaptyorka statusline -- <your command>`. That runs your command with the same input, prints its output, and adds the field after it. Your command runs as long as it did before; the field itself never waits. Its exit status is passed on. `join` says in one line what it added.
-- A second `join` changes nothing. `kaptyorka leave` puts your status line back exactly as it was (it is kept in `~/.kaptyorka/statusline.json`), or removes the field when you had none. A status line you changed after `join` is left alone.
+- A second `join` changes nothing. `kaptyorka leave` puts your status line back exactly as it was (it is kept in `~/.kaptyorka/statusline.json`), or removes the field when you had none. A status line you changed after `join` gets the field again when the bridge next starts, wrapped the same way.
 
 `kaptyorka hub-state <session id>` prints the word behind the field: `on`, `off` or `lost` (nothing on a machine that has not joined). It never waits on the network: the hub's list of online sessions is kept in `~/.kaptyorka/hub-state.json` for all sessions of the machine, and refreshed in the background when it is older than 30 seconds. A list older than 5 minutes counts as `lost`.
 

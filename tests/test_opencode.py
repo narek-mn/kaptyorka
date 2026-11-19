@@ -128,7 +128,7 @@ def test_configure_merges_mcp_and_plugin(home, monkeypatch):
     assert '"/k"' in plugin and "experimental.chat.system.transform" in plugin
     assert "alias opencode='opencode --port 0'" in (home / ".bashrc").read_text()
     assert any("--port 0" in line for line in first)
-    assert len(first) == 3
+    assert len(first) == 4  # MCP, plugin, /hub command, alias
     assert a.configure("/k") == []
     assert (home / ".bashrc").read_text().count("alias opencode=") == 1
 

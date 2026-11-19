@@ -26,6 +26,21 @@ ALIAS = "alias codex='codex --remote unix://'"
 START, END = "# kaptyorka start", "# kaptyorka end"
 APPROVE = "codex: approve the kaptyorka hooks once with /hooks in Codex"
 EVENTS = (("SessionStart", "start"), ("UserPromptSubmit", "prompt"), ("Stop", "stop"))
+SKILL_MARK = "<!-- written by kaptyorka; it rewrites this file -->"
+# Codex has no custom slash commands (custom prompts are gone): a skill, typed `$hub on`. The
+# prompt hook answers it before the model sees it; the text below is only for when it did not.
+SKILL = f"""\
+---
+name: hub
+description: Show or switch whether this Codex session is on the kaptyorka hub. Type $hub, $hub on or $hub off.
+---
+{SKILL_MARK}
+kaptyorka's prompt hook answers `$hub`, `$hub on` and `$hub off` before you see them. You see
+this because it did not run. Tell the user, word for word: "kaptyorka: $hub did not run, because
+Codex has not approved the kaptyorka hooks yet; approve them with /hooks and try again."
+Run nothing yourself.
+"""
+SKILL_POLICY = "# written by kaptyorka\npolicy:\n  allow_implicit_invocation: false\n"
 
 
 def codex_home(home: Optional[Path] = None) -> Path:
@@ -269,8 +284,28 @@ class CodexAdapter:
             trust += f'{table}\ntrusted_hash = {json.dumps(h["currentHash"])}\n'
         return trust
 
+    def install_hub(self, kaptyorka: str) -> List[str]:
+        """The `$hub` skill; the hooks answer it and show the state at session start. Also run
+        at bridge start. A hub skill someone else wrote is left alone."""
+        folder = codex_home(self.home) / "skills" / "hub"
+        try:
+            old = (folder / "SKILL.md").read_text() if (folder / "SKILL.md").exists() else None
+            if old is not None and SKILL_MARK not in old:
+                self.log(f"left alone, not written by kaptyorka: {folder / 'SKILL.md'}")
+                return []
+            policy = folder / "agents" / "openai.yaml"
+            if old == SKILL and policy.exists() and policy.read_text() == SKILL_POLICY:
+                return []
+            policy.parent.mkdir(parents=True, exist_ok=True)
+            write_atomic(folder / "SKILL.md", SKILL)
+            write_atomic(policy, SKILL_POLICY)
+        except OSError as e:
+            self.log(f"could not write {folder}: {e}")
+            return []
+        return [f"Codex: $hub skill written to {folder}"]
+
     def configure(self, kaptyorka: str) -> List[str]:
-        lines = []
+        lines = self.install_hub(kaptyorka)
         conf = codex_home(self.home)
 
         index: Dict[str, int] = {}  # event -> our group's index in hooks.json
@@ -353,6 +388,13 @@ class CodexAdapter:
     def unconfigure(self) -> List[str]:
         lines = []
         conf = codex_home(self.home)
+        folder = conf / "skills" / "hub"
+        try:
+            if SKILL_MARK in (folder / "SKILL.md").read_text():
+                shutil.rmtree(folder)
+                lines.append(f"Codex: $hub skill removed ({folder})")
+        except OSError:
+            pass
 
         def drop(data: dict) -> bool:
             hooks = data.get("hooks")

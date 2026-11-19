@@ -347,7 +347,11 @@ class ClaudeAdapter:
             self.log(f"left alone, not valid JSON: {settings}")
         elif result == "changed":
             lines.append(f"Claude Code: kaptyorka hooks added to {settings}")
-        return lines + self.wire_status(kaptyorka) + self.install_command(kaptyorka)
+        return lines + self.install_hub(kaptyorka)
+
+    def install_hub(self, kaptyorka: str) -> List[str]:
+        """The /hub command and the hub field in the status line; also run at bridge start."""
+        return self.wire_status(kaptyorka) + self.install_command(kaptyorka)
 
     def wire_status(self, kaptyorka: str) -> List[str]:
         """Put the hub field in the status line. With none, the line shows only the field; with

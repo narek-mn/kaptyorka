@@ -1,9 +1,12 @@
 """`kaptyorka hook <tool> <event>`: print the hub's brief for this session. Silent on any failure."""
 import json
 import os
+import re
+import shutil
 import subprocess
+import sys
 import time
-from typing import Callable, Dict
+from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
 from kaptyorka import facts, http, offhub, paths
@@ -31,6 +34,34 @@ def main(tool: str, event: str, stdin: str = "", run=subprocess.run) -> int:
     if out:
         print(out)
     return 0
+
+
+HUB_PROMPT = re.compile(r"\s*[/$]hub(?:\s+(.*?))?\s*")
+
+
+def hub_words(prompt) -> Optional[List[str]]:
+    """The words after /hub (or $hub, as Codex runs skills) when the prompt is that command
+    alone; None for any other prompt."""
+    m = HUB_PROMPT.fullmatch(prompt) if isinstance(prompt, str) else None
+    return None if m is None else (m.group(1) or "").split()
+
+
+def _exe() -> str:
+    me = sys.argv[0] if sys.argv else ""
+    return me if os.path.basename(me) == "kaptyorka" else shutil.which("kaptyorka") or "kaptyorka"
+
+
+def _hub_line(ident: Identity, words: List[str], run) -> str:
+    """What `kaptyorka hub <words>` prints for this session: the same command /hub runs in
+    Claude Code and OpenCode, so every tool answers alike. "" when it did not run."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CLAUDE_CODE_SESSION_ID", offhub.OPENCODE_SESSION)}  # this key decides
+    try:
+        r = run([_exe(), "hub", *words], capture_output=True, text=True, timeout=TIMEOUT_S,
+                cwd=ident.cwd or None, env={**env, offhub.SESSION_KEY: ident.key})
+    except Exception:
+        return ""
+    return (r.stdout or "").strip()
 
 
 def _git_query(cwd: str, run, deadline: float) -> str:
@@ -76,10 +107,28 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
             cwd = data.get("cwd") or os.getcwd()
             ident = Identity(f"{prefix}:{data['session_id']}", cfg.get("machine", ""), tool,
                              os.path.basename(cwd.rstrip("/")), cwd)
+        elif tool == "cursor" and event == "prompt" and isinstance(workspace, str) and workspace:
+            # the same key identify() gives Cursor: its folder names the session
+            ident = Identity(f"cursor:{cfg.get('machine', '')}:{workspace}", cfg.get("machine", ""),
+                             tool, os.path.basename(workspace.rstrip("/")), workspace)
         else:
             ident = identify(cfg.get("machine", ""), workspace=workspace)
         if ident is None:
             return ""
+        if event == "prompt" and tool in ("codex", "cursor"):
+            words = hub_words(data.get("prompt"))
+            if words is not None:  # /hub typed into the chat: answered here, never sent on
+                line = _hub_line(ident, words, run) or "kaptyorka: /hub did not run"
+                if tool == "codex":
+                    return json.dumps({"decision": "block", "reason": line, "systemMessage": line})
+                return json.dumps({"continue": False, "user_message": line})
+            if tool == "cursor":
+                return json.dumps({"continue": True})
+        shown = ""
+        if tool == "codex" and event == "start":
+            shown = _hub_line(ident, [], run)  # Codex shows no status line: say it at start
+            if offhub.personal(ident.project, ident.cwd, ident.key) or offhub.off(ident.key):
+                return json.dumps({"systemMessage": shown}) if shown else ""
         if offhub.personal(ident.project, ident.cwd, ident.key):
             return ""  # not a team project's folder: nothing is sent, nothing is shown
         if tool == "claude-code":
@@ -87,8 +136,8 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
             found = offhub.session(sid) if event == "start" else None
             if found is not None:
                 offhub.started(sid, *found, os.environ)
-            if offhub.off(ident.key):
-                return ""  # kept off the hub: nothing is sent, nothing is shown
+        if offhub.off(ident.key):
+            return ""  # kept off the hub: nothing is sent, nothing is shown
 
         deadline = time.monotonic() + TIMEOUT_S  # one budget for all calls of this hook
 
@@ -113,6 +162,9 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
         if status != 200 or not isinstance(brief, str):
             brief = ""
         brief = "\n\n".join(p for p in (reason, brief) if p)
+        if shown:
+            return json.dumps({**(json.loads(fmt(event, brief)) if brief else {}),
+                               "systemMessage": shown})
         if brief:
             return fmt(event, brief)
     except Exception:

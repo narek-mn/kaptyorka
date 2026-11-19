@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **`/hub on` and `/hub off` in every tool.** OpenCode gets `/hub` (its plugin runs it for the right session and shows the answer as a toast, also when a chat starts), Codex gets `$hub` (a skill its prompt hook answers, plus a line at session start saying whether the session is on the hub), and Cursor gets `/hub` (a skill its new `beforeSubmitPrompt` hook answers; in Cursor it switches the folder). All run the same `kaptyorka hub` as Claude Code. An off session of any tool is never reported by the bridge or the Cursor shim, gets no pushed messages, and its hooks and kaptyorka tools stay silent. `/hub` also says when a folder that is not a team project keeps the session off anyway.
+- The bridge installs each tool's `/hub` and hub indicator when it starts (Claude Code's status line field too), so an update brings them without joining again. `kaptyorka doctor` checks them per tool and `--fix` puts them back. The README has what each tool can show.
+
 ## 0.9.25
 
 - The manager starts again on a hub whose own account is a team machine (0.9.24 sent the start for the admin, and the hub account's bridge refused it).
