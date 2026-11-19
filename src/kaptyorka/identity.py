@@ -89,6 +89,18 @@ RESOLVERS: Dict[str, Callable[[int, str], Optional[str]]] = {
 }
 
 
+def project_of(cwd: str) -> str:
+    """A session's project from its folder: the folder's name, or the registered project its git
+    remote names when the name is no team project (repos.resolve, from the bridge's list)."""
+    from kaptyorka import offhub, repos
+
+    name = os.path.basename(cwd.rstrip("/"))
+    if not name:
+        return ""
+    team, _ = offhub.load_team()
+    return repos.resolve(name, cwd, team, offhub.load_repos())
+
+
 def _tool(pid: int, comm: str) -> Optional[str]:
     if _session_file(pid).exists():
         return "claude-code"
@@ -119,7 +131,7 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
     # set by the OpenCode plugin; OPENCODE_SESSION_ID by some OpenCode V2 builds
     sid = os.environ.get("KAPTYORKA_OPENCODE_SESSION") or os.environ.get("OPENCODE_SESSION_ID")
     if sid:
-        project = os.path.basename(os.getcwd().rstrip("/"))
+        project = project_of(os.getcwd())
         tool_pid = int(os.environ.get("OPENCODE_PID") or os.getppid())
         return Identity(f"opencode:{sid}", machine, "opencode", project,
                         os.getcwd(), tool_pid) if project else None
@@ -146,7 +158,7 @@ def _identify(machine: str, pid: int, workspace: Optional[str]) -> Optional[Iden
     else:
         resolve = RESOLVERS.get(tool)
         key = resolve(tool_pid, cwd) if resolve else None
-    project = os.path.basename(cwd.rstrip("/"))
+    project = project_of(cwd)
     if not key or not project:
         return None
     return Identity(key, machine, tool, project, cwd, tool_pid)

@@ -191,12 +191,14 @@ def clean() -> None:
                 pass
 
 
-def save_team(team: Optional[set], keep: set, mine: Optional[list] = None) -> None:
+def save_team(team: Optional[set], keep: set, mine: Optional[list] = None,
+              repos: Optional[dict] = None) -> None:
     """The bridge saves the hub's list of team projects (None: the hub sent none), the keys
-    of the workers it started and the team projects its person has a role in (for the help a
-    refused call gets), for the shims and hooks of this machine."""
+    of the workers it started, the team projects its person has a role in (for the help a
+    refused call gets) and the registered repos' fingerprints ({fingerprint: project}, see
+    repos.py), for the shims and hooks of this machine."""
     body = {"team": None if team is None else sorted(team), "keep": sorted(keep),
-            "mine": None if mine is None else sorted(mine)}
+            "mine": None if mine is None else sorted(mine), "repos": repos or {}}
     try:
         tmp = paths.home() / f".{TEAM}.tmp"
         tmp.write_text(json.dumps(body))
@@ -217,6 +219,16 @@ def load_team() -> Tuple[Optional[set], set]:
     team, keep = st.get("team"), st.get("keep")
     return ({t for t in team if isinstance(t, str)} if isinstance(team, list) else None,
             {k for k in keep if isinstance(k, str)} if isinstance(keep, list) else set())
+
+
+def load_repos() -> dict:
+    """{fingerprint: project} of the registered repos, as the bridge saved them; {} when none."""
+    try:
+        repos = json.loads((paths.home() / TEAM).read_text()).get("repos")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {k: v for k, v in repos.items() if isinstance(k, str) and isinstance(v, str)} \
+        if isinstance(repos, dict) else {}
 
 
 def load_mine() -> Optional[List[str]]:

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import __version__, facts, http, identity, offhub, optin, orders, paths, skills_sync, usage
+from kaptyorka import __version__, facts, http, identity, offhub, optin, orders, paths, repos, skills_sync, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES, Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
@@ -76,6 +76,7 @@ class Bridge:
         # one lost answer never hides sessions. None: no list (a hub older than 0.9.11)
         self._list = offhub.load_team()
         self._mine = offhub.load_mine()  # the team projects this machine's person has a role in
+        self._repos = offhub.load_repos()  # {fingerprint: project} of the registered repos
         self._facts: dict = {}
         self._facts_at: Optional[float] = None  # monotonic time of the last build; None forces one
         self._usage = usage.Sampler()
@@ -158,14 +159,18 @@ class Bridge:
         if status != 200 or not isinstance(answer, dict):
             return
         team, keep, mine = answer.get("team"), answer.get("keep"), answer.get("projects")
+        got = answer.get("repos")
+        found = {k: v for k, v in got.items() if isinstance(k, str) and isinstance(v, str)} \
+            if isinstance(got, dict) else {}
         new = ({t for t in team if isinstance(t, str)} if isinstance(team, list) else None,
                {k for k in keep if isinstance(k, str)} if isinstance(keep, list) else set())
         # the help a refused call gets names only registered projects of this person
         mine = sorted(m for m in mine if isinstance(m, str) and new[0] is not None
                       and m in new[0]) if isinstance(mine, list) else None
-        if new != self._list or mine != self._mine or not (paths.home() / offhub.TEAM).exists():
-            self._list, self._mine = new, mine
-            offhub.save_team(*new, mine)  # for this machine's shims and hooks
+        if new != self._list or mine != self._mine or found != self._repos \
+                or not (paths.home() / offhub.TEAM).exists():
+            self._list, self._mine, self._repos = new, mine, found
+            offhub.save_team(*new, mine, found)  # for this machine's shims and hooks
 
     def heartbeat(self, again: bool = True) -> None:
         offhub.clean()
@@ -185,9 +190,11 @@ class Bridge:
 
         def as_joined(s):
             """A joined session with its chosen project and nothing of its folder: no path, so
-            no git facts or folder list for it either."""
+            no git facts or folder list for it either. Any other session's project comes from
+            its folder's name or, when that is no team project, its git remote."""
             if s.key not in joined:
-                return s
+                project = repos.resolve(s.project, s.cwd, team, self._repos) if s.cwd else s.project
+                return s if project == s.project else replace(s, project=project)
             coordinator = joined[s.key] == paths.COORDINATOR
             return replace(s, project=joined[s.key], cwd="",
                            label=s.label or (optin.LABEL if coordinator else ""))

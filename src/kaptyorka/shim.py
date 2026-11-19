@@ -90,7 +90,7 @@ class Relay:
 
 
 async def _heartbeat(cfg: dict, first: identity.Identity) -> None:
-    own = os.path.basename(first.cwd.rstrip("/")) or first.project  # its folder's own name
+    own = identity.project_of(first.cwd) if first.cwd else first.project  # its folder's own
     while True:
         # a join or leave (/hub team) changes the project it reports
         ident = await anyio.to_thread.run_sync(
@@ -238,7 +238,7 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
         def meta_ident(sid: str) -> identity.Identity:
             return optin.apply(identity.Identity(
                 f"opencode:{sid}", cfg.get("machine", ""), "opencode",
-                os.path.basename(os.getcwd().rstrip("/")), os.getcwd(),
+                identity.project_of(os.getcwd()), os.getcwd(),
                 int(os.environ.get("OPENCODE_PID") or os.getppid())))
 
         def session_relay(sid: str, ident: identity.Identity) -> Relay:

@@ -959,6 +959,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                              "projects": [] if principal.legacy else
                              [p["name"] for p in store.projects_for(principal)],
                              "team": store.team_projects(),  # the bridge reports only these
+                             "repos": store.team_repos(),  # and folders whose remote is one
                              "keep": ws.live_keys_on(principal.device_id) if own else [],
                              "you": principal.person_name, "shared": principal.shared,
                              "skills_version": rs.skills_version(),

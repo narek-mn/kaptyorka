@@ -822,6 +822,21 @@ class Store:
             return [r["name"] for r in self.db.execute(
                 "SELECT name FROM projects WHERE archived_at IS NULL ORDER BY name")]
 
+    def team_repos(self) -> Dict[str, str]:
+        """{fingerprint of the repo: project} of the registered projects with a repo: bridges
+        match their sessions' git remotes against it (repos.py), never sending their own."""
+        from kaptyorka.repos import fingerprint
+
+        with self.lock:
+            rows = self.db.execute("SELECT name, repo FROM projects WHERE archived_at IS NULL"
+                                   " AND repo != ''").fetchall()
+        out: Dict[str, str] = {}
+        for r in rows:
+            f = fingerprint(r["repo"])
+            if f:
+                out[f] = r["name"]
+        return out
+
     def team_project(self, project: str) -> bool:
         """A session folder of a registered project (or a `--N` worktree of one)."""
         with self.lock:
