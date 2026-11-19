@@ -267,13 +267,24 @@ The old shared token cannot start, adopt or close workers. Use your own token.
 
 ## Only team projects reach the hub
 
-A session shows on the hub only when its folder is a team project: one the admin registered (a `<folder>--N` worktree counts as its project). Every other folder is personal and stays on your machine, as if it were switched off with `/hub off`: no presence, no folder name, no status, no git activity, no notes, no messages and no files. Its kaptyorka tools refuse with one line saying the folder is not a team project, and its hooks print nothing. So nobody on the hub can message it either.
+A session shows on the hub only when its folder is a team project: one the admin registered (a `<folder>--N` worktree counts as its project). Every other folder is personal and stays on your machine, as if it were switched off with `/hub off`: no presence, no folder name, no status, no git activity, no notes, no messages and no files. Its kaptyorka tools refuse, saying the folder is not a team project and how to put the session on the team (`/hub team`, below), and its hooks print nothing. So nobody on the hub can message it either.
 
 - When the admin registers a project, sessions in its folder appear within about 10 seconds. When the admin removes it, they disappear again.
 - The bridge decides from the list of team projects the hub sends with each heartbeat. It keeps the last list when a heartbeat fails and across restarts (`~/.kaptyorka/team.json`). With no list at all (an older hub that sends none) it reports nothing, and tools say the hub has not sent its team project list yet.
 - The hub checks again and drops anything a bridge or tool still sends from a personal folder.
 - Two sessions are always on the hub: the manager session, and workers the hub started.
 - At start, and when a project is removed, the hub deletes what it kept from sessions in personal folders: their session rows, the messages to and from them with their files, their knocks, doors, connection requests and done checks, and the git activity, finished workers and work requests of folders that are no project at all. Notes stay: a project's notes need a registered project, and a team-board note does not say which folder wrote it.
+
+### Put one session on the team: `/hub team`
+
+Sometimes a session in another folder works for the team: a coordinator on your laptop that directs sessions on team machines, or a session that works for a project from a folder with another name. You put that one session on the team yourself; nothing else in the folder changes.
+
+- `/hub team` makes it a **coordinator**: on the hub as your session with no project. It shows on Home with your sessions, labelled `coordinator` (with its Claude Code title when it has one). It can `who` and message every session you may reach (your own, and team machine sessions in projects you have a role in), and they can answer it. It reads and writes team notes; for a project's notes or state it names the project (`notes_read(topic, project="proj-a")`), and your role decides. `work` needs a project too.
+- `/hub team <project>` gives it that project: it counts as a session in that project's folder for who sees it, messages, notes, the brief and work. It needs your role in the project (an admin has every one) and the project registered; the hub checks before anything is saved.
+- `/hub team off` takes it back to the folder's own rules: it leaves the hub at once. `/hub` says which it is.
+- In OpenCode, Codex and Cursor the agent calls the `join_team(project)` tool instead (`""` to coordinate, `"off"` to leave), only when you asked it to. A tool call from a personal folder answers with how to do this and the projects you have a role in, for the agent to offer to you; it never switches on its own.
+- Nothing of the folder goes to the hub, even then: no folder name, no path, no git activity, no file list. Only the session itself, under the project it chose.
+- The choice is kept per session on this machine (`~/.kaptyorka/team/`), so it survives a restart of the kaptyorka tools in that session, and ends with the session. Other sessions in the same folder stay personal.
 
 ## Keep a session off the hub
 

@@ -92,11 +92,12 @@ COMMAND_MARK = "<!-- written by kaptyorka; it rewrites this file -->"
 
 
 def command_text(kaptyorka: str) -> str:
-    """~/.claude/commands/hub.md: `/hub`, `/hub on`, `/hub off`. The `!` line runs before the
-    model sees anything; the model cannot run the command itself."""
+    """~/.claude/commands/hub.md: `/hub`, `/hub on`, `/hub off`, `/hub team [project|off]`.
+    The `!` line runs before the model sees anything; the model cannot run the command itself."""
     exe = shlex.quote(kaptyorka)
-    return (f"---\ndescription: Show or switch whether this session is on the kaptyorka hub\n"
-            f"argument-hint: \"[on|off]\"\nallowed-tools: Bash({exe} hub:*)\n"
+    return (f"---\ndescription: Show or switch whether this session is on the kaptyorka hub,"
+            f" or put it on the team (team: coordinate; team <project>: work for one)\n"
+            f"argument-hint: \"[on|off|team [project|off]]\"\nallowed-tools: Bash({exe} hub:*)\n"
             f"disable-model-invocation: true\n---\n{COMMAND_MARK}\n"
             f"!`{exe} hub $ARGUMENTS`\n\n"
             "Tell the user the line above, word for word, and nothing else.\n")

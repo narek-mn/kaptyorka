@@ -14,7 +14,7 @@ from mcp.server.stdio import stdio_server
 
 from urllib.parse import quote
 
-from kaptyorka import http, identity, offhub, paths
+from kaptyorka import http, identity, offhub, optin, paths
 from kaptyorka.store import MAX_FILE
 
 TIMEOUT_S = 4.5  # whole call, connection included: the agent hears back within 5 s
@@ -26,6 +26,13 @@ FALLBACK_TOOLS = ["who", "send", "inbox", "status", "notes_list", "notes_read", 
                   "projects", "knock", "answer", "door_close", "request_access", "fetch_file",
                   "work", "workers", "adopt", "close_worker", "state", "state_write", "decide",
                   "rules", "propose_rule", "conflict", "work_decide", "log"]
+JOIN = types.Tool(  # answered by the shim itself: it saves the choice on this machine
+    name="join_team",
+    description=("Put this session on the team hub when its folder is no team project. Only "
+                 "when the user asked for it. project: a team project to work for, \"\" to "
+                 "coordinate sessions across projects (then name a project for notes and work), "
+                 "or \"off\" to leave. Same as /hub team [project] in Claude Code."),
+    input_schema={"type": "object", "properties": {"project": {"type": "string"}}})
 
 
 class Relay:
@@ -82,11 +89,15 @@ class Relay:
                 self.client = self.stop = None
 
 
-async def _heartbeat(cfg: dict, ident: identity.Identity) -> None:
-    body = {"machine": ident.machine,
-            "sessions": [{"key": ident.key, "tool": ident.tool, "project": ident.project}],
-            "facts": identity.facts()}
+async def _heartbeat(cfg: dict, first: identity.Identity) -> None:
+    own = os.path.basename(first.cwd.rstrip("/")) or first.project  # its folder's own name
     while True:
+        # a join or leave (/hub team) changes the project it reports
+        ident = await anyio.to_thread.run_sync(
+            optin.apply, dataclasses.replace(first, project=own))
+        body = {"machine": ident.machine,
+                "sessions": [{"key": ident.key, "tool": ident.tool, "project": ident.project}],
+                "facts": identity.facts()}
         if await anyio.to_thread.run_sync(offhub.personal, ident.project, ident.cwd, ident.key):
             await anyio.sleep(HEARTBEAT_S)  # not a team project's folder: never reported
             continue
@@ -165,6 +176,7 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
     async with anyio.create_task_group() as tg:
         relay = Relay(url, _headers(cfg, None), tg)
         found = {"ident": None, "off": False}  # off: the manager's folder without its config
+        beating: set = set()  # Cursor session keys with a heartbeat task
 
         async def identify() -> None:
             # Retried on each call until found: Claude Code may start the shim before it
@@ -191,7 +203,8 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 found["ident"] = ident
                 relay.headers = _headers(cfg, ident)
                 await relay.drop(relay.client)
-                if ident.tool == "cursor":
+                if ident.tool == "cursor" and ident.key not in beating:
+                    beating.add(ident.key)
                     tg.start_soon(_heartbeat, cfg, ident)  # Cursor has no bridge to find its sessions
 
         async def hidden() -> bool:
@@ -214,33 +227,56 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
             except MCPError:
                 r = None
             if r is not None:
-                return types.ListToolsResult(tools=r.tools)
+                return types.ListToolsResult(tools=[*r.tools, JOIN])
             return types.ListToolsResult(tools=[
                 types.Tool(name=n, description=mine or unreachable,
                            input_schema={"type": "object"})
-                for n in FALLBACK_TOOLS])
+                for n in FALLBACK_TOOLS] + [JOIN])
 
         per_session: Dict[str, Relay] = {}  # OpenCode V2: one shim serves every session in a folder
 
-        def session_relay(sid: str) -> Relay:
-            if sid not in per_session:
-                ident = identity.Identity(f"opencode:{sid}", cfg.get("machine", ""), "opencode",
-                                          os.path.basename(os.getcwd().rstrip("/")))
-                per_session[sid] = Relay(url, _headers(cfg, ident), tg)
+        def meta_ident(sid: str) -> identity.Identity:
+            return optin.apply(identity.Identity(
+                f"opencode:{sid}", cfg.get("machine", ""), "opencode",
+                os.path.basename(os.getcwd().rstrip("/")), os.getcwd(),
+                int(os.environ.get("OPENCODE_PID") or os.getppid())))
+
+        def session_relay(sid: str, ident: identity.Identity) -> Relay:
+            if sid not in per_session or per_session[sid].headers != _headers(cfg, ident):
+                per_session[sid] = Relay(url, _headers(cfg, ident), tg)  # joined or left
             return per_session[sid]
+
+        async def join(who: Optional[identity.Identity], args: dict) -> types.CallToolResult:
+            """join_team: ask the hub, save the choice here, and speak as it from now on."""
+            if who is None:
+                return _error("kaptyorka: this session is not detected yet; try again")
+            if paths.in_manager_folder(who.cwd):
+                return _error("kaptyorka: the manager session is on the hub already")
+            if await anyio.to_thread.run_sync(offhub.off, who.key):
+                return _error(f"kaptyorka: {offhub.COME_BACK}")
+            project = args.get("project") if isinstance(args.get("project"), str) else ""
+            ok, line = await anyio.to_thread.run_sync(optin.join, cfg, who.key, who.pid, project)
+            if ok and found["ident"] is not None and found["ident"].key == who.key:
+                found["ident"] = None
+                await identify()  # found again, with the project it chose (or its own)
+            return types.CallToolResult(content=[types.TextContent(text=line)]) if ok \
+                else _error(line)
 
         async def call_tool(ctx, params) -> types.CallToolResult:
             sid = (params.meta or {}).get(OPENCODE_META)
             if sid and isinstance(sid, str):
-                use = session_relay(sid)
-                who = identity.Identity(f"opencode:{sid}", "", "opencode",
-                                        os.path.basename(os.getcwd().rstrip("/")), os.getcwd())
+                who = meta_ident(sid)
+                use = session_relay(sid, who)
             else:
                 await identify()
                 use, who = relay, found["ident"]
             if found["off"]:
                 return _error(NO_MANAGER_CONFIG)
+            if params.name == JOIN.name:
+                return await join(who, dict(params.arguments or {}))
             why = await personal(who)
+            if why == paths.NOT_TEAM:
+                why = paths.not_team_help(await anyio.to_thread.run_sync(offhub.load_mine))
             if why:
                 return _error(f"kaptyorka: {why}")
             if use is relay and await hidden():

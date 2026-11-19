@@ -6,7 +6,7 @@ import time
 from typing import Callable, Dict
 from urllib.parse import urlencode
 
-from kaptyorka import facts, http, offhub, paths
+from kaptyorka import facts, http, offhub, optin, paths
 from kaptyorka.identity import Identity, identify
 
 TIMEOUT_S = 3
@@ -76,6 +76,7 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
             cwd = data.get("cwd") or os.getcwd()
             ident = Identity(f"{prefix}:{data['session_id']}", cfg.get("machine", ""), tool,
                              os.path.basename(cwd.rstrip("/")), cwd)
+            ident = optin.apply(ident)
         else:
             ident = identify(cfg.get("machine", ""), workspace=workspace)
         if ident is None:
@@ -100,7 +101,8 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
         reason = ""
         if stop:
             query = ""
-            if tool in ("claude-code", "codex"):
+            if tool in ("claude-code", "codex") and optin.get(ident.key) is None:
+                # a session that joined the team sends nothing of its folder
                 query = _git_query(data.get("cwd") or os.getcwd(), run, deadline)
             status, check = get("/api/done-check" + query)
             if status == 200 and isinstance(check, dict) and check.get("decision") == "block":

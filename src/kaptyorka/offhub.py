@@ -191,10 +191,12 @@ def clean() -> None:
                 pass
 
 
-def save_team(team: Optional[set], keep: set) -> None:
-    """The bridge saves the hub's list of team projects (None: the hub sent none) and the keys
-    of the workers it started, for the shims and hooks of this machine."""
-    body = {"team": None if team is None else sorted(team), "keep": sorted(keep)}
+def save_team(team: Optional[set], keep: set, mine: Optional[list] = None) -> None:
+    """The bridge saves the hub's list of team projects (None: the hub sent none), the keys
+    of the workers it started and the team projects its person has a role in (for the help a
+    refused call gets), for the shims and hooks of this machine."""
+    body = {"team": None if team is None else sorted(team), "keep": sorted(keep),
+            "mine": None if mine is None else sorted(mine)}
     try:
         tmp = paths.home() / f".{TEAM}.tmp"
         tmp.write_text(json.dumps(body))
@@ -217,6 +219,16 @@ def load_team() -> Tuple[Optional[set], set]:
             {k for k in keep if isinstance(k, str)} if isinstance(keep, list) else set())
 
 
+def load_mine() -> Optional[List[str]]:
+    """The team projects this machine's person has a role in, as the bridge saved them; None
+    when unknown."""
+    try:
+        mine = json.loads((paths.home() / TEAM).read_text()).get("mine")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return [m for m in mine if isinstance(m, str)] if isinstance(mine, list) else None
+
+
 def personal(project: str, cwd: str = "", key: str = "") -> str:
     """Why this session's shim and hooks send nothing ("" when they may): outside the team
     projects (automatically off the hub), or the hub named no team projects yet (an older
@@ -224,6 +236,10 @@ def personal(project: str, cwd: str = "", key: str = "") -> str:
     refuses such a session too). The manager and the hub's workers are never personal."""
     if paths.in_manager_folder(cwd):
         return ""
+    if project == paths.COORDINATOR:  # only a session that joined with /hub team says so
+        from kaptyorka import optin
+
+        return "" if optin.get(key) == paths.COORDINATOR else paths.NOT_TEAM
     if not (paths.home() / TEAM).exists():
         return ""
     team, keep = load_team()
@@ -254,20 +270,34 @@ def _tell_now(data: dict) -> None:
 def command(words: List[str], environ: Mapping = os.environ) -> Tuple[int, str]:
     """`kaptyorka hub [on|off]`, run by Claude Code's /hub inside the session: (exit code, line)."""
     want = " ".join(words).strip().lower()
-    if want not in ("", "on", "off"):
-        return 1, "use /hub, /hub on or /hub off"
+    team = bool(words) and words[0].strip().lower() == "team"
+    if want not in ("", "on", "off") and not (team and len(words) <= 2):
+        return 1, "use /hub, /hub on, /hub off, /hub team, /hub team <project> or /hub team off"
     sid = str(environ.get("CLAUDE_CODE_SESSION_ID") or "")
     found = session(sid) if sid else None
     if found is None:
         return 1, "kaptyorka: /hub works only inside a Claude Code session"
     pid, data = found
     bg = data.get("kind") == "bg"
+    if team:
+        from kaptyorka import optin
+
+        if paths.in_manager_folder(data.get("cwd")):
+            return 1, "kaptyorka: the manager session is on the hub already"
+        if decide(sid, pid, data, environ):
+            return 1, f"kaptyorka: {COME_BACK}"
+        ok, line = optin.join(paths.load_config(data.get("cwd")), f"claude:{sid}", pid,
+                              words[1].strip() if len(words) > 1 else "")
+        return (0 if ok else 1), line
     if want == "":
         if decide(sid, pid, data, environ):
             return 0, COME_BACK
         note = (f" (a background session ignores {ENV}=off; type /hub off to hide it)"
                 if bg and env_off(environ) else "")
-        return 0, f"this session is on the hub{note}"
+        from kaptyorka import optin
+
+        joined = optin.describe(optin.get(f"claude:{sid}"))
+        return 0, (joined + note if joined else f"this session is on the hub{note}")
     why = exempt(data)
     if want == "off" and why:
         return 1, f"kaptyorka: {why}"

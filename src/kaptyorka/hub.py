@@ -148,8 +148,11 @@ INSTRUCTIONS = (
     "rules() reads the team rules; propose_rule(text, evidence) suggests one after your person "
     "corrected you twice; conflict(rule_a, rule_b) reports two rules that clash. "
     "Only sessions in a team project's folder use the hub: in any other folder every tool "
-    "refuses, and nothing from it reaches the hub."
+    "refuses, and nothing from it reaches the hub, until the user puts the session on the team "
+    "with /hub team [project] (or join_team, only when the user asked)."
 )
+NAME_A_PROJECT = ("this session coordinates across projects, so name the project:"
+                  " work(project, task) with one of your projects")
 
 
 def opencode_reminder(ms, key: str, principal, now: float, project: Optional[str] = None) -> str:
@@ -238,6 +241,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         manager_id = mm.person_id()
         if principal is not None and manager_id is not None and principal.person_id == manager_id:
             return True
+        if project == paths.COORDINATOR:  # joined with /hub team: its person's, no project
+            return principal is not None and not principal.legacy
         if store.team_project(project) or key in ws.live_keys():
             return True
         return manager_id is not None and ws.session_person(key) == manager_id
@@ -249,9 +254,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if not all(ident):
             raise KaptyorkaError("no kaptyorka identity; run kaptyorka join")
         principal = principal or principal_of(h)
-        if not on_hub(ident[3], ident[0], principal):
-            raise KaptyorkaError(paths.NOT_TEAM)  # checked before anything about it is stored
+        if not on_hub(ident[3], ident[0], principal):  # checked before anything is stored
+            raise KaptyorkaError(paths.not_team_help(team_projects_of(principal)))
         return store.seen(*ident, principal=principal)
+
+    def team_projects_of(principal: Principal) -> List[str]:
+        """The registered projects the principal has a role in (archived ones left out)."""
+        return [p["name"] for p in store.projects_for(principal) if not p.get("archived")]
 
     def session_project(agent: Agent, principal: Optional[Principal]) -> str:
         """The session's project from its folder, the same lookup the brief uses."""
@@ -701,6 +710,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             raise KaptyorkaError(OWN_TOKEN)
         if foreign(principal, agent.person_id) is not None:
             raise KaptyorkaError(ON_SHARED)
+        if not project.strip() or project == paths.COORDINATOR:
+            raise KaptyorkaError(NAME_A_PROJECT)
         if ws.archived(project):
             raise KaptyorkaError(REMOVED.format(project=project))
         if not (store.may_write_project(project, principal)
@@ -914,7 +925,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                            machine=str(body["machine"])) or principal
         # an older or changed bridge may still report sessions of personal folders: dropped
         body["sessions"] = [s for s in body["sessions"]
-                            if on_hub(str(s.get("project") or ""), str(s.get("key") or ""))]
+                            if on_hub(str(s.get("project") or ""), str(s.get("key") or ""))
+                            or (s.get("project") == paths.COORDINATOR and principal is not None
+                                and not principal.legacy)]
+        for s in body["sessions"]:
+            if s.get("project") == paths.COORDINATOR:
+                s["cwd"] = ""  # a coordinator has no folder on the hub
         kept = {s.get("cwd") for s in body["sessions"] if s.get("cwd")}
         if isinstance(body.get("folders"), dict):
             body["folders"] = {p: f for p, f in body["folders"].items()
@@ -949,6 +965,25 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                              # its computer's GPU queue, read by one bridge per computer
                              "gpu_queue": ws.gpu_queue_ask(principal.device_id, store.clock())
                              if own else None})
+
+    @server.custom_route("/bridge/join-team", methods=["POST"])
+    @_bad_request
+    async def bridge_join_team(request: Request) -> Response:
+        """/hub team [project] asks first: a project needs the person's role in it (an admin
+        has every one) and the project registered; no project (a coordinator) needs a person."""
+        body = await request.json()
+        project = str(body.get("project") or "").strip()
+        principal = request.scope["state"]["principal"]
+        if principal.legacy:
+            return PlainTextResponse(OWN_TOKEN, status_code=403)
+        mine = team_projects_of(principal)
+        if project and project not in mine:
+            listed = ", ".join(mine) if mine else "none yet; the admin gives roles"
+            why = (f"{project} is not a team project" if not store.team_project(project)
+                   or paths.team_name(project) != project
+                   else f"you have no role in {project}")
+            return PlainTextResponse(f"{why}; your projects: {listed}", status_code=403)
+        return JSONResponse({"project": project, "projects": mine})
 
     @server.custom_route("/bridge/poll", methods=["GET"])
     @_bad_request

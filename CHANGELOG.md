@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`/hub team [project]`: put one session on the team from any folder.** `/hub team` makes the session a coordinator: on the hub as your session with no project, labelled `coordinator` on Home. It reaches every session you may reach (your own, team machine sessions in your projects), and they can answer it; project notes, state and `work` name the project, and your role decides. `/hub team <project>` gives it that project instead (your role in it and the project registered, checked by the hub first), as if it ran in the project's folder. `/hub team off` leaves. Other tools use the new `join_team(project)` tool, only when the person asked. The choice is per session, kept on the machine until the session ends; nothing of the folder (name, path, git, files) goes to the hub.
+- **A refused call from a personal folder says how to join.** "This folder isn't a team project, so nothing from it goes to the hub. If this session works for the team, run /hub team (to coordinate across projects) or /hub team <project> (you have: proj-a, proj-b), or open the agent in your copy of that project." It lists only your projects, and tells the agent to offer it to you, never to switch on its own.
 - **A session may answer one that messaged it.** For 24 hours after a session wrote to another, the other may reply by name or #id, even when it could not reach or list it otherwise. Before, a team machine session could not answer a member session from another project ("no session named #… that you can reach"). It never adds anyone to `who`; a team machine hidden from the person still blocks it both ways, and closing a door between the two ends it.
 
 ## 0.9.25

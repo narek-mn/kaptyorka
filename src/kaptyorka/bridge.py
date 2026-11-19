@@ -5,12 +5,12 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import __version__, facts, http, identity, offhub, orders, paths, skills_sync, usage
+from kaptyorka import __version__, facts, http, identity, offhub, optin, orders, paths, skills_sync, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES, Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
@@ -75,6 +75,7 @@ class Bridge:
         # the team projects and worker keys the hub last named; kept when a beat fails, so
         # one lost answer never hides sessions. None: no list (a hub older than 0.9.11)
         self._list = offhub.load_team()
+        self._mine = offhub.load_mine()  # the team projects this machine's person has a role in
         self._facts: dict = {}
         self._facts_at: Optional[float] = None  # monotonic time of the last build; None forces one
         self._usage = usage.Sampler()
@@ -156,12 +157,15 @@ class Bridge:
         Any other answer keeps the last list."""
         if status != 200 or not isinstance(answer, dict):
             return
-        team, keep = answer.get("team"), answer.get("keep")
+        team, keep, mine = answer.get("team"), answer.get("keep"), answer.get("projects")
         new = ({t for t in team if isinstance(t, str)} if isinstance(team, list) else None,
                {k for k in keep if isinstance(k, str)} if isinstance(keep, list) else set())
-        if new != self._list or not (paths.home() / offhub.TEAM).exists():
-            self._list = new
-            offhub.save_team(*new)  # for this machine's shims and hooks
+        # the help a refused call gets names only registered projects of this person
+        mine = sorted(m for m in mine if isinstance(m, str) and new[0] is not None
+                      and m in new[0]) if isinstance(mine, list) else None
+        if new != self._list or mine != self._mine or not (paths.home() / offhub.TEAM).exists():
+            self._list, self._mine = new, mine
+            offhub.save_team(*new, mine)  # for this machine's shims and hooks
 
     def heartbeat(self, again: bool = True) -> None:
         offhub.clean()
@@ -172,13 +176,25 @@ class Bridge:
 
         def personal(s) -> bool:
             """Outside the team projects: never reported, like a session switched off. With
-            no list from the hub yet, only the manager and the hub's workers are reported."""
+            no list from the hub yet, only the manager and the hub's workers are reported.
+            A session that joined the team (/hub team) is reported as it chose."""
             return not (paths.in_manager_folder(s.cwd) or s.key in keep
+                        or (s.key in joined and s.project == paths.COORDINATOR)
                         or (team is not None and paths.team_name(s.project) in team))
+        joined = dict(optin.joined())
+
+        def as_joined(s):
+            """A joined session with its chosen project and nothing of its folder: no path, so
+            no git facts or folder list for it either."""
+            if s.key not in joined:
+                return s
+            coordinator = joined[s.key] == paths.COORDINATOR
+            return replace(s, project=joined[s.key], cwd="",
+                           label=s.label or (optin.LABEL if coordinator else ""))
         sessions, tools, objs, shown, held = [], [], [], [], False
         for a in self.adapters:
             try:
-                got = list(a.sessions())
+                got = [as_joined(s) for s in a.sessions()]
                 off = set(getattr(a, "off_keys", set()))  # kept off the hub: never reported
                 mine = {s.key for s in got if personal(s)}
                 held = held or bool(mine - off)

@@ -834,7 +834,10 @@ class Store:
     def _may(self, project, principal, write) -> bool:
         """A registered project goes by role. An unregistered one is only a folder name, which
         two people can share by chance: it belongs to whoever has a session in it. A removed
-        (archived) project is the admin's alone, read-only."""
+        (archived) project is the admin's alone, read-only. A coordinator's "(team)" is no
+        project at all."""
+        if project == paths.COORDINATOR:
+            return False
         if self._archived(project):
             return principal.is_admin() and not write
         if principal.is_admin():
