@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS device_facts (
     device_id INTEGER PRIMARY KEY, facts TEXT NOT NULL, folders TEXT NOT NULL DEFAULT '{}',
     updated REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS device_settings (device_id INTEGER PRIMARY KEY, auto_update INTEGER);
+CREATE TABLE IF NOT EXISTS host_settings (host TEXT PRIMARY KEY, gpu_lock TEXT, gpu_shares INTEGER);
 """
 
 
@@ -155,6 +156,25 @@ def clean_use(use) -> Optional[dict]:
     return out
 
 
+def clean_queue(q) -> Optional[dict]:
+    """The bridge's GPU queue (usage.read_queue): OS user names and counts only."""
+    if not isinstance(q, dict):
+        return None
+    out: dict = {"age": _n(q.get("age"), 1e9) or 0.0,
+                 "shares": int(_n(q.get("shares"), 1000) or usage.GPU_SHARES)}
+    if q.get("unknown") is True:
+        return {**out, "unknown": True}
+    for key in ("holders", "waiters"):
+        out[key] = {name[:MAX_FACT]: int(_n(k, 1e6) or 0)
+                    for name, k in list((q.get(key) or {}).items())[:200]
+                    if (safe_name(name) or name == "unknown") and _n(k, 1e6)} \
+            if isinstance(q.get(key), dict) else {}
+    whole = q.get("whole")
+    out["whole"] = whole[:MAX_FACT] if isinstance(whole, str) and (safe_name(whole) or whole == "unknown") else ""
+    out["waiting"] = int(_n(q.get("waiting"), 1e6) or 0)
+    return out
+
+
 def tool_tags(facts: Optional[dict]) -> Optional[List[dict]]:
     """The agent tools a machine's bridge reported, for the Machines page: each installed tool
     with its display name and whether it is logged in (None: unknown). None when the bridge
@@ -202,7 +222,16 @@ def clean_facts(facts: dict) -> dict:
     use = clean_use(facts.get("use"))
     if use is not None:
         out["use"] = use
+    q = clean_queue(facts.get("gpu_queue"))
+    if q is not None:
+        out["gpu_queue"] = q
     return out
+
+
+def _check_path(path: str, what: str) -> None:
+    if not (isinstance(path, str) and path.startswith("/") and len(path) <= 500
+            and not any(c in path for c in "\0\n\r")):
+        raise KaptyorkaError(f"{what} must be a full path, starting with /")
 
 
 def _version_tuple(v: str) -> Tuple[int, ...]:
@@ -247,6 +276,103 @@ class WorkerStore:
                 "INSERT INTO device_settings (device_id, auto_update) VALUES (?,?)"
                 " ON CONFLICT(device_id) DO UPDATE SET auto_update=excluded.auto_update",
                 (device_id, None if on is None else int(on)))
+
+    # the GPU queue (one per computer)
+
+    def set_gpu_queue(self, host: str, lock: Optional[str], shares: int = usage.GPU_SHARES,
+                      by: str = "") -> None:
+        """Read the GPU share queue on lock file `lock` on host; None switches it off."""
+        if lock is not None:
+            _check_path(lock, "the lock file")
+            if not 1 <= shares <= 100:
+                raise KaptyorkaError("shares must be from 1 to 100")
+        with self.lock:
+            if self.db.execute("SELECT 1 FROM machines WHERE host=?", (host,)).fetchone() is None:
+                raise KaptyorkaError(f"no such machine: {host}")
+            self.db.execute(
+                "INSERT INTO host_settings (host, gpu_lock, gpu_shares) VALUES (?,?,?)"
+                " ON CONFLICT(host) DO UPDATE SET gpu_lock=excluded.gpu_lock,"
+                " gpu_shares=excluded.gpu_shares", (host, lock, shares if lock else None))
+        self.store.log_add(by or "hub", "gpu_queue",
+                           f"{host}: {lock} ({shares} shares)" if lock else f"{host}: off")
+
+    def _gpu_config(self, host: str) -> Optional[dict]:
+        """Lock held. {"lock", "shares"} of host's queue, or None."""
+        r = self.db.execute("SELECT gpu_lock, gpu_shares FROM host_settings WHERE host=?",
+                            (host,)).fetchone()
+        return {"lock": r["gpu_lock"], "shares": r["gpu_shares"] or usage.GPU_SHARES} \
+            if r and r["gpu_lock"] else None
+
+    def gpu_queue_ask(self, device_id: int, now: float) -> Optional[dict]:
+        """What this device's bridge is asked to read: its computer's queue, from one bridge
+        only (the lowest device id online there that runs 0.9.23 or later)."""
+        with self.lock:
+            d = self.db.execute("SELECT host FROM devices WHERE id=?", (device_id,)).fetchone()
+            q = self._gpu_config(d["host"]) if d and d["host"] else None
+            if q is None:
+                return None
+            for r in self.db.execute(
+                    "SELECT d.id, f.facts FROM devices d JOIN device_facts f ON f.device_id=d.id"
+                    " WHERE d.host=? AND d.revoked_at IS NULL AND d.legacy=0 AND d.last_used>?"
+                    " ORDER BY d.id", (d["host"], now - ONLINE_S)):
+                if _version_tuple(json.loads(r["facts"]).get("version") or "") >= (0, 9, 23):
+                    return q if r["id"] == device_id else None
+        return q
+
+    def _owners(self, host: str) -> Tuple[dict, set]:
+        """Lock held. ({OS user: [people]}, OS users of team machines) on host; the manager
+        account is nobody."""
+        owners: dict = {}
+        team = set()  # OS users of team machines: the team's, not anyone's
+        for d in self.db.execute(
+                "SELECT DISTINCT d.os_user, p.name, p.team FROM devices d JOIN people p"
+                " ON p.id=d.person_id WHERE d.host=? AND d.revoked_at IS NULL AND d.legacy=0"
+                " AND NOT (p.name=? AND p.role='manager') AND d.os_user!=''",
+                (host, MANAGER_ACCOUNT)):
+            if d["team"]:
+                team.add(d["os_user"])
+            else:
+                owners.setdefault(d["os_user"], []).append(d["name"])
+        return owners, team
+
+    def host_queue(self, host: str, now: float) -> Optional[Tuple[dict, dict]]:
+        """(host's GPU queue as last read there, {OS user: [people]}); None when no queue is
+        set up or no bridge read it within usage.STALE_S."""
+        best = None
+        with self.lock:
+            if self._gpu_config(host) is None:
+                return None
+            for r in self.db.execute(
+                    "SELECT f.facts, f.updated FROM device_facts f JOIN devices d ON d.id=f.device_id"
+                    " WHERE d.host=? AND d.revoked_at IS NULL", (host,)):
+                q = json.loads(r["facts"]).get("gpu_queue")
+                if not isinstance(q, dict):
+                    continue
+                age = (q.get("age") or 0.0) + max(now - r["updated"], 0.0)
+                if age <= usage.STALE_S and (best is None or age < best[0]):
+                    best = (age, q)
+            owners = self._owners(host)[0]
+        return (best[1], owners) if best else None
+
+    def queue_text(self, host: str, now: float, names: bool) -> str:
+        """The Machines line for host's queue: people's names for an admin, counts otherwise."""
+        here = self.host_queue(host, now)
+        if here is None:
+            return ""
+        q, owners = here
+        return usage.queue_line(q, names, lambda u: " and ".join(sorted(set(owners.get(u) or []))) or u)
+
+    def queue_busy(self, host: str, now: float, me: str = "") -> Optional[str]:
+        """Why the GPU queue makes host heavy (usage.queue_full) for `me`, with names, for the
+        manager; None when it is not, or when only `me` holds and waits."""
+        here = self.host_queue(host, now)
+        if here is None or not usage.queue_full(here[0]):
+            return None
+        q, owners = here
+        users = set(q.get("holders") or {}) | set(q.get("waiters") or {}) | ({q["whole"]} if q.get("whole") else set())
+        if me and users and all(owners.get(u) == [me] for u in users):
+            return None
+        return usage.queue_line(q, True, lambda u: " and ".join(sorted(set(owners.get(u) or []))) or u)
 
     def machine_rows(self, principal: Principal) -> List[dict]:
         """store.machines with each device's facts, folders, bridge online and auto_update."""
@@ -303,6 +429,7 @@ class WorkerStore:
             h["people"] = sorted(set(h["people"]))
             h["team"] = sorted(set(h["team"]))
             h["use"] = usage.short(here[0]) if here else ""
+            h["gpu_queue"] = self.queue_text(h["host"], now, True)
             out.append(h)
         return out
 
@@ -660,28 +787,19 @@ class WorkerStore:
                 age = (use.get("age") or 0.0) + max(now - r["updated"], 0.0)
                 if age <= usage.STALE_S and (best is None or age < best[0]):
                     best = (age, use)
-            owners: dict = {}
-            team = set()  # OS users of team machines: the team's, not anyone's
-            for d in self.db.execute(
-                    "SELECT DISTINCT d.os_user, p.name, p.team FROM devices d JOIN people p"
-                    " ON p.id=d.person_id WHERE d.host=? AND d.revoked_at IS NULL AND d.legacy=0"
-                    " AND NOT (p.name=? AND p.role='manager') AND d.os_user!=''",
-                    (host, MANAGER_ACCOUNT)):
-                if d["team"]:
-                    team.add(d["os_user"])
-                else:
-                    owners.setdefault(d["os_user"], []).append(d["name"])
+            owners, team = self._owners(host)
         if best is None:
             return None
         return best[1], usage.people_use(best[1], owners, team)
 
     def _heavy_by_others(self, host: str, person_id: int, now: float) -> bool:
-        here = self.host_use(host, now)
-        if here is None:
-            return False
         with self.lock:
             me = self._person_name(person_id)
-        return any(me not in p["people"] and usage.heavy(p, here[0]) for p in here[1].values())
+        here = self.host_use(host, now)
+        if here is None:
+            return self.queue_busy(host, now, me) is not None
+        return any(me not in p["people"] and usage.heavy(p, here[0]) for p in here[1].values()) \
+            or self.queue_busy(host, now, me) is not None
 
     def host_people(self, host: str, now: float) -> dict:
         """{person name: the name of one of their online sessions} on host; the manager account

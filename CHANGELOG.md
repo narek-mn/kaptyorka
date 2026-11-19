@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.23
+
+- **GPU queue on Machines.** `kaptyorka machine gpu-queue <machine> <lock file> [--shares N]` (10 by default; `--off`) tells the hub where a computer's flock share queue is. One bridge on that computer reads it about once a minute from `/proc/locks`, never taking a lock or trusting the files' text, and maps each job to its OS user. The computer's rows on Machines show `GPU queue: bob 4/10 · carol 6/10 · 1 waiting`, `GPU queue: free` or `GPU queue: taken whole by bob` for admins, and counts only (`GPU queue: 10/10 in use · 1 waiting`) for everyone else. Missing files or no permission read `GPU queue: unknown`.
+- **A full GPU queue is heavy.** Every share held, the GPU taken whole, or a job waiting: hub-started work on that computer waits for the manager, the person is told why in counts, and the manager's notice has the queue line with names.
+
 ## 0.9.22
 
 - **One name for a machine everywhere: `account@computer`**, such as `alice@box-1`, on Home, Machines (Mine and Everyone), a person's page and the warning bar; its label when someone renamed it, the name it joined with when the account or computer is unknown. The hub's own account now reads like the others, with no data change. Rename leaves the box empty to go back to that name.

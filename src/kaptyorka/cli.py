@@ -691,6 +691,16 @@ def _machine_move(args) -> int:
     return 0
 
 
+def _machine_gpu_queue(args) -> int:
+    if args.off == bool(args.lock):
+        print("give the lock file's full path, or --off", file=sys.stderr)
+        return 1
+    body = {"off": True} if args.off else {"lock": args.lock, "shares": args.shares}
+    return _admin_do("POST", f"/api/machines/{quote(args.machine, safe='')}/gpu-queue", body,
+                     f"{args.machine}: GPU queue off" if args.off else
+                     f"{args.machine}: GPU queue on {args.lock} ({args.shares} shares)")
+
+
 def _machine_visible(args) -> int:
     show = args.machine_cmd == "show"
     return _admin_do("POST", f"/api/people/{quote(args.person, safe='')}/team-machines/{quote(args.machine, safe='')}",
@@ -1266,9 +1276,9 @@ def entry() -> None:
     st = sub.add_parser("shared-token", help="switch the old shared token (machines from before invites) on or off")
     st.add_argument("state", choices=("on", "off"))
     st.set_defaults(run=_shared_token)
-    mc = sub.add_parser("machine", help="say who owns a machine, add a team machine, move one, or hide a team"
-                        " machine from a person").add_subparsers(
-        dest="machine_cmd", required=True, metavar="{owner,team,move,hide,show}")
+    mc = sub.add_parser("machine", help="say who owns a machine, add a team machine, move one, hide a team"
+                        " machine from a person, or show its GPU queue").add_subparsers(
+        dest="machine_cmd", required=True, metavar="{owner,team,move,hide,show,gpu-queue}")
     mo = mc.add_parser("owner", help="make a person the owner of a machine")
     mo.add_argument("host", help="the machine's name (kaptyorka fleet list shows them)")
     mo.add_argument("person", help="the person's name")
@@ -1290,6 +1300,13 @@ def entry() -> None:
         m_.add_argument("machine", help="the team machine's name")
         m_.add_argument("person", help="the person's name")
         m_.set_defaults(run=_machine_visible)
+    mg = mc.add_parser("gpu-queue", help="show a computer's flock GPU share queue on Machines,"
+                                         " and hold hub work there while it is full")
+    mg.add_argument("machine", help="the computer's name (kaptyorka fleet list shows them)")
+    mg.add_argument("lock", nargs="?", help="the queue's lock file, for example /srv/gpu.lock")
+    mg.add_argument("--shares", type=int, default=10, help="how many shares the GPU has (10)")
+    mg.add_argument("--off", action="store_true", help="stop reading the queue")
+    mg.set_defaults(run=_machine_gpu_queue)
     sub.add_parser("who", help="list the agents on the team and what each is doing").set_defaults(run=_who)
     sub.add_parser("status", help="show whether this machine's bridge, the hub and the manager are running"
                    ).set_defaults(run=_status)

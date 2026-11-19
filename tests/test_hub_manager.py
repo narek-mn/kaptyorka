@@ -1206,3 +1206,44 @@ def test_manager_down_notice_reaches_every_admin_page(hub, clock):
     hub.tick()
     assert MANAGER_UNTRUSTED in page_texts(hub, "root")
     assert MANAGER_UNTRUSTED in page_texts(hub, "bob")
+
+
+# the GPU share queue: a full queue or a waiting job is heavy for that computer
+
+FULL_QUEUE = {"age": 1, "shares": 10, "holders": {"u": 10}, "whole": "", "waiting": 0, "waiters": {}}
+
+
+def queue_beat(hub, d, q):
+    facts = {"host": HOST, "os_user": d.os_user, "version": kaptyorka.__version__,
+             "tmux": True, "load": 0.1, "cpus": 4, "gpu_queue": q}
+    body = {"machine": HOST, "sessions": [], "tools": [], "facts": facts,
+            "folders": {"proj-a": "/w/proj-a"}}
+    status, answer = http.request("POST", hub.url + "/bridge/heartbeat", d.token, body)
+    assert status == 200
+    return answer
+
+
+def test_full_gpu_queue_holds_hub_work(hub):
+    mgr, me = manager_online(hub)
+    b, _, bob = in_use_setup(hub)
+    hub.ws.set_gpu_queue(HOST, "/srv/gpu.lock", 10)
+    assert queue_beat(hub, b, FULL_QUEUE)["gpu_queue"] == {"lock": "/srv/gpu.lock", "shares": 10}
+    # bob hears counts only; the manager's notice names who holds the shares
+    assert ask(hub, bob) == ("busy: box-1 is in use by the GPU queue (10/10 in use); the manager"
+                             " is deciding (request 1); you will hear back here")
+    text = inbox(mgr, me)[0]
+    assert "GPU queue: alice 10/10" in text and hub.mm.request(1) is not None
+
+
+def test_a_waiting_job_holds_and_room_starts(hub):
+    mgr, me = manager_online(hub)
+    b, _, bob = in_use_setup(hub)
+    hub.ws.set_gpu_queue(HOST, "/srv/gpu.lock", 10)
+    queue_beat(hub, b, {**FULL_QUEUE, "holders": {"u": 2}})
+    assert ask(hub, bob).startswith("starting `proj-a-w1`")  # room left, nobody waits
+    queue_beat(hub, b, {**FULL_QUEUE, "holders": {"u": 2}, "waiting": 1, "waiters": {"u": 1}})
+    assert ask(hub, bob).startswith("busy: box-1 is in use by the GPU queue (2/10 in use · 1 waiting)")
+    hub.ws.set_gpu_queue(HOST, None)  # switched off: the old report no longer counts
+    queue_beat(hub, b, FULL_QUEUE)
+    assert ask(hub, bob).startswith("starting `proj-a-w")
+

@@ -63,7 +63,7 @@ MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
     ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab|team-machines)"),
     ("POST", r"/api/people/[^/]+/(gitlab|role|team)"),
     ("POST", r"/api/people/[^/]+/team-machines/[^/]+"),
-    ("POST", r"/api/machines/[^/]+/(grant|owner|revoke)"),
+    ("POST", r"/api/machines/[^/]+/(grant|owner|revoke|gpu-queue)"),
     ("POST", r"/api/projects/[^/]+(/grant|/revoke)?"),
     ("POST", r"/api/devices/\d+/(revoke|move)"),
     ("POST", r"/api/legacy/(on|off)"),
@@ -664,17 +664,24 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         present = [n for n in ws.host_people(host, now) if n != me]
         heavy = [n for n, p in by_person.items()
                  if me not in p["people"] and usage.heavy(p, use)]
+        queue = ws.queue_busy(host, now, me)  # every share held, taken whole, or a job waits
+        if queue is not None:  # the person hears counts only; the manager's line has names
+            heavy.append(usage.queue_line(ws.host_queue(host, now)[0], False).replace(
+                "GPU queue: ", "the GPU queue (") + ")")
         who = present + [n for n in heavy if n not in present]
         if not who:
             return [], [], [], here is not None
         if here is None:
-            return [], ["no fresh use report from this machine"], present, False
+            return heavy, ["no fresh use report from this machine"] + ([queue] if queue else []), \
+                present, queue is not None
         named = {n for n in who if n in by_person}
         for n, p in by_person.items():  # a shared account's label holds the person's name
             if n not in named and any(x in p["people"] for x in present):
                 named.add(n)
         lines = [usage.describe(n, by_person[n], use) for n in sorted(
             named, key=lambda n: (-len(usage.held(by_person[n])), -by_person[n]["cpu"], n))]
+        if queue is not None:
+            lines.append(queue)
         return heavy, lines or ["no notable use by them"], present, True
 
     @server.tool()
@@ -933,7 +940,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                              "team": store.team_projects(),  # the bridge reports only these
                              "keep": ws.live_keys_on(principal.device_id) if own else [],
                              "you": principal.person_name, "shared": principal.shared,
-                             "skills_version": rs.skills_version()})
+                             "skills_version": rs.skills_version(),
+                             # its computer's GPU queue, read by one bridge per computer
+                             "gpu_queue": ws.gpu_queue_ask(principal.device_id, store.clock())
+                             if own else None})
 
     @server.custom_route("/bridge/poll", methods=["GET"])
     @_bad_request
@@ -1067,7 +1077,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.custom_route("/api/me/account", methods=["GET"])
     async def api_me_account(request: Request) -> Response:
         """The account panel: only the caller's own person, machines and projects."""
-        return JSONResponse(admin_ops.account(store, request.scope["state"]["principal"]),
+        return JSONResponse(admin_ops.account(store, request.scope["state"]["principal"], ws),
                             headers=NO_STORE)
 
     @server.custom_route("/api/me/machines/{device_id:int}/label", methods=["POST"])
@@ -1809,6 +1819,25 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @_bad_request
     async def api_machine_revoke(request: Request) -> Response:
         return await machine_grant(request, False)
+
+    @server.custom_route("/api/machines/{host}/gpu-queue", methods=["POST"])
+    @_bad_request
+    async def api_machine_gpu_queue(request: Request) -> Response:
+        """Read the GPU share queue on this computer: {"lock", "shares"}, or {"off": true}."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        shares = body.get("shares", usage.GPU_SHARES)
+        try:
+            if not isinstance(shares, int) or isinstance(shares, bool):
+                raise KaptyorkaError("shares must be a whole number")
+            ws.set_gpu_queue(request.path_params["host"],
+                             None if body.get("off") else str(body["lock"]), shares,
+                             request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return admin_error(e)
+        return Response(status_code=204)
 
     @server.custom_route("/api/projects", methods=["GET"])
     async def api_projects(request: Request) -> Response:

@@ -312,9 +312,11 @@ _MACHINE = "revoked_at IS NULL AND expires IS NULL AND legacy=0"  # a joined mac
 _BROWSER = ("revoked_at IS NULL AND id IN (SELECT device_id FROM gitlab_sessions)")  # a GitLab sign-in
 
 
-def account(store, principal: Principal) -> dict:
+def account(store, principal: Principal, ws=None) -> dict:
     """The account page: the caller's own person, machines, browsers signed in with GitLab and
-    projects, nothing of anyone else's. `current` marks the device this page signed in with."""
+    projects, nothing of anyone else's. `current` marks the device this page signed in with.
+    With `ws` (a WorkerStore) each machine has its computer's GPU queue line (other people's
+    names for an admin only, counts for anyone else)."""
     now, emergency = store.clock(), emergency_device(store)
     with store.lock:
         p = store.db.execute("SELECT name, role, gitlab_user FROM people WHERE id=?",
@@ -328,6 +330,14 @@ def account(store, principal: Principal) -> dict:
             " AND (expires IS NULL OR expires>?) ORDER BY created DESC",
             (principal.person_id, now)).fetchall()
         team = _team_machines(store, principal.person_id)
+    queue: Dict[str, str] = {}
+
+    def extra(d) -> dict:
+        if ws is None:
+            return {}
+        if d["host"] not in queue:
+            queue[d["host"]] = ws.queue_text(d["host"], now, principal.is_admin() and not principal.legacy)
+        return {"gpu_queue": queue[d["host"]]}
     return {
         "person": p["name"], "role": p["role"], "gitlab_user": p["gitlab_user"],
         "machines": [{"id": d["id"], "name": machine_name(d["label"], d["os_user"], d["host"], d["name"]),
@@ -336,14 +346,15 @@ def account(store, principal: Principal) -> dict:
                       "os_user": d["os_user"], "last_seen": d["last_used"], "tools": tools[d["id"]],
                       "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S,
                       "current": d["id"] == principal.device_id,
-                      "emergency": d["id"] == emergency}
+                      "emergency": d["id"] == emergency, **extra(d)}
                      for d in devices],
         "browsers": [{"id": b["id"], "created": b["created"], "last_used": b["last_used"],
                       "current": b["id"] == principal.device_id} for b in browsers],
         "team_machines": [{"name": machine_name(d["label"], d["os_user"], d["host"], d["name"]),
                            "os_user": d["os_user"], "tools": d["tools"],
                            "last_seen": d["last_used"], "projects": d["projects"],
-                           "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S}
+                           "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S,
+                           **extra(d)}
                           for d in team],
         "projects": [{"name": x["name"], "role": x["role"]} for x in store.projects_for(principal)],
         "add_machine": can_add_machine(principal) and not store.is_team(principal.person_id),

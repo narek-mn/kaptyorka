@@ -328,6 +328,21 @@ The same holds when another person uses the machine heavily, in any folder: the 
 
 Shared machines: every bridge reports, once a minute, what each OS user on its machine uses: CPU cores (the average over that minute), memory, and, where `nvidia-smi` is installed, each GPU's busy % and memory and which OS user holds GPU memory. A Jetson has no `nvidia-smi` (before JetPack 7): there the bridge reads the GPU's busy % from sysfs (the GPU's `devfreq` device, or `/sys/devices/gpu.0/load`), and from one `tegrastats` line, within 2 seconds, only when sysfs has none. Per-user GPU memory is not available there, so a Jetson reports only how busy its GPU is. Only numbers per OS user leave the machine, never process names or command lines; reading them takes about 10 ms, and `nvidia-smi` gets 5 seconds before it is left out for 10 minutes. The hub adds an OS user's numbers to the person whose device runs as it (one person in two OS users adds up; an account nobody joined from shows as `account <name>`), ignores a report older than 3 minutes, and never counts the manager. A person holds a GPU when their processes use 1 GB or more of it. Their use is **heavy** when they hold half the GPUs or more, a GPU they hold is 80% busy or full, or they use half the CPU cores or the memory. The thresholds are in `usage.py`; there is no setting. Only the admin (on `/api/machines`) and the manager see the numbers.
 
+### GPU queue
+
+Some computers share one GPU through a flock queue: a lock file such as `/srv/gpu.lock` and share files `/srv/gpu.lock.share1` to `.share10`. A job takes K shares by holding K share files exclusively (and the lock file shared); a job that wants the whole GPU holds the lock file exclusively; waiting jobs line up on `/srv/gpu.lock.queue` (one holds it while it looks for room, the rest wait on it). Tell the hub where the lock file is, once per computer:
+
+```bash
+kaptyorka machine gpu-queue box-1 /srv/gpu.lock          # --shares 10 is the default
+kaptyorka machine gpu-queue box-1 --off
+```
+
+One bridge on that computer reads the queue (the lowest-numbered account online there that runs 0.9.23 or later; the others skip it), at every facts refresh, about once a minute. It never takes a lock and never reads the files' content (it goes stale): it reads `/proc/locks`, finds the lock files by their inode, counts the shares each job holds, and maps each job to its OS user through `/proc/<pid>/status`. Jobs that wait are the one holding the queue file and every job blocked on the queue file or the lock file. A missing lock file or an unreadable `/proc/locks` shows as `GPU queue: unknown`, never as an error. Inodes are matched without the device number, because btrfs and overlay report another device in `/proc/locks` than `stat` does.
+
+On **Machines**, the rows of that computer show one line in the use line's style: `GPU queue: bob 4/10 · carol 6/10 · 1 waiting`, `GPU queue: free` or `GPU queue: taken whole by bob`. Only admins see names; everyone else sees counts, such as `GPU queue: 10/10 in use · 1 waiting` or `GPU queue: taken whole`, so nobody learns another person's activity. A report older than 3 minutes is not shown.
+
+For the manager, a full queue (every share held or the GPU taken whole) or a waiting job makes that computer **heavy**, like heavy use above: work started through the hub there is held, the person is told `busy: box-1 is in use by the GPU queue (10/10 in use); the manager is deciding`, and the manager's notice carries the queue line with names. When only your own jobs hold and wait, it is not heavy for you.
+
 A session someone opens straight on a machine cannot be held. When a person's first session on a machine (none there for 10 minutes before) arrives while another person's use there is heavy, the hub tells the manager once. The manager sends that session one line on who uses what and tells the admin; it never refuses. Only team-project sessions reach the hub, so a personal session is never noticed. People who share one OS account count as one account here, so their use never holds or warns each other.
 
 Every decision carries a reason, is written to the log, and is told to the asker. A request nobody decides expires after an hour, and the asker is told to ask again. If no manager is online, `work` answers as before and the asker picks another machine.
@@ -453,6 +468,7 @@ kaptyorka machine team jetson-1        # a team machine; prints the join command
 kaptyorka machine hide jetson-1 bob    # hide a team machine and its sessions from bob (show: back again)
 kaptyorka machine team --from svc      # turn an existing person (the hub's own account) into a team machine
 kaptyorka machine move laptop-1 carol  # give a joined machine to another person
+kaptyorka machine gpu-queue box-1 /srv/gpu.lock   # show its GPU share queue; --shares N, --off
 kaptyorka shared-token off             # or on
 kaptyorka project add proj-a --repo <url> --desc "what it is"
 kaptyorka project edit proj-a --description "new words"
@@ -564,6 +580,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka revoke <person> <project>` | Admin: take it away; or `machine:<host>` |
 | `kaptyorka machine owner <host> <person>` | Admin: name a machine's owner |
 | `kaptyorka machine hide\|show <machine> <person>` | Admin: hide a team machine and its sessions from one person, or show it again |
+| `kaptyorka machine gpu-queue <machine> <lock file>` | Admin: read a computer's flock GPU share queue for Machines and the manager (`--shares N`, 10 by default; `--off`) |
 | `kaptyorka who` | List sessions online |
 | `kaptyorka status` | Show whether this machine's bridge, the hub (on the hub machine) and the manager (admin) are running; exit 1 if not |
 | `kaptyorka page` | Open your own page on the hub in a browser and print its private link (keep it to yourself: it signs you in). With sign-in with GitLab on, a member's machine says to open the hub and sign in with GitLab |

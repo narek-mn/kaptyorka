@@ -653,6 +653,7 @@ a.p-main { color: inherit; text-decoration: none; }
 .m-use, .m-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-sm); color: var(--faint); }
 .m-use { font-family: var(--mono); color: var(--muted); }
 .m-line > span + span::before { content: "\00b7"; margin-right: 10px; color: var(--faint); font-family: var(--sans); }
+.m-queue { display: block; margin-top: 2px; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-sm); font-family: var(--mono); color: var(--muted); }
 .m-row .confirm select { height: var(--h-sm); max-width: 220px; }
 .pj-add #new-project { flex: 0 1 200px; }
 .pj-add #new-project-desc { flex: 1 1 240px; }
@@ -2349,6 +2350,10 @@ a.p-main { color: inherit; text-decoration: none; }
       return t.logged_in === false ? chip(t.name + " · not logged in", "warn") : chip(t.name, "ok");
     }));
   }
+  /* the computer's GPU share queue, in the use line's style */
+  function queueLine(queue) {
+    return queue ? el("div", { "class": "m-queue", title: "The GPU share queue on this computer", text: queue }) : null;
+  }
   /* Everyone: one row per joined account (account@computer), whose it is, how busy its computer is */
   function deviceRow(m, d) {
     var acts = el("span", { "class": "pj-acts" });
@@ -2364,7 +2369,7 @@ a.p-main { color: inherit; text-decoration: none; }
                                           d.team ? chip("Team", "active", "pj-tag") : null]),
         el("div", { "class": "pj-desc m-line" }, [el("span", { "class": "m-who", text: whose }),
           m.use ? el("span", { "class": "m-use", title: "This computer's use", text: m.use }) : el("span", { "class": "m-state" }, [seenLine(d.online, d.last_seen)])]),
-        toolTags(d.tools)]),
+        queueLine(m.gpu_queue), toolTags(d.tools)]),
       acts]);
   }
   function giveMachine(d, acts) {
@@ -2787,7 +2792,7 @@ a.p-main { color: inherit; text-decoration: none; }
     return el("div", { "class": "a-row", "data-machine": String(d.id) }, [
       avatar("machine", d.name, { dot: !!d.online }),
       el("div", { "class": "a-text" }, [el("b", { text: d.name, title: d.name === d.machine ? d.name : d.name + " (joined as " + d.machine + ")" }), d.emergency ? chip("This hub", "idle", "a-hub") : null, sub,
-        toolTags(d.tools)]),
+        queueLine(d.gpu_queue), toolTags(d.tools)]),
       acts]);
   }
   /* a team machine you can use: shared by the team, so no Rename or Remove here */
@@ -2795,7 +2800,7 @@ a.p-main { color: inherit; text-decoration: none; }
     var sub = el("small", null, [d.projects.join(", ") + " \u00b7 ", seenText(d)]);
     return el("div", { "class": "a-row", "data-team-machine": d.name, title: "A team machine: everyone with a role in " + d.projects.join(", ") + " uses it" }, [
       avatar("machine", d.name, { dot: !!d.online }),
-      el("div", { "class": "a-text" }, [el("b", { text: d.name }), sub, toolTags(d.tools)]),
+      el("div", { "class": "a-text" }, [el("b", { text: d.name }), sub, queueLine(d.gpu_queue), toolTags(d.tools)]),
       chip("Team", "active", "a-tag")]);
   }
   function renderAccount() {

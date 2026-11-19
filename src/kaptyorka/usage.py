@@ -365,3 +365,143 @@ def short(use: Optional[dict]) -> str:
     if mem:
         parts.append(f"memory {round(100 * sum(u.get('mem') or 0 for u in users) / mem)}%")
     return " · ".join(parts)
+
+
+# the GPU share queue: jobs coordinate with flock(1) on one lock file L. A job holds L shared
+# and K of L.share1..L.shareN exclusively; a job wanting the whole GPU holds L exclusively;
+# waiting jobs queue on L.queue (one holds it while it looks for room, the rest block on it).
+# Read from /proc/locks only: never a lock taken, never a file's content trusted.
+GPU_SHARES = 10
+
+
+def parse_locks(text: str) -> List[dict]:
+    """/proc/locks lines as {"pid", "ino", "write", "waiting"}: FLOCK locks only. A blocked
+    waiter's line is marked "->". Lines that do not parse are skipped."""
+    out = []
+    for line in text.splitlines():
+        f = line.split()
+        if len(f) < 6 or not f[0].endswith(":"):
+            continue
+        waiting = f[1] == "->"
+        f = f[2:] if waiting else f[1:]
+        if len(f) < 5 or f[0] != "FLOCK":
+            continue
+        dev = f[4].split(":")
+        if len(dev) != 3 or not f[3].isdigit() or not dev[2].isdigit():
+            continue
+        out.append({"pid": int(f[3]), "ino": int(dev[2]), "write": f[2] == "WRITE",
+                    "waiting": waiting})
+    return out
+
+
+def queue_state(locks: List[dict], lock_ino: int, share_inos: Dict[int, int],
+                queue_ino: Optional[int], user: Callable[[int], str], shares: int) -> dict:
+    """{"shares", "holders": {user: shares held}, "whole": user or "", "waiting": n,
+    "waiters": {user: n}} from parsed /proc/locks. Matched on inode only: btrfs and overlay
+    report a device in /proc/locks other than stat's. `share_inos`: inode -> share number.
+    Waiting: the job holding L.queue (it looks for room) and every job blocked on L.queue or
+    L, each pid once."""
+    held: Dict[int, set] = {}
+    whole, waiters = "", set()
+    for lk in locks:
+        ino, pid = lk["ino"], lk["pid"]
+        if lk["waiting"]:
+            if ino == queue_ino or ino == lock_ino:
+                waiters.add(pid)
+        elif ino in share_inos and lk["write"]:
+            held.setdefault(pid, set()).add(share_inos[ino])
+        elif ino == lock_ino and lk["write"]:
+            whole = user(pid)
+        elif ino == queue_ino and lk["write"]:
+            waiters.add(pid)
+    holders: Dict[str, int] = {}
+    for pid, nums in held.items():
+        u = user(pid)
+        holders[u] = holders.get(u, 0) + len(nums)
+    waiting: Dict[str, int] = {}
+    for pid in waiters - set(held):
+        u = user(pid)
+        waiting[u] = waiting.get(u, 0) + 1
+    return {"shares": shares, "holders": holders, "whole": whole,
+            "waiting": sum(waiting.values()), "waiters": waiting}
+
+
+def pid_user(proc: Path, pid: int, name: Callable[[int], str]) -> str:
+    """The OS user a pid runs as, from the real uid in /proc/<pid>/status; "unknown" when it
+    is gone or in another pid namespace."""
+    try:
+        for line in (proc / str(pid) / "status").read_text().splitlines():
+            if line.startswith("Uid:"):
+                return name(int(line.split()[1]))
+    except (OSError, ValueError, IndexError):
+        pass
+    return "unknown"
+
+
+def read_queue(lock: str, shares: int, proc: Path = Path("/proc"),
+               name: Optional[Callable[[int], str]] = None) -> dict:
+    """The queue on lock file `lock` now; {"unknown": True} when L or /proc/locks cannot be
+    read. Never blocks: stat and one read of /proc/locks."""
+    def ino(path: str) -> Optional[int]:
+        try:
+            return os.stat(path).st_ino
+        except OSError:
+            return None
+    lock_ino = ino(lock)
+    try:
+        text = (proc / "locks").read_text()
+    except OSError:
+        text = None
+    if lock_ino is None or text is None:
+        return {"unknown": True, "shares": shares}
+    share_inos = {}
+    for i in range(1, shares + 1):
+        n = ino(f"{lock}.share{i}")
+        if n is not None:
+            share_inos[n] = i
+    names: Dict[int, str] = {}
+
+    def by_uid(uid: int) -> str:
+        if uid not in names:
+            try:
+                names[uid] = pwd.getpwuid(uid).pw_name
+            except KeyError:
+                names[uid] = str(uid)
+        return names[uid]
+    return queue_state(parse_locks(text), lock_ino, share_inos, ino(f"{lock}.queue"),
+                       lambda pid: pid_user(proc, pid, name or by_uid), shares)
+
+
+def queue_used(q: dict) -> int:
+    return min(sum((q.get("holders") or {}).values()), q.get("shares") or GPU_SHARES)
+
+
+def queue_full(q: Optional[dict]) -> bool:
+    """Heavy for the manager: every share held, the GPU taken whole, or someone waiting."""
+    if not isinstance(q, dict) or q.get("unknown"):
+        return False
+    return bool(q.get("whole")) or q.get("waiting", 0) > 0 \
+        or queue_used(q) >= (q.get("shares") or GPU_SHARES)
+
+
+def queue_line(q: Optional[dict], names: bool, label: Callable[[str], str] = str) -> str:
+    """"GPU queue: bob 4/10 · carol 6/10 · 1 waiting" (names, for admins), or only counts:
+    "GPU queue: 10/10 in use · 1 waiting". `label` turns an OS user into a person's name.
+    "" when nothing was reported."""
+    if not isinstance(q, dict):
+        return ""
+    if q.get("unknown"):
+        return "GPU queue: unknown"
+    n = q.get("shares") or GPU_SHARES
+    wait = f" · {q['waiting']} waiting" if q.get("waiting") else ""
+    if q.get("whole"):
+        return f"GPU queue: taken whole{' by ' + label(q['whole']) if names else ''}{wait}"
+    used = queue_used(q)
+    if not used:
+        return "GPU queue: free" + wait
+    if not names:
+        return f"GPU queue: {used}/{n} in use{wait}"
+    by: Dict[str, int] = {}
+    for u, k in (q.get("holders") or {}).items():
+        by[label(u)] = by.get(label(u), 0) + k
+    return "GPU queue: " + " · ".join(f"{who} {k}/{n}" for who, k in sorted(by.items())) + wait

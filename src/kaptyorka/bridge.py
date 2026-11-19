@@ -78,6 +78,7 @@ class Bridge:
         self._facts: dict = {}
         self._facts_at: Optional[float] = None  # monotonic time of the last build; None forces one
         self._usage = usage.Sampler()
+        self._gpu_queue_ask: Optional[dict] = None  # the hub's last gpu_queue ask
         self._skills_version: Optional[str] = None  # the hub's last skills_version; None until one comes
         self._updated_to = ""  # the hub version an update was last run for
         self._update_retry_at = 0.0
@@ -103,8 +104,21 @@ class Bridge:
                 self._facts["use"] = self._usage.read()
             except Exception as e:
                 self._report("use", f"reading machine use failed: {e}")
+            self._checks()
             self._facts_at = time.monotonic()
         return self._facts
+
+    def _checks(self) -> None:
+        """The GPU queue, when the hub asked this bridge for it; it never stops the heartbeat
+        and an unreadable file is "unknown", never a log line."""
+        q = self._gpu_queue_ask
+        try:
+            if isinstance(q, dict) and isinstance(q.get("lock"), str):
+                shares = q.get("shares") if isinstance(q.get("shares"), int) else usage.GPU_SHARES
+                self._facts["gpu_queue"] = {**usage.read_queue(q["lock"], shares),
+                                            "read_at": time.time()}
+        except Exception as e:
+            self._report("gpu_queue", f"reading the GPU queue failed: {e}")
 
     @staticmethod
     def _sendable(facts_: dict, cwds: set) -> dict:
@@ -126,6 +140,11 @@ class Bridge:
             read_at = use.pop("read_at", None)
             use["age"] = round(max(0.0, time.time() - read_at), 1) if read_at is not None else 0.0
             out["use"] = use
+        if isinstance(facts_.get("gpu_queue"), dict):
+            q = dict(facts_["gpu_queue"])
+            read_at = q.pop("read_at", None)
+            q["age"] = round(max(0.0, time.time() - read_at), 1) if read_at is not None else 0.0
+            out["gpu_queue"] = q
         return out
 
     def _team(self):
@@ -192,6 +211,10 @@ class Bridge:
         if isinstance(v, str) and v != self._skills_version:
             self._skills_version = v
             self._facts_at = None  # the next facts show the skills after this sync
+        ask = self.hub.get("gpu_queue")
+        if self.hub and ask != self._gpu_queue_ask:  # a lost answer keeps the last ask
+            self._gpu_queue_ask = ask
+            self._facts_at = None  # switched on, changed or off: read it next beat
         self._sessions = objs
         self._report("heartbeat", None if status in (200, 204)
                      else f"hub answered {status} to heartbeat" + _said(status, answer))

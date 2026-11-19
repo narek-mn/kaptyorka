@@ -114,7 +114,8 @@ def test_heartbeat_answers_json_with_projects_and_version(hub, alice):
     assert status == 200
     assert body == {"version": kaptyorka.__version__, "auto_update": True,
                     "projects": ["proj-a"], "team": ["proj-a", "proj-b"], "keep": [],
-                    "you": "alice", "shared": False, "skills_version": ""}
+                    "you": "alice", "shared": False, "skills_version": "",
+                    "gpu_queue": None}
     dev = hub.store.authenticate(token).device_id
     assert hub.ws.facts(dev)["tmux"] is True and hub.ws.folders(dev) == {"proj-a": "/w/proj-a"}
     with hub.store.lock:

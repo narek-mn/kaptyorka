@@ -1664,3 +1664,60 @@ def test_home_mine_everyone_and_the_machine_switch(tmp_path, w, h):
     finally:
         stop()
         store.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_machines_gpu_queue_line(tmp_path, w, h):
+    """The GPU queue line on Machines: names for the admin (Everyone and Mine), counts only for
+    a member (Mine). Screenshots to KAPTYORKA_SHOTS."""
+    import json as _json
+    import os
+    from kaptyorka.workers import WorkerStore
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    _, token = person(store, "alice", "admin")
+    _, bob_t = person(store, "bob")
+    carol, _ = person(store, "carol")
+    b = store.authenticate(bob_t)
+    store.heartbeat("box-1", [], principal=b, facts={"host": "box-1", "os_user": "bob"})
+    c = store.authenticate(store.device_add(carol, "carol-box-1"))
+    store.heartbeat("box-1", [], principal=c, facts={"host": "box-1", "os_user": "carol"})
+    WorkerStore(store).set_gpu_queue("box-1", "/srv/gpu.lock", 10, "alice")
+    with store.lock:
+        store.db.execute("INSERT INTO device_facts (device_id, facts, updated) VALUES (?,?,?)",
+                         (b.device_id, _json.dumps({
+                             "version": "0.9.23", "tools": {"claude-code": "2.1"}, "logins": {"claude-code": True},
+                             "use": {"age": 0, "cpus": 16, "mem_mb": 64000,
+                                     "gpus": [{"index": 0, "util": 97.0, "mem": 0, "total": 0}],
+                                     "users": {"bob": {"cpu": 6.0, "mem": 20000}}},
+                             "gpu_queue": {"age": 0, "shares": 10, "holders": {"bob": 4, "carol": 6},
+                                           "whole": "", "waiting": 1, "waiters": {"carol": 1}}}),
+                          store.clock()))
+    row = 'document.querySelector("#team-machine-rows [data-machine=\\"{}\\"]")'.format
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    base = f"http://127.0.0.1:{stop.port}"
+    try:
+        with chrome(w, h) as page:
+            page.go(f"{base}/#t={token}&view=machines")
+            page.wait(f'!!{row(b.device_id)} && !!{row(b.device_id)}.querySelector(".m-queue")')
+            for d in (b, c):  # every account on that computer
+                assert page.js(f'{row(d.device_id)}.querySelector(".m-queue").textContent') == \
+                    "GPU queue: bob 4/10 · carol 6/10 · 1 waiting"
+            assert page.js(f'{row(b.device_id)}.querySelector(".m-use").textContent').startswith("GPU 97%")
+            assert page.js(wide)
+            page.screenshot(shots / f"machines-gpu-queue-admin-{tag}.png")
+        with chrome(w, h) as page:
+            page.go(f"{base}/#t={bob_t}&view=machines")
+            page.wait('!!document.querySelector("#a-machines .m-queue")')
+            assert page.js('document.querySelector("#a-machines .m-queue").textContent') == \
+                "GPU queue: 10/10 in use · 1 waiting"
+            assert "carol" not in page.js('document.getElementById("a-machines").textContent')
+            assert page.js(wide)
+            page.screenshot(shots / f"machines-gpu-queue-member-{tag}.png")
+    finally:
+        stop()
+        store.close()
