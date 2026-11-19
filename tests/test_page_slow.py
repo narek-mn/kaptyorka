@@ -315,7 +315,8 @@ def test_background_job_marked_and_empty_chat(tmp_path):
                     page.wait('getComputedStyle(document.querySelector("#home .side")).display !== "none"')
                 page.js(f'{term}.click()')
                 assert page.wait('document.getElementById("text").placeholder') == "Message api-dev"
-                assert page.wait('document.querySelector("#log .blank")?.textContent') == "No messages yet."
+                assert page.wait('document.querySelector("#log .blank")?.textContent') == \
+                        "Messages you send here show up here. What you type to Claude stays on your computer."
                 assert "background" not in page.js('document.getElementById("chat-sub").textContent')
     finally:
         stop()
