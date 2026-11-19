@@ -3,6 +3,7 @@ pushes that fail visibly, the login check and the machine's current name."""
 import json
 import os
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -17,6 +18,8 @@ from kaptyorka.bridge import Bridge
 from kaptyorka.launch import Launcher
 from kaptyorka.store import Store
 from test_bridge import FakeAdapter
+
+BASH_RC = ".bash_profile" if sys.platform == "darwin" else ".bashrc"  # add_alias's pick
 
 REAL_LOGIN_PATH = opencode.login_path  # conftest fakes it
 
@@ -81,10 +84,10 @@ def test_the_wrapper_adds_port_0_to_the_tui_only(home, bins, monkeypatch):
 
 def test_no_wrapper_where_it_would_not_come_first(home, bins, monkeypatch):
     for path in (f"{bins.real}:{bins.local}:/usr/bin:/bin", f"{bins.real}:/usr/bin:/bin"):
-        (home / ".bashrc").write_text("")
+        (home / BASH_RC).write_text("")
         wired(home, path, monkeypatch)._server_on(False)
         assert not (bins.local / "opencode").exists()
-        assert ALIAS in (home / ".bashrc").read_text()  # the fallback
+        assert ALIAS in (home / BASH_RC).read_text()  # the fallback
 
 
 def test_a_real_opencode_in_local_bin_is_never_touched(home, bins, monkeypatch):
@@ -92,7 +95,7 @@ def test_a_real_opencode_in_local_bin_is_never_touched(home, bins, monkeypatch):
     mine.write_text("#!/bin/sh\necho mine\n")
     wired(home, f"{bins.local}:/usr/bin:/bin", monkeypatch)._server_on(False)
     assert mine.read_text() == "#!/bin/sh\necho mine\n"
-    assert ALIAS in (home / ".bashrc").read_text()
+    assert ALIAS in (home / BASH_RC).read_text()
 
 
 def test_configure_unconfigure_v2_and_bridge_start(home, bins, monkeypatch):
