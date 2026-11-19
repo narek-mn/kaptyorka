@@ -245,17 +245,22 @@ class ManagerStore:
             me = getpass.getuser()
         except Exception:  # no passwd entry for this uid
             me = ""
-        live = ("d.host=? AND d.legacy=0 AND d.revoked_at IS NULL AND d.secret_hash!=''"
-                " ORDER BY d.last_used IS NULL, d.last_used DESC LIMIT 1")
+        # Hosts and OS users are what a bridge says about itself, so only trusted devices count: an
+        # admin's, the hub key's, or the hub key's person's (the install person, now a team machine).
+        # Other team machines never do: members can read a shared account's token.
+        live = (" JOIN people p ON p.id=d.person_id WHERE (p.role='admin' OR d.token_hash=:key OR"
+                " d.person_id=(SELECT person_id FROM devices WHERE token_hash=:key AND"
+                " revoked_at IS NULL)) AND d.host=:host AND d.legacy=0 AND d.revoked_at IS NULL"
+                " AND d.secret_hash!=''")
+        order = " ORDER BY d.last_used IS NULL, d.last_used DESC LIMIT 1"
         with self.lock:
-            row = self.db.execute("SELECT d.* FROM devices d WHERE d.os_user=? AND " + live,
-                                  (me, host)).fetchone() if me else None
+            row = self.db.execute("SELECT d.* FROM devices d" + live + " AND d.os_user=:me" + order,
+                                  {"key": hub_key, "host": host, "me": me}).fetchone() \
+                if me else None
             fallback = row is None
             if fallback:
-                row = self.db.execute(
-                    "SELECT d.* FROM devices d JOIN people p ON p.id=d.person_id"
-                    " WHERE (p.role='admin' OR d.token_hash=?) AND " + live,
-                    (hub_key, host)).fetchone()
+                row = self.db.execute("SELECT d.* FROM devices d" + live + order,
+                                      {"key": hub_key, "host": host}).fetchone()
             now = self.clock()
         if row is None:
             return None

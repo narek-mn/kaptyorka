@@ -299,6 +299,7 @@ def bridge_as(hub, name, role, os_user, team=False):
 def test_manager_launches_through_the_hub_accounts_bridge(hub, monkeypatch):
     monkeypatch.setattr(manager.getpass, "getuser", lambda: "svc")
     svc = bridge_as(hub, "svc", "admin", "svc", team=True)  # the install-time person, now a team machine
+    write_hub_key(hub, svc)
     human = bridge_as(hub, "carol", "admin", "carol")  # joined later from their own account
     hub.mm.set_enabled(True, "test")
     hub.tick()
@@ -309,6 +310,35 @@ def test_manager_launches_through_the_hub_accounts_bridge(hub, monkeypatch):
     with hub.store.lock:
         row = hub.store.db.execute("SELECT device_id, boss_key FROM workers WHERE name='manager'").fetchone()
     assert row["device_id"] == svc.device_id and row["boss_key"] == "web:" + o["person"]
+
+
+def write_hub_key(hub, b):
+    paths.home().mkdir(parents=True, exist_ok=True)
+    (paths.home() / "admin-token").write_text(b.token + "\n")
+
+
+def test_manager_launches_through_the_hub_key_persons_bridge(hub, monkeypatch):
+    monkeypatch.setattr(manager.getpass, "getuser", lambda: "svc")
+    svc = bridge_as(hub, "svc", "member", "svc", team=True)
+    write_hub_key(hub, svc)
+    hub.mm.set_enabled(True, "test")
+    other = bridge_as(hub, "carol", "admin", "carol")
+    assert hub.mm.admin_device(HOST)["id"] == svc.device_id
+    hub.tick()
+    assert orders(hub, other) == [] and len(orders(hub, svc)) == 1
+
+
+def test_untrusted_devices_reporting_the_hub_user_are_never_picked(hub, monkeypatch):
+    monkeypatch.setattr(manager.getpass, "getuser", lambda: "svc")
+    svc = bridge_as(hub, "svc", "member", "svc", team=True)
+    write_hub_key(hub, svc)
+    bridge_as(hub, "mallory", "member", "svc")  # a member claims the hub's host and OS user
+    bridge_as(hub, "shared", "member", "svc", team=True)  # another team machine does the same
+    got = hub.mm.admin_device(HOST)
+    assert got["id"] == svc.device_id
+    with hub.store.lock:  # with the hub key's bridge gone, nobody trusted is left
+        hub.store.db.execute("UPDATE devices SET revoked_at=1 WHERE id=?", (svc.device_id,))
+    assert hub.mm.admin_device(HOST) is None
 
 
 def test_old_setup_admin_owns_the_hub_account(hub, monkeypatch):
