@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **A session may answer one that messaged it.** For 24 hours after a session wrote to another, the other may reply by name or #id, even when it could not reach or list it otherwise. Before, a team machine session could not answer a member session from another project ("no session named #… that you can reach"). It never adds anyone to `who`; a team machine hidden from the person still blocks it both ways, and closing a door between the two ends it.
+
 ## 0.9.25
 
 - The manager starts again on a hub whose own account is a team machine (0.9.24 sent the start for the admin, and the hub account's bridge refused it).

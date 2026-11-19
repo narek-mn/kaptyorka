@@ -24,6 +24,7 @@ MAX_FILE = 5_000_000
 FILE_TYPES = ("png", "jpg", "jpeg", "gif", "webp", "svg", "txt", "md", "log", "json", "csv", "pdf",
               "mp4", "webm", "mov", "m4v", "ogg")
 RATE = (30, 60)
+REPLY_S = 86400  # a session may answer one that messaged it this recently, whoever it is
 SCHEMA_VERSION = 2
 INVITE_TTL_S = 7 * 86400
 LEGACY_IDLE_S = 7 * 86400  # the shared token switches itself off after this long unused
@@ -1662,6 +1663,10 @@ class Store:
         online = [r for r in self._online_rows(now) if not limited or self._listed(viewer, r)]
         if to == "all":
             return [r for r in online if r["key"] != sender_key]
+        if limited:  # by name only, never in a listing: the sessions that wrote to this one
+            seen = {r["key"] for r in online}
+            online += [r for r in self._online_rows(now) if r["key"] not in seen
+                       and self._answers(sender_key, viewer, r)]
         match = self._named(online, to, viewer)
         match = match or [r for r in self.db.execute(
             "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1", (to,)).fetchall()
@@ -1973,12 +1978,43 @@ class Store:
             return True
         if (self._is_team(tp) and self._hidden(tp, sp)) or (self._is_team(sp) and self._hidden(sp, tp)):
             return False  # hidden stays hidden, even behind an open door
+        if self._wrote_to(target["key"], sender["key"]):
+            return True  # one hop back: the answer to a session that wrote to this one
         return self.db.execute(
             "SELECT 1 FROM doors WHERE closed_at IS NULL AND ("
             "(scope='session' AND ((a_key=? AND b_key=?) OR (a_key=? AND b_key=?))) OR"
             " (scope='group' AND ((a_person=? AND b_person=?) OR (a_person=? AND b_person=?))))",
             (sender["key"], target["key"], target["key"], sender["key"],
              sp, tp, tp, sp)).fetchone() is not None
+
+    def _wrote_to(self, from_key, to_key) -> bool:
+        """Lock held. True when the session `from_key` sent a message to `to_key` within
+        REPLY_S: `to_key` may answer it, even when it could not reach it otherwise. A door
+        closed between them since then ends it: closing a door still closes the way back."""
+        if from_key.startswith("web:") or to_key.startswith("web:"):
+            return False  # a person's page has its own reply door
+        people = [r["person_id"] for r in self.db.execute(
+            "SELECT person_id FROM agents WHERE key IN (?,?)", (from_key, to_key))]
+        fp, tp = (people + [None, None])[:2]
+        closed = self.db.execute(
+            "SELECT MAX(closed_at) FROM doors WHERE closed_at IS NOT NULL AND ("
+            "(scope='session' AND ((a_key=? AND b_key=?) OR (a_key=? AND b_key=?))) OR"
+            " (scope='group' AND ((a_person=? AND b_person=?) OR (a_person=? AND b_person=?))))",
+            (from_key, to_key, to_key, from_key, fp, tp, tp, fp)).fetchone()[0]
+        since = max(self.clock() - REPLY_S, closed or 0)
+        return self.db.execute(
+            "SELECT 1 FROM messages WHERE sender_key=? AND to_key=? AND kind='message'"
+            " AND created > ? LIMIT 1", (from_key, to_key, since)
+        ).fetchone() is not None
+
+    def _answers(self, sender_key, viewer, row) -> bool:
+        """Lock held. True when the session `row` wrote to `sender_key` recently and no hidden
+        team machine stands between them: `send` may then name it, though `_listed` hides it."""
+        pid = row["person_id"]
+        if viewer is None or pid is None or not self._wrote_to(row["key"], sender_key):
+            return False
+        return not ((self._is_team(pid) and self._hidden(pid, viewer))
+                    or (self._is_team(viewer) and self._hidden(viewer, pid)))
 
     def page_may_message(self, person: str, person_id: int, key: str,
                          target_person: Optional[int]) -> bool:
