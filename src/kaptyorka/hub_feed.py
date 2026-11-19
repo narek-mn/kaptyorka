@@ -119,13 +119,14 @@ def feed(store: Store, principal: Principal, ws=None, cs=None) -> dict:
     if not admin and ws is not None:  # only what blocks this person; the admin has /api/warnings
         out["warnings"] = [w for w in ws.warnings(now, __version__) if w["person"] == me]
     if admin:
-        members, grants = store.project_members(), store.machine_grants()
+        members, grants, hidden = store.project_members(), store.machine_grants(), store.team_hidden()
         sides = (("_from", "from_session"), ("_to", "target"))
         connects = [masked(store, principal, r, sides) for r in cs.requests()] if cs else []
         decided = [masked(store, principal, r, sides)
                    for r in cs.requests(pending_only=False)] if cs else []
         out.update({
-            "people": [{**p, "devices": store.devices(p["id"])} for p in people],
+            "people": [{**p, "devices": store.devices(p["id"]),
+                        **({"hidden_from": hidden.get(p["name"], [])} if p["team"] else {})} for p in people],
             "requests": sorted(store.requests() + connects, key=lambda r: r["created"]),
             "decisions": sorted([r for r in store.requests(pending_only=False) if r["decided_at"]]
                                 + decided, key=lambda r: r["decided_at"], reverse=True)[:10],

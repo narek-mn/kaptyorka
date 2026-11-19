@@ -337,3 +337,92 @@ def test_machines_show_their_agent_tools(store, team):
     assert "alice" not in json.dumps(acc) and "carol" not in json.dumps(acc)
     every = {d["name"]: d["tools"] for h in ws.overview() for d in h["devices"]}
     assert every["bob@box-2"][0]["logged_in"] is True and every["nvidia@jet-1"][0]["logged_in"] is False
+
+
+def test_a_team_machine_hidden_from_one_person(store, team):
+    """Every team machine is there for everyone by default. Hidden from bob, it is gone for
+    him: not on his Machines, its sessions not in his feed or who, no messages either way, no
+    workers there, no request for it. Shown again, it is back. Admins see it always, and the
+    switch refuses them. Removing bob or the team machine drops the row."""
+    from kaptyorka.workers import WorkerStore as WS
+    jet, p = team
+    bob = who(store, "bob")
+    store.seen("b-1", "box-2", "claude", "proj-a", principal=Principal(bob.person_id, "bob", "member", 0, "laptop", False, False))
+
+    def sees():
+        return (len(admin_ops.account(store, bob)["team_machines"]),
+                sorted(a["name"] for a in feed(store, bob)["agents"] if a["team"]),
+                store.listed(bob.person_id, "t-a", jet),
+                store.may_message("b-1", "t-a"), store.may_message("t-a", "b-1"),
+                store.listed(jet, "b-1", bob.person_id))
+    assert sees() == (1, ["jet-1/claude/proj-a"], True, True, True, True)  # the default
+    store.team_machine_set_visible("jet-1", "bob", False, "alice")
+    assert sees() == (0, [], False, False, False, False)
+    with pytest.raises(KaptyorkaError, match="no machine named jet-1"):
+        store.request_access(bob.person_id, "machine", "jet-1", "")
+    assert store.team_hidden() == {"jet-1": ["bob"]}
+    assert admin_ops.log_sentence(store.log(1)[0]) == "alice hid jet-1 from bob"
+    # admins always see it; the switch refuses them
+    alice = who(store, "alice")
+    assert len(admin_ops.account(store, alice)["team_machines"]) == 1 and store.listed(alice.person_id, "t-a", jet)
+    with pytest.raises(KaptyorkaError, match="sees every team machine"):
+        store.team_machine_set_visible("jet-1", "alice", False, "alice")
+    with pytest.raises(KaptyorkaError, match="no team machine named bob"):
+        store.team_machine_set_visible("bob", "carol", False, "alice")
+    store.team_machine_set_visible("jet-1", "bob", True, "alice")
+    assert sees() == (1, ["jet-1/claude/proj-a"], True, True, True, True)
+    assert admin_ops.log_sentence(store.log(1)[0]) == "alice showed jet-1 to bob"
+    # the manager never routes bob's work there
+    store.team_machine_set_visible("jet-1", "bob", False, "alice")
+    with store.lock:
+        store.db.execute("UPDATE devices SET shared=1 WHERE id=?", (p.device_id,))
+        store.db.execute("INSERT INTO machine_access (host, person_id) VALUES ('jet-1', ?)", (bob.person_id,))
+    assert WS(store).candidates_for(bob.person_id, "proj-a", "jet-1") == ([], [])  # not even named
+    store.team_machine_set_visible("jet-1", "bob", True, "alice")
+    assert WS(store).candidates_for(bob.person_id, "proj-a", "jet-1")[0] != []  # shown: it would be used
+    store.team_machine_set_visible("jet-1", "bob", False, "alice")
+    # removing bob cleans his row up; so does removing the team machine
+    admin_ops.remove_person(store, WS(store), "bob", alice)
+    assert store.team_hidden() == {}
+    with store.lock:
+        assert store.db.execute("SELECT COUNT(*) FROM team_machine_hidden").fetchone()[0] == 0
+    store.team_machine_set_visible("jet-1", "carol", False, "alice")
+    admin_ops.remove_person(store, WS(store), "jet-1", alice)
+    with store.lock:
+        assert store.db.execute("SELECT COUNT(*) FROM team_machine_hidden").fetchone()[0] == 0
+
+
+def test_hide_route_and_cli(tmp_path, monkeypatch, capsys):
+    """POST /api/people/<person>/team-machines/<machine> {visible} (admin only), and
+    `kaptyorka machine hide|show <machine> <person>`."""
+    from conftest import start_hub
+    from kaptyorka import cli, http, paths
+    s = Store(tmp_path / "hub.db")
+    stop = start_hub(s)
+    url = f"http://127.0.0.1:{stop.port}"
+    try:
+        _, admin = person(s, "alice", "admin")
+        _, member = person(s, "bob")
+        s.team_machine_add("jet-1", "alice")
+        path = url + "/api/people/bob/team-machines/jet-1"
+        assert http.request("POST", path, member, {"visible": False}) == (403, "admin only")
+        assert http.request("POST", path, admin, {"visible": "no"})[0] == 400
+        assert http.request("POST", url + "/api/people/bob/team-machines/nope", admin, {"visible": False}) == \
+            (404, "no team machine named nope")
+        assert http.request("POST", path, admin, {"visible": False})[0] == 204
+        assert s.team_hidden() == {"jet-1": ["bob"]}
+        assert http.request("GET", url + "/api/feed", admin)[1]["people"][-1]["hidden_from"] == ["bob"]
+        paths.save_config({"hub": url, "token": admin, "machine": "pc"})
+        monkeypatch.setattr(cli.sys, "argv", ["kaptyorka", "machine", "show", "jet-1", "bob"])
+        with pytest.raises(SystemExit) as e:
+            cli.entry()
+        assert e.value.code == 0 and capsys.readouterr().out == "jet-1 is shown to bob\n"
+        assert s.team_hidden() == {}
+        monkeypatch.setattr(cli.sys, "argv", ["kaptyorka", "machine", "hide", "jet-1", "bob"])
+        with pytest.raises(SystemExit) as e:
+            cli.entry()
+        assert e.value.code == 0 and capsys.readouterr().out == "jet-1 is hidden from bob\n"
+        assert s.team_hidden() == {"jet-1": ["bob"]}
+    finally:
+        stop()
+        s.close()

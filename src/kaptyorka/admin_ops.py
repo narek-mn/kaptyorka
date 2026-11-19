@@ -114,6 +114,7 @@ def _remove(store, pid: int, name: str, new: str, now: float) -> tuple:
                " (from_person=? OR to_person=?)", (now, pid, pid))
     grants = db.execute("DELETE FROM project_access WHERE person_id=?", (pid,)).rowcount
     grants += db.execute("DELETE FROM machine_access WHERE person_id=?", (pid,)).rowcount
+    db.execute("DELETE FROM team_machine_hidden WHERE person_id=? OR team_person_id=?", (pid, pid))
     requests = db.execute("DELETE FROM requests WHERE person_id=? AND decided_at IS NULL",
                           (pid,)).rowcount
     work = db.execute("UPDATE work_requests SET decided_at=?, decision='person removed'"
@@ -359,6 +360,8 @@ def _team_machines(store, person_id: int) -> List[dict]:
             " JOIN people p ON p.id=d.person_id WHERE p.team=1 AND p.removed_at IS NULL"
             f" AND d.host!='' AND d.person_id!=? AND {_MACHINE} ORDER BY d.name",
             (person_id,)).fetchall():
+        if store._hidden(d["person_id"], person_id):  # an admin turned it off for them
+            continue
         projects = [r["project"] for r in store.db.execute(
             "SELECT DISTINCT project FROM agents WHERE person_id=? ORDER BY project", (d["person_id"],))
             if store._role(r["project"], person_id) is not None]
@@ -790,6 +793,8 @@ SENTENCES = {
     "team_machine": _match(r"(.+)", "{0} added the team machine {1}"),
     "team_machine_from": _match(r"(.+)", "{0} made {1} a team machine"),
     "machine_move": _match(r"(.+): (.+) -> (.+)", "{0} moved the machine {1} from {2} to {3}"),
+    "team_machine_hidden": _match(r"(.+) -> (.+)", "{0} hid {1} from {2}"),
+    "team_machine_shown": _match(r"(.+) -> (.+)", "{0} showed {1} to {2}"),
     "page_login": _match(r"(.*)", "{0} opened the page ({1})"),
     "request": _match(r"(\w+):(.+)", "{0} asked for access to the {1} {2}"),
     "request_decided": _match(r"(\w+):(.+) -> (.+): (\w+).*",
@@ -836,7 +841,7 @@ LOG_GROUPS = [
                 "connect_decided"]),
     ("projects", ["project_register", "project_updated", "project_removed", "gitlab"]),
     ("notes", ["note_delete", "note_undo"]),
-    ("machines", ["machine_move", "machine_owner", "machine_owner_auto", "machine_in_use", "legacy_auto_off", "legacy_toggle", "legacy_assign", "legacy_used", "rekeyed",
+    ("machines", ["machine_move", "team_machine_hidden", "team_machine_shown", "machine_owner", "machine_owner_auto", "machine_in_use", "legacy_auto_off", "legacy_toggle", "legacy_assign", "legacy_used", "rekeyed",
                   "backup", "auto_update"]),
     ("messages", ["settings", "retention", "door_open", "door_close", "knock", "knock_answer"]),
     ("rules", ["rules", "skills", "propose", "proposal", "conflict"]),

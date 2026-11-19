@@ -212,6 +212,7 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 .a-row:hover { background: var(--surface2); }
 .a-row:last-child { border-bottom: 0; }
 .a-row.pj { min-height: 44px; }
+.a-row.off .a-text b { color: var(--muted); font-weight: var(--fw-medium); }
 .a-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .a-text b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--fw-semi); color: var(--ink); }
 .a-text small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); color: var(--faint); }
@@ -2123,14 +2124,15 @@ a.p-main { color: inherit; text-decoration: none; }
       .then(function (f) { feed = f; delete pending[k]; flash("saved:" + k, 2000); },
             function (e) { delete pending[k]; boxErr[k] = e.message; renderTeam(); });
   }
-  /* a team machine's switch: the person's use of it (kaptyorka grant <person> machine:<host>) */
-  function setMachine(v, host, on) {
-    var k = "m:" + v.name + "\n" + host;
+  /* a team machine's switch: on (the default) it and its sessions are there for the person, off
+     they are hidden from them (kaptyorka machine hide|show <machine> <person>) */
+  function setMachine(v, team, on) {
+    var k = "m:" + v.name + "\n" + team;
     pending[k] = on;
     delete boxErr[k];
     delete cues["saved:" + k];
     renderTeam();
-    api(apiPath("/api/machines/", host, on ? "/grant" : "/revoke"), { person: v.name })
+    api(apiPath("/api/people/", v.name, "/team-machines/" + encodeURIComponent(team)), { visible: on })
       .then(function () { return get("/api/feed"); })
       .then(function (f) { feed = f; delete pending[k]; flash("saved:" + k, 2000); },
             function (e) { delete pending[k]; boxErr[k] = e.message; renderTeam(); });
@@ -2220,20 +2222,13 @@ a.p-main { color: inherit; text-decoration: none; }
   }
   /* a person's page: profile, projects (each box saves at once), machines (a switch per team
      machine, their own accounts read only), then New invite link, Make/Remove admin, Remove */
-  function teamHosts() {
-    var hosts = {};
-    feed.people.filter(function (p) { return p.team; }).forEach(function (p) {
-      p.devices.filter(function (d) { return d.revoked_at == null && d.expires == null && d.host; }).forEach(function (d) {
-        var h = hosts[d.host] || (hosts[d.host] = { host: d.host, names: [], teams: [], online: false });
-        h.names.push(machineName(d));
-        if (h.teams.indexOf(p.name) < 0) h.teams.push(p.name);
-        h.online = h.online || (d.last_used != null && Date.now() / 1000 - d.last_used < 30);
-      });
-    });
-    return Object.keys(hosts).sort().map(function (k) {
-      var m = (feed.machines || []).filter(function (x) { return x.host === k; })[0] || { grants: [], owner: null };
-      return Object.assign(hosts[k], { grants: m.grants || [], owner: m.owner || null });
-    });
+  /* the team machines: one row each, with the accounts it joined from */
+  function teamMachines() {
+    return feed.people.filter(function (p) { return p.team; }).map(function (p) {
+      var devs = p.devices.filter(function (d) { return d.revoked_at == null && d.expires == null && d.host; });
+      return { name: p.name, hidden: p.hidden_from || [], names: devs.map(machineName),
+               online: devs.some(function (d) { return d.last_used != null && Date.now() / 1000 - d.last_used < 30; }) };
+    }).sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
   }
   function seenLine(on, last) {
     if (on) return el("span", { "class": "on", text: "online" });
@@ -2245,7 +2240,7 @@ a.p-main { color: inherit; text-decoration: none; }
     if (holding && holding.isConnected && $("pane-person").contains(holding)) return;  /* a question is open */
     if (pressing(body)) return;
     var p = feed.people.filter(function (x) { return x.name === personName && !isManagerAccount(x) && !x.team; })[0];
-    var v = p ? personView(p) : null, hosts = v ? teamHosts() : [];
+    var v = p ? personView(p) : null, hosts = v ? teamMachines() : [];
     var cueKeys = Object.keys(cues).filter(cueOn);
     if (!changed("person", calm([personName, v, hosts, cueKeys, pending, boxErr, linkFor]))) return;
     var focus = document.activeElement, fk = body.contains(focus) && focus.dataset ? focus.dataset.k : null;
@@ -2291,15 +2286,13 @@ a.p-main { color: inherit; text-decoration: none; }
     /* machines */
     var list = el("div", { "class": "panel t-list" });
     hosts.forEach(function (h) {
-      var k = "m:" + v.name + "\n" + h.host, fixed = v.admin ? "Admins may use every machine" : h.owner === v.name ? "It is theirs" : null;
-      var on = pending[k] !== undefined ? pending[k] : !!fixed || h.grants.indexOf(v.name) >= 0;
-      var sw = el("button", { type: "button", role: "switch", "class": "sw", "aria-checked": on ? "true" : "false", "data-k": k,
-                              "aria-label": v.name + " may use " + h.names.join(", "), title: fixed || (on ? "On: they may use it" : "Off") });
-      sw.disabled = !!fixed;
-      if (pending[k] !== undefined) sw.setAttribute("aria-busy", "true");
-      sw.addEventListener("click", function () { if (pending[k] === undefined) setMachine(v, h.host, !on); });
-      list.appendChild(el("div", { "class": "a-row", "data-host": h.host }, [avatar("machine", h.host, { dot: h.online }),
-        el("div", { "class": "a-text" }, [el("b", { text: h.names.join(", "), title: h.host }), el("small", { text: "Team machine" + (h.teams.length ? " · " + h.teams.join(", ") : "") })]),
+      var k = "m:" + v.name + "\n" + h.name, on = pending[k] !== undefined ? pending[k] : h.hidden.indexOf(v.name) < 0;
+      var sw = v.admin ? null : el("button", { type: "button", role: "switch", "class": "sw", "aria-checked": on ? "true" : "false", "data-k": k,
+                                               "aria-label": v.name + " can use " + h.name, title: on ? "On: they see it and its sessions" : "Off: hidden from them" });
+      if (sw && pending[k] !== undefined) sw.setAttribute("aria-busy", "true");
+      if (sw) sw.addEventListener("click", function () { if (pending[k] === undefined) setMachine(v, h.name, !on); });
+      list.appendChild(el("div", { "class": "a-row" + (on ? "" : " off"), "data-team": h.name }, [avatar("machine", h.name, { dot: h.online }),
+        el("div", { "class": "a-text" }, [el("b", { text: h.names.join(", ") || h.name }), el("small", { text: "Team machine \u00b7 " + h.name + (on ? "" : " \u00b7 hidden from them") })]),
         el("span", { "class": "a-acts" }, [cueOn("saved:" + k) ? el("span", { "class": "pp-cue", role: "status", text: "Saved ✓" }) : null,
           boxErr[k] ? el("span", { "class": "pp-err", role: "alert", text: boxErr[k] }) : null, sw])]));
     });
@@ -2310,7 +2303,7 @@ a.p-main { color: inherit; text-decoration: none; }
     });
     if (!hosts.length && !v.accounts.length) list.appendChild(el("div", { "class": "a-none" }, [icon("i-monitor", 14), el("span", { text: "No machines yet" })]));
     body.appendChild(el("div", { "class": "pp-sec" }, [el("h2", { "class": "set-sub" }, ["Machines",
-      hosts.length ? el("small", { text: "The switch lets the manager start work for them on that machine's shared accounts. Team accounts take no workers yet." }) : null]), list]));
+      hosts.length ? el("small", { text: v.admin ? "Admins see every team machine." : "Turn a team machine off to hide it and its sessions from them." }) : null]), list]));
     /* actions */
     var acts = el("div", { "class": "pp-acts" });
     if (!v.self) {

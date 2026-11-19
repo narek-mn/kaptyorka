@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS machines (
     host TEXT PRIMARY KEY, owner_person_id INTEGER, first_seen REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS machine_access (
     host TEXT NOT NULL, person_id INTEGER NOT NULL, PRIMARY KEY(host, person_id));
+CREATE TABLE IF NOT EXISTS team_machine_hidden (
+    person_id INTEGER NOT NULL, team_person_id INTEGER NOT NULL,
+    PRIMARY KEY(person_id, team_person_id));
 CREATE TABLE IF NOT EXISTS doors (
     id INTEGER PRIMARY KEY, a_key TEXT NOT NULL, a_person INTEGER NOT NULL,
     b_key TEXT NOT NULL, b_person INTEGER NOT NULL,
@@ -892,8 +895,11 @@ class Store:
             else:
                 m = self.db.execute("SELECT owner_person_id FROM machines WHERE host=?",
                                     (target,)).fetchone()
-                if m is None:
-                    raise KaptyorkaError(f"no machine named {target}")
+                teams = [r["person_id"] for r in self.db.execute(
+                    "SELECT DISTINCT d.person_id FROM devices d JOIN people p ON p.id=d.person_id"
+                    " WHERE d.host=? AND d.revoked_at IS NULL", (target,))]
+                if m is None or (teams and all(self._hidden(t, person_id) for t in teams)):
+                    raise KaptyorkaError(f"no machine named {target}")  # a hidden team machine: not there
                 has = (self._is_admin(person_id) or m["owner_person_id"] == person_id
                        or self._granted(target, person_id))
             if has:
@@ -1528,7 +1534,7 @@ class Store:
             # sessions of people with a role in a project it works in, in that project
             project = self.db.execute("SELECT project FROM agents WHERE key=?",
                                       (row["key"],)).fetchone()
-            if project is not None and self._role(project["project"], pid) is not None \
+            if project is not None and not self._hidden(viewer, pid) and self._role(project["project"], pid) is not None \
                     and self.db.execute("SELECT 1 FROM agents WHERE person_id=? AND project=?",
                                         (viewer, project["project"])).fetchone():
                 return True
@@ -1548,9 +1554,54 @@ class Store:
         row = self.db.execute("SELECT team FROM people WHERE id=?", (person_id,)).fetchone()
         return row is not None and bool(row["team"])
 
+    def _hidden(self, team_person_id, person_id) -> bool:
+        """Lock held. True when an admin turned the team machine `team_person_id` off for this
+        person: it and its sessions are hidden from them. Admins and the manager see it always."""
+        if team_person_id is None or person_id is None or self._role_of(person_id) in ("admin", "manager"):
+            return False
+        return self.db.execute("SELECT 1 FROM team_machine_hidden WHERE person_id=? AND"
+                               " team_person_id=?", (person_id, team_person_id)).fetchone() is not None
+
+    def team_machine_set_visible(self, team: str, person: str, visible: bool, by: str) -> None:
+        """Show or hide the team machine `team` (and its sessions) for one person. Only the
+        exceptions are kept; every team machine is visible by default. Admins see every one."""
+        with self.lock:
+            t = self.db.execute("SELECT id, name, team FROM people WHERE name=? AND removed_at IS NULL",
+                                (team.strip(),)).fetchone()
+            if t is None or not t["team"]:
+                raise KaptyorkaError(f"no team machine named {team.strip()}")
+            p = self.db.execute("SELECT id, name, role, team FROM people WHERE name=? AND removed_at IS NULL",
+                                (person.strip(),)).fetchone()
+            if p is None or p["team"]:
+                raise KaptyorkaError(f"no person named {person.strip()}")
+            if p["role"] in ("admin", "manager"):
+                raise KaptyorkaError(f"{p['name']} sees every team machine: admins and the manager always do")
+            if visible:
+                changed = self.db.execute("DELETE FROM team_machine_hidden WHERE person_id=? AND team_person_id=?",
+                                          (p["id"], t["id"])).rowcount
+            else:
+                changed = self.db.execute("INSERT OR IGNORE INTO team_machine_hidden (person_id, team_person_id)"
+                                          " VALUES (?,?)", (p["id"], t["id"])).rowcount
+        if changed:
+            self.log_add(by, "team_machine_shown" if visible else "team_machine_hidden", f"{t['name']} -> {p['name']}")
+
+    def team_hidden(self) -> Dict[str, List[str]]:
+        """{team machine name: the people it is hidden from}, for the admin's page."""
+        with self.lock:
+            out: Dict[str, List[str]] = {}
+            for r in self.db.execute(
+                    "SELECT t.name AS team, p.name AS person FROM team_machine_hidden h"
+                    " JOIN people t ON t.id=h.team_person_id JOIN people p ON p.id=h.person_id"
+                    " WHERE t.removed_at IS NULL AND p.removed_at IS NULL ORDER BY t.name, p.name"):
+                out.setdefault(r["team"], []).append(r["person"])
+            return out
+
     def _team_reach(self, session, person_id) -> bool:
         """Lock held. True when the person has a role in the project of the team machine's
-        session `session` (a row with its key, and its project when known)."""
+        session `session` (a row with its key and person, and its project when known), and the
+        team machine is not hidden from them."""
+        if "person_id" in session.keys() and self._hidden(session["person_id"], person_id):
+            return False
         project = session["project"] if "project" in session.keys() else None
         if project is None:
             row = self.db.execute("SELECT project FROM agents WHERE key=?",

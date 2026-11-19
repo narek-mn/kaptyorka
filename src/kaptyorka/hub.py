@@ -62,6 +62,7 @@ MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
     ("GET", r"/api/files/\d+"),
     ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab|team-machines)"),
     ("POST", r"/api/people/[^/]+/(gitlab|role|team)"),
+    ("POST", r"/api/people/[^/]+/team-machines/[^/]+"),
     ("POST", r"/api/machines/[^/]+/(grant|owner|revoke)"),
     ("POST", r"/api/projects/[^/]+(/grant|/revoke)?"),
     ("POST", r"/api/devices/\d+/(revoke|move)"),
@@ -1616,6 +1617,23 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return admin_error(e)
         wake_bridges()
         return JSONResponse(done)
+
+    @server.custom_route("/api/people/{name}/team-machines/{machine}", methods=["POST"])
+    @_bad_request
+    async def api_person_team_machine(request: Request) -> Response:
+        """Show or hide a team machine (and its sessions) for one person: {"visible": bool}."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        if not isinstance(body.get("visible"), bool):
+            return PlainTextResponse("visible must be true or false", status_code=400)
+        try:
+            store.team_machine_set_visible(request.path_params["machine"], request.path_params["name"],
+                                           body["visible"], request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return admin_error(e)
+        return Response(status_code=204)
 
     @server.custom_route("/api/me/access", methods=["GET"])
     async def api_my_access(request: Request) -> Response:

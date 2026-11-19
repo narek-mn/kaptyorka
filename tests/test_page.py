@@ -245,9 +245,10 @@ def test_team_people_rows_and_person_page(hub):
     assert 'on ? { person: v.name, role: "write" } : { person: v.name }' in code
     assert 'api("/api/projects", { name: project })' in code
     assert 'flash("saved:" + k, 2000)' in code and 'text: "Saved ✓"' in code and "boxErr[k] = e.message" in code
-    # a team machine's switch is the existing machine grant
-    assert 'api(apiPath("/api/machines/", host, on ? "/grant" : "/revoke"), { person: v.name })' in code
-    assert 'role: "switch"' in code and "Team accounts take no workers yet." in code
+    # a team machine's switch: on by default, off hides it and its sessions from them; none for admins
+    assert 'api(apiPath("/api/people/", v.name, "/team-machines/" + encodeURIComponent(team)), { visible: on })' in code
+    assert 'role: "switch"' in code and '"Turn a team machine off to hide it and its sessions from them."' in code
+    assert "var sw = v.admin ? null :" in code and "shared accounts" not in code and "machine_access" not in code
     # the page may run on plain http: the copy falls back to a hidden field
     assert 'document.execCommand("copy")' in code and "window.isSecureContext" in code
 

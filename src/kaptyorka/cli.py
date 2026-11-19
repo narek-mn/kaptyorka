@@ -690,6 +690,13 @@ def _machine_move(args) -> int:
     return 0
 
 
+def _machine_visible(args) -> int:
+    show = args.machine_cmd == "show"
+    return _admin_do("POST", f"/api/people/{quote(args.person, safe='')}/team-machines/{quote(args.machine, safe='')}",
+                     {"visible": show},
+                     f"{args.machine} is {'shown to' if show else 'hidden from'} {args.person}")
+
+
 def _project_add(args) -> int:
     return _admin_do("POST", "/api/projects",
                      {"name": args.name, "repo": args.repo, "description": args.desc},
@@ -1258,8 +1265,9 @@ def entry() -> None:
     st = sub.add_parser("shared-token", help="switch the old shared token (machines from before invites) on or off")
     st.add_argument("state", choices=("on", "off"))
     st.set_defaults(run=_shared_token)
-    mc = sub.add_parser("machine", help="say who owns a machine, add a team machine, or move one").add_subparsers(
-        dest="machine_cmd", required=True, metavar="{owner,team,move}")
+    mc = sub.add_parser("machine", help="say who owns a machine, add a team machine, move one, or hide a team"
+                        " machine from a person").add_subparsers(
+        dest="machine_cmd", required=True, metavar="{owner,team,move,hide,show}")
     mo = mc.add_parser("owner", help="make a person the owner of a machine")
     mo.add_argument("host", help="the machine's name (kaptyorka fleet list shows them)")
     mo.add_argument("person", help="the person's name")
@@ -1275,6 +1283,12 @@ def entry() -> None:
     mv.add_argument("device", help="the machine's name or id (kaptyorka people lists them)")
     mv.add_argument("person", help="the person who gets it")
     mv.set_defaults(run=_machine_move)
+    mh = mc.add_parser("hide", help="hide a team machine and its sessions from one person")
+    ms = mc.add_parser("show", help="show a hidden team machine to that person again")
+    for m_ in (mh, ms):
+        m_.add_argument("machine", help="the team machine's name")
+        m_.add_argument("person", help="the person's name")
+        m_.set_defaults(run=_machine_visible)
     sub.add_parser("who", help="list the agents on the team and what each is doing").set_defaults(run=_who)
     sub.add_parser("status", help="show whether this machine's bridge, the hub and the manager are running"
                    ).set_defaults(run=_status)
@@ -1328,7 +1342,7 @@ def entry() -> None:
     h.add_argument("tool")
     h.add_argument("event")
     h.set_defaults(run=_hook)
-    for admin in (i, pp, pr, pv, pl, pg, iv, *grants, pa, pe, px, gs, *gl_rest, st, mo, mt, mv):
+    for admin in (i, pp, pr, pv, pl, pg, iv, *grants, pa, pe, px, gs, *gl_rest, st, mo, mt, mv, mh, ms):
         admin.add_argument("--hub-key", action="store_true", default=argparse.SUPPRESS,
                            help="on the hub machine: use the hub key (~/.kaptyorka/admin-token),"
                                 " which has every admin right; only with this machine's own hub")

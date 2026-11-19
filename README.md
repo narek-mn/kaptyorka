@@ -370,7 +370,7 @@ Click a person to open their page, at its own address such as `#settings/people/
 
 - **Role**, **GitLab** user (click it to set or change it, once sign-in with GitLab is set up) and **Last seen**.
 - **Projects**: every project on the hub as a box to tick. A tick gives write and saves at once ("Changes save automatically"); **Saved ✓** shows next to that box for 2 seconds, and an error right beside it. A project seen only on a session is registered on its first tick. Admins work in every project, so they have no boxes.
-- **Machines**: each team machine with a switch for this person's use of it, the same as `kaptyorka grant bob machine:jetson-1` (and `revoke`); an admin, or the owner of the computer, always may. Then their own accounts, read only. The switch lets the manager start work for them on that machine's shared accounts; team accounts take no workers yet, and kaptyorka never controls who can log in to a computer.
+- **Machines**: each team machine with a switch, on for everyone by default. Turn a team machine off to hide it and its sessions from them: it leaves their Machines, its sessions leave their Home and `who` (even in projects they have a role in), their sessions and its sessions cannot message each other, they cannot ask for it with `request_access`, and the manager never sends their work there. **Saved ✓** shows like on the boxes. Admins always see every team machine, so their page has no switch. Then their own accounts, read only. The same from the command line: `kaptyorka machine hide jetson-1 bob` and `kaptyorka machine show jetson-1 bob`. The log says "alice hid jetson-1 from bob" and "alice showed jetson-1 to bob". Removing the person or the team machine drops the setting.
 - **New invite link** makes a fresh link and copies it; their older links stop working, so a lost or expired link is never a problem. **Make admin** and **Remove admin** change the admin role, and **Remove** takes them off the team ("Remove bob? They are signed out everywhere."), each with a question first. See "Admins".
 **Projects**: every project of the team's GitLab group and every project on the hub, one row each, with its description, who has access, and **On hub** or **Not on hub**. **Add to hub** registers a GitLab project with its GitLab description and repo address. A project on the hub has **Edit** (its description) and **Remove**, which asks first: its sessions leave the hub and their chats are deleted; its notes are kept. **Add project** takes a folder name and an optional description, for a project that is not in GitLab.
 
@@ -450,6 +450,7 @@ kaptyorka grant bob proj-a:read        # read, write or manage; or machine:box-1
 kaptyorka revoke bob proj-a            # or machine:box-1
 kaptyorka machine owner box-1 bob
 kaptyorka machine team jetson-1        # a team machine; prints the join command for its shared account
+kaptyorka machine hide jetson-1 bob    # hide a team machine and its sessions from bob (show: back again)
 kaptyorka machine team --from svc      # turn an existing person (the hub's own account) into a team machine
 kaptyorka machine move laptop-1 carol  # give a joined machine to another person
 kaptyorka shared-token off             # or on
@@ -562,6 +563,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka grant <person> <project>:<role>` | Admin: give a project role; or `machine:<host>` to allow a machine |
 | `kaptyorka revoke <person> <project>` | Admin: take it away; or `machine:<host>` |
 | `kaptyorka machine owner <host> <person>` | Admin: name a machine's owner |
+| `kaptyorka machine hide\|show <machine> <person>` | Admin: hide a team machine and its sessions from one person, or show it again |
 | `kaptyorka who` | List sessions online |
 | `kaptyorka status` | Show whether this machine's bridge, the hub (on the hub machine) and the manager (admin) are running; exit 1 if not |
 | `kaptyorka page` | Open your own page on the hub in a browser and print its private link (keep it to yourself: it signs you in). With sign-in with GitLab on, a member's machine says to open the hub and sign in with GitLab |

@@ -84,3 +84,11 @@ def test_readme_says_logins_and_why_the_manager_is_not_running():
             " as the tools report it; a tool that is not logged in cannot run workers there.") in r
     mgr = r.split("## The manager", 1)[1].split("\n## ", 1)[0]
     assert "When it is not running, `kaptyorka status` says why" in mgr
+
+
+def test_readme_team_machine_switch():
+    r = (ROOT / "README.md").read_text()
+    for s in ["Turn a team machine off to hide it and its sessions from them", "`kaptyorka machine hide jetson-1 bob`",
+              "`kaptyorka machine show jetson-1 bob`", "alice hid jetson-1 from bob", "Admins always see every team machine"]:
+        assert s in r, s
+    assert "Team accounts take no workers yet" not in r and "shared accounts; team accounts" not in r

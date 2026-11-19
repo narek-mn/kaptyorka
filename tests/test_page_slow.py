@@ -1570,8 +1570,8 @@ def test_home_mine_everyone_and_the_machine_switch(tmp_path, w, h):
     """An admin's Home: Mine shows the manager, your own sessions and the team machine sessions
     in your projects (what a member sees); Everyone shows every session under a header per
     person and per team machine with its count, folded but your own; both kept on reload. A
-    member gets no switch. A person's page: a switch per team machine is the machine grant, and
-    a poll does not redraw an open view whose data did not change. Screenshots to
+    member gets no switch. A person's page: a switch per team machine, on by default; off hides
+    it and its sessions from them; a poll does not redraw an open view whose data did not change. Screenshots to
     KAPTYORKA_SHOTS."""
     import os
     shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
@@ -1616,19 +1616,20 @@ def test_home_mine_everyone_and_the_machine_switch(tmp_path, w, h):
             page.wait('document.querySelectorAll("#agents .row").length === 4')
             assert "bob@box-2" in page.js(rows)
             page.screenshot(shots / f"home-admin-everyone-{tag}.png")
-            page.js("location.reload()")  # the switch and the folds are kept in this browser
-            page.wait('document.querySelectorAll("#agents .g-head").length === 3')
+            page.js("window.before = 1; location.reload()")  # the switch and the folds are kept in this browser
+            page.wait('!window.before && document.querySelectorAll("#agents .g-head").length === 3')
             assert page.js(heads) == ["You1|true", "bob1|true", "jet-1Team1|false"]
-            # bob's page: the team machine's switch is his use of it
+            # bob's page: the team machine's switch, on by default
             page.go(f"{base}/#settings/people/bob")
             sw = 'document.querySelector("#person-body .sw")'
             page.wait(f'!!{sw}')
-            assert page.js(f'{sw}.getAttribute("aria-checked")') == "false"
-            assert "nvidia@jet-1" in page.js('document.querySelector("#person-body [data-host=\\"jet-1\\"]").textContent')
+            assert page.js(f'{sw}.getAttribute("aria-checked")') == "true"
+            assert "Turn a team machine off to hide it and its sessions from them." in page.js('document.getElementById("person-body").textContent')
+            assert "nvidia@jet-1" in page.js('document.querySelector("#person-body [data-team=\\"jet-1\\"]").textContent')
             assert "bob@box-2" in page.js('document.getElementById("person-body").textContent')  # his own account, read only
             page.js(f'{sw}.focus(); {sw}.click()')
-            page.wait(f'{sw}.getAttribute("aria-checked") === "true" && !!document.querySelector("#person-body .pp-cue")')
-            assert store.may_use("jet-1", bob)
+            page.wait(f'{sw}.getAttribute("aria-checked") === "false" && !!document.querySelector("#person-body .pp-cue")')
+            assert store.team_hidden() == {"jet-1": ["bob"]}
             assert page.js(f'document.activeElement === {sw}')
             page.wait('!document.querySelector("#person-body .pp-cue")', timeout=5)
             # an open view is not redrawn by polls that bring nothing new
@@ -1638,13 +1639,26 @@ def test_home_mine_everyone_and_the_machine_switch(tmp_path, w, h):
                 time.sleep(2.2)
             assert page.js('window.__pp === document.querySelector("#person-body .a-profile")')
             page.screenshot(shots / f"person-{tag}.png")
-            page.js(f'{sw}.click()')
-            page.wait(f'{sw}.getAttribute("aria-checked") === "false" && !!document.querySelector("#person-body .pp-cue")')
-            assert not store.may_use("jet-1", bob)
+        with chrome(w, h) as page:  # hidden: bob's Home has no jet-1 session
+            page.go(f"{base}/#t={bob_t}")
+            page.wait('document.querySelectorAll("#agents .row").length === 2')
+            assert page.js('document.getElementById("h-scope").hidden')
+            assert page.js(rows) == ["bob@box-2"]
         with chrome(w, h) as page:
+            page.go(f"{base}/#t={token}")
+            page.wait('!document.getElementById("h-scope").hidden')
+            page.go(f"{base}/#settings/people/bob")
+            page.wait(f'!!{sw}')
+            page.js(f'{sw}.click()')
+            page.wait(f'{sw}.getAttribute("aria-checked") === "true" && !!document.querySelector("#person-body .pp-cue")')
+            assert store.team_hidden() == {}
+            # admins: no switch, they see every team machine
+            page.go(f"{base}/#settings/people/alice")
+            page.wait('document.getElementById("person-body").textContent.includes("Admins see every team machine.")')
+            assert page.js(f'!{sw}')
+        with chrome(w, h) as page:  # shown again
             page.go(f"{base}/#t={bob_t}")
             page.wait('document.querySelectorAll("#agents .row").length === 3')
-            assert page.js('document.getElementById("h-scope").hidden')
             assert page.js(rows) == ["bob@box-2", "nvidia@jet-1"]
             page.screenshot(shots / f"home-member-{tag}.png")
     finally:

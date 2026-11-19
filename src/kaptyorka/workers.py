@@ -327,6 +327,8 @@ class WorkerStore:
                 if not (d["person_id"] == person_id
                         or (d["shared"] and self.store._may_use(d["host"], person_id))):
                     continue
+                if self.store._hidden(d["person_id"], person_id):  # a team machine hidden from them
+                    continue
                 who = f"{d['host']} ({d['person']})"
                 if d["last_used"] is None or d["last_used"] <= now - ONLINE_S:
                     reasons.append(f"{who}: bridge offline")
