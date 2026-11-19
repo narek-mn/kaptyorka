@@ -164,8 +164,8 @@ def test_settings_one_flat_sidebar(hub):
     at the bottom of the Settings sidebar, and at the end of Profile on a phone. Settings is one area with one flat sidebar, no headings: Profile,
     Machines, Signed-in browsers, then People (with the waiting count) and Projects for an
     admin, each at its own address; the old #settings/account/... and #settings/team/...
-    addresses still land there. One Machines page: an admin switches Mine / Everyone there, and
-    the old All machines address lands on it. What left the page long ago stays gone."""
+    addresses still land there. One Machines page, with filter chips; the old All machines
+    address lands on it with All. What left the page long ago stays gone."""
     html = page(hub)
     top = re.search(r'<nav role="tablist">.*?</nav>', html, re.S).group(0)
     assert re.findall(r'data-view="(\w+)"', top) == ["home"]
@@ -181,10 +181,9 @@ def test_settings_one_flat_sidebar(hub):
                      ("team/people", "people"), ("team/projects", "projects")):
         assert f'"{old}": "{new}"' in html
     assert 'id="pane-team-machines"' not in html and ">All machines<" not in html
-    pane = re.search(r'id="pane-machines".*?id="machines-err"', html, re.S).group(0)
-    assert 'id="m-scope"' in pane and ">Mine<" in pane and ">Everyone<" in pane
-    assert 'id="team-machine-rows"' in pane and 'id="add-team-btn"' not in pane
-    assert '{ mScope = "everyone"; return ["settings", "machines"]; }' in html
+    pane = re.search(r'id="pane-machines".*?id="a-machines-err"', html, re.S).group(0)
+    assert 'id="m-filter"' in pane and 'id="add-team-btn"' not in pane
+    assert '{ mFilter = "all"; return ["settings", "machines"]; }' in html
     assert 'id="n-team"' in nav and 'id="n-acct"' in html  # the waiting count, twice in sight
     people = re.search(r'id="pane-people".*?id="team-err"', html, re.S).group(0)
     assert people.index("Waiting for you") < people.index('id="people-rows"')
@@ -202,7 +201,7 @@ def test_one_add_machine_button(hub):
     """One Add machine: an admin answers whose account it is (two options, a line each); a member
     goes straight to their own join command."""
     html = page(hub)
-    pane = re.search(r'id="pane-machines".*?id="machines-err"', html, re.S).group(0)
+    pane = re.search(r'id="pane-machines".*?id="a-machines-err"', html, re.S).group(0)
     assert pane.count(">Add machine<") == 1 and "Add a machine" not in html and "Add team machine" not in html
     choice = re.search(r'id="add-choice".*?id="add-choice-cancel"', pane, re.S).group(0)
     assert ">My own account<" in choice and ">Shared team account<" in choice
@@ -257,11 +256,27 @@ def test_no_make_team_machine_button(hub):
     assert 'd.emergency ? chip("This hub"' in html
 
 
-def test_give_to_replaces_move(hub):
-    code = team_code(page(hub))
-    assert 'button("Give to…", ""' in code and '"Give " + d.name + " to", "Give"' in code
-    assert 'button("Move"' not in code
-    assert 'api(apiPath("/api/devices/", d.id, "/move"), { person: to.value })' in code
+def test_machines_grouped_with_filter_chips(hub):
+    """Machines: no Mine / Everyone switch and no Give to…; four chips, one choice, kept per
+    browser behind try/catch; one card per computer, something online first; inside, team,
+    yours, then others; the empty sentences."""
+    html = page(hub)
+    pane = re.search(r'id="pane-machines".*?id="a-machines-err"', html, re.S).group(0)
+    chips = re.search(r'id="m-filter".*?</div>', pane, re.S).group(0)
+    assert re.findall(r'data-f="(\w+)"', chips) == ["all", "team", "mine", "online"]
+    assert re.findall(r'>(\w+)</button>', chips) == ["All", "Team", "Mine", "Online"]
+    assert 'id="m-scope"' not in html and 'id="team-machine-rows"' not in html and "mScope" not in html
+    assert "Give to" not in html and '"/move"' not in html and "giveMachine" not in html
+    code = html[html.index("function machineHosts()"):html.index("function renderAccount()")]
+    assert 'store(function (s) { s.setItem("kaptyorka.machines-filter", f); });' in code
+    assert 'store(function (s) { return s.getItem("kaptyorka.machines-filter"); })' in html
+    assert "function store(fn) { try { return fn(window.localStorage); } catch (e) { return null; } }" in html
+    assert "var rank = { team: 0, mine: 1, other: 2 };" in code
+    assert "(b.on - a.on) || (a.h.host < b.h.host" in code
+    assert "if (!isAdmin()) account.team_machines.forEach" in code  # a member: what the hub lets them use
+    assert '"No machines online right now."' in code
+    assert '"No machines yet. Click Add machine and run the command on your computer."' in code
+    assert 'chip("Team", "active", "a-tag")' in code and 'chip("Mine", "", "a-tag")' in code
 
 
 def test_one_name_for_a_machine(hub):

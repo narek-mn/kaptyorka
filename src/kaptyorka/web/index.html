@@ -216,15 +216,36 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 .a-join .cmd .btn { height: auto; border: 0; border-left: 1px solid var(--line-ctl); border-radius: 0; }
 .a-join small { font-size: var(--fs-sm); color: var(--faint); }
 .a-tag { flex: none; text-transform: capitalize; }
+.a-tag.a-person { text-transform: none; }  /* a person's name as they wrote it */
 .a-hub { flex: none; align-self: flex-start; margin: 2px 0; }
-/* Machines: Mine / Everyone for an admin, one switch of two joined buttons */
+/* Home: Mine / Everyone for an admin, one switch of two joined buttons */
 .seg { display: inline-flex; align-self: flex-start; margin: calc(-1 * var(--s-2)) 0 var(--s-4); }
 .seg .btn { border-radius: 0; }
 .seg .btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
 .seg .btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
 .seg .btn[aria-pressed="true"] { position: relative; }
 .seg .btn[aria-pressed="false"] { color: var(--muted); }
-.seg + .a-sec { margin-top: 0; }
+/* Machines: filter chips (one choice), then one card per computer: its header, then its accounts */
+.m-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: calc(-1 * var(--s-1)) 0 var(--s-4); }
+.m-chip { height: 28px; padding: 0 12px; border: 1px solid var(--line-ctl); border-radius: var(--pill); background: none;
+  font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--muted); transition: border-color var(--ease), background-color var(--ease), color var(--ease); }
+.m-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+.m-chip[aria-pressed="true"] { border-color: var(--accent-line); background: var(--accent-soft); color: var(--ink); }
+.m-filter + .a-sec { margin-top: 0; }
+.m-list { display: flex; flex-direction: column; gap: var(--s-3); }
+.m-head { display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-3) var(--s-4); background: var(--surface2); border-bottom: 1px solid var(--line); }
+.m-head > .av { margin-top: 1px; }
+.m-head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.m-host { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px var(--s-2); min-width: 0; }
+.m-host b { font-weight: var(--fw-semi); color: var(--ink); overflow-wrap: anywhere; }
+.m-kind { font-size: var(--fs-sm); color: var(--faint); }
+.m-use { display: block; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-sm); font-family: var(--mono); color: var(--muted); }
+.m-acct { min-height: 52px; padding-left: var(--s-5); }
+.m-acct .a-top { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.m-acct .a-top b { min-width: 0; }
+.m-acct .a-top .chip { flex: none; }
+.m-dot { flex: none; align-self: flex-start; width: 8px; height: 8px; margin: 6px 2px 0 0; border-radius: var(--round); background: var(--faint); opacity: .6; }
+.m-dot.on { background: var(--ok); opacity: 1; }
 .a-name { display: flex; align-items: center; gap: 10px; }
 /* a machine's agent tools, as the bridge reports them */
 .m-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
@@ -636,14 +657,7 @@ a.p-main { color: inherit; text-decoration: none; }
 .pj-row > .confirm { flex: 1 1 100%; max-width: 100%; justify-content: flex-start; }
 .pj-row > .confirm input { flex: 1 1 220px; min-width: 0; height: var(--h-sm); padding: 0 var(--s-2); font-size: var(--fs-sm); }
 .pj-add { flex-wrap: wrap; }
-.m-row { min-height: 0; }
-.m-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.m-who { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; }
-.m-use, .m-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-sm); color: var(--faint); }
-.m-use { font-family: var(--mono); color: var(--muted); }
-.m-line > span + span::before { content: "\00b7"; margin-right: 10px; color: var(--faint); font-family: var(--sans); }
 .m-queue { display: block; margin-top: 2px; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-sm); font-family: var(--mono); color: var(--muted); }
-.m-row .confirm select { height: var(--h-sm); max-width: 220px; }
 .pj-add #new-project { flex: 0 1 200px; }
 .pj-add #new-project-desc { flex: 1 1 240px; }
 
@@ -904,8 +918,8 @@ a.p-main { color: inherit; text-decoration: none; }
         <button type="button" class="signout set-out-phone"><svg width="16" height="16" aria-hidden="true"><use href="#i-signout"/></svg>Sign out</button>
         </div>
         <div class="set-pane" id="pane-machines" data-sec="machines" hidden>
-          <div class="set-title"><div><h1>Machines</h1><p id="m-sub">The computers you joined from, and the team machines you can use.</p></div><button type="button" class="btn small primary" id="add-machine" aria-expanded="false" aria-controls="a-join"><svg width="14" height="14"><use href="#i-plus"/></svg>Add machine</button></div>
-          <div class="seg admin-only" id="m-scope" role="group" aria-label="Show machines" hidden><button type="button" class="btn small" data-scope="mine" aria-pressed="true">Mine</button><button type="button" class="btn small" data-scope="everyone" aria-pressed="false">Everyone</button></div>
+          <div class="set-title"><div><h1>Machines</h1><p id="m-sub">Your accounts and the team machines you can use, by computer.</p></div><button type="button" class="btn small primary" id="add-machine" aria-expanded="false" aria-controls="a-join"><svg width="14" height="14"><use href="#i-plus"/></svg>Add machine</button></div>
+          <div class="m-filter" id="m-filter" role="group" aria-label="Show"><button type="button" class="m-chip" data-f="all" aria-pressed="true">All</button><button type="button" class="m-chip" data-f="team" aria-pressed="false">Team</button><button type="button" class="m-chip" data-f="mine" aria-pressed="false">Mine</button><button type="button" class="m-chip" data-f="online" aria-pressed="false">Online</button></div>
         <div class="a-sec">
           <div class="panel add-box m-choice" id="add-choice" role="group" aria-labelledby="add-choice-q" hidden>
             <div class="m-choice-q" id="add-choice-q">Whose account is it?</div>
@@ -927,10 +941,8 @@ a.p-main { color: inherit; text-decoration: none; }
             <div class="add-link" id="add-team-link" hidden></div>
             <div class="err" id="add-team-err" hidden></div>
           </div>
-          <div class="panel t-list" id="a-machines"><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div></div>
-          <div class="panel t-list" id="team-machine-rows" hidden><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div></div>
+          <div class="m-list" id="a-machines"><div class="panel"><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div></div></div>
           <div class="err" id="a-machines-err" role="alert" hidden></div>
-          <div class="err" id="machines-err" hidden></div>
         </div>
         </div>
         <div class="set-pane" id="pane-browsers" data-sec="browsers" hidden>
@@ -1007,7 +1019,8 @@ a.p-main { color: inherit; text-decoration: none; }
   var addOpen = false, added = null;  /* People: Add person, its link */
   var account = null, accountAt = 0, joinCmd = null, linkToken = null;  /* the Account page's data; its Add machine command; a device link kept only to link GitLab */
   var myAccess = null;
-  var mScope = "mine";  /* Machines: an admin's Mine or Everyone */
+  var M_FILTERS = ["all", "team", "mine", "online"];  /* Machines: one filter, kept per browser */
+  var mFilter = (function (f) { return M_FILTERS.indexOf(f) >= 0 ? f : "all"; })(store(function (s) { return s.getItem("kaptyorka.machines-filter"); }));
   var hScope = store(function (s) { return s.getItem("kaptyorka.home-scope"); }) === "everyone" ? "everyone" : "mine";  /* Home: an admin's Mine or Everyone */
   var groupOpen = store(function (s) { var g = JSON.parse(s.getItem("kaptyorka.home-groups") || "null"); return g && typeof g === "object" ? g : null; }) || {};
   var groupFolded = {};  /* a group folded while its chat was open: it stays folded */
@@ -1033,7 +1046,7 @@ a.p-main { color: inherit; text-decoration: none; }
     if (p) { try { personName = decodeURIComponent(p[1]); } catch (e) { personName = p[1]; } return ["settings", "person"]; }
     var m = /^#?settings\/([a-z]+(?:\/[a-z]+)?)/.exec(h);
     var v = new URLSearchParams(h.replace(/^#/, "")).get("view");
-    if ((m && m[1] === "team/machines") || v === "machines") { mScope = "everyone"; return ["settings", "machines"]; }  /* the old All machines */
+    if ((m && m[1] === "team/machines") || v === "machines") { mFilter = "all"; return ["settings", "machines"]; }  /* the old All machines and Everyone */
     if (m && OLD_SECS[m[1]]) return ["settings", OLD_SECS[m[1]]];
     if (m && ACCOUNT_SECS.concat(TEAM_SECS).indexOf(m[1]) >= 0) return ["settings", m[1]];
     if (!v || v === "home") return ["home", null];
@@ -1260,7 +1273,7 @@ a.p-main { color: inherit; text-decoration: none; }
     if (v === "home") { toBottom(); loadAccess(); }
     if (inTeam()) { loadProposals(true); loadGitlab(); if (feed) { seen = {}; render(); } }
     if (inAccount()) { accountAt = 0; loadAccount(); }
-    if (inMachines()) { loadMachines(true); machineScope(); }
+    if (inMachines()) { loadMachines(true); renderMachines(); }
   }
   window.addEventListener("popstate", function () {
     if (!me) return;
@@ -1382,7 +1395,7 @@ a.p-main { color: inherit; text-decoration: none; }
   /* a row's in-progress click: a redraw under the pointer would swallow it, so it waits */
   var pressIn = null, pressLater = false;
   document.addEventListener("pointerdown", function (e) {
-    pressIn = e.target.closest ? e.target.closest("#agents, #people-rows, #person-body, #team-machine-rows, #a-machines") : null;
+    pressIn = e.target.closest ? e.target.closest("#agents, #people-rows, #person-body, #a-machines") : null;
   }, true);
   function pressDone() {
     if (!pressIn) return;
@@ -2196,7 +2209,6 @@ a.p-main { color: inherit; text-decoration: none; }
     var people = feed.people.filter(function (p) { return !isManagerAccount(p) && !p.team; })
       .sort(function (a, b) { return (b.role === "admin") - (a.role === "admin"); }).map(personView);
     if (changed("waiting", [items.map(function (w) { return [w.key, w.who, plain(w.what), w.why]; }), answering])) renderWaiting(items);
-    renderMachines();
     renderProjects();
     renderPerson();
     var box = $("people-rows");
@@ -2319,12 +2331,12 @@ a.p-main { color: inherit; text-decoration: none; }
   /* Team > Projects: every project of the GitLab group and every project on the hub. GitLab
      only names them; who may work on one is decided here (the ticks above, or the command line) */
   var gitlab = null, gitlabAt = 0, adding = {}, projectOpen = false;
-  /* Team > Machines: one row per machine with who uses it, online, and its use (admin only) */
+  /* an admin's Machines: every account on the hub by computer, with its use and size */
   var machines = null, machinesAt = 0, teamAdded = null;
   function loadMachines(force) {
     if (!isAdmin() || (!force && Date.now() - machinesAt < 10000)) return;
     machinesAt = Date.now();
-    get("/api/team/machines").then(function (m) { machines = m; if (feed) renderTeam(); }, function () { machinesAt = 0; });
+    get("/api/team/machines").then(function (m) { machines = m; renderMachines(); }, function () { machinesAt = 0; });
   }
   /* a machine's agent tools as small tags: logged in (green), installed but logged out (amber),
      none at all (red); nothing when its bridge never reported */
@@ -2338,68 +2350,6 @@ a.p-main { color: inherit; text-decoration: none; }
   /* the computer's GPU share queue, in the use line's style */
   function queueLine(queue) {
     return queue ? el("div", { "class": "m-queue", title: "The GPU share queue on this computer", text: queue }) : null;
-  }
-  /* Everyone: one row per joined account (account@computer), whose it is, how busy its computer is */
-  function deviceRow(m, d) {
-    var acts = el("span", { "class": "pj-acts" });
-    var cue = cueOn("given:" + d.id) ? el("span", { "class": "ok", text: "Given" }) : null;
-    if (cue) acts.appendChild(cue);
-    var give = button("Give to…", "", function () { giveMachine(d, acts); },
-                      { "aria-label": "Give " + d.name + " to another person", title: "Give it to another person, without joining again" });
-    acts.appendChild(give);
-    var whose = d.team ? "Team machine" : d.person;
-    return el("div", { "class": "pj-row m-row" + (d.online ? "" : " off"), "data-machine": String(d.id), "data-host": m.host }, [
-      avatar("machine", d.name, { dot: d.online }), el("div", { "class": "pj-text" }, [
-        el("div", { "class": "pj-top" }, [el("b", { "class": "pj-name", text: d.name, title: d.name === d.os_user + "@" + m.host ? null : d.os_user + "@" + m.host }),
-                                          d.team ? chip("Team", "active", "pj-tag") : null]),
-        el("div", { "class": "pj-desc m-line" }, [el("span", { "class": "m-who", text: whose }),
-          m.use ? el("span", { "class": "m-use", title: "This computer's use", text: m.use }) : el("span", { "class": "m-state" }, [seenLine(d.online, d.last_seen)])]),
-        queueLine(m.gpu_queue), toolTags(d.tools)]),
-      acts]);
-  }
-  function giveMachine(d, acts) {
-    var to = el("select", { "aria-label": "Give to" });
-    options(to, feed.people.filter(function (p) { return !isManagerAccount(p) && p.name !== d.person; })
-      .map(function (p) { return [p.name, p.team ? p.name + " (team machine)" : p.name]; }));
-    confirmInline(acts, "Give " + d.name + " to", "Give", function () {
-      return api(apiPath("/api/devices/", d.id, "/move"), { person: to.value }).then(function (r) { return r.json(); })
-        .then(function () { teamErr("machines-err", ""); flash("given:" + d.id); machinesAt = 0; loadMachines(true); return get("/api/feed"); })
-        .then(function (f) { feed = f; }, function (e) { teamErr("machines-err", e.message); throw e; });
-    }, { edit: true, parts: [to] });
-  }
-  /* Machines: Mine (your own and the team machines you can use) or, for an admin, Everyone */
-  function machineScope() {
-    var all = isAdmin() && mScope === "everyone";
-    [].forEach.call($("m-scope").querySelectorAll("button"), function (b) {
-      b.setAttribute("aria-pressed", b.dataset.scope === (all ? "everyone" : "mine") ? "true" : "false");
-    });
-    $("m-sub").textContent = all ? "Every account on the hub: whose it is and how busy its computer is."
-                                 : "The accounts you joined from, and the team machines you can use.";
-    $("a-machines").hidden = all;
-    $("team-machine-rows").hidden = !all;
-    $("machines-err").hidden = !all || !$("machines-err").textContent;
-  }
-  $("m-scope").addEventListener("click", function (e) {
-    var b = e.target.closest("button");
-    if (!b || b.dataset.scope === mScope) return;
-    if (holdClose) holdClose();
-    mScope = b.dataset.scope;
-    machineScope();
-    if (mScope === "everyone") loadMachines(true);
-  });
-  function renderMachines() {
-    if (!machines) return;
-    var box = $("team-machine-rows");
-    if (holding && holding.isConnected && box.contains(holding)) return;
-    if (pressing(box)) return;
-    if (!changed("hosts", calm([machines, Object.keys(cues).filter(function (k) { return cueOn(k) && /^given:/.test(k); })]))) return;
-    var rows = [];
-    machines.forEach(function (m) { m.devices.forEach(function (d) { rows.push(deviceRow(m, d)); }); });
-    drawRows(box, rows.length ? rows
-                              : [el("div", { "class": "blank" }, [icon("i-monitor", 20), el("span", { text: "No machines yet" }),
-                                 button([icon("i-plus", 14), "Add machine"], "", function () { $("add-machine").click(); })])], "data-machine");
-    tick();
-    machineScope();
   }
   /* Add machine: an admin first says whose account it is; a member goes straight to the command */
   function addPanels(which) {
@@ -2598,6 +2548,7 @@ a.p-main { color: inherit; text-decoration: none; }
     }
     renderHome();
     if (feed.people) renderTeam();
+    if (inMachines()) renderMachines();
     tick();
   }
 
@@ -2727,9 +2678,10 @@ a.p-main { color: inherit; text-decoration: none; }
     if (d.online) return el("span", { "class": "on", text: "online" });
     return d.last_seen ? el("span", null, ["seen ", timeEl(d.last_seen)]) : "not seen yet";
   }
-  function machineRow(d) {
+  /* your own account's Rename and Remove (not for the token this page opened with, nor the
+     hub's emergency sign-in) */
+  function ownActs(d) {
     var acts = el("span", { "class": "a-acts" });
-    var sub = el("small", null, [d.label && d.auto !== d.label ? d.auto + " \u00b7 " : "", seenText(d)]);
     var rename = button([icon("i-edit", 14), "Rename"], "", function () {
       confirmInline(rename, null, "Save", function (text) {
         return api("/api/me/machines/" + d.id + "/label", { label: text })
@@ -2738,7 +2690,7 @@ a.p-main { color: inherit; text-decoration: none; }
       }, { ask: d.auto || "Machine name", value: d.label || "", edit: true, max: "80" });
     }, { "aria-label": "Rename " + d.name });
     acts.appendChild(rename);
-    if (!d.current && !d.emergency) {  /* not the token this page opened with, nor the hub's emergency sign-in */
+    if (!d.current && !d.emergency) {
       var rm = button("Remove", "quiet-danger", function () {
         confirmInline(rm, "Remove " + d.name + "? It stops reaching the hub until it joins again.", "Remove", function () {
           return api("/api/me/machines/" + d.id + "/remove")
@@ -2748,23 +2700,108 @@ a.p-main { color: inherit; text-decoration: none; }
       }, { "aria-label": "Remove " + d.name });
       acts.appendChild(rm);
     }
-    return el("div", { "class": "a-row", "data-machine": String(d.id) }, [
-      avatar("machine", d.name, { dot: !!d.online }),
-      el("div", { "class": "a-text" }, [el("b", { text: d.name, title: d.name === d.machine ? d.name : d.name + " (joined as " + d.machine + ")" }), d.emergency ? chip("This hub", "idle", "a-hub") : null, sub,
-        queueLine(d.gpu_queue), toolTags(d.tools)]),
-      acts]);
+    return acts;
   }
-  /* a team machine you can use: shared by the team, so no Rename or Remove here */
-  function teamMachineRow(d) {
-    var sub = el("small", null, [d.projects.join(", ") + " \u00b7 ", seenText(d)]);
-    return el("div", { "class": "a-row", "data-team-machine": d.name, title: "A team machine: everyone with a role in " + d.projects.join(", ") + " uses it" }, [
-      avatar("machine", d.name, { dot: !!d.online }),
-      el("div", { "class": "a-text" }, [el("b", { text: d.name }), sub, queueLine(d.gpu_queue), toolTags(d.tools)]),
-      chip("Team", "active", "a-tag")]);
+  /* the accounts to show, by computer: a member's own and the team machines they can use (the
+     account payload); an admin's every account (the hub's list, with their own from the account
+     payload for Rename and Remove). Each row: who ("team", "mine" or "other"), the device, its
+     owner. Each computer: its size and use (admins only) and its GPU queue line */
+  function machineHosts() {
+    var hosts = {}, own = {}, listed = {};
+    function host(name) { return hosts[name] || (hosts[name] = { host: name, kind: "", use: "", queue: "", rows: [] }); }
+    account.machines.forEach(function (d) { own[d.id] = d; });
+    if (isAdmin()) machines.forEach(function (m) {
+      var h = host(m.host);
+      h.kind = m.kind || ""; h.use = m.use || ""; h.queue = m.gpu_queue || "";
+      m.devices.forEach(function (d) {
+        var mine = own[d.id];
+        if (mine) listed[d.id] = 1;
+        h.rows.push({ who: mine ? "mine" : d.team ? "team" : "other", d: mine || d, person: d.person });
+      });
+    });
+    account.machines.forEach(function (d) {
+      if (listed[d.id]) return;
+      var h = host(d.host || d.machine || d.name);  /* no computer known: its own card, by the name it joined with */
+      h.queue = h.queue || d.gpu_queue || "";
+      h.rows.push({ who: "mine", d: d });
+    });
+    if (!isAdmin()) account.team_machines.forEach(function (d) {
+      var h = host(d.host);
+      h.queue = h.queue || d.gpu_queue || "";
+      h.rows.push({ who: "team", d: d });
+    });
+    var rank = { team: 0, mine: 1, other: 2 };
+    return Object.keys(hosts).map(function (k) {
+      hosts[k].rows.sort(function (a, b) { return rank[a.who] - rank[b.who] || (a.d.name < b.d.name ? -1 : a.d.name > b.d.name ? 1 : 0); });
+      return hosts[k];
+    });
+  }
+  /* live sessions on an account, from the feed (what this viewer may see anyway) */
+  function sessionCount(d) {
+    return feed ? (feed.agents || []).filter(function (a) { return a.where === d.name; }).length : 0;
+  }
+  /* one account under its computer: online or last seen, whose it is, its sessions and tools */
+  function acctRow(r) {
+    var d = r.d, n = sessionCount(d);
+    var tag = r.who === "team" ? chip("Team", "active", "a-tag") : r.who === "mine" ? chip("Mine", "", "a-tag") : chip(r.person, "", "a-tag a-person");
+    var sub = el("small", null, [r.who === "mine" && d.label && d.auto !== d.label ? d.auto + " · " : "", seenText(d),
+                                 n ? " · " + n + (n === 1 ? " session" : " sessions") : ""]);
+    var attrs = { "class": "a-row m-acct" + (d.online ? "" : " off") };
+    if (d.id != null) attrs["data-machine"] = String(d.id); else attrs["data-team-machine"] = d.name;
+    if (r.who === "team" && d.projects) attrs.title = "A team machine: everyone with a role in " + d.projects.join(", ") + " uses it";
+    else if (r.who === "mine" && d.machine && d.name !== d.machine) attrs.title = d.name + " (joined as " + d.machine + ")";
+    return el("div", attrs, [
+      el("span", { "class": "m-dot" + (d.online ? " on" : ""), "aria-hidden": "true" }),
+      el("div", { "class": "a-text" }, [el("div", { "class": "a-top" }, [el("b", { text: d.name }), tag, d.emergency ? chip("This hub", "idle", "a-hub") : null]),
+                                       sub, toolTags(d.tools)]),
+      r.who === "mine" ? ownActs(d) : null]);
+  }
+  /* a computer's card: its name, size, use and GPU queue, then its accounts */
+  function hostCard(h, rows) {
+    var on = h.rows.some(function (r) { return r.d.online; });
+    return el("div", { "class": "panel m-group", "data-host": h.host }, [
+      el("div", { "class": "m-head" }, [avatar("machine", h.host, { dot: on }), el("div", { "class": "m-head-text" }, [
+        el("div", { "class": "m-host" }, [el("b", { text: h.host }), h.kind ? el("span", { "class": "m-kind", text: h.kind }) : null]),
+        h.use ? el("span", { "class": "m-use", title: "How busy this computer is", text: h.use }) : null, queueLine(h.queue)])])
+    ].concat(rows.map(acctRow)));
+  }
+  function setFilter(f) {
+    mFilter = f;
+    store(function (s) { s.setItem("kaptyorka.machines-filter", f); });
+    renderMachines();
+  }
+  $("m-filter").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b || b.dataset.f === mFilter) return;
+    if (holdClose) holdClose();
+    setFilter(b.dataset.f);
+  });
+  var M_EMPTY = { team: "No team machines yet.", mine: "You have no machines of your own yet.", online: "No machines online right now." };
+  /* Machines: one card per computer (something online first, then by name), its accounts
+     filtered by All, Team, Mine or Online; a computer with nothing left is not shown */
+  function renderMachines() {
+    [].forEach.call($("m-filter").querySelectorAll("button"), function (b) { b.setAttribute("aria-pressed", b.dataset.f === mFilter ? "true" : "false"); });
+    $("m-sub").textContent = isAdmin() ? "Every account on the hub, by computer." : "Your accounts and the team machines you can use, by computer.";
+    if (!account || (isAdmin() && !machines)) return;
+    var box = $("a-machines");
+    if (holding && holding.isConnected && box.contains(holding)) return;
+    if (pressing(box)) return;
+    var hosts = machineHosts(), keep = function (r) {
+      return mFilter === "team" ? r.who === "team" : mFilter === "mine" ? r.who === "mine" : mFilter === "online" ? !!r.d.online : true;
+    };
+    var shown = hosts.map(function (h) { return { h: h, rows: h.rows.filter(keep), on: h.rows.some(function (r) { return r.d.online; }) }; })
+      .filter(function (g) { return g.rows.length; })
+      .sort(function (a, b) { return (b.on - a.on) || (a.h.host < b.h.host ? -1 : a.h.host > b.h.host ? 1 : 0); });
+    if (!changed("hosts", calm([mFilter, shown, (feed && feed.agents || []).map(function (a) { return a.where; })]))) return;
+    var none = !hosts.length ? (account.add_machine ? "No machines yet. Click Add machine and run the command on your computer." : "No machines yet")
+                             : M_EMPTY[mFilter];
+    drawRows(box, shown.length ? shown.map(function (g) { return hostCard(g.h, g.rows); })
+                               : [el("div", { "class": "panel" }, [el("div", { "class": "a-none" }, [icon("i-monitor", 14), el("span", { text: none })])])], "data-host");
+    tick();
   }
   function renderAccount() {
     var a = account, roles = { admin: "Admin", member: "Member", manager: "Manager" };
-    if (!a || (holding && holding.isConnected && $("settings").contains(holding) && !$("pane-people").contains(holding) && !$("pane-person").contains(holding) && !$("pane-projects").contains(holding) && !$("team-machine-rows").contains(holding))) return;  /* an edit is open */
+    if (!a || (holding && holding.isConnected && $("settings").contains(holding) && !$("pane-people").contains(holding) && !$("pane-person").contains(holding) && !$("pane-projects").contains(holding))) return;  /* an edit is open */
     if (pressing($("a-machines"))) return;
     if (!changed("account", calm([a, me && me.gitlab_connect]))) return;
     var prof = $("a-profile"), gl = [a.gitlab_user ? "@" + a.gitlab_user : el("span", { "class": "quiet", text: "Not linked" })];
@@ -2777,14 +2814,9 @@ a.p-main { color: inherit; text-decoration: none; }
       prof.appendChild(el("dt", { text: r[0] }));
       prof.appendChild(el("dd", null, r[1]));
     });
-    var box = $("a-machines");
-    box.textContent = "";
-    if (!a.machines.length && !a.team_machines.length)
-      box.appendChild(el("div", { "class": "a-none" }, [icon("i-monitor", 14), el("span", { text: a.add_machine
-        ? "No machines yet. Click Add machine and run the command on your computer." : "No machines yet" })]));
-    a.machines.forEach(function (d) { box.appendChild(machineRow(d)); });
-    a.team_machines.forEach(function (d) { box.appendChild(teamMachineRow(d)); });
     $("add-machine").hidden = !a.add_machine;
+    renderMachines();
+    var box;
     $("a-browsers-sec").hidden = !a.browsers.length;
     $("nav-browsers").hidden = !a.browsers.length;
     $("browsers-out").hidden = !a.browsers.some(function (b) { return !b.current; });
@@ -2825,8 +2857,8 @@ a.p-main { color: inherit; text-decoration: none; }
     ownJoin();
   });
   $("add-own").addEventListener("click", ownJoin);
-  $("add-shared").addEventListener("click", function () {  /* a team machine shows under Everyone */
-    if (mScope !== "everyone") { mScope = "everyone"; machineScope(); loadMachines(true); }
+  $("add-shared").addEventListener("click", function () {  /* a team machine does not show under Mine */
+    if (mFilter === "mine") setFilter("all");
     teamAdded = null; teamBox(true);
   });
   $("add-choice-cancel").addEventListener("click", function () { addPanels(null); $("add-machine").focus(); });
@@ -2834,7 +2866,7 @@ a.p-main { color: inherit; text-decoration: none; }
   $("add-choice").addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); addPanels(null); $("add-machine").focus(); } });
   function ownJoin() {
     var b = $("add-machine");
-    if (mScope === "everyone") { mScope = "mine"; machineScope(); }  /* your own shows under Mine */
+    if (mFilter === "team") setFilter("all");  /* your own does not show under Team */
     var n = account ? account.machines.length : -1;
     if (joinCmd && joinCmd.machines === n && joinCmd.expires > Date.now() / 1000 + 60) { showJoin(); return; }
     b.setAttribute("aria-busy", "true");

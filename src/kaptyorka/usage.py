@@ -349,6 +349,26 @@ def describe(name: str, p: dict, use: dict) -> str:
     return f"{name} is using {words}"
 
 
+def kind(use: Optional[dict]) -> str:
+    """A computer's size in a few words for the admin's Machines list, from its last report:
+    "2 GPUs 24 GB · 32 CPUs · 128 GB RAM", "Jetson · 8 CPUs · 16 GB RAM" (a Jetson's one GPU
+    reports no memory), "" when nothing was reported. The bridge sends no GPU model."""
+    if not isinstance(use, dict):
+        return ""
+    parts, gpus = [], use.get("gpus") or []
+    if len(gpus) == 1 and gpus[0].get("total") is None:
+        parts.append("Jetson")
+    elif gpus:
+        total = max((g.get("total") or 0) for g in gpus)
+        n = f"{len(gpus)} GPUs" if len(gpus) > 1 else "GPU"
+        parts.append(f"{n} {round(total / 1024)} GB" if total >= 1024 else n)
+    if use.get("cpus"):
+        parts.append(f"{use['cpus']} CPUs")
+    if use.get("mem_mb"):
+        parts.append(f"{round(use['mem_mb'] / 1024)} GB RAM")
+    return " · ".join(parts)
+
+
 def short(use: Optional[dict]) -> str:
     """A machine's use in a few words for the admin's Machines list: "GPU 90% · CPU 35% · memory
     40%" (GPU: the busiest one), "" when nothing was reported."""

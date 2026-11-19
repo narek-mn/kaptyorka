@@ -132,6 +132,28 @@ def test_overview_lists_hosts_people_team_and_use(store, team):
     assert m["use"] == "GPU 90% · CPU 25% · memory 40%"
     assert sorted(d["name"] for d in m["devices"]) == ["bob@jet-1", "nvidia@jet-1"]  # account@computer
     assert usage.short(None) == "" and usage.short({"users": {}}) == ""
+    assert m["kind"] == "GPU · 8 CPUs · 1 GB RAM"  # the size hint, from the last report
+
+
+def test_overview_kind_is_the_computers_size_even_offline(store, team):
+    """The Machines header's size hint: GPUs and their memory (a Jetson's one GPU reports no
+    memory), CPUs and RAM, from the newest report however old; "" when none came."""
+    import json
+    big = {"cpus": 32, "mem_mb": 131072, "gpus": [{"index": i, "util": 1.0, "mem": 0, "total": 24576} for i in (0, 1)]}
+    jet = {"cpus": 8, "mem_mb": 16384, "gpus": [{"index": 0, "util": 1.0, "mem": None, "total": None}]}
+    assert usage.kind(big) == "2 GPUs 24 GB · 32 CPUs · 128 GB RAM"
+    assert usage.kind(jet) == "Jetson · 8 CPUs · 16 GB RAM"
+    assert usage.kind({"cpus": 4, "mem_mb": 8192}) == "4 CPUs · 8 GB RAM"
+    assert usage.kind(None) == "" and usage.kind({}) == ""
+    ws = WorkerStore(store)
+    store.heartbeat("jet-1", [], principal=team[1], facts={"host": "jet-1", "os_user": "nvidia"})
+    [m] = [m for m in ws.overview() if m["host"] == "jet-1"]
+    assert m["kind"] == ""
+    with store.lock:
+        store.db.execute("INSERT INTO device_facts (device_id, facts, updated) VALUES (?,?,?)",
+                         (team[1].device_id, json.dumps({"use": {**jet, "age": 0}}), store.clock() - 86400))
+    [m] = [m for m in ws.overview() if m["host"] == "jet-1"]
+    assert m["kind"] == "Jetson · 8 CPUs · 16 GB RAM" and m["use"] == ""  # a day old: no use line, the size stays
 
 
 def test_move_a_machine_to_another_person(store, team):
@@ -214,6 +236,7 @@ def test_account_lists_the_team_machines_you_can_use(store, team):
         return [(m["name"], m["os_user"], m["projects"])
                 for m in admin_ops.account(store, who(store, name))["team_machines"]]
     assert tm("bob") == [("nvidia@jet-1", "nvidia", ["proj-a"])]  # not proj-b: no role there
+    assert admin_ops.account(store, who(store, "bob"))["team_machines"][0]["host"] == "jet-1"  # its card on Machines
     assert tm("carol") == []
     assert tm("alice") == [("nvidia@jet-1", "nvidia", ["proj-a", "proj-b"])]
     assert admin_ops.account(store, team[1])["team_machines"] == []  # not itself

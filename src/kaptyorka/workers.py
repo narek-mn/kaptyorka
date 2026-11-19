@@ -433,6 +433,7 @@ class WorkerStore:
             h["team"] = sorted(set(h["team"]))
             h["use"] = usage.short(here[0]) if here else ""
             h["gpu_queue"] = self.queue_text(h["host"], now, True)
+            h["kind"] = self.host_kind(h["host"])
             out.append(h)
         return out
 
@@ -794,6 +795,19 @@ class WorkerStore:
         if best is None:
             return None
         return best[1], usage.people_use(best[1], owners, team)
+
+    def host_kind(self, host: str) -> str:
+        """usage.kind of the newest use any bridge on host reported, however old: the size of
+        a computer does not change while it is off."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT f.facts FROM device_facts f JOIN devices d ON d.id=f.device_id"
+                " WHERE d.host=? AND d.revoked_at IS NULL ORDER BY f.updated DESC", (host,)).fetchall()
+        for r in rows:
+            use = json.loads(r["facts"]).get("use")
+            if isinstance(use, dict):
+                return usage.kind(use)
+        return ""
 
     def _heavy_by_others(self, host: str, person_id: int, now: float) -> bool:
         with self.lock:

@@ -343,7 +343,8 @@ def account(store, principal: Principal, ws=None) -> dict:
         "machines": [{"id": d["id"], "name": machine_name(d["label"], d["os_user"], d["host"], d["name"]),
                       "machine": d["name"], "label": d["label"],
                       "auto": machine_name("", d["os_user"], d["host"], d["name"]),
-                      "os_user": d["os_user"], "last_seen": d["last_used"], "tools": tools[d["id"]],
+                      "os_user": d["os_user"], "host": d["host"], "last_seen": d["last_used"],
+                      "tools": tools[d["id"]],
                       "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S,
                       "current": d["id"] == principal.device_id,
                       "emergency": d["id"] == emergency, **extra(d)}
@@ -351,7 +352,7 @@ def account(store, principal: Principal, ws=None) -> dict:
         "browsers": [{"id": b["id"], "created": b["created"], "last_used": b["last_used"],
                       "current": b["id"] == principal.device_id} for b in browsers],
         "team_machines": [{"name": machine_name(d["label"], d["os_user"], d["host"], d["name"]),
-                           "os_user": d["os_user"], "tools": d["tools"],
+                           "os_user": d["os_user"], "host": d["host"], "tools": d["tools"],
                            "last_seen": d["last_used"], "projects": d["projects"],
                            "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S,
                            **extra(d)}

@@ -1109,14 +1109,14 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             page.js("location.reload()")
             page.wait('!document.getElementById("pane-machines").hidden && document.querySelectorAll("#a-machines .a-row").length === 2')
             # rename a machine inline
-            box2 = 'document.querySelector("#a-machines [data-machine]:nth-child(2)")'
-            click(page, "#a-machines [data-machine]:nth-child(2)", "Rename")
+            box2 = 'document.querySelector("#a-machines [data-host=\\"bob@box-2\\"] [data-machine]")'
+            click(page, '#a-machines [data-host="bob@box-2"] [data-machine]', "Rename")
             page.wait('!!document.querySelector("#a-machines .confirm input")')
             page.js('document.querySelector("#a-machines .confirm input").value = "build box"')
             click(page, "#a-machines .confirm", "Save")
             page.wait(f'{box2} && {box2}.querySelector("b").textContent === "build box"')
             # remove asks first
-            click(page, "#a-machines [data-machine]:nth-child(2)", "Remove")
+            click(page, '#a-machines [data-host="bob@box-2"] [data-machine]', "Remove")
             q = page.wait('document.querySelector("#a-machines .confirm") && document.querySelector("#a-machines .confirm").innerText')
             assert "Remove build box? It stops reaching the hub until it joins again." in q
             page.screenshot(shots / f"account-remove-{tag}.png")
@@ -1232,12 +1232,11 @@ def test_team_make_and_remove_admin(tmp_path, w, h):
 
 
 @pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
-def test_team_machines_add_list_move(tmp_path, w, h):
-    """Machines, Everyone (the admin's view): one row per account (account@computer) with whose
-    it is, online, its computer's use and its agent tools. The old All machines link lands
-    there. Add machine asks whose account it is; Shared team account shows the join command;
-    Give to… gives a machine to another person, asked in place. Screenshots to KAPTYORKA_SHOTS."""
-    import json as _json
+def test_machines_add_a_shared_team_account(tmp_path, w, h):
+    """Machines for an admin: Add machine asks whose account it is; Shared team account takes a
+    name and shows the join command; once it joins, the new account shows under its own
+    computer with a Team tag. The old All machines link lands on Machines with All. Rows have
+    no Give to… (the command line keeps `machine move`). Screenshots to KAPTYORKA_SHOTS."""
     import os
     shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
     shots.mkdir(parents=True, exist_ok=True)
@@ -1247,30 +1246,29 @@ def test_team_machines_add_list_move(tmp_path, w, h):
     stop = start_hub(store)
     _, token = person(store, "alice", "admin")
     bob, bob_t = person(store, "bob")
-    person(store, "carol")
     b = store.authenticate(bob_t)
-    store.heartbeat("gpu-1", [], principal=b, facts={"host": "gpu-1", "os_user": "bob"})
+    store.heartbeat("box-1", [], principal=b, facts={"host": "box-1", "os_user": "bob"})
     with store.lock:
-        store.db.execute("INSERT INTO device_facts (device_id, facts, updated) VALUES (?,?,?)",
-                         (b.device_id, _json.dumps({"tools": {"claude-code": "2.1", "codex": "0.9"},
-                                                    "logins": {"claude-code": True, "codex": False}, "use": {
+        store.db.execute("INSERT OR REPLACE INTO device_facts (device_id, facts, updated) VALUES (?,?,?)",
+                         (b.device_id, json.dumps({"tools": {"claude-code": "2.1", "codex": "0.9"},
+                                                   "logins": {"claude-code": True, "codex": False}, "use": {
                              "age": 0, "cpus": 16, "mem_mb": 64000,
-                             "gpus": [{"index": 0, "util": 90.0, "mem": 0, "total": 0}],
+                             "gpus": [{"index": 0, "util": 90.0, "mem": 0, "total": 24576}],
                              "users": {"bob": {"cpu": 6.0, "mem": 20000}}}}), store.clock()))
-    row = 'document.querySelector("#team-machine-rows [data-host=\\"{}\\"]")'.format
-    tags = 'document.querySelector("#team-machine-rows [data-host=\\"{}\\"] .m-tools").textContent'.format
+    card = 'document.querySelector("#a-machines [data-host=\\"{}\\"]")'.format
     wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
     try:
         with chrome(w, h) as page:
             page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=machines")
-            page.wait(f'!!{row("gpu-1")}')
+            page.wait(f'!!{card("box-1")}')
             assert page.js("location.hash") == "#settings/machines"
-            assert page.js('document.querySelector("#m-scope [data-scope=\\"everyone\\"]").getAttribute("aria-pressed")') == "true"
-            assert page.js(f'{row("gpu-1")}.querySelector(".m-who").textContent') == "bob"
-            assert page.js(f'{row("gpu-1")}.querySelector(".pj-name").textContent') == "bob@gpu-1"
-            assert page.js(tags("gpu-1")) == "Claude CodeCodex · not logged in"
-            assert page.js(f'{row("gpu-1")}.querySelector(".m-use").textContent') == \
-                "GPU 90% · CPU 38% · memory 31%"
+            assert page.js('document.querySelector("#m-filter [aria-pressed=\\"true\\"]").textContent') == "All"
+            assert page.js(f'{card("box-1")}.querySelector(".m-host b").textContent') == "box-1"
+            assert page.js(f'{card("box-1")}.querySelector(".m-kind").textContent') == "GPU 24 GB · 16 CPUs · 62 GB RAM"
+            assert page.js(f'{card("box-1")}.querySelector(".m-use").textContent') == "GPU 90% · CPU 38% · memory 31%"
+            assert page.js(f'{card("box-1")}.querySelector(".a-top").innerText').split() == ["bob@box-1", "bob"]
+            assert page.js(f'{card("box-1")}.querySelector(".m-tools").textContent') == "Claude CodeCodex · not logged in"
+            assert "Give" not in page.js('document.getElementById("pane-machines").innerText')
             # Add machine: whose account? Shared team account: a name, then the command to run there
             page.js('document.getElementById("add-machine").click()')
             page.wait('!document.getElementById("add-choice").hidden')
@@ -1280,36 +1278,21 @@ def test_team_machines_add_list_move(tmp_path, w, h):
             page.js('document.getElementById("add-shared").click()')
             page.wait('!document.getElementById("add-team-box").hidden && document.getElementById("add-choice").hidden')
             assert page.js('document.activeElement.id') == "new-team"
-            page.js('document.getElementById("new-team").value = "jet-1"')
+            page.js('document.getElementById("new-team").value = "jetson-1"')
             page.js('document.querySelector("#add-team button[type=submit]").click()')
             page.wait('!document.getElementById("add-team-link").hidden')
             cmd = page.js('document.querySelector("#add-team-link input").value')
             assert cmd.startswith("kaptyorka join http://127.0.0.1:")
             assert page.js(wide)
             page.screenshot(shots / f"team-machine-added-{tag}.png")
-            code = cmd.rsplit("/", 1)[1]
-            t, _ = store.invite_redeem(code, "jet-1", host="jet-1", os_user="nvidia")
-            store.heartbeat("jet-1", [], principal=store.authenticate(t),
-                            facts={"host": "jet-1", "os_user": "nvidia"})
+            t, _ = store.invite_redeem(cmd.rsplit("/", 1)[1], "jetson-1", host="jetson-1", os_user="nvidia")
+            store.heartbeat("jetson-1", [], principal=store.authenticate(t),
+                            facts={"host": "jetson-1", "os_user": "nvidia"})
             page.js('[...document.querySelectorAll("#add-team-link button")].find(b => b.textContent === "Done").click()')
-            page.wait(f'!!{row("jet-1")}')
-            assert page.js(f'{row("jet-1")}.querySelector(".m-who").textContent') == "Team machine"
-            assert page.js(f'{row("jet-1")}.querySelector(".chip").textContent') == "Team"
-            assert page.js(f'{row("jet-1")}.querySelector(".pj-name").textContent') == "nvidia@jet-1"
-            assert page.js(f'!{row("jet-1")}.querySelector(".m-tools")')  # its bridge never reported
-            assert "jet-1" not in page.js('document.getElementById("people-rows").textContent')
-            page.screenshot(shots / f"machines-{tag}.png")
-            # Give bob's machine to carol, asked in place
-            click(page, '#team-machine-rows [data-host="gpu-1"]', "Give to…")
-            page.wait(f'!!{row("gpu-1")}.querySelector(".confirm select")')
-            page.js(f'{row("gpu-1")}.querySelector(".confirm select").value = "carol"')
-            assert page.js(wide)
-            page.screenshot(shots / f"machine-move-{tag}.png")
-            assert page.js(f'{row("gpu-1")}.querySelector(".confirm span").textContent') == "Give bob@gpu-1 to"
-            click(page, '#team-machine-rows [data-host="gpu-1"] .confirm', "Give")
-            page.wait(f'{row("gpu-1")} && {row("gpu-1")}.querySelector(".m-who").textContent === "carol"')
-            assert store.db.execute("SELECT person_id FROM devices WHERE id=?",
-                                    (b.device_id,)).fetchone()[0] == store.person_by_name("carol")["id"]
+            page.wait(f'!!{card("jetson-1")}')
+            assert page.js(f'{card("jetson-1")}.querySelector(".a-top").innerText').split() == ["nvidia@jetson-1", "Team"]
+            assert page.js(f'!{card("jetson-1")}.querySelector(".m-tools") && !{card("jetson-1")}.querySelector(".m-kind")')  # never reported
+            assert "jetson-1" not in page.js('document.getElementById("people-rows").textContent')
     finally:
         stop()
         store.close()
@@ -1396,24 +1379,93 @@ def test_settings_sections_and_account_button(tmp_path, w, h):
             assert page.js('document.querySelector("#set-nav [data-sec=\\"people\\"]").getAttribute("aria-current")') == "page"
             page.go(f"{base}/#settings/people/nobody")
             page.wait('document.getElementById("person-body").textContent.includes("No one named nobody is on the hub.")')
-            # the old All machines address: Machines, Everyone
+            # the old All machines address: Machines, with every account
             page.go(f"{base}/#settings/team/machines")
             page.wait('!document.getElementById("pane-machines").hidden'
-                      ' && !!document.querySelector(\'#team-machine-rows [data-host="jet-1"]\')')
+                      ' && !!document.querySelector(\'#a-machines [data-host="jet-1"]\')')
             assert page.js("location.hash") == "#settings/machines"
-            assert page.js('document.getElementById("a-machines").hidden')
+            assert page.js('document.querySelector("#m-filter [aria-pressed=\\"true\\"]").dataset.f') == "all"
     finally:
         stop()
         store.close()
 
 
+def machines_demo(store):
+    """A hub for the Machines page: box-1 with three accounts (lab, a team machine; alice, the
+    admin; bob, a member) and a GPU queue; two Jetsons (team machines), jetson-2 offline and
+    hidden from bob; carol, a member signed in only in a browser, with one offline account on
+    box-2; dave, with no machine at all. Returns ({name: token}, keep_online)."""
+    from kaptyorka.workers import WorkerStore
+    _, alice_t = person(store, "alice", "admin")
+    bob, bob_t = person(store, "bob")
+    carol, carol_t = person(store, "carol")
+    _, dave_t = person(store, "dave")
+    store.project_register("proj-a", by="alice")
+    store.grant_project("proj-a", bob, "write", "alice")
+    a, b = store.authenticate(alice_t), store.authenticate(bob_t)
+    store.heartbeat("box-1", [], principal=a, facts={"host": "box-1", "os_user": "alice"})
+    store.heartbeat("box-1", [], principal=b, facts={"host": "box-1", "os_user": "bob"})
+    team = {}
+    for name, host, user in (("lab", "box-1", "lab"), ("jetson-1", "jetson-1", "nvidia"), ("jetson-2", "jetson-2", "nvidia")):
+        _, code = store.team_machine_add(name, "alice")
+        t, _ = store.invite_redeem(code, name, host=host, os_user=user)
+        team[name] = store.authenticate(t)
+        store.heartbeat(host, [], principal=team[name], facts={"host": host, "os_user": user})
+    store.team_machine_set_visible("jetson-2", "bob", False, "alice")
+    c = store.authenticate(store.device_add(carol, "carol@box-2"))
+    store.heartbeat("box-2", [], principal=c, facts={"host": "box-2", "os_user": "carol"})
+    WorkerStore(store).set_gpu_queue("box-1", "/srv/gpu.lock", 10, "alice")
+    big = {"age": 0, "cpus": 32, "mem_mb": 131072,
+           "gpus": [{"index": 0, "util": 97.0, "mem": 20000, "total": 24576},
+                    {"index": 1, "util": 40.0, "mem": 8000, "total": 24576}],
+           "users": {"alice": {"cpu": 6.0, "mem": 30000}, "bob": {"cpu": 4.0, "mem": 20000}}}
+    jet = {"age": 0, "cpus": 8, "mem_mb": 16384, "gpus": [{"index": 0, "util": 40.0, "mem": None, "total": None}],
+           "users": {"nvidia": {"cpu": 2.0, "mem": 4000}}}
+    cc = {"tools": {"claude-code": "2.1"}, "logins": {"claude-code": True}}
+    facts = {a.device_id: {**cc, "use": big, "gpu_queue": {"age": 0, "shares": 10, "holders": {"alice": 4, "bob": 3},
+                                                           "whole": "", "waiting": 1, "waiters": {"bob": 1}}},
+             b.device_id: {"tools": {"claude-code": "2.1"}, "logins": {"claude-code": False}},
+             team["lab"].device_id: {"tools": {}, "logins": {}},
+             team["jetson-1"].device_id: {**cc, "use": jet},
+             team["jetson-2"].device_id: {**cc, "use": jet}}
+    with store.lock:
+        for dev, f in facts.items():  # jetson-2 last reported two days ago
+            store.db.execute("INSERT OR REPLACE INTO device_facts (device_id, facts, updated) VALUES (?,?,?)",
+                             (dev, json.dumps(f), store.clock() - (2 * 86400 if dev == team["jetson-2"].device_id else 0)))
+        # carol's own token is a browser sign-in that ends, so her only machine is carol@box-2
+        for who in ("carol", "dave"):
+            store.db.execute("UPDATE devices SET expires=? WHERE person_id=(SELECT id FROM people WHERE name=?)"
+                             " AND host=''", (store.clock() + 3600, who))
+        old = store.clock() - 2 * 86400
+        store.db.execute("UPDATE devices SET last_used=? WHERE id IN (?,?)", (old, team["jetson-2"].device_id, c.device_id))
+        store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (store.clock() - 3 * 3600, team["lab"].device_id))
+
+    def online():
+        store.seen("a1", "box-1", "claude", "proj-a", principal=a)
+        store.seen("a2", "box-1", "claude", "proj-a", principal=a)
+        store.seen("b1", "box-1", "claude", "proj-a", principal=b)
+        store.seen("j1", "jetson-1", "claude", "proj-a", principal=team["jetson-1"])
+        with store.lock:  # lab and jetson-2 stay offline; their sessions only make them bob's
+            store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (store.clock(), team["jetson-1"].device_id))
+    online()
+    for name, key in (("lab", "l1"), ("jetson-2", "j2")):
+        store.seen(key, name, "claude", "proj-a", principal=team[name])
+    with store.lock:
+        store.db.execute("UPDATE agents SET last_seen=? WHERE key IN ('l1', 'j2')", (store.clock() - 3600,))
+        store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (store.clock() - 3 * 3600, team["lab"].device_id))
+        store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (store.clock() - 2 * 86400, team["jetson-2"].device_id))
+    return {"alice": alice_t, "bob": bob_t, "carol": carol_t, "dave": dave_t}, online
+
+
 @pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
-def test_one_machines_page_for_members_and_admins(tmp_path, w, h):
-    """One Machines page. A member sees their own machines (Rename, Remove) and the team
-    machines of their projects (no actions, a Team tag), with no Mine / Everyone switch; Add
-    machine goes straight to their join command; with none, a sentence points to Add machine.
-    An admin starts on Mine and switches to Everyone: every account, whose it is, Give to…; Add
-    machine asks whose account it is. Screenshots to KAPTYORKA_SHOTS."""
+def test_machines_grouped_by_computer_with_filters(tmp_path, w, h):
+    """Machines: one card per computer (something online first, then by name) with its size,
+    use and GPU queue; under it one row per account (team, then yours, then others) with its
+    dot or last seen, its tag, its sessions and tools. All / Team / Mine / Online filter it and
+    stay on reload; a computer with nothing left goes. An admin sees every account; bob, a
+    member, his own and the team machines he can use (not the one hidden from him), no use or
+    size, queue counts only; carol's Online is empty; dave has no machine yet. Screenshots to
+    KAPTYORKA_SHOTS."""
     import os
     shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
     shots.mkdir(parents=True, exist_ok=True)
@@ -1421,93 +1473,79 @@ def test_one_machines_page_for_members_and_admins(tmp_path, w, h):
     store = Store(tmp_path / "hub.db")
     ManagerStore(store).set_enabled(False, "test")
     stop = start_hub(store)
-    _, token = person(store, "alice", "admin")
-    bob, bob_t = person(store, "bob")
-    _, dave_t = person(store, "dave")
-    store.project_register("proj-a", by="alice")
-    store.project_register("proj-b", by="alice")
-    store.grant_project("proj-a", bob, "write", "alice")
-    store.heartbeat("box-2", [], principal=store.authenticate(token), facts={"host": "box-2", "os_user": "alice"})
-    b = store.authenticate(store.device_add(bob, "bob@box-1"))
-    store.heartbeat("box-1", [], principal=b, facts={"host": "box-1", "os_user": "bob"})
-    _, code = store.team_machine_add("jet-1", "alice")
-    t, _ = store.invite_redeem(code, "jet-1", host="jet-1", os_user="nvidia")
-    j = store.authenticate(t)
-    store.heartbeat("jet-1", [], principal=j, facts={"host": "jet-1", "os_user": "nvidia"})
-    store.seen("t-a", "jet-1", "claude", "proj-a", principal=j)
+    tokens, online = machines_demo(store)
     base = f"http://127.0.0.1:{stop.port}"
     wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
-    pane = 'document.getElementById("pane-machines")'
-    acts = lambda attr: page.js(f'document.querySelector({json.dumps("#a-machines [" + attr + "]")}).innerText')
+    hosts = '[...document.querySelectorAll("#a-machines .m-group:not(.row-out)")].map(g => g.dataset.host)'
+    rows = 'document.querySelector(\'#a-machines [data-host="{}"]\').querySelectorAll(".m-acct")'.format
+    card = 'document.querySelector(\'#a-machines [data-host="{}"]\')'.format
 
-    def open_as(name, t):  # a fresh load, so the page takes the new token
+    def tops(host):
+        return page.js(f'[...{rows(host)}].map(r => r.querySelector(".a-top").innerText.split(/\\s+/).join(" "))')
+
+    def text(host):
+        return page.js(f'{card(host)}.innerText')
+
+    def pick(f):
+        page.js(f'document.querySelector(\'#m-filter [data-f="{f}"]\').click()')
+        assert page.js('document.querySelector("#m-filter [aria-pressed=\\"true\\"]").dataset.f') == f
+
+    def open_as(name):  # a fresh load, so the page takes the new token
         page.go("about:blank")
-        page.go(f"{base}/#t={t}")
+        page.go(f"{base}/#t={tokens[name]}")
         page.wait(f'document.getElementById("viewer-label").textContent === {json.dumps(name)}')
+        online()
         page.go(f"{base}/#settings/machines")
-        page.wait(f'!{pane}.hidden')
+        page.wait('!document.getElementById("pane-machines").hidden && !document.querySelector("#a-machines .skel")')
 
     try:
         with chrome(w, h) as page:
-            # bob, a member: his own two machines and the team machine of proj-a
-            open_as("bob", bob_t)
-            page.wait('document.querySelectorAll("#a-machines .a-row").length === 3')
-            assert page.js('document.getElementById("m-scope").hidden')
-            assert not page.js('document.getElementById("add-machine").hidden')
-            assert page.js('[...document.querySelectorAll("#set-nav a:not([hidden])")].map(a => a.textContent)') == \
-                ["Profile", "Machines"]
-            names = page.js('[...document.querySelectorAll("#a-machines .a-row b")].map(b => b.textContent)')
-            assert "bob@box-1" in names and "nvidia@jet-1" in names
-            team = acts('data-team-machine="nvidia@jet-1"')
-            assert "Team" in team and "proj-a" in team and "Rename" not in team and "Remove" not in team
-            own = 'document.querySelector("#a-machines [data-machine]:nth-child(2)").innerText'
-            assert "Rename" in page.js(own) and "Remove" in page.js(own)
-            assert "Remove" not in page.js('document.querySelector("#a-machines [data-machine]:nth-child(1)").innerText')  # this page's own
+            # alice, the admin, All: every account on the hub
+            open_as("alice")
+            page.wait(f'{hosts}.length === 4')
+            assert page.js('[...document.querySelectorAll("#m-filter button")].map(b => b.textContent)') == ["All", "Team", "Mine", "Online"]
+            assert page.js('document.querySelector("#m-filter [aria-pressed=\\"true\\"]").dataset.f') == "all"
+            assert page.js(hosts) == ["box-1", "jetson-1", "box-2", "jetson-2"]  # online first, then by name
+            assert tops("box-1") == ["lab@box-1 Team", "alice@box-1 Mine", "bob@box-1 bob"]  # team, yours, others
+            assert page.js(f'{card("box-1")}.querySelector(".m-kind").textContent') == "2 GPUs 24 GB · 32 CPUs · 128 GB RAM"
+            assert page.js(f'{card("box-1")}.querySelector(".m-use").textContent').startswith("GPU 97% · CPU")
+            assert page.js(f'{card("box-1")}.querySelector(".m-queue").textContent') == "GPU queue: alice 4/10 · bob 3/10 · 1 waiting"
+            assert page.js(f'{card("jetson-2")}.querySelector(".m-kind").textContent') == "Jetson · 8 CPUs · 16 GB RAM"  # offline, still known
+            assert page.js(f'{card("jetson-2")}.querySelector(".m-use")') is None  # nothing fresh
+            box = text("box-1")
+            assert "online · 2 sessions" in box and "online · 1 session" in box and "3h ago" in box
+            assert "Claude Code · not logged in" in box and "No agent tool" in box
+            assert tops("box-2") == ["carol@box-2 carol"] and "2d ago" in text("box-2")
+            own = page.js(f'[...{rows("box-1")}].map(r => r.querySelector(".a-acts") ? r.querySelector(".a-acts").innerText : "")')
+            assert "Rename" in own[1] and own[0] == "" and own[2] == ""  # only your own; not the page's own token
+            assert "Remove" not in own[1] and "Give" not in page.js('document.getElementById("pane-machines").innerText')
             assert page.js(wide)
             time.sleep(0.4)
-            page.screenshot(shots / f"machines-member-mine-{tag}.png")
-            # Add machine: no question for a member, straight to the command
-            page.js('document.getElementById("add-machine").click()')
-            page.wait('!document.getElementById("a-join").hidden && document.getElementById("join-cmd").textContent !== ""')
-            assert page.js('document.getElementById("add-choice").hidden')
-            page.js('document.getElementById("join-done").click()')
-            assert page.js('document.getElementById("a-join").hidden')
-            # dave, signed in in a browser only (a sign-in that ends) and in no project: no
-            # machines, pointed to Add a machine
-            with store.lock:
-                store.db.execute("UPDATE devices SET expires=? WHERE person_id=(SELECT id FROM people"
-                                 " WHERE name='dave')", (store.clock() + 3600,))
-            open_as("dave", dave_t)
-            assert page.wait('document.querySelector("#a-machines .a-none")?.textContent') == \
-                "No machines yet. Click Add machine and run the command on your computer."
+            page.screenshot(shots / f"machines-admin-all-{tag}.png")
+            # Team: only team accounts; box-2 (no team account) goes
+            pick("team")
+            assert page.js(hosts) == ["box-1", "jetson-1", "jetson-2"]
+            assert tops("box-1") == ["lab@box-1 Team"]
             assert page.js(wide)
             time.sleep(0.4)
-            page.screenshot(shots / f"machines-member-empty-{tag}.png")
-            # alice, an admin: Mine first, then Everyone
-            open_as("alice", token)
-            page.wait('!document.getElementById("m-scope").hidden && !!document.querySelector("#a-machines [data-team-machine=\\"nvidia@jet-1\\"]")')
-            assert page.js('document.querySelector("#m-scope [aria-pressed=\\"true\\"]").textContent') == "Mine"
-            assert page.js('document.getElementById("team-machine-rows").hidden')
-            assert page.js(wide)
-            time.sleep(0.4)
-            page.screenshot(shots / f"machines-admin-mine-{tag}.png")
-            page.js('document.querySelector("#m-scope [data-scope=\\"everyone\\"]").click()')
-            page.wait('!!document.querySelector(\'#team-machine-rows [data-host="box-1"]\')')
-            assert page.js('document.getElementById("a-machines").hidden')
-            assert page.js(f'{pane}.querySelector("#m-sub").textContent').startswith("Every account")
-            hosts = page.js('[...document.querySelectorAll("#team-machine-rows [data-host]")].map(r => r.dataset.host)')
-            assert sorted(hosts) == ["box-1", "box-2", "jet-1"]
-            assert page.js('document.querySelector(\'#team-machine-rows [data-host="box-1"] .m-who\').textContent') == "bob"
-            click(page, '#team-machine-rows [data-host="box-1"]', "Give to…")
-            page.wait('!!document.querySelector(\'#team-machine-rows [data-host="box-1"] .confirm\')')
-            click(page, '#team-machine-rows [data-host="box-1"] .confirm', "Cancel")
-            assert page.js(wide)
-            time.sleep(0.4)
-            page.screenshot(shots / f"machines-admin-everyone-{tag}.png")
-            # back to Mine; Add machine asks whose; Shared team account opens it under Everyone,
-            # where it will show; a second click on Add machine closes it; Esc closes the question
-            page.js('document.querySelector("#m-scope [data-scope=\\"mine\\"]").click()')
-            assert not page.js('document.getElementById("a-machines").hidden')
+            page.screenshot(shots / f"machines-admin-team-{tag}.png")
+            pick("mine")
+            assert page.js(hosts) == ["box-1"] and tops("box-1") == ["alice@box-1 Mine"]
+            pick("online")
+            assert page.js(hosts) == ["box-1", "jetson-1"] and tops("box-1") == ["alice@box-1 Mine", "bob@box-1 bob"]
+            # kept on reload, in this browser
+            page.js("window.before = 1; location.reload()")
+            page.wait(f'!window.before && {hosts}.length === 2')
+            assert page.js('document.querySelector("#m-filter [aria-pressed=\\"true\\"]").dataset.f') == "online"
+            assert page.js('localStorage.getItem("kaptyorka.machines-filter")') == "online"
+            # the old All machines / Everyone address opens Machines with All
+            page.go(f"{base}/#settings/team/machines")
+            page.wait(f'{hosts}.length === 4')
+            assert page.js("location.hash") == "#settings/machines"
+            assert page.js('document.querySelector("#m-filter [aria-pressed=\\"true\\"]").dataset.f') == "all"
+            # Add machine asks whose; Shared team account from Mine moves to All, where it shows;
+            # a second click closes; Esc closes the question; My own account from Team moves to All
+            pick("mine")
             page.js('document.getElementById("add-machine").click()')
             assert not page.js('document.getElementById("add-choice").hidden')
             page.js('document.getElementById("add-choice").dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}))')
@@ -1515,15 +1553,60 @@ def test_one_machines_page_for_members_and_admins(tmp_path, w, h):
             page.js('document.getElementById("add-machine").click()')
             page.js('document.getElementById("add-shared").click()')
             assert not page.js('document.getElementById("add-team-box").hidden')
-            assert page.js('document.querySelector("#m-scope [aria-pressed=\\"true\\"]").textContent') == "Everyone"
-            assert page.js('document.getElementById("a-machines").hidden')
+            assert page.js('document.querySelector("#m-filter [aria-pressed=\\"true\\"]").dataset.f') == "all"
             page.js('document.getElementById("add-machine").click()')
             assert page.js('document.getElementById("add-team-box").hidden && document.getElementById("add-machine").getAttribute("aria-expanded") === "false"')
-            # My own account: the join command, under Mine
+            pick("team")
             page.js('document.getElementById("add-machine").click()')
             page.js('document.getElementById("add-own").click()')
             page.wait('!document.getElementById("a-join").hidden && document.getElementById("join-cmd").textContent !== ""')
-            assert page.js('document.querySelector("#m-scope [aria-pressed=\\"true\\"]").textContent') == "Mine"
+            assert page.js('document.querySelector("#m-filter [aria-pressed=\\"true\\"]").dataset.f') == "all"
+            page.js('document.getElementById("join-done").click()')
+
+            # bob, a member: his own and the team machines he can use, never jetson-2
+            open_as("bob")
+            pick("all")
+            page.wait(f'{hosts}.length === 2')
+            assert page.js(hosts) == ["box-1", "jetson-1"]
+            assert tops("box-1") == ["lab@box-1 Team", "bob@box-1 Mine"]
+            assert tops("jetson-1") == ["nvidia@jetson-1 Team"]
+            pane = page.js('document.getElementById("pane-machines").innerText')
+            assert "jetson-2" not in pane and "alice" not in pane and "carol" not in pane
+            assert page.js('!document.querySelector("#a-machines .m-use") && !document.querySelector("#a-machines .m-kind")')
+            assert page.js(f'{card("box-1")}.querySelector(".m-queue").textContent') == "GPU queue: 7/10 in use · 1 waiting"
+            assert page.js('[...document.querySelectorAll("#set-nav a:not([hidden])")].map(a => a.textContent)') == ["Profile", "Machines"]
+            assert page.js(wide)
+            time.sleep(0.4)
+            page.screenshot(shots / f"machines-member-{tag}.png")
+            pick("team")
+            assert page.js(hosts) == ["box-1", "jetson-1"] and tops("box-1") == ["lab@box-1 Team"]
+            pick("mine")
+            assert page.js(hosts) == ["box-1"] and tops("box-1") == ["bob@box-1 Mine"]
+            # Add machine: no question for a member, straight to the command
+            page.js('document.getElementById("add-machine").click()')
+            page.wait('!document.getElementById("a-join").hidden && document.getElementById("join-cmd").textContent !== ""')
+            assert page.js('document.getElementById("add-choice").hidden')
+            page.js('document.getElementById("join-done").click()')
+
+            # carol: one machine, offline; Online is empty
+            open_as("carol")
+            pick("online")
+            assert page.wait('document.querySelector("#a-machines .a-none")?.textContent') == "No machines online right now."
+            assert page.js(f'{hosts}.length') == 0
+            assert page.js(wide)
+            time.sleep(0.4)
+            page.screenshot(shots / f"machines-online-empty-{tag}.png")
+            pick("all")
+            assert page.js(hosts) == ["box-2"]
+
+            # dave: no machine yet, pointed to Add machine (whatever the filter)
+            open_as("dave")
+            pick("online")
+            assert page.wait('document.querySelector("#a-machines .a-none")?.textContent') == \
+                "No machines yet. Click Add machine and run the command on your computer."
+            assert page.js(wide)
+            time.sleep(0.4)
+            page.screenshot(shots / f"machines-member-empty-{tag}.png")
     finally:
         stop()
         store.close()
@@ -1661,8 +1744,8 @@ def test_home_mine_everyone_and_the_machine_switch(tmp_path, w, h):
 
 @pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
 def test_machines_gpu_queue_line(tmp_path, w, h):
-    """The GPU queue line on Machines: names for the admin (Everyone and Mine), counts only for
-    a member (Mine). Screenshots to KAPTYORKA_SHOTS."""
+    """The GPU queue line on Machines, once in the computer's header: names for the admin,
+    counts only for a member. Screenshots to KAPTYORKA_SHOTS."""
     import json as _json
     import os
     from kaptyorka.workers import WorkerStore
@@ -1690,17 +1773,17 @@ def test_machines_gpu_queue_line(tmp_path, w, h):
                              "gpu_queue": {"age": 0, "shares": 10, "holders": {"bob": 4, "carol": 6},
                                            "whole": "", "waiting": 1, "waiters": {"carol": 1}}}),
                           store.clock()))
-    row = 'document.querySelector("#team-machine-rows [data-machine=\\"{}\\"]")'.format
+    head = 'document.querySelector("#a-machines [data-host=\\"box-1\\"] .m-head")'
     wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
     base = f"http://127.0.0.1:{stop.port}"
     try:
         with chrome(w, h) as page:
             page.go(f"{base}/#t={token}&view=machines")
-            page.wait(f'!!{row(b.device_id)} && !!{row(b.device_id)}.querySelector(".m-queue")')
-            for d in (b, c):  # every account on that computer
-                assert page.js(f'{row(d.device_id)}.querySelector(".m-queue").textContent') == \
-                    "GPU queue: bob 4/10 · carol 6/10 · 1 waiting"
-            assert page.js(f'{row(b.device_id)}.querySelector(".m-use").textContent').startswith("GPU 97%")
+            page.wait(f'!!{head} && !!{head}.querySelector(".m-queue")')
+            assert page.js('document.querySelectorAll("#a-machines .m-queue").length') == 1  # once per computer
+            assert page.js(f'{head}.querySelector(".m-queue").textContent') == \
+                "GPU queue: bob 4/10 · carol 6/10 · 1 waiting"
+            assert page.js(f'{head}.querySelector(".m-use").textContent').startswith("GPU 97%")
             assert page.js(wide)
             page.screenshot(shots / f"machines-gpu-queue-admin-{tag}.png")
         with chrome(w, h) as page:
