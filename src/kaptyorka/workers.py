@@ -377,9 +377,17 @@ class WorkerStore:
 
     def machine_rows(self, principal: Principal) -> List[dict]:
         """store.machines with each device's facts, folders, bridge online and auto_update."""
-        rows = self.store.machines(principal)
+        full = principal.is_admin() and not principal.legacy
+        extra: set = set()
+        if not full:
+            from kaptyorka.admin_ops import _team_machines
+            with self.lock:
+                extra = {d["host"] for d in _team_machines(self.store, principal.person_id)}
+        rows = self.store.machines(principal, extra)
         with self.lock:
             now = self.clock()
+            if not full:
+                rows = self._only_mine(rows, principal.person_id)
             for m in rows:
                 for d in m["devices"]:
                     d["facts"], d["folders"] = self._facts_row(d["id"])
@@ -400,6 +408,27 @@ class WorkerStore:
                     d["auto_update"] = (bool(s["auto_update"]) if s["auto_update"] is not None
                                         else s["role"] != "admin")
         return rows
+
+    def _only_mine(self, rows: List[dict], person_id: int) -> List[dict]:
+        """Lock held. For anyone but a full admin: only their own accounts and the team machines
+        they may use (admin_ops._team_machines); no other person's name or OS user, and no
+        computer left with nothing of theirs on it."""
+        from kaptyorka.admin_ops import _team_machines
+        allowed = {d["id"] for d in _team_machines(self.store, person_id)}
+        names = {r["id"]: r["name"] for r in self.db.execute("SELECT id, name FROM people")}
+        mine = {r["id"] for r in self.db.execute(
+            "SELECT id FROM devices WHERE person_id=?", (person_id,))}
+        out = []
+        for m in rows:
+            devs = [d for d in m["devices"] if d["id"] in mine or d["id"] in allowed]
+            if not devs:
+                continue
+            owner = m["owner_person_id"]
+            seen = {d["person"] for d in devs}
+            if owner != person_id and names.get(owner) not in seen:
+                m = {**m, "owner": None, "owner_person_id": None}
+            out.append({**m, "devices": devs})
+        return out
 
     def overview(self) -> List[dict]:
         """The admin's Machines list: one row per host with who uses it (people, or a team

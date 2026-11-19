@@ -476,8 +476,7 @@ def test_member_sees_only_own_machine_logins(hub, alice):
     hub.store.grant_machine("box-2", pid, by="test")
     machines = http.request("GET", hub.url + "/api/machines", client.token)[1]
     devices = {d["id"]: d for m in machines for d in m["devices"]}
-    assert devices[granted.device_id]["facts"]["logins"] == logins  # bob's account on a box she may use
-    assert devices[granted.device_id]["facts"]["tools"] == {"claude-code": "2.1"}
+    assert granted.device_id not in devices  # bob's account on a box she may use is bob's
     assert other.device_id not in devices and "box-3" not in [m.get("host") for m in machines]
     assert http.request("GET", hub.url + "/api/warnings", client.token)[0] == 403
 
@@ -495,13 +494,12 @@ def test_machines_hide_other_peoples_folders_and_commits(hub, alice):
 
     def dev(token):
         machines = http.request("GET", hub.url + "/api/machines", token)[1]
-        return next(d for m in machines for d in m["devices"] if d["id"] == b.device_id)
-    seen = dev(client.token)  # alice may use box-2, but bob's projects are his
-    assert seen["folders"] == {} and "git" not in seen["facts"] and seen["os_user"] == "u"
+        return next((d for m in machines for d in m["devices"] if d["id"] == b.device_id), None)
+    assert dev(client.token) is None  # alice may use box-2, but bob's account is not hers to see
     for token in (bob.token, admin.token):
         seen = dev(token)
         assert seen["folders"] == {"proj-x": "/w/proj-x"} and seen["facts"]["git"] == git["git"]
-    assert dev(ADMIN)["folders"] == {}  # the shared token is no admin here
+    assert dev(ADMIN) is None  # the shared token is no admin here
 
 
 def test_names_that_read_as_ssh_options_are_dropped(hub, alice):

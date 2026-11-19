@@ -459,3 +459,51 @@ def test_hide_route_and_cli(tmp_path, monkeypatch, capsys):
     finally:
         stop()
         s.close()
+
+
+def _member_rows(store, name):
+    """machine_rows for a member: {host: [(person, os_user)]}."""
+    out = {}
+    for m in WorkerStore(store).machine_rows(who(store, name)):
+        out[m["host"]] = sorted((d["person"], d["os_user"]) for d in m["devices"])
+    return out
+
+
+def _join(store, name, host, os_user):
+    p = store.authenticate(store.device_add(store.person_by_name(name)["id"], f"{os_user}-{host}"))
+    store.heartbeat(host, [], principal=p, facts={"host": host, "os_user": os_user})
+    return p
+
+
+def test_machines_list_shows_a_member_only_their_own_and_allowed_team_accounts(store, team):
+    """A shared computer lists only the member's own account; a team machine shows when they
+    have a role in one of its projects and it is not hidden from them; admins see all."""
+    store.heartbeat("jet-1", [], principal=team[1], facts={"host": "jet-1", "os_user": "nvidia"})
+    _join(store, "alice", "box-1", "alice-u")
+    _join(store, "bob", "box-1", "bob-u")
+    _join(store, "carol", "box-1", "carol-u")
+    _join(store, "carol", "box-3", "carol-u")
+    rows = _member_rows(store, "bob")
+    assert rows["box-1"] == [("bob", "bob-u")]  # no alice, no carol
+    assert "box-3" not in rows  # nothing of bob's there
+    assert rows["jet-1"] == [("jet-1", "nvidia")]  # allowed team machine (role in proj-a)
+    text = repr(WorkerStore(store).machine_rows(who(store, "bob")))
+    assert "alice-u" not in text and "carol" not in text
+    assert "jet-1" not in _member_rows(store, "carol")  # no role in any of its projects
+    store.team_machine_set_visible("jet-1", "bob", False, "alice")
+    assert "jet-1" not in _member_rows(store, "bob")  # hidden from bob
+    assert _member_rows(store, "bob")["box-1"] == [("bob", "bob-u")]
+    full = _member_rows(store, "alice")  # the admin sees everything
+    assert full["box-1"] == [("alice", "alice-u"), ("bob", "bob-u"), ("carol", "carol-u")]
+    assert "jet-1" in full and "box-3" in full
+
+
+def test_fleet_list_of_a_member_has_only_their_rows(store, team):
+    from kaptyorka import fleet
+    _join(store, "bob", "box-1", "bob-u")
+    _join(store, "carol", "box-1", "carol-u")
+    rows = WorkerStore(store).machine_rows(who(store, "bob"))
+    for d in (d for m in rows for d in m["devices"]):
+        d.setdefault("online", False)
+    text = "\n".join(fleet.list(rows))
+    assert "bob-u" in text and "carol" not in text

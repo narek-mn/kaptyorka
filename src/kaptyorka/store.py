@@ -615,9 +615,9 @@ class Store:
 
     # machines
 
-    def machines(self, principal: Principal) -> List[dict]:
+    def machines(self, principal: Principal, extra_hosts=()) -> List[dict]:
         """Machines (hosts) with their devices and online session count. An admin sees all; anyone
-        else sees the hosts they own, have a device on, or were given."""
+        else sees the hosts they own, have a device on, or were given, and extra_hosts."""
         with self.lock:
             now = self.clock()
             out = []
@@ -633,7 +633,8 @@ class Store:
                             " ORDER BY d.id", (m["host"],))]
                 if not (principal.is_admin() or m["owner_person_id"] == principal.person_id
                         or any(d["person_id"] == principal.person_id for d in devs)
-                        or self._granted(m["host"], principal.person_id)):
+                        or self._granted(m["host"], principal.person_id)
+                        or m["host"] in extra_hosts):
                     continue
                 online = sum(1 for r in self.db.execute(
                     "SELECT key, person_id FROM agents WHERE host=? AND last_seen>?",

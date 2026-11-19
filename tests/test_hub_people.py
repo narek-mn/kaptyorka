@@ -149,22 +149,23 @@ def test_machines_route_filtered(hub):
         facts = {"host": host, "os_user": "u", "version": "0.2.0"}
         assert http.request("POST", hub.url + "/bridge/heartbeat", t,
                             {"machine": host, "sessions": [], "facts": facts})[0] == 200
-    status, rows = http.request("GET", hub.url + "/api/machines", ADMIN)
+    admin = hub.store.device_add(hub.store.authenticate(ADMIN).person_id, "admin-own")
+    status, rows = http.request("GET", hub.url + "/api/machines", admin)
     assert status == 200 and sorted(r["host"] for r in rows) == ["h-a", "h-b"]
     _, rows = http.request("GET", hub.url + "/api/machines", ta)
     assert [r["host"] for r in rows] == ["h-a"]
     assert http.request("POST", hub.url + "/api/machines/h-b/grant", ta, {"person": "ann"})[0] == 403
-    assert http.request("POST", hub.url + "/api/machines/h-b/grant", ADMIN, {"person": "ann"})[0] == 204
+    assert http.request("POST", hub.url + "/api/machines/h-b/grant", admin, {"person": "ann"})[0] == 204
     _, rows = http.request("GET", hub.url + "/api/machines", ta)
-    assert sorted(r["host"] for r in rows) == ["h-a", "h-b"]
+    assert [r["host"] for r in rows] == ["h-a"]  # granted, but only ben's account is there: not listed
     who = hub.store.db.execute("SELECT person FROM log WHERE kind='grant'").fetchone()["person"]
     assert who == hub.store.authenticate(ADMIN).person_name
-    assert http.request("POST", hub.url + "/api/machines/h-b/revoke", ADMIN, {"person": "ann"})[0] == 204
+    assert http.request("POST", hub.url + "/api/machines/h-b/revoke", admin, {"person": "ann"})[0] == 204
     _, rows = http.request("GET", hub.url + "/api/machines", ta)
     assert [r["host"] for r in rows] == ["h-a"]
-    status, text = http.request("POST", hub.url + "/api/machines/nope/grant", ADMIN, {"person": "ann"})
+    status, text = http.request("POST", hub.url + "/api/machines/nope/grant", admin, {"person": "ann"})
     assert status == 400 and "no such machine" in text
-    status, text = http.request("POST", hub.url + "/api/machines/h-b/grant", ADMIN, {"person": "zed"})
+    status, text = http.request("POST", hub.url + "/api/machines/h-b/grant", admin, {"person": "zed"})
     assert status == 400 and "no such person" in text
 
 
