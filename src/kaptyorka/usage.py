@@ -484,6 +484,15 @@ def queue_full(q: Optional[dict]) -> bool:
         or queue_used(q) >= (q.get("shares") or GPU_SHARES)
 
 
+def queue_counts(q: dict) -> dict:
+    """The queue with no names, for anyone but an admin: {"shares", "used", "waiting",
+    "whole": bool}, or {"shares", "unknown": True}."""
+    if q.get("unknown"):
+        return {"shares": q.get("shares") or GPU_SHARES, "unknown": True}
+    return {"shares": q.get("shares") or GPU_SHARES, "used": queue_used(q),
+            "waiting": q.get("waiting", 0), "whole": bool(q.get("whole"))}
+
+
 def queue_line(q: Optional[dict], names: bool, label: Callable[[str], str] = str) -> str:
     """"GPU queue: bob 4/10 · carol 6/10 · 1 waiting" (names, for admins), or only counts:
     "GPU queue: 10/10 in use · 1 waiting". `label` turns an OS user into a person's name.

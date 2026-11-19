@@ -1247,3 +1247,20 @@ def test_a_waiting_job_holds_and_room_starts(hub):
     queue_beat(hub, b, FULL_QUEUE)
     assert ask(hub, bob).startswith("starting `proj-a-w")
 
+
+
+def test_a_queue_report_going_stale_mid_request_does_not_crash(hub, monkeypatch):
+    """The queue is read once per request: a report that goes stale right after is no crash."""
+    mgr, me = manager_online(hub)
+    b, _, bob = in_use_setup(hub)
+    hub.ws.set_gpu_queue(HOST, "/srv/gpu.lock", 10)
+    queue_beat(hub, b, FULL_QUEUE)
+    real, calls = WorkerStore.host_queue, []
+
+    def once(self, host, now):
+        calls.append(host)
+        return real(self, host, now) if len(calls) == 1 else None
+    monkeypatch.setattr(WorkerStore, "host_queue", once)
+    assert ask(hub, bob).startswith("busy: box-1 is in use by the GPU queue (10/10 in use)")
+    text = inbox(mgr, me)[0]
+    assert "GPU queue: alice 10/10 (names for admins only; to anyone else say: 10/10 in use)" in text

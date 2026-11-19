@@ -834,6 +834,10 @@ SENTENCES = {
     "settings": _match(r"retention_days=(\d+)", "{0} set message keeping to {1} days"),
     "machine_owner": _match(r"(.+) -> (.+)", "{0} made {2} the owner of {1}"),
     "machine_owner_auto": _match(r"(.+)", "{0} owns {1}: the first to join from it"),
+    "gpu_queue": lambda who, d: (_match(r"(.+): off", "{0} turned off the GPU queue of {1}")(who, d)
+                                 if d.endswith(": off") else
+                                 _match(r"(.+?): (.+) \((\d+) shares\)",
+                                        "{0} set the GPU queue of {1} to {2} ({3} shares)")(who, d)),
     "machine_in_use": _match(r"(.+?) on (\S+): (.+)",
                              "{1} opened a session on {2}, which someone else uses heavily: {3}",
                              re.S),
@@ -852,7 +856,7 @@ LOG_GROUPS = [
                 "connect_decided"]),
     ("projects", ["project_register", "project_updated", "project_removed", "gitlab"]),
     ("notes", ["note_delete", "note_undo"]),
-    ("machines", ["machine_move", "team_machine_hidden", "team_machine_shown", "machine_owner", "machine_owner_auto", "machine_in_use", "legacy_auto_off", "legacy_toggle", "legacy_assign", "legacy_used", "rekeyed",
+    ("machines", ["machine_move", "team_machine_hidden", "team_machine_shown", "machine_owner", "machine_owner_auto", "machine_in_use", "gpu_queue", "legacy_auto_off", "legacy_toggle", "legacy_assign", "legacy_used", "rekeyed",
                   "backup", "auto_update"]),
     ("messages", ["settings", "retention", "door_open", "door_close", "knock", "knock_answer"]),
     ("rules", ["rules", "skills", "propose", "proposal", "conflict"]),

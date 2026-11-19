@@ -202,6 +202,38 @@ def test_admins_see_names_members_see_counts(store):
     assert ws.overview()[0]["gpu_queue"] == ""
 
 
+def test_machine_rows_give_members_counts_only(store):
+    """GET /api/machines: a member with an account on the computer never sees a name, also
+    when their own bridge is the one reporting the queue; an admin sees it all."""
+    person(store, "alice", "admin")
+    b = account(store, "bob", "bob")
+    account(store, "carol", "carol")
+    ws = WorkerStore(store)
+    ws.set_gpu_queue("box-1", "/srv/gpu.lock", 10)
+    report(store, b, {**QUEUE, "whole": "carol"})  # bob's own bridge reports it
+    bob = store.authenticate(store.device_add(store.person_by_name("bob")["id"], "web"))
+    rows = ws.machine_rows(bob)
+    queues = json.dumps([d["facts"].get("gpu_queue") for m in rows for d in m["devices"]])
+    assert "carol" not in queues and "bob" not in queues  # the device list itself is as before
+    [mine] = [d for m in rows for d in m["devices"] if d["id"] == b.device_id]
+    assert mine["facts"]["gpu_queue"] == {"shares": 10, "used": 10, "waiting": 1, "whole": True}
+    report(store, b, {"unknown": True, "shares": 10})
+    [mine] = [d for m in ws.machine_rows(bob) for d in m["devices"] if d["id"] == b.device_id]
+    assert mine["facts"]["gpu_queue"] == {"shares": 10, "unknown": True}
+    report(store, b, QUEUE)
+    alice = store.authenticate(store.device_add(store.person_by_name("alice")["id"], "web2"))
+    [full] = [d for m in ws.machine_rows(alice) for d in m["devices"] if d["id"] == b.device_id]
+    assert full["facts"]["gpu_queue"]["holders"] == {"bob": 4, "carol": 6}
+
+
+def test_gpu_queue_log_sentences():
+    from kaptyorka.admin_ops import LOG_GROUPS, log_sentence
+    row = {"person": "alice", "kind": "gpu_queue", "detail": "box-1: /srv/gpu.lock (10 shares)"}
+    assert log_sentence(row) == "alice set the GPU queue of box-1 to /srv/gpu.lock (10 shares)"
+    assert log_sentence({**row, "detail": "box-1: off"}) == "alice turned off the GPU queue of box-1"
+    assert "gpu_queue" in dict(LOG_GROUPS)["machines"]
+
+
 def test_queue_busy_for_the_manager(store):
     person(store, "alice", "admin")
     a = account(store, "alice", "alice")
@@ -211,7 +243,7 @@ def test_queue_busy_for_the_manager(store):
     report(store, a, {"shares": 10, "holders": {"bob": 3}, "whole": "", "waiting": 0, "waiters": {}})
     assert ws.queue_busy("box-1", store.clock(), "alice") is None  # room left, nobody waits
     report(store, a, {"shares": 10, "holders": {"bob": 10}, "whole": "", "waiting": 0, "waiters": {}})
-    assert ws.queue_busy("box-1", store.clock(), "alice") == "GPU queue: bob 10/10"
+    assert ws.queue_busy("box-1", store.clock(), "alice")[0] == "GPU queue: bob 10/10"
     assert ws.queue_busy("box-1", store.clock(), "bob") is None  # only bob's own jobs
     assert ws._heavy_by_others("box-1", store.person_by_name("alice")["id"], store.clock())
 

@@ -362,9 +362,10 @@ class WorkerStore:
         q, owners = here
         return usage.queue_line(q, names, lambda u: " and ".join(sorted(set(owners.get(u) or []))) or u)
 
-    def queue_busy(self, host: str, now: float, me: str = "") -> Optional[str]:
-        """Why the GPU queue makes host heavy (usage.queue_full) for `me`, with names, for the
-        manager; None when it is not, or when only `me` holds and waits."""
+    def queue_busy(self, host: str, now: float, me: str = "") -> Optional[Tuple[str, dict]]:
+        """(the queue line with names, for the manager; the queue) when the GPU queue makes host
+        heavy (usage.queue_full) for `me`; None when it is not, or when only `me` holds and
+        waits. One read, so both come from the same report."""
         here = self.host_queue(host, now)
         if here is None or not usage.queue_full(here[0]):
             return None
@@ -372,7 +373,7 @@ class WorkerStore:
         users = set(q.get("holders") or {}) | set(q.get("waiters") or {}) | ({q["whole"]} if q.get("whole") else set())
         if me and users and all(owners.get(u) == [me] for u in users):
             return None
-        return usage.queue_line(q, True, lambda u: " and ".join(sorted(set(owners.get(u) or []))) or u)
+        return usage.queue_line(q, True, lambda u: " and ".join(sorted(set(owners.get(u) or []))) or u), q
 
     def machine_rows(self, principal: Principal) -> List[dict]:
         """store.machines with each device's facts, folders, bridge online and auto_update."""
@@ -394,6 +395,8 @@ class WorkerStore:
                         d["facts"].pop("git", None)
                     if not (principal.is_admin() and not principal.legacy):
                         d["facts"].pop("use", None)  # other people's numbers: admin and manager
+                        if isinstance(d["facts"].get("gpu_queue"), dict):  # counts, no names
+                            d["facts"]["gpu_queue"] = usage.queue_counts(d["facts"]["gpu_queue"])
                     d["auto_update"] = (bool(s["auto_update"]) if s["auto_update"] is not None
                                         else s["role"] != "admin")
         return rows

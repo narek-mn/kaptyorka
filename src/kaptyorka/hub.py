@@ -664,10 +664,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         present = [n for n in ws.host_people(host, now) if n != me]
         heavy = [n for n, p in by_person.items()
                  if me not in p["people"] and usage.heavy(p, use)]
-        queue = ws.queue_busy(host, now, me)  # every share held, taken whole, or a job waits
-        if queue is not None:  # the person hears counts only; the manager's line has names
-            heavy.append(usage.queue_line(ws.host_queue(host, now)[0], False).replace(
-                "GPU queue: ", "the GPU queue (") + ")")
+        busy = ws.queue_busy(host, now, me)  # every share held, taken whole, or a job waits
+        queue = None
+        if busy is not None:  # the person hears counts only; the manager's line has names
+            counts = usage.queue_line(busy[1], False).replace("GPU queue: ", "")
+            heavy.append(f"the GPU queue ({counts})")
+            queue = f"{busy[0]} (names for admins only; to anyone else say: {counts})"
         who = present + [n for n in heavy if n not in present]
         if not who:
             return [], [], [], here is not None
