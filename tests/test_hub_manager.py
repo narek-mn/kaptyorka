@@ -281,6 +281,56 @@ def test_manager_waits_for_the_admin_bridge(hub, clock):
     assert len(orders(hub, b)) == 1
 
 
+def bridge_as(hub, name, role, os_user, team=False):
+    """A person with one live bridge on HOST running as `os_user`."""
+    pid, _ = person(hub.store, name, role)
+    if team:
+        with hub.store.lock:
+            hub.store.db.execute("UPDATE people SET team=1, role='member' WHERE id=?", (pid,))
+    code = hub.store.invite_create(pid)
+    token, _ = hub.store.invite_redeem(code, HOST, host=HOST, os_user=os_user)
+    b = SimpleNamespace(token=token, device_id=hub.store.authenticate(token).device_id)
+    body = {"machine": HOST, "sessions": [], "tools": [],
+            "facts": {"host": HOST, "os_user": os_user, "version": kaptyorka.__version__}}
+    assert http.request("POST", hub.url + "/bridge/heartbeat", token, body)[0] == 200
+    return b
+
+
+def test_manager_launches_through_the_hub_accounts_bridge(hub, monkeypatch):
+    monkeypatch.setattr(manager.getpass, "getuser", lambda: "svc")
+    svc = bridge_as(hub, "svc", "admin", "svc", team=True)  # the install-time person, now a team machine
+    human = bridge_as(hub, "carol", "admin", "carol")  # joined later from their own account
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    assert orders(hub, human) == []
+    [o] = orders(hub, svc)
+    assert o["worker"] == "manager" and o["person"] in admin_ops.admins(hub.store) \
+        and o["person"] != "svc"  # the boss is a human admin, never the team machine
+    with hub.store.lock:
+        row = hub.store.db.execute("SELECT device_id, boss_key FROM workers WHERE name='manager'").fetchone()
+    assert row["device_id"] == svc.device_id and row["boss_key"] == "web:" + o["person"]
+
+
+def test_old_setup_admin_owns_the_hub_account(hub, monkeypatch):
+    monkeypatch.setattr(manager.getpass, "getuser", lambda: "u")
+    b = admin_bridge(hub)  # os_user "u", the admin
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    assert o["person"] == "root"
+
+
+def test_no_hub_account_bridge_falls_back_and_says_so(hub, monkeypatch, capsys):
+    monkeypatch.setattr(manager.getpass, "getuser", lambda: "svc")
+    manager._FALLBACK_LOGGED.clear()
+    b = bridge_as(hub, "carol", "admin", "carol")
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    assert o["person"] == "carol"
+    assert "no bridge runs as the hub's OS user 'svc'" in capsys.readouterr().out
+
+
 def test_manager_failure_never_stops_the_worker_tick(hub, monkeypatch, capsys):
     hub.mm.set_enabled(True, "test")
     seen = []

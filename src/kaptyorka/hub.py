@@ -397,7 +397,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         wake_bridges()
 
     def keep_manager(now: float) -> None:
-        """Keep the manager session alive through the admin's own bridge on this machine."""
+        """Keep the manager session alive through the bridge of the hub's own OS user on this machine."""
         for r in mm.expire_requests(now):
             names = {p["id"]: p["name"] for p in store.people()}
             to = r["boss_key"] if ws.session_online(r["boss_key"], now) \
@@ -427,8 +427,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         ok, _ = mm.may_launch(now)
         if not ok or admin is None:
             return
+        boss = mm.boss(admin)
+        if boss is None:
+            return
         folder = paths.home() / manager.DIR
-        ws.create_manager(admin["person_id"], mm.person_id(), admin, str(folder), MANAGER_FIRST)
+        ws.create_manager(boss, mm.person_id(), admin, str(folder), MANAGER_FIRST)
         mm.record_launch(now)
         wake_bridges()
 

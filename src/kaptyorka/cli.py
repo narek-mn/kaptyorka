@@ -373,9 +373,8 @@ def _status_of(cfg: dict) -> int:
         print(f"hub: {said}" if said else "hub: refused this machine's token (ask your admin for a new invite link, "
               "then: kaptyorka join <link>)")
         return 1
-    if got[0] == 200 and isinstance(got[1], dict):
-        state = got[1].get("manager_state")
-        why = got[1].get("manager_reason") or ""
+    state, why = _manager_word(hub, cfg["token"], got)
+    if state is not None:
         shown = {"up": "running", "blocked": f"blocked: {why}" if why else "blocked"}.get(state, state)
         print(f"manager: {shown}")
         ok = ok and state in ("up", "asleep", "starting", "off")
@@ -910,6 +909,20 @@ def _remove(args) -> int:
     return remove.main()
 
 
+def _manager_word(hub: str, token: str, settings) -> tuple:
+    """(state, reason) of the manager. Settings are for admins; a machine whose person is not one
+    (the hub's own account as a team machine) reads the state word every member gets."""
+    if settings[0] == 200 and isinstance(settings[1], dict):
+        return settings[1].get("manager_state"), settings[1].get("manager_reason") or ""
+    try:
+        feed = http.request("GET", hub.rstrip("/") + "/api/feed", token)
+    except http.HubUnreachable:
+        return None, ""
+    if feed is not None and feed[0] == 200 and isinstance(feed[1], dict):
+        return feed[1].get("manager"), ""
+    return None, ""
+
+
 def _manager_runs_here() -> bool:
     """True on the hub's own machine while the manager is switched on (the test `status` uses)."""
     cfg = paths.load_config()
@@ -925,8 +938,9 @@ def _manager_runs_here() -> bool:
         got = http.request("GET", cfg["hub"].rstrip("/") + "/api/settings", cfg["token"])
     except http.HubUnreachable:
         return False
-    return (got is not None and got[0] == 200 and isinstance(got[1], dict)
-            and got[1].get("manager_state") not in (None, "off"))
+    if got is None:
+        return False
+    return _manager_word(cfg["hub"], cfg["token"], got)[0] not in (None, "off")
 
 
 def _leave(args, isatty=None, ask=input) -> int:

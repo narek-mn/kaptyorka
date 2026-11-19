@@ -1,6 +1,7 @@
 """Manager: the team's always-on manager session on the hub machine. Its account, files,
 keep-alive decisions, work-request queue and deduped pushes. Kept out of store.py; a
 ManagerStore shares the Store's database, lock and clock."""
+import getpass
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,8 @@ from kaptyorka.adapters import claude as claude_adapter
 from kaptyorka.adapters.base import write_atomic
 from kaptyorka.store import ONLINE_S, Store
 from kaptyorka.workers import WorkerStore
+
+_FALLBACK_LOGGED: set = set()  # (host, OS user) already logged as falling back
 
 PERSON = "manager"
 DEVICE = "manager"
@@ -233,22 +236,47 @@ class ManagerStore:
         return None if row is None else row["id"]
 
     def admin_device(self, host: str) -> Optional[dict]:
-        """The bridge on the hub machine the manager runs through: an admin's, or the hub key's
-        whatever its person's role."""
+        """The bridge the manager runs through: the live bridge on the hub machine running as the
+        hub's own OS user (it holds the admin token, the manager folder and the hub), whoever
+        owns that device and whatever their role. Only when there is none (an old setup): an
+        admin's bridge on the hub machine, or the hub key's, whatever its person's role."""
         hub_key = paths.hub_key_digest() or ""
+        try:
+            me = getpass.getuser()
+        except Exception:  # no passwd entry for this uid
+            me = ""
+        live = ("d.host=? AND d.legacy=0 AND d.revoked_at IS NULL AND d.secret_hash!=''"
+                " ORDER BY d.last_used IS NULL, d.last_used DESC LIMIT 1")
         with self.lock:
-            row = self.db.execute(
-                "SELECT d.* FROM devices d JOIN people p ON p.id=d.person_id"
-                " WHERE (p.role='admin' OR d.token_hash=?) AND d.host=? AND d.legacy=0"
-                " AND d.revoked_at IS NULL AND d.secret_hash!=''"
-                " ORDER BY d.last_used IS NULL, d.last_used DESC LIMIT 1",
-                (hub_key, host)).fetchone()
+            row = self.db.execute("SELECT d.* FROM devices d WHERE d.os_user=? AND " + live,
+                                  (me, host)).fetchone() if me else None
+            fallback = row is None
+            if fallback:
+                row = self.db.execute(
+                    "SELECT d.* FROM devices d JOIN people p ON p.id=d.person_id"
+                    " WHERE (p.role='admin' OR d.token_hash=?) AND " + live,
+                    (hub_key, host)).fetchone()
             now = self.clock()
         if row is None:
             return None
+        if fallback and (host, me) not in _FALLBACK_LOGGED:
+            _FALLBACK_LOGGED.add((host, me))
+            print(f"kaptyorka: no bridge runs as the hub's OS user {me!r} on {host}; the manager"
+                  f" uses the bridge of {row['os_user']!r} instead", flush=True)
         out = {k: row[k] for k in row.keys() if k not in ("token_hash", "secret_hash")}
         out["online"] = row["last_used"] is not None and now - row["last_used"] < ONLINE_S
         return out
+
+    def boss(self, device: dict) -> Optional[int]:
+        """The admin the manager reports to when launched through `device`: the device's own
+        person when an admin, else the oldest admin who is not a team machine."""
+        with self.lock:
+            row = self.db.execute("SELECT id FROM people WHERE id=? AND role='admin' AND"
+                                  " removed_at IS NULL", (device["person_id"],)).fetchone()
+            if row is None:
+                row = self.db.execute("SELECT id FROM people WHERE role='admin' AND team=0 AND"
+                                      " removed_at IS NULL ORDER BY id LIMIT 1").fetchone()
+        return None if row is None else row["id"]
 
     def ensure_account(self, host: str, by: str) -> Optional[str]:
         pid = self.person_id()

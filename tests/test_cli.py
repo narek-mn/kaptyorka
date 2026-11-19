@@ -1073,6 +1073,20 @@ def test_status_hub_machine_with_manager_asleep(monkeypatch, home, capsys):
                                        "open your page: kaptyorka page\n")
 
 
+def test_status_shows_the_manager_when_settings_are_admin_only(monkeypatch, home, capsys):
+    _joined()
+    _hub_json()
+    _units(monkeypatch, bridge=True, hub=True)
+
+    def req(method, url, *a, **k):
+        if url.endswith("/api/settings"):
+            return 403, "admin only"
+        return 200, {"manager": "up"}
+    monkeypatch.setattr(http, "request", req)
+    assert entry_with_exit(["status"]) == 0
+    assert "manager: running\n" in capsys.readouterr().out
+
+
 def test_status_manager_off_is_ok(monkeypatch, home, capsys):
     _joined()
     _hub_json()
