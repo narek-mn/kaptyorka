@@ -84,6 +84,13 @@ def test_home_names_a_session_by_its_title(hub):
     assert 'shortName(a.name) + " \\u00b7 "' in html  # the folder moves to the grey line
 
 
+def test_empty_session_chat_says_where_the_typing_stays(hub):
+    html = page(hub)
+    assert "function emptyText(e)" in html and "stays on " in html
+    assert '"Messages you send here show up here. What "' in html
+    assert 'e.who, e.note]' in html  # the session's own status line in the chat header
+
+
 def test_no_function_name_is_declared_twice(hub):
     """A second declaration silently replaces the first (both hoist): two `tick`s once made every
     poll throw, so the live dot said the hub was unreachable."""

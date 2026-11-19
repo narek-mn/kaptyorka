@@ -1879,6 +1879,7 @@ def test_home_shows_claude_codes_title_else_the_folder(tmp_path, w, h):
         {"key": "claude:s-2", "tool": "claude-code", "project": "proj-b"}],
         principal=p, facts={"host": "box-1", "os_user": "alice"})
     rows = '[...document.querySelectorAll(".list .row")].map(r => r.innerText.replace(/\\s+/g, " "))'
+    store.set_status("claude:s-1", "Fixing the training loop")
     base = f"http://127.0.0.1:{stop.port}"
     try:
         with chrome(w, h) as page:
@@ -1891,9 +1892,15 @@ def test_home_shows_claude_codes_title_else_the_folder(tmp_path, w, h):
             assert "alice@box-1" in plain and "Fix" not in plain
             page.js('[...document.querySelectorAll(".list .row")].find(r => r.innerText.includes("Fix the robot")).click()')
             page.wait('document.getElementById("chat-name").textContent === "Fix the robot assembly"')
-            assert "proj-a" in page.js('document.getElementById("chat-sub").textContent')
+            head = page.js('document.getElementById("chat-sub").textContent')
+            assert "proj-a" in head and "alice@box-1" in head and "Fixing the training loop" in head
+            assert page.js('document.querySelector("#log .blank").textContent') == \
+                "Messages you send here show up here. What you type to Claude stays on your computer."
             time.sleep(0.4)
             page.screenshot(shots / f"home-title-{tag}.png")
+            page.js('[...document.querySelectorAll(".list .row")].find(r => r.innerText.includes("proj-b")).click()')
+            page.wait('document.getElementById("chat-name").textContent === "proj-b"')
+            assert page.js('document.querySelector("#log .blank").textContent').startswith("Messages you send here show up here.")
     finally:
         stop()
         store.close()

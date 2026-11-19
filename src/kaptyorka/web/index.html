@@ -1353,7 +1353,7 @@ a.p-main { color: inherit; text-decoration: none; }
       list.push({ key: k, name: rowName(a, shortName(a.name)), online: true,
                   sub: (a.title && !a.label && !hidden(a) ? shortName(a.name) + " \u00b7 " : "") + (a.where || a.machine), to: k, bg: !!a.background, tool: a.tool, act: a.activity || "",
                   who: !a.mine && (isAdmin() || hidden(a)) ? a.person : null, ro: !a.mine && a.writable === false,
-                  sess: true, mine: !!a.mine, team: !!a.team && !hidden(a), owner: a.team ? String(a.person || "").replace(/ \(team\)$/, "") : a.person || "",
+                  sess: true, mine: !!a.mine, note: a.status || "", where: a.where || a.machine, agent: a.tool === "claude-code" ? "Claude" : "the agent", team: !!a.team && !hidden(a), owner: a.team ? String(a.person || "").replace(/ \(team\)$/, "") : a.person || "",
                   tip: hidden(a) ? a.person + "'s session in a project you have no role in" : tip });
     });
     var people = {};
@@ -1664,7 +1664,7 @@ a.p-main { color: inherit; text-decoration: none; }
       $("chat-name").textContent = e.name;
       var sub = $("chat-sub");
       sub.textContent = "";
-      if (!act) [e.bg ? "background job" : null, statusChip(e), e.sub, e.who].forEach(function (t) { if (t) sub.appendChild(typeof t === "string" ? el("span", { text: t }) : t); });
+      if (!act) [e.bg ? "background job" : null, statusChip(e), e.sub, e.who, e.note].forEach(function (t) { if (t) sub.appendChild(typeof t === "string" ? el("span", { text: t }) : t); });
     }
     $("access-pane").hidden = !askOpen;
     $("log").hidden = askOpen;
@@ -1675,6 +1675,13 @@ a.p-main { color: inherit; text-decoration: none; }
     $("home").classList.toggle("open", phoneOpen);
   }
   var shownTo = {};
+  /* an empty session chat: the hub holds only hub messages, what is typed in the session stays there */
+  function emptyText(e) {
+    if (!e || !e.sess) return "No messages yet.";
+    var who = e.mine ? "you type" : e.team ? "people type on " + e.where : (e.owner || "they") + " types";
+    return "Messages you send here show up here. What " + who + " to " + e.agent + " stays on " +
+      (e.mine ? "your computer." : e.team ? "that computer." : "their computer.");
+  }
   var BG_EMPTY = "No messages yet. This job works on its own; write to it below.";
   function renderMessages(jump) {
     var log = $("log");
@@ -1729,7 +1736,7 @@ a.p-main { color: inherit; text-decoration: none; }
     /* only my last message, while nothing came after it: Sent, then Delivered once the session has it */
     if (!act && !outs.length && mineLast) mineLast.body.appendChild(sendMark({ state: mineLast.m.read ? "delivered" : "sent" }));
     var bg = (entryOf[conv] || {}).bg;
-    if (!shown.length && !outs.length) log.appendChild(el("div", { "class": "blank" }, [icon("i-chat", 20), el("span", { text: bg ? BG_EMPTY : "No messages yet." })]));
+    if (!shown.length && !outs.length) log.appendChild(el("div", { "class": "blank" }, [icon("i-chat", 20), el("span", { text: bg ? BG_EMPTY : emptyText(entryOf[conv]) })]));
     var t = $("notices-toggle");
     t.hidden = !act || !notices;
     t.textContent = "";
