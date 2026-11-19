@@ -183,6 +183,9 @@ def _start(args) -> int:
         print(f"this machine is joined to {cfg['hub']}; it does not run a hub. "
               "To turn its bridge back on: kaptyorka join", file=sys.stderr)
         return 1
+    if first and not saved and hub_unit is None and not getattr(args, "new_hub", False) \
+            and not _confirm_new_hub():
+        return 1
     args.port = args.port or saved.get("port", 8765)
     args.host = args.host or saved.get("host")
     args.foreground = False
@@ -208,6 +211,27 @@ def _start(args) -> int:
                 print(e, file=sys.stderr)
                 return 1
     return rc
+
+
+NEW_HUB_NOTE = ("this creates a NEW, separate hub on this machine. To join your team's existing"
+                " hub instead, run: kaptyorka join <invite link>")
+
+
+def _confirm_new_hub(isatty=None, ask=None) -> bool:
+    """A first start on a machine with no hub: a teammate should join, not start a second hub.
+    True once they typed `new hub` (or the caller passed --new-hub)."""
+    print(NEW_HUB_NOTE, file=sys.stderr)
+    if not (sys.stdin.isatty() if isatty is None else isatty):
+        print("not started: add --new-hub to create a new hub here", file=sys.stderr)
+        return False
+    try:
+        answer = (ask or input)("Type new hub to continue: ")
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if answer.strip().lower() != "new hub":
+        print("not started; nothing changed", file=sys.stderr)
+        return False
+    return True
 
 
 def _already_running(args) -> int:
@@ -1137,6 +1161,8 @@ def entry() -> None:
     m = s.add_mutually_exclusive_group()
     m.add_argument("--no-manager", action="store_true", help="do not keep a manager session")
     m.add_argument("--manager", action="store_true", help="keep a manager session (the default)")
+    s.add_argument("--new-hub", action="store_true",
+                   help="first start only: create a new hub here without asking")
     s.set_defaults(run=_start)
     j = sub.add_parser("join", help="connect this machine to a hub with the invite link your admin sent (with no flags: retry the last join)")
     j.add_argument("invite", nargs="?", help="invite link from your admin")

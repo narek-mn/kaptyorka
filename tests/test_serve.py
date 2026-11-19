@@ -77,7 +77,7 @@ def test_start_makes_admin_device_once_and_joins_this_machine(home, capsys, monk
     outs = []
     for _ in range(2):
         with pytest.raises(SystemExit) as e:
-            run_cli(["start", "--port", "9999", "--host", "10.0.0.5"])
+            run_cli(["start", "--new-hub", "--port", "9999", "--host", "10.0.0.5"])
         assert e.value.code == 0
         outs.append(capsys.readouterr().out.splitlines())
     shared = (paths.home() / "hub-token").read_text().strip()
@@ -103,7 +103,7 @@ def test_start_keeps_an_existing_join(home, capsys, monkeypatch):
     monkeypatch.setattr(service, "install", lambda *a, **k: [])
     paths.save_config({"hub": "http://other:1", "token": "MINE", "machine": "pc"})
     with pytest.raises(SystemExit):
-        run_cli(["start", "--port", "9999", "--host", "10.0.0.5"])
+        run_cli(["start", "--new-hub", "--port", "9999", "--host", "10.0.0.5"])
     assert paths.load_config() == {"hub": "http://other:1", "token": "MINE", "machine": "pc"}
 
 
@@ -112,7 +112,7 @@ def test_start_replaces_a_revoked_admin_device(home, capsys, monkeypatch):
 
     monkeypatch.setattr(service, "install", lambda *a, **k: [])
     with pytest.raises(SystemExit):
-        run_cli(["start", "--port", "9999", "--host", "10.0.0.5"])
+        run_cli(["start", "--new-hub", "--port", "9999", "--host", "10.0.0.5"])
     first = (paths.home() / "admin-token").read_text().strip()
     store = Store(paths.home() / "hub.db")
     store.device_revoke(store.authenticate(first).device_id)
@@ -128,7 +128,7 @@ def test_start_keeps_the_hub_key_when_its_person_is_demoted(home, capsys, monkey
 
     monkeypatch.setattr(service, "install", lambda *a, **k: [])
     with pytest.raises(SystemExit):
-        run_cli(["start", "--port", "9999", "--host", "10.0.0.5"])
+        run_cli(["start", "--new-hub", "--port", "9999", "--host", "10.0.0.5"])
     first = (paths.home() / "admin-token").read_text().strip()
     store = Store(paths.home() / "hub.db")
     old = store.authenticate(first)
@@ -203,7 +203,7 @@ def test_serve_service_error_exits_1(home, capsys, monkeypatch):
         raise service.ServiceError("systemctl said no")
     monkeypatch.setattr(service, "install", boom)
     with pytest.raises(SystemExit) as e:
-        run_cli(["start"])
+        run_cli(["start", "--new-hub"])
     assert e.value.code == 1
     cap = capsys.readouterr()
     assert cap.out == "" and "systemctl said no" in cap.err
@@ -503,7 +503,7 @@ def test_start_again_uses_saved_port_and_host(home, capsys, monkeypatch):
     monkeypatch.setattr(service, "is_active", lambda name, **k: None)  # no unit running, no real systemctl
     for args in (["--port", "9999", "--host", "10.0.0.5"], []):
         with pytest.raises(SystemExit):
-            run_cli(["start", *args])
+            run_cli(["start", "--new-hub", *args])
     out = capsys.readouterr().out.splitlines()
     assert out[0] == "hub running: http://10.0.0.5:9999" and out[4] == "hub started: http://10.0.0.5:9999"
     assert seen[0] == seen[1] and seen[1][-2:] == ["--port", "9999"]
@@ -592,7 +592,7 @@ def _manager_flag():
 def test_start_no_manager_persists_and_disables(home, capsys, monkeypatch):
     cmds = _unit_cmds(monkeypatch)
     with pytest.raises(SystemExit) as e:
-        run_cli(["start", "--port", "9999", "--host", "10.0.0.5", "--no-manager"])
+        run_cli(["start", "--new-hub", "--port", "9999", "--host", "10.0.0.5", "--no-manager"])
     assert e.value.code == 0
     assert json.loads((paths.home() / "hub.json").read_text())["manager"] is False
     assert "--no-manager" in cmds[-1] and cli.MANAGER_NOTE not in capsys.readouterr().out
@@ -606,7 +606,7 @@ def test_start_manager_flag_turns_it_back_on(home, capsys, monkeypatch):
     monkeypatch.setattr(service, "is_active", lambda name, **k: True)  # the hub was running
     cmds = _unit_cmds(monkeypatch)
     with pytest.raises(SystemExit):
-        run_cli(["start", "--port", "9999", "--host", "10.0.0.5", "--no-manager"])
+        run_cli(["start", "--new-hub", "--port", "9999", "--host", "10.0.0.5", "--no-manager"])
     capsys.readouterr()
     with pytest.raises(SystemExit):
         run_cli(["start", "--manager"])
@@ -657,7 +657,7 @@ def test_plain_serve_keeps_the_switch_and_start_manager_turns_it_on(home, monkey
         run_cli(["serve", "--foreground", "--port", "9999"])
     assert built == ["app"] and _manager_flag() is False
     with pytest.raises(SystemExit):
-        run_cli(["start", "--port", "9999", "--host", "10.0.0.5"])  # plain start too
+        run_cli(["start", "--new-hub", "--port", "9999", "--host", "10.0.0.5"])  # plain start too
     assert _manager_flag() is False
     with pytest.raises(SystemExit):
         run_cli(["start", "--manager"])

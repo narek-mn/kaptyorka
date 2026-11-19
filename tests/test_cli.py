@@ -681,7 +681,7 @@ def _start_with(monkeypatch, home, active, restart):
     monkeypatch.setattr(cli, "_serve", lambda args: 0)
     monkeypatch.setattr(cli.service, "is_active", lambda name, **kw: active)
     monkeypatch.setattr(cli.service, "restart", restart)
-    return entry_with_exit(["start"])
+    return entry_with_exit(["start", "--new-hub"])
 
 
 def test_start_turns_the_bridge_back_on(monkeypatch, home, capsys):
@@ -796,7 +796,7 @@ def test_start_new_port_moves_this_machine(monkeypatch, home, capsys):
 
 def test_first_start_output(monkeypatch, home, capsys):
     calls = _units(monkeypatch)
-    assert entry_with_exit(["start"]) in (0, None)
+    assert entry_with_exit(["start", "--new-hub"]) in (0, None)
     out, err = capsys.readouterr()
     lines = out.splitlines()
     assert lines[0] == "hub running: http://10.0.0.1:8765"
@@ -805,6 +805,48 @@ def test_first_start_output(monkeypatch, home, capsys):
     assert lines[3] == cli.MANAGER_NOTE
     assert "installed" not in out + err and "join --hub" not in out
     assert calls == [("install", "kaptyorka-hub")]
+
+
+def _first_start(monkeypatch, tty, answer=None):
+    _units(monkeypatch)
+    served, asked = [], []
+    monkeypatch.setattr(cli, "_serve", lambda args: served.append(args) or 0)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: tty, raising=False)
+    monkeypatch.setattr("builtins.input", lambda q: asked.append(q) or answer)
+    return served, asked
+
+
+def test_first_start_asks_and_new_hub_goes_on(monkeypatch, home, capsys):
+    served, asked = _first_start(monkeypatch, True, "new hub")
+    assert entry_with_exit(["start"]) in (0, None)
+    assert asked == ["Type new hub to continue: "] and len(served) == 1
+    err = capsys.readouterr().err
+    assert "NEW, separate hub" in err and "kaptyorka join <invite link>" in err
+    assert (paths.home() / "hub.json").exists()
+
+
+def test_first_start_anything_else_aborts(monkeypatch, home, capsys):
+    served, asked = _first_start(monkeypatch, True, "yes")
+    assert entry_with_exit(["start"]) == 1
+    assert len(asked) == 1 and served == []
+    assert "nothing changed" in capsys.readouterr().err
+    assert not (paths.home() / "hub.json").exists()
+
+
+def test_first_start_without_a_terminal_needs_the_flag(monkeypatch, home, capsys):
+    served, asked = _first_start(monkeypatch, False)
+    assert entry_with_exit(["start"]) == 1
+    assert asked == [] and served == []
+    assert "add --new-hub" in capsys.readouterr().err
+    assert entry_with_exit(["start", "--new-hub"]) in (0, None)
+    assert asked == [] and len(served) == 1
+
+
+def test_start_with_a_hub_here_never_asks(monkeypatch, home):
+    served, asked = _first_start(monkeypatch, True, "")
+    _hub_json()
+    assert entry_with_exit(["start"]) in (0, None)
+    assert asked == [] and len(served) == 1
 
 
 def test_restart_output_is_one_line(monkeypatch, home, capsys):

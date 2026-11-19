@@ -52,6 +52,8 @@ pipx install kaptyorka
 kaptyorka start
 ```
 
+The first start on a machine asks you to type `new hub`: it creates a new, separate hub. A teammate joining the team's hub runs `kaptyorka join <invite link>` instead, never `start`. In a script, with no terminal to ask, add `--new-hub`.
+
 kaptyorka needs Python 3.10 or newer. On an older Python, `pip` and `pipx` only say `No matching distribution found for kaptyorka`; see "Jetson and older Linux" below.
 
 It prints:
@@ -535,7 +537,7 @@ Everything is in `~/.kaptyorka`:
 
 | Command | What it does |
 |---|---|
-| `kaptyorka start` | Run the hub on this machine; `--no-manager` keeps no manager session, `--manager` switches it back on |
+| `kaptyorka start` | Run the hub on this machine; `--no-manager` keeps no manager session, `--manager` switches it back on; `--new-hub` creates a first hub here without asking |
 | `kaptyorka join <invite-link>` | Join this machine as the invited person |
 | `kaptyorka invite <person>` | Admin: make an invite link, 7 days, one use (creates the person if new) |
 | `kaptyorka invites` | Admin: list open invite links, and used ones that can still link GitLab (`used`); `--cancel <code>` stops one |
