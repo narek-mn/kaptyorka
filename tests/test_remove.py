@@ -85,7 +85,7 @@ def test_opencode_unconfigure(home, monkeypatch):
     assert json.loads((conf / "opencode.json").read_text()) == {"mcp": {"other": {}}, "theme": "x"}
     assert not (conf / "plugins/kaptyorka.js").exists()
     assert (home / ".bashrc").read_text() == "export A=1\n"
-    assert len(lines) == 3
+    assert len(lines) == 4  # with the /hub command
 
 
 def test_codex_unconfigure_removes_block_hooks_and_alias(home, monkeypatch):

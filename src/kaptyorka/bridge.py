@@ -47,10 +47,10 @@ def joined_adapters(cfg: dict, adapters: List[Adapter]) -> List[Adapter]:
 
 
 def install_commands(adapters: List[Adapter], exe: str, log: Callable[[str], None]) -> None:
-    """At bridge start: commands a newer kaptyorka adds (Claude Code's /hub), so a machine
-    that updated gets them without joining again."""
+    """At bridge start: what a newer kaptyorka adds to the tools (each tool's /hub and its hub
+    indicator), so a machine that updated gets them without joining again."""
     for a in adapters:
-        install = getattr(a, "install_command", None)
+        install = getattr(a, "install_hub", None)
         if install is not None:
             try:
                 for line in install(exe):
@@ -203,6 +203,7 @@ class Bridge:
             try:
                 got = [as_joined(s) for s in a.sessions()]
                 off = set(getattr(a, "off_keys", set()))  # kept off the hub: never reported
+                off |= {s.key for s in got if offhub.kept_off(s.key)}  # the other tools' /hub off
                 mine = {s.key for s in got if personal(s)}
                 held = held or bool(mine - off)
                 off |= mine
@@ -455,6 +456,8 @@ class Bridge:
                 adapter = by_prefix.get(key.split(":", 1)[0])
                 if adapter is None:
                     raise LookupError("no adapter for this tool")
+                if offhub.kept_off(key):
+                    raise LookupError("that session is off the hub")
                 adapter.deliver(key, m["text"])
                 ok = True
             except Exception as e:  # any failure leaves the message for pull

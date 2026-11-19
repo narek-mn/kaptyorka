@@ -84,9 +84,10 @@ def test_checks_all_ok(home, unit, answer):
     write_claude(home)
     a = ClaudeAdapter(home=home, run=Run())
     a.installed = lambda: True
+    a.install_hub(EXE)
     res = doctor.checks(CFG, [a], home, Run(), "linux")
     assert [c.name for c in res] == ["config", "hub reachable", "token valid", "bridge service",
-                                     "tmux", "tool: claude-code"]
+                                     "tmux", "tool: claude-code", "tool: claude-code /hub"]
     assert all(c.ok for c in res)
 
 
@@ -144,7 +145,7 @@ def test_run_prints_lines_and_fix_rewires_and_restarts(monkeypatch, home, unit, 
     a = ClaudeAdapter(home=home, run=Run())
     a.installed = lambda: True
     configured = []
-    a.configure = lambda exe: configured.append(exe) or write_claude(home) or []
+    a.configure = lambda exe: configured.append(exe) or write_claude(home) or a.install_hub(exe)
     r = Run(active=False)
 
     def restart(name, run, platform):

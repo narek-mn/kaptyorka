@@ -38,7 +38,7 @@ def test_configure_merges_mcp_and_hooks(home):
     (d / "hooks.json").write_text(json.dumps(
         {"version": 1, "hooks": {"stop": [{"command": "other stop"}]}}))
     a = CursorAdapter(home)
-    assert len(a.configure("/bin/kap")) == 2
+    assert len(a.configure("/bin/kap")) == 3  # MCP, hooks, /hub skill
     mcp = json.loads((d / "mcp.json").read_text())
     assert mcp["mcpServers"]["other"] == {"command": "x"}
     assert mcp["mcpServers"]["kaptyorka"] == {"type": "stdio", "command": "/bin/kap", "args": ["mcp"]}

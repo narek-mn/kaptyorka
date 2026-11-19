@@ -184,7 +184,7 @@ def test_configure_toml_block_by_markers(home, codex_home, monkeypatch):
                     '[mcp_servers.kaptyorka]\ncommand = "/k"\nargs = ["mcp"]\n# kaptyorka end\n')
     assert APPROVE in first
     assert "alias codex='codex --remote unix://'" in (home / ".bashrc").read_text().splitlines()
-    assert len(first) == 4
+    assert len(first) == 5  # with the $hub skill
     assert configure(home) == [APPROVE]  # no daemon: still untrusted, so say it again
     assert toml.read_text() == text
     assert configure(home, "/new/k") == [f"Codex: kaptyorka hooks added to {codex_home / 'hooks.json'}",
@@ -262,7 +262,7 @@ def test_configure_writes_toml_atomically_keeping_mode(home, codex_home, monkeyp
     configure(home)
     assert toml.resolve() in [Path(p).resolve() for p in replaced]  # macOS tmp is a symlink
     assert toml.stat().st_mode & 0o777 == 0o640
-    assert sorted(p.name for p in codex_home.iterdir()) == ["config.toml", "hooks.json"]
+    assert sorted(p.name for p in codex_home.iterdir()) == ["config.toml", "hooks.json", "skills"]
 
 
 def test_configure_leaves_broken_hooks_json_alone(home, codex_home, monkeypatch):

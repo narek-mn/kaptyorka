@@ -61,17 +61,35 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
 const KAPTYORKA = %s;
-export const Kaptyorka = async ({ directory }) => {
+export const Kaptyorka = async ({ directory, client }) => {
   const brief = {};
+  const run = async (sessionID, args) => {
+    const p = exec(KAPTYORKA, args, { cwd: directory, timeout: 4000,
+      env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } });
+    p.child.stdin.end();
+    return (await p).stdout.trim();
+  };
   const hook = async (sessionID, event) => {
     try {
-      const run = exec(KAPTYORKA, ["hook", "opencode", event], { cwd: directory, timeout: 4000,
-        env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } });
-      run.child.stdin.end();
-      return (await run).stdout.trim();
+      return await run(sessionID, ["hook", "opencode", event]);
     } catch {
       return "";
     }
+  };
+  // /hub: `kaptyorka hub [on|off|team [project|off]]` for this session, shown as a toast and as the command's text
+  const hub = async (sessionID, words) => {
+    let line, ok = true;
+    try {
+      line = await run(sessionID, ["hub", ...words]);
+    } catch (e) {
+      line = String(e.stdout || "").trim() || "kaptyorka: /hub did not run";
+      ok = false;
+    }
+    try {
+      await client.tui.showToast({ body: { title: "kaptyorka hub", message: line, duration: 8000,
+        variant: !ok ? "error" : /off the hub/.test(line) ? "warning" : "success" } });
+    } catch {}
+    return line;
   };
   return {
     "chat.message": async (input) => {
@@ -80,8 +98,30 @@ export const Kaptyorka = async ({ directory }) => {
     "experimental.chat.system.transform": async (input, output) => {
       if (brief[input.sessionID]) output.system.push(brief[input.sessionID]);
     },
+    "command.execute.before": async (input, output) => {
+      if (input.command !== "hub") return;
+      const line = await hub(input.sessionID, String(input.arguments || "").split(/\\s+/).filter(Boolean));
+      for (const part of output.parts)
+        if (part.type === "text") part.text = line + "\\n\\n" + SAY;
+    },
+    event: async ({ event }) => {  // a new chat says whether it is on the hub
+      const info = event.type === "session.created" ? event.properties.info : null;
+      if (info && !info.parentID) await hub(info.id, []);
+    },
   };
 };
+const SAY = "Tell the user the line above, word for word, and nothing else.";
+"""
+COMMAND_MARK = "<!-- written by kaptyorka; it rewrites this file -->"
+COMMAND = f"""\
+---
+description: Show or switch whether this session is on the kaptyorka hub ([on|off|team [project|off]])
+---
+{COMMAND_MARK}
+kaptyorka: /hub did not run, because kaptyorka's OpenCode plugin did not answer. Restart
+OpenCode; on OpenCode 2 /hub does not work yet.
+
+Tell the user the line above, word for word, and nothing else.
 """
 PLUGIN_V2 = """\
 // kaptyorka: adds the team brief to every OpenCode chat. Written by `kaptyorka join`.
@@ -498,13 +538,8 @@ class OpenCodeAdapter:
         elif result == "changed":
             lines.append(f"OpenCode: kaptyorka MCP server added to {conf / 'opencode.json'}")
 
-        plugin = conf / "plugins" / "kaptyorka.js"
         v2 = major() >= 2
-        text = (PLUGIN_V2 if v2 else PLUGIN) % json.dumps(kaptyorka)
-        if not plugin.exists() or plugin.read_text() != text:
-            plugin.parent.mkdir(parents=True, exist_ok=True)
-            plugin.write_text(text)
-            lines.append(f"OpenCode: kaptyorka plugin written to {plugin}")
+        lines += self.install_hub(kaptyorka, v2)
 
         return lines + self._server_on(v2)
 
@@ -565,9 +600,41 @@ class OpenCodeAdapter:
             return [f"OpenCode: wrapper removed ({w})"]
         return []
 
+    def install_hub(self, kaptyorka: str, v2: Optional[bool] = None) -> List[str]:
+        """The plugin (which runs /hub and shows the hub toasts) and the /hub command; also run
+        at bridge start, so an update brings them. A hub.md someone else wrote is left alone."""
+        conf = self.home / ".config" / "opencode"
+        lines = []
+        plugin = conf / "plugins" / "kaptyorka.js"
+        v2 = major() >= 2 if v2 is None else v2
+        text = (PLUGIN_V2 if v2 else PLUGIN) % json.dumps(kaptyorka)
+        if not plugin.exists() or plugin.read_text() != text:
+            plugin.parent.mkdir(parents=True, exist_ok=True)
+            plugin.write_text(text)
+            lines.append(f"OpenCode: kaptyorka plugin written to {plugin}")
+        command = conf / "commands" / "hub.md"
+        try:
+            old = command.read_text() if command.exists() else None
+            if old is not None and COMMAND_MARK not in old:
+                self.log(f"left alone, not written by kaptyorka: {command}")
+            elif old != COMMAND:
+                command.parent.mkdir(parents=True, exist_ok=True)
+                write_atomic(command, COMMAND)
+                lines.append(f"OpenCode: /hub command written to {command}")
+        except OSError as e:
+            self.log(f"could not write {command}: {e}")
+        return lines
+
     def unconfigure(self) -> List[str]:
         lines = []
         conf = self.home / ".config" / "opencode"
+        command = conf / "commands" / "hub.md"
+        try:
+            if COMMAND_MARK in command.read_text():
+                command.unlink()
+                lines.append(f"OpenCode: /hub command removed ({command})")
+        except OSError:
+            pass
 
         def drop_mcp(data: dict) -> bool:
             servers = data.get("mcp")

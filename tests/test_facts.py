@@ -211,7 +211,7 @@ def test_logins_from_tool_commands(monkeypatch, tmp_path):
     run = Run({"auth status": (1, SECRET), "login status": (0, "Logged in using ChatGPT\n"),
                "auth list": (0, OPENCODE_EMPTY), "--version": (0, "1.0\n")})
     m = facts.machine(_login_adapters(tmp_path), run)
-    assert m["logins"] == {"claude-code": False, "codex": True, "opencode": False, "cursor": None}
+    assert m["logins"] == {"claude-code": False, "codex": True, "opencode": None, "cursor": None}  # none found: unknown
     login_calls = [c for c in run.calls if "--version" not in c[0]]
     assert [c[0] for c in login_calls] == [["/bin/claude", "auth", "status"],
                                            ["/bin/codex", "login", "status"],

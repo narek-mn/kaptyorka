@@ -82,6 +82,41 @@ def tool_configured(adapter, home: Path) -> bool:
     return False
 
 
+def hub_installed(adapter, home: Path) -> bool:
+    """Read-only: the tool's /hub command and its hub indicator are in place (see README, /hub)."""
+    tool = adapter.tool
+    if tool == "claude-code":
+        from kaptyorka.adapters.claude import COMMAND_MARK, _our_status
+
+        line = _json(home / ".claude" / "settings.json").get("statusLine")
+        return (_marked(home / ".claude" / "commands" / "hub.md", COMMAND_MARK)
+                and isinstance(line, dict) and _our_status(line.get("command")))
+    if tool == "opencode":
+        from kaptyorka.adapters.opencode import COMMAND_MARK
+
+        conf = home / ".config" / "opencode"
+        return (_marked(conf / "commands" / "hub.md", COMMAND_MARK)
+                and _marked(conf / "plugins" / "kaptyorka.js", "kaptyorka hub"))
+    if tool == "codex":
+        from kaptyorka.adapters.codex import SKILL_MARK, codex_home
+
+        return _marked(codex_home(home) / "skills" / "hub" / "SKILL.md", SKILL_MARK)
+    if tool == "cursor":
+        from kaptyorka.adapters.cursor import SKILL_MARK
+
+        return (_marked(home / ".cursor" / "skills" / "hub" / "SKILL.md", SKILL_MARK)
+                and _has_hooks(_json(home / ".cursor" / "hooks.json").get("hooks"), tool,
+                               (("beforeSubmitPrompt", "prompt"),), False))
+    return True
+
+
+def _marked(path: Path, mark: str) -> bool:
+    try:
+        return mark in path.read_text()
+    except OSError:
+        return False
+
+
 def _tmux(run: Callable, platform: str) -> Check:
     install = "brew install tmux" if platform == "darwin" else "sudo apt install -y tmux"
     try:
@@ -135,6 +170,11 @@ def checks(cfg: dict, adapters: list, home: Path, run: Callable = subprocess.run
             ok = tool_configured(a, home)
             out.append(Check(f"tool: {a.tool}", ok, "" if ok else "not wired to kaptyorka",
                              None if ok else "kaptyorka join"))
+            if ok:
+                hub = hub_installed(a, home)
+                out.append(Check(f"tool: {a.tool} /hub", hub,
+                                 "" if hub else "the /hub command or the hub indicator is missing",
+                                 None if hub else "kaptyorka doctor --fix"))
             if a.tool == "opencode":
                 out.append(_opencode_server())
     return out
@@ -181,6 +221,9 @@ def run(cfg: dict, fix: bool = False, adapters: Optional[list] = None, home: Opt
         for a in adapters:
             if f"tool: {a.tool}" in failing:
                 for line in a.configure(exe):
+                    print(line)
+            elif f"tool: {a.tool} /hub" in failing and hasattr(a, "install_hub"):
+                for line in a.install_hub(exe):
                     print(line)
         if "bridge service" in failing and failing["bridge service"].detail == "stopped":
             try:

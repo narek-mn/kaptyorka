@@ -99,8 +99,9 @@ async def _heartbeat(cfg: dict, first: identity.Identity) -> None:
         body = {"machine": ident.machine,
                 "sessions": [{"key": ident.key, "tool": ident.tool, "project": ident.project}],
                 "facts": identity.facts()}
-        if await anyio.to_thread.run_sync(offhub.personal, ident.project, ident.cwd, ident.key):
-            await anyio.sleep(HEARTBEAT_S)  # not a team project's folder: never reported
+        if await anyio.to_thread.run_sync(offhub.personal, ident.project, ident.cwd, ident.key) \
+                or await anyio.to_thread.run_sync(offhub.off, ident.key):
+            await anyio.sleep(HEARTBEAT_S)  # not a team project's folder, or /hub off: never reported
             continue
         try:
             await anyio.to_thread.run_sync(lambda: http.request(
@@ -292,7 +293,8 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 why = paths.not_team_help(await anyio.to_thread.run_sync(offhub.load_mine))
             if why:
                 return _error(f"kaptyorka: {why}")
-            if use is relay and await hidden():
+            if (await hidden() if use is relay
+                    else await anyio.to_thread.run_sync(offhub.off, who.key)):
                 return _error(f"kaptyorka: {offhub.COME_BACK}")
             args = dict(params.arguments or {})
             f = args.get("file")

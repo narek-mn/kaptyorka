@@ -252,6 +252,65 @@ def test_hub_team_command(home, monkeypatch):
     assert offhub.command(["team", "a", "b"], env)[0] == 1
 
 
+def _join_hub(monkeypatch):
+    def request(method, url, token, body=None, **kw):
+        if url.endswith("/bridge/join-team"):
+            if body["project"] in ("", "proj-a"):
+                return 200, {"project": body["project"], "projects": ["proj-a"]}
+            return 403, "you have no role in proj-b; your projects: proj-a"
+        return 204, None
+    monkeypatch.setattr(http, "request", request)
+
+
+def test_hub_team_in_opencode_codex_and_cursor(home, monkeypatch):
+    paths.save_config({"hub": "http://h", "token": "t", "machine": "box-1"})
+    _join_hub(monkeypatch)
+    monkeypatch.setattr(offhub, "_tool_pid", lambda key: os.getpid())  # the tool's process
+    for env, key, cmd in (({offhub.OPENCODE_SESSION: "ses_1"}, "opencode:ses_1", "/hub"),
+                          ({offhub.SESSION_KEY: "codex:t-1"}, "codex:t-1", "$hub"),
+                          ({offhub.SESSION_KEY: "cursor:box-1:/w/diary"}, "cursor:box-1:/w/diary",
+                           "/hub")):
+        assert offhub.command(["team", "proj-b"], env, cwd="/w/diary")[0] == 1
+        code, line = offhub.command(["team", "proj-a"], env, cwd="/w/diary")
+        assert code == 0 and "project proj-a" in line and optin.get(key) == "proj-a"
+        assert offhub.command([], env, cwd="/w/diary") == (
+            0, "this session is on the hub for project proj-a")
+        assert offhub.command(["team"], env, cwd="/w/diary")[0] == 0 and optin.get(key) == COORD
+        code, line = offhub.command(["team", "off"], env, cwd="/w/diary")
+        assert code == 0 and "left the team" in line and optin.get(key) is None
+        offhub.switch_key(key, True)  # an off session must come back first
+        assert offhub.command(["team"], env, cwd="/w/diary") == (
+            1, f"kaptyorka: {'this folder' if key.startswith('cursor') else 'this session'}"
+               f" is off the hub; type {cmd} on to come back")
+        offhub.switch_key(key, False)
+
+
+def test_a_join_needs_the_tools_process(home, monkeypatch):
+    paths.save_config({"hub": "http://h", "token": "t", "machine": "box-1"})
+    _join_hub(monkeypatch)
+    monkeypatch.setattr(offhub, "_tool_pid", lambda key: 0)
+    assert offhub.command(["team"], {offhub.SESSION_KEY: "codex:t-1"}, cwd="/w/diary") == (
+        1, "kaptyorka: could not find this session's process; try again")
+
+
+def test_hub_team_through_the_codex_and_cursor_prompt_hooks(home, monkeypatch, capsys):
+    from test_hub_toggle import HubCli
+
+    paths.save_config({"hub": "http://h", "token": "t", "machine": "box-1"})
+    _join_hub(monkeypatch)
+    monkeypatch.setattr(offhub, "_tool_pid", lambda key: os.getpid())
+    stdin = json.dumps({"session_id": "t-1", "cwd": "/w/diary", "prompt": "$hub team proj-a"})
+    assert hook.main("codex", "prompt", stdin, run=HubCli()) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["decision"] == "block" and "project proj-a" in out["reason"]
+    assert optin.get("codex:t-1") == "proj-a"
+    stdin = {"workspace_roots": ["/w/diary"], "prompt": "/hub team"}
+    hook.main("cursor", "prompt", json.dumps(stdin), run=HubCli())
+    out = json.loads(capsys.readouterr().out)
+    assert out["continue"] is False and "coordinator" in out["user_message"]
+    assert optin.get("cursor:box-1:/w/diary") == COORD
+
+
 def test_a_joined_sessions_stop_hook_sends_no_git(home, monkeypatch):
     paths.save_config({"hub": "http://h", "token": "t", "machine": "pc"})
     offhub.save_team({"proj-a"}, set())
