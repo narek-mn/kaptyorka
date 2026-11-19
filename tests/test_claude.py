@@ -385,8 +385,8 @@ def test_session_reports_its_transcript_title(home, tmp_path):
     ad = ClaudeAdapter(home)
     assert [s.title for s in ad.sessions()] == ["Fix the build"]
     with open(path, "a") as f:
-        f.write(json.dumps({"type": "custom-title", "customTitle": "kaptyorka-dgx"}) + "\n")
-    assert [s.title for s in ad.sessions()] == ["kaptyorka-dgx"]  # the file changed: read again
+        f.write(json.dumps({"type": "custom-title", "customTitle": "proj-a on box-1"}) + "\n")
+    assert [s.title for s in ad.sessions()] == ["proj-a on box-1"]  # the file changed: read again
 
 
 def test_title_read_is_bounded_to_the_tail(home, monkeypatch):

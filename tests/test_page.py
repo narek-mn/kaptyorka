@@ -73,6 +73,8 @@ def test_home_warns_only_what_blocks(hub):
     html = page(hub)
     assert 'var rows = (isAdmin() ? fleet.warnings : feed.warnings || []).filter(function (w) { return w.blocks; });' in html
     assert 'id="warns"' in html and 'id="warn-banner"' not in html
+    assert 'JSON.stringify(group.map(nameOf).filter(function (n, i, all) { return all.indexOf(n) === i; }))' in html  # replaced, not grown
+    assert 'attrs.title = "A team machine: shared by the team" + (d.projects.length ?' in html
     assert "run agents (no tool logged in)" in html and "kaptyorka.login-warn-dismissed" in html  # one line, its x kept here
 
 

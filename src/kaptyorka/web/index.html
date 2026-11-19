@@ -1864,7 +1864,7 @@ a.p-main { color: inherit; text-decoration: none; }
       var more = el("a", { href: "#settings/machines", text: "See machines" });
       more.addEventListener("click", function () { mFilter = "all"; store(function (st) { st.setItem("kaptyorka.machines-filter", "all"); }); });
       var x = button([icon("i-x", 14)], "icon", function () {
-        store(function (st) { st.setItem("kaptyorka.login-warn-dismissed", JSON.stringify(dismissed.concat(group.map(nameOf)))); });
+        store(function (st) { st.setItem("kaptyorka.login-warn-dismissed", JSON.stringify(group.map(nameOf).filter(function (n, i, all) { return all.indexOf(n) === i; }))); });
         seen.warns = null; renderWarns();
       }, { title: "Dismiss", "aria-label": "Dismiss" });
       box.appendChild(el("li", { "class": "login-group", title: group.map(nameOf).join("\n") }, [icon("i-warn", 14),
@@ -2773,7 +2773,7 @@ a.p-main { color: inherit; text-decoration: none; }
                                  n ? " · " + n + (n === 1 ? " session" : " sessions") : ""]);
     var attrs = { "class": "a-row m-acct" + (d.online ? "" : " off") };
     if (d.id != null) attrs["data-machine"] = String(d.id); else attrs["data-team-machine"] = d.name;
-    if (r.who === "team" && d.projects) attrs.title = "A team machine: everyone with a role in " + d.projects.join(", ") + " uses it";
+    if (r.who === "team" && d.projects) attrs.title = "A team machine: shared by the team" + (d.projects.length ? " \u00b7 works in " + d.projects.join(", ") : "");
     else if (r.who === "mine" && d.machine && d.name !== d.machine) attrs.title = d.name + " (joined as " + d.machine + ")";
     return el("div", attrs, [
       el("span", { "class": "m-dot" + (d.online ? " on" : ""), "aria-hidden": "true" }),

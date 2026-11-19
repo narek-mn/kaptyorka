@@ -1593,6 +1593,7 @@ def test_machines_grouped_by_computer_with_filters(tmp_path, w, h):
             pick("online")
             page.wait(f'{hosts}.length === 1')
             assert page.js(hosts) == ["jetson-1"] and tops("jetson-1") == ["nvidia@jetson-1 Team"]
+            assert page.js(f'{rows("jetson-1")}[0].title') == "A team machine: shared by the team"  # no project of hers: no tail
             assert page.js(wide)
             time.sleep(0.4)
             page.screenshot(shots / f"machines-online-{tag}.png")
@@ -1843,7 +1844,10 @@ def test_login_warnings_make_one_line(tmp_path, w, h):
             page.wait(f'{warns}.length === 2')
             assert "alice@box-1" in page.js('document.querySelector("#warns li").textContent')
             assert "claude auth login" in page.js('document.getElementById("warns").textContent')
+            page.js('localStorage.setItem("kaptyorka.login-warn-dismissed", JSON.stringify(["old@gone", "old@gone"]))')
             page.js('document.querySelector("#warns .login-group button").click()')
+            assert page.js('JSON.parse(localStorage.getItem("kaptyorka.login-warn-dismissed"))') == \
+                [f"alice@box-{i}" for i in range(2, 7)]  # exactly this group, no old names
             page.wait(f'{warns}.length === 1')
             assert "claude auth login" in page.js('document.getElementById("warns").textContent')
             page.js("location.reload()")
