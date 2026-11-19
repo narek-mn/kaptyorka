@@ -648,6 +648,92 @@ def test_weekly_push_repeats_after_a_week(hub, clock):
     assert sum(t.startswith("weekly review") for t in drain(hub, mgr, me)) == 1
 
 
+def knowledge_texts(hub, mgr, me, start="knowledge"):
+    return [t for t in drain(hub, mgr, me) if t.startswith(start)]
+
+
+def unread_to_manager(hub):
+    with hub.store.lock:
+        return hub.store.db.execute("SELECT COUNT(*) FROM messages WHERE to_key='k:mgr' AND"
+                                    " read_at IS NULL").fetchone()[0]
+
+
+def test_knowledge_digest_daily_and_only_to_an_awake_manager(hub, clock):
+    from kaptyorka import knowledge
+    mgr, me = manager_online(hub)
+    hub.tick()  # the first tick starts the count: no digest of the past
+    assert knowledge_texts(hub, mgr, me) == []
+    assert hub.mm.stamp(knowledge.DIGEST_KEY) == clock[0]
+    clock[0] += 1
+    hub.store.project_register("proj-a", by="test")
+    clock[0] = knowledge.quiet_mark(clock[0]) + 86400 + 60  # past the next quiet hour
+    hub.tick()  # the manager is asleep: nothing is queued, so nothing wakes it
+    assert unread_to_manager(hub) == 0 and not hub.mm.has_work()
+    clock[0] += 5 * 3600  # it wakes later in the day
+    run(call(mgr, me, "inbox"))
+    hub.tick()
+    [digest] = knowledge_texts(hub, mgr, me, "knowledge digest")
+    assert "- proj-a: new" in digest
+    hub.tick()
+    assert knowledge_texts(hub, mgr, me) == []
+    clock[0] += 12 * 3600  # the same quiet hour has not come again yet
+    run(call(mgr, me, "inbox"))
+    hub.store.project_register("proj-b", by="test")
+    hub.tick()
+    assert knowledge_texts(hub, mgr, me, "knowledge digest") == []
+    clock[0] += 12 * 3600
+    run(call(mgr, me, "inbox"))
+    hub.tick()
+    [digest] = knowledge_texts(hub, mgr, me, "knowledge digest")
+    assert "- proj-b: new" in digest and "proj-a" not in digest
+
+
+def test_knowledge_light_notice_on_a_project_note_and_a_finished_worker(hub, clock):
+    mgr, me = manager_online(hub)
+    hub.tick()
+    hub.store.project_register("proj-a", by="test")
+    alice, _, _ = plain(hub, "alice")
+    hub.store.grant_project("proj-a", alice, "write", "test")
+    hub.store.seen("k:alice", "box-1", "claude-code", "proj-a",
+                   principal=hub.store._person_principal(alice))
+    clock[0] += 1
+    hub.store.notes_write("k:alice", "state", "where it stands", "proj-a")
+    run(call(mgr, me, "inbox"))
+    hub.tick()
+    assert knowledge_texts(hub, mgr, me) == [
+        "knowledge: proj-a/state written by alice. If it changes what the team knows, update"
+        " the team notes (read first, merge)."]
+    clock[0] += 1
+    insert_worker(hub, "w-1", "closed", alice, clock[0])
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE workers SET closed_at=? WHERE name='w-1'", (clock[0],))
+    hub.tick()  # at most one light notice per 10 minutes: this one waits
+    assert knowledge_texts(hub, mgr, me) == []
+    clock[0] += 600
+    run(call(mgr, me, "inbox"))
+    hub.tick()
+    assert knowledge_texts(hub, mgr, me) == [
+        "knowledge: worker `w-1` in proj-a finished. If it changes what the team knows,"
+        " update the team notes (read first, merge)."]
+    hub.store.notes_write("k:alice", "team", "a team note waits for the digest")
+    clock[0] += 601
+    run(call(mgr, me, "inbox"))
+    hub.tick()
+    assert knowledge_texts(hub, mgr, me) == []
+
+
+def test_manager_writes_project_notes_through_the_tool(hub):
+    mgr, me = manager_online(hub)
+    hub.store.project_register("proj-a", by="test")
+    assert run(call(mgr, me, "notes_write", topic="api", text="x", project="proj-a")) \
+        == "saved note api"
+    assert run(call(mgr, me, "notes_write", topic="projects", text="- proj-a: x")) \
+        == "saved note projects"
+    assert [p["name"] for p in run(call(mgr, me, "projects"))] == ["proj-a"]
+    assert "not registered" in call_error(mgr, me, "notes_write", topic="api", text="x",
+                                          project="home-stuff")
+
+
 def test_page_answers_the_manager_without_a_door(hub):
     mgr, me = manager_online(hub)
     _, btok, _ = plain(hub, "bob")

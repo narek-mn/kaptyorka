@@ -92,3 +92,11 @@ def test_readme_team_machine_switch():
               "`kaptyorka machine show jetson-1 bob`", "alice hid jetson-1 from bob", "Admins always see every team machine"]:
         assert s in r, s
     assert "Team accounts take no workers yet" not in r and "shared accounts; team accounts" not in r
+
+
+def test_readme_knowledge_section():
+    r = (ROOT / "README.md").read_text()
+    k = r.split("### The manager keeps the team's knowledge", 1)[1].split("\n## ", 1)[0]
+    for s in ["`team`", "`glossary`", "`decisions`", "knowledge digest", "never the text",
+              "never wake a sleeping manager", "14 days", "never edits rules", "not orders"]:
+        assert s in k, s

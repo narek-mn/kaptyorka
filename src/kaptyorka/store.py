@@ -858,8 +858,11 @@ class Store:
         with self.lock:
             online = self._online_rows(self.clock())
             out = []
+            keeper = principal.role == "manager"  # keeps every team project's notes
             for p in self.db.execute("SELECT * FROM projects ORDER BY name").fetchall():
                 role = self._role(p["name"], principal.person_id)
+                if keeper and p["archived_at"] is None:
+                    role = role or "notes"
                 archived = p["archived_at"] is not None  # shown to the admin alone, read-only
                 if role is None or (archived and not principal.is_admin()):
                     continue
@@ -2299,6 +2302,8 @@ class Store:
         unregistered folder name can belong to two people by chance."""
         if project is None or principal is None:
             return
+        if principal.role == "manager" and self._registered(project):
+            return  # the knowledge keeper reads and writes every team project's notes
         if self._archived(project) and not self._may(project, principal, write):
             raise KaptyorkaError(f"project {project} was removed; its notes are kept for the admin")
         if not self._registered(project) and not self._archived(project):
