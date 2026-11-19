@@ -17,6 +17,27 @@ COORDINATOR = "(team)"  # the project of a session that joined with /hub team: n
 # (never a registered name: PROJECT_NAME has no brackets)
 
 
+# Why the bridge could not push a message, as its sender may see it: a short fixed reason,
+# never the adapter's own text (that names the recipient's session key, OS user and paths).
+UNREACHABLE = "the session isn't reachable"
+PUSH_REASONS = (UNREACHABLE, "the session is off the hub", "the agent tool refused the message",
+                "this tool only pulls messages")
+
+
+def push_reason(error: str) -> str:
+    """The short reason for a failed push's raw error text (the bridge logs the full text)."""
+    text = (error or "").lower()
+    if text in PUSH_REASONS:
+        return text
+    if "off the hub" in text:
+        return PUSH_REASONS[1]
+    if "pull only" in text:
+        return PUSH_REASONS[3]
+    if "refused" in text:
+        return PUSH_REASONS[2]
+    return UNREACHABLE
+
+
 def not_team_help(projects, hub: str = "/hub") -> str:
     """The refusal a tool call outside a team folder gets: how to join, for the agent to
     offer, never to do on its own. `projects`: the person's team projects, None when unknown."""

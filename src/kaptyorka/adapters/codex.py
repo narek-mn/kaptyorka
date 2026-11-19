@@ -391,7 +391,16 @@ class CodexAdapter:
         folder = conf / "skills" / "hub"
         try:
             if SKILL_MARK in (folder / "SKILL.md").read_text():
-                shutil.rmtree(folder)
+                # only the files kaptyorka wrote; anything else someone put there stays
+                (folder / "SKILL.md").unlink()
+                policy = folder / "agents" / "openai.yaml"
+                if policy.exists() and policy.read_text().startswith(SKILL_POLICY.split("\n")[0]):
+                    policy.unlink()
+                for d in (folder / "agents", folder):
+                    try:
+                        d.rmdir()  # only when empty
+                    except OSError:
+                        pass
                 lines.append(f"Codex: $hub skill removed ({folder})")
         except OSError:
             pass

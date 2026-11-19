@@ -462,7 +462,7 @@ class Bridge:
                 ok = True
             except Exception as e:  # any failure leaves the message for pull
                 self.log(f"push to {key} failed: {e}; message {m['id']} left for pull")
-                ok, error = False, str(e)
+                ok, error = False, paths.push_reason(str(e))  # the full text stays in the log
             else:
                 error = ""
             self._ack(m["id"], ok, error=error)

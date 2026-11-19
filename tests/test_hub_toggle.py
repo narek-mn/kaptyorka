@@ -153,7 +153,7 @@ def test_bridge_never_reports_or_pushes_an_off_opencode_session(team, home, monk
         return real(method, url, token, body, **kw)
     monkeypatch.setattr(http, "request", request)
     assert b.poll_once(0) == 0 and oc.sent == [] and acks == [
-        {"id": 7, "ok": False, "error": "that session is off the hub"}]
+        {"id": 7, "ok": False, "error": "the session is off the hub"}]
     monkeypatch.setattr(http, "request", real)
     offhub.command(["on"], OC, cwd="/w/proj-a")
     b.heartbeat()
@@ -286,6 +286,13 @@ def test_codex_installs_a_dollar_hub_skill(home, monkeypatch, tmp_path):
     assert "allow_implicit_invocation: false" in (folder / "agents/openai.yaml").read_text()
     a.unconfigure()
     assert not folder.exists()
+    a.install_hub("/k")
+    (folder / "notes.txt").write_text("someone's own file")
+    (folder / "agents" / "other.yaml").write_text("theirs")
+    a.unconfigure()  # leave removes only what kaptyorka wrote
+    assert sorted(str(f.relative_to(folder)) for f in folder.rglob("*")) == [
+        "agents", "agents/other.yaml", "notes.txt"]
+    shutil.rmtree(folder)
     folder.mkdir(parents=True)
     (folder / "SKILL.md").write_text("theirs")
     assert a.install_hub("/k") == [] and SKILL_MARK not in (folder / "SKILL.md").read_text()

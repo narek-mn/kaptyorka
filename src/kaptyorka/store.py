@@ -1881,7 +1881,7 @@ class Store:
                                 (self.clock(), msg_id))
             else:
                 self.db.execute("UPDATE messages SET push_state='failed', push_error=? WHERE id=?",
-                                (clean(error, 300) or "the push failed", msg_id))
+                                (paths.push_reason(error), msg_id))  # never the raw text
             return True
 
     def messages_for(self, principal: Principal, limit: int = 500) -> List[dict]:
@@ -1912,7 +1912,7 @@ class Store:
                                    m["sender_key"].startswith("web:"),
                                    (m["to_key"] or "").startswith("web:"), m["kind"],
                                    self._file_info(m["file_id"]),
-                                   failed=m["push_error"] if m["push_state"] == "failed"
+                                   failed=paths.push_reason(m["push_error"]) if m["push_state"] == "failed"
                                    and m["read_at"] is None else ""))
                 for k, p in (("_from", "s_"), ("_to", "r_")):
                     d[k] = None if m[p + "machine"] is None else {

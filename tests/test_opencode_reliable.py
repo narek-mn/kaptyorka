@@ -183,14 +183,46 @@ def test_a_failed_push_shows_with_its_reason_until_read(store):
     store.seen("claude:b", "box-1", "claude-code", "proj-a", principal=p)
     store.send("claude:b", store.agent("opencode:ses_a").name, "hi")
     [item] = store.offer("box-1", "9", p)
-    why = "opencode session opencode:ses_a: no running OpenCode server has it"
-    assert store.ack(item["id"], False, p, why)
+    assert store.ack(item["id"], False, p, "the session is off the hub")
     [m] = [m for m in store.messages_for(p) if m["text"] == "hi"]
-    assert m["failed"] == why and not m["read"]
+    assert m["failed"] == "the session is off the hub" and not m["read"]
     assert store.offer("box-1", "9", p) == []  # not offered again and again
     store.inbox("opencode:ses_a")  # pulled after all
     [m] = [m for m in store.messages_for(p) if m["text"] == "hi"]
     assert m["failed"] == "" and m["read"]
+
+
+def test_a_failed_push_never_shows_the_recipients_key_or_paths(store):
+    from kaptyorka import hub_feed
+
+    alice, _ = person(store, "alice", "admin")
+    bob, _ = person(store, "bob")
+    pa = store.authenticate(store.device_add(alice, "box-1"))
+    pb = store.authenticate(store.device_add(bob, "box-2"))
+    store.seen("opencode:ses_a", "box-1", "opencode", "proj-a", principal=pa)
+    store.send_from_web("bob", store.agent("opencode:ses_a").name, "hi")  # bob on the page
+    [item] = store.offer("box-1", "9", pa)
+    raw = ("opencode session opencode:ses_a: [Errno 13] Permission denied:"
+           " '/home/alice/.local/share/opencode/x'")
+    assert store.ack(item["id"], False, pa, raw)
+    for who in (pb, pa):  # the sender, and even the recipient's admin person
+        [m] = [m for m in store.messages_for(who) if m["text"] == "hi"]
+        assert m["failed"] == paths.UNREACHABLE
+        [m] = [m for m in hub_feed.feed(store, who)["messages"] if m["text"] == "hi"]
+        assert m["failed"] == paths.UNREACHABLE  # what the page's Not delivered tooltip shows
+        assert "ses_a" not in m["failed"] and "/home" not in m["failed"]
+
+
+def test_push_reasons_are_short_and_fixed():
+    assert paths.push_reason("claude session claude:x: that session is off the hub") == \
+        "the session is off the hub"
+    assert paths.push_reason("cursor: pull only") == "this tool only pulls messages"
+    assert paths.push_reason("claude session claude:x refused: busy") == \
+        "the agent tool refused the message"
+    assert paths.push_reason("codex session codex:x: not loaded in the app-server") == \
+        paths.UNREACHABLE
+    assert paths.push_reason("") == paths.UNREACHABLE
+    assert all(paths.push_reason(r) == r for r in paths.PUSH_REASONS)
 
 
 def test_the_bridge_sends_why_a_push_failed(home, monkeypatch):
@@ -205,7 +237,7 @@ def test_the_bridge_sends_why_a_push_failed(home, monkeypatch):
     b = Bridge({"hub": "http://h", "token": "t", "machine": "box-1"},
                [FakeAdapter(fail=True)], lambda line: None)
     assert b.poll_once(0) == 0
-    assert acks == [{"id": 5, "ok": False, "error": "door closed"}]
+    assert acks == [{"id": 5, "ok": False, "error": paths.UNREACHABLE}]  # never the raw text
 
 
 def test_logged_in_reads_auth_json_and_the_auth_list(home, monkeypatch):
