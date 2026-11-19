@@ -134,7 +134,7 @@ def test_feed_admin_extras(app):
 def test_page_contains_team_markup(app):
     status, html = http.request("GET", app.url + "/", "")
     assert status == 200
-    assert 'href="#settings/team/people"' in html and 'id="pane-team-people"' in html
+    assert 'href="#settings/people"' in html and 'id="pane-people"' in html and 'id="pane-person"' in html
     assert "Your name" not in html
     assert "/api/me" in html and "/api/knocks/" in html
     assert "Yes opens a door between them" in html
@@ -382,7 +382,7 @@ def test_page_inline_confirm_holds_the_panel():
     html = page_html()
     assert "function confirmInline(anchor, text, yesLabel, onYes, opt)" in html
     assert 'e.key === "Escape"' in html and "holding.isConnected" in html
-    assert '$("people-rows").contains(holding)) return;' in html  # a Remove question survives the refresh
+    assert '$("pane-person").contains(holding)) return;' in html  # a Remove question survives the refresh
     assert '"Remove " + v.name + "? They are signed out everywhere."' in html
 
 

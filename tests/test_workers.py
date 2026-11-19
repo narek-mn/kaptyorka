@@ -719,12 +719,12 @@ def test_warnings_texts_and_order(store, ws, alice, bob, clock):
     hhmm = time.strftime("%H:%M", time.localtime(since))
     assert [w["text"] for w in got] == [
         "worker w3 on box-2 failed to start: no tmux",
-        "bridge on box-3 (bob) has been offline for 125 minutes",
-        "box-1 (alice) runs kaptyorka 0.2.9; the hub runs 0.3.0",
-        "claude-code on box-1 (alice) is set up but its kaptyorka hooks are missing",
+        "bridge on bob@box-3 has been offline for 125 minutes",
+        "alice@box-1 runs kaptyorka 0.2.9; the hub runs 0.3.0",
+        "claude-code on alice@box-1 is set up but its kaptyorka hooks are missing",
         f"worker w1 on box-1 is unattended since {hhmm}",
         "worker w2 on box-1 was abandoned",
-        "box-2 (bob) has no tmux: only Claude Code workers can run there",
+        "bob@box-2 has no tmux: only Claude Code workers can run there",
     ]
     assert got[0]["person"] == "alice" and got[1]["person"] == "bob"
     assert got[1]["host"] == "box-3" and got[1]["os_user"] == "bob"
@@ -750,7 +750,7 @@ def test_warnings_old_version_from_device_row_without_facts(store, ws, alice, cl
     a = device(store, alice, "box-1", "alice")[0]
     store.db.execute("UPDATE devices SET version='0.2.1' WHERE id=?", (a,))
     assert [w["text"] for w in ws.warnings(clock[0], "0.3.0")] == [
-        "box-1 (alice) runs kaptyorka 0.2.1; the hub runs 0.3.0"]
+        "alice@box-1 runs kaptyorka 0.2.1; the hub runs 0.3.0"]
 
 
 def test_bridge_gone_an_hour_closes_its_workers(store, ws, alice, alice_p, boss, clock):
@@ -828,7 +828,7 @@ def test_warning_when_no_tool_logged_in(store, ws, alice, clock):
     got = ws.warnings(clock[0], "0.3.0")
     # one line, with the login of a tool installed there (the first that reports a state)
     assert [w["text"] for w in got] == [
-        "box-1 (alice): no agent tool is logged in. Run `codex login` there."]
+        "alice@box-1: no agent tool is logged in. Run `codex login` there."]
     assert got[0]["host"] == "box-1" and got[0]["person"] == "alice" and got[0]["blocks"]
     ws.facts_seen(a, {"version": "0.3.0", "tmux": True, "logins": {"codex": None}}, {})
     assert ws.warnings(clock[0], "0.3.0") == []  # no tool knows: nothing to say
@@ -955,4 +955,4 @@ def test_no_offline_warning_without_bridge_facts(store, ws, alice, clock):
     ws.facts_seen(b, {"version": "0.3.0"}, {})
     store.db.execute("UPDATE devices SET last_used=? WHERE id IN (?,?)", (clock[0] - 125 * 60, m, b))
     got = [w["text"] for w in ws.warnings(clock[0], "0.3.0")]
-    assert got == ["bridge on box-2 (alice) has been offline for 125 minutes"]
+    assert got == ["bridge on alice@box-2 has been offline for 125 minutes"]

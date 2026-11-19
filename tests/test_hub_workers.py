@@ -346,7 +346,7 @@ def test_admin_brief_lists_warnings(hub, alice, clock):
     bridge(hub, pid)
     clock[0] += 3600  # the bridge on box-1 is silent
     text = brief(hub, ADMIN, ident("k:x", machine="hubbox"))
-    assert "Warnings: bridge on box-1 (u) has been offline for 60 minutes." in text
+    assert "Warnings: bridge on u@box-1 has been offline for 60 minutes." in text
     _, client = alice
     assert "Warnings" not in brief(hub, client.token, BOSS)
 

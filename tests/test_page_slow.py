@@ -84,7 +84,7 @@ def test_member_asks_for_access(tmp_path):
             assert [(r["person"], r["target"], r["role"], r["why"]) for r in store.requests()] == \
                 [("bob", "proj-a", "write", "to review")]
             # the admin-only parts stay away
-            assert page.js('document.querySelector("[data-go=\\"team/people\\"]").hidden')
+            assert page.js('document.querySelector("[data-go=\\"people\\"]").hidden')
     finally:
         stop()
         store.close()
@@ -100,12 +100,16 @@ def test_attach_sends_file(admin_page):
     _, bob_t = person(store, "bob")
     store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(bob_t))
     page.go(url.replace("&view=team", ""))
-    # a click on bob's line writes to it; no select
+    # Everyone, bob's group: a click on bob's line writes to it; no select
+    page.wait('!document.getElementById("h-scope").hidden')
+    page.js('document.querySelector("#h-scope [data-scope=everyone]").click()')
+    page.wait('!!document.querySelector("#agents .g-head[data-key=\\"g:p:bob\\"]")')
+    page.js('document.querySelector("#agents .g-head[data-key=\\"g:p:bob\\"]").click()')
     page.wait('[...document.querySelectorAll("#agents .row")].some(r => r.title.startsWith("box-1/codex/proj-a") '
               '|| r.querySelector(".name").textContent === "proj-a")')
     page.js('[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name").textContent === "proj-a").click()')
     assert page.wait('document.getElementById("text").placeholder') == "Message proj-a"
-    assert page.js('document.querySelector("#agents .row.on .who").textContent') == "bob"  # the admin sees whose
+    assert page.js('document.querySelector("#agents .row.on").closest(".bg-rows").getAttribute("aria-label")') == "bob"  # the admin sees whose
     page.js("""(() => { const dt = new DataTransfer(); dt.items.add(new File(["hello"], "a.txt"));
       const i = document.getElementById("file-in"); i.files = dt.files; i.dispatchEvent(new Event("change")); })()""")
     assert page.wait('!document.getElementById("file-chip").hidden && '
@@ -125,7 +129,7 @@ def test_member_sees_only_home(member_page):
     store.seen("b1", "box-1", "codex", "proj-a", principal=bob)
     page.go(url + "&view=notes")
     page.wait('document.querySelectorAll("#agents .row").length === 2')
-    assert page.js('document.querySelector("[data-go=\\"team/people\\"]").hidden') and page.js('document.getElementById("settings").hidden')
+    assert page.js('document.querySelector("[data-go=\\"people\\"]").hidden') and page.js('document.getElementById("settings").hidden')
     assert page.js('[...document.querySelectorAll("#agents .row .name")].map(n => n.textContent)') == ["manager", "proj-a"]
     assert page.js('document.querySelector("#agents .mgr .n").textContent') == "off"
     assert page.js('document.getElementById("text").placeholder') == "Message manager"
@@ -293,7 +297,7 @@ def test_background_job_marked_and_empty_chat(tmp_path):
                 assert page.js(f'{head}.getAttribute("aria-expanded")') == "true"
                 assert page.js(f'!!{job}.closest(".bg-rows")')
                 assert page.js(f'!!{job}.querySelector(".bg-lead.on use[href=\\"#i-clock\\"]")')
-                assert page.js(f'{job}.querySelector(".subline").textContent') == "box-1"
+                assert page.js(f'{job}.querySelector(".subline").textContent') == "u@box-1"  # account@computer
                 time.sleep(0.3)
                 page.screenshot(shots / f"list-open-{tag}.png")
                 page.js("window.before = 1; location.reload()")  # this viewer's choice holds
@@ -359,10 +363,21 @@ def team_row(name):
     return '[...document.querySelectorAll("#people-rows .person")].find(r => r.dataset.person === %s)' % json.dumps(name)
 
 
+PERSON = 'document.getElementById("person-body")'
+
+
+def open_person(page, name):
+    """Click a person's row in People; wait for their page."""
+    page.js(f'{team_row(name)}.querySelector(".p-main").click()')
+    page.wait(f'!document.getElementById("pane-person").hidden && document.getElementById("person-name").textContent === {json.dumps(name)}'
+              f' && !!{PERSON}.querySelector(".pp-acts, .pp-boxes")')
+
+
 def test_team_add_person_give_project_remove(admin_page):
     """A first-time admin: Add person, type a name, Add, copy the link in place; open the
-    person, tick a project seen only on a session (it is registered on that tick) and untick
-    it; Remove asks inline, holds through refreshes, and signs them out."""
+    person's page (its own address, Back returns), tick a project seen only on a session (it is
+    registered on that tick, "Saved ✓" shows beside it) and untick it; Remove asks inline,
+    holds through refreshes, signs them out and returns to People."""
     store, page, url = admin_page
     _, bob_t = person(store, "bob")
     store.heartbeat("box-1", [{"key": "k:b", "tool": "claude-code", "project": "proj-a"}],
@@ -371,7 +386,7 @@ def test_team_add_person_give_project_remove(admin_page):
     page.wait(f'!!{team_row("bob")}')
     assert page.js('document.getElementById("waiting").hidden')  # nothing waits: no box
     assert page.js(f'{team_row("alice")}.textContent') == "aliceAdminyou"
-    assert page.js(f'{team_row("alice")}.querySelector("button")') is None  # nothing to do on yourself
+    assert page.js(f'{team_row("alice")}.querySelector("button")') is None  # a clean row: no buttons
     # Add person: the name field has the focus; Add shows the link with Copy in the same place
     page.js('document.getElementById("add-person-btn").click()')
     assert page.js('document.activeElement.id') == "new-name"
@@ -388,35 +403,44 @@ def test_team_add_person_give_project_remove(admin_page):
     assert page.wait('document.getElementById("add-copy").textContent === "Copied" && navigator.clipboard.readText()') == link
     page.wait(f'!!{team_row("carol")}')
     assert page.js(f'{team_row("carol")}.querySelector(".p-sum").textContent') == "hasn't joined yet"
-    assert page.js(f'{team_row("carol")}.querySelector(".p-act").textContent') == "New invite linkMake admin"
     page.js('document.getElementById("add-done").click()')
     assert page.js('document.getElementById("add-box").hidden && !document.getElementById("add-person-btn").hidden')
-    # bob: open, tick proj-a (only a session had it), Saved; it is registered and he may write
-    page.js(f'{team_row("bob")}.querySelector(".p-main").click()')
-    page.wait(f'!!{team_row("bob")}.querySelector(".p-projects")')
-    assert page.js(f'[...{team_row("bob")}.querySelectorAll(".proj")].map(l => l.textContent)') == ["proj-a"]
-    page.js(f'{team_row("bob")}.querySelector(".proj input").click()')
-    page.wait(f'{team_row("bob")}.querySelector(".proj small")?.textContent === "Saved"')
+    # carol's page: profile, no machines yet, New invite link and Make admin; Back returns
+    open_person(page, "carol")
+    assert page.js("location.hash") == "#settings/people/carol"
+    assert page.js(f'{PERSON}.querySelector(".pp-acts").textContent') == "New invite linkMake adminRemove"
+    assert "hasn't joined yet" in page.js(f'{PERSON}.querySelector(".a-profile").textContent')
+    page.js('document.getElementById("person-back").click()')
+    page.wait('!document.getElementById("pane-people").hidden')
+    assert page.js("location.hash") == "#settings/people"
+    # bob: tick proj-a (only a session had it), Saved; it is registered and he may write
+    open_person(page, "bob")
+    assert page.js(f'[...{PERSON}.querySelectorAll(".proj")].map(l => l.textContent)') == ["proj-a"]
+    assert "Changes save automatically" in page.js(f'{PERSON}.textContent')
+    page.js(f'{PERSON}.querySelector(".proj input").focus(); {PERSON}.querySelector(".proj input").click()')
+    page.wait(f'{PERSON}.querySelector(".pp-cue")?.textContent === "Saved ✓"')
+    assert page.js(f'document.activeElement === {PERSON}.querySelector(".proj input")')  # focus kept through the redraw
     bob = store.person_by_name("bob")["id"]
     assert store.project_role("proj-a", bob) == "write"
-    assert page.wait(f'{team_row("bob")}.querySelector(".p-sum").textContent') == "proj-a"
-    page.js(f'{team_row("bob")}.querySelector(".proj input").click()')
+    page.wait(f'!{PERSON}.querySelector(".pp-cue")', timeout=5)  # about 2 seconds
+    page.js(f'{PERSON}.querySelector(".proj input").click()')
     end = time.monotonic() + 10
     while store.project_role("proj-a", bob) is not None:
         assert time.monotonic() < end, "untick did not take the project away"
         time.sleep(0.1)
-    page.wait(f'!{team_row("bob")}.querySelector(".proj input").checked')
+    page.wait(f'!{PERSON}.querySelector(".proj input").checked')
     # Remove: the question holds through refreshes; Esc cancels; Remove removes
-    click(page, "#people-rows [data-person=bob]", "Remove")
-    assert page.wait('document.querySelector("#people-rows .confirm")?.textContent').startswith(
+    click(page, "#person-body .pp-acts", "Remove")
+    assert page.wait(f'{PERSON}.querySelector(".confirm")?.textContent').startswith(
         "Remove bob? They are signed out everywhere.")
     time.sleep(4.5)
-    assert page.js('!!document.querySelector("#people-rows .confirm")')
+    assert page.js(f'!!{PERSON}.querySelector(".confirm")')
     page.js('document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))')
-    page.wait('!document.querySelector("#people-rows .confirm")')
-    click(page, "#people-rows [data-person=bob]", "Remove")
-    page.wait('!!document.querySelector("#people-rows .confirm")')
-    click(page, "#people-rows .confirm", "Remove")
+    page.wait(f'!{PERSON}.querySelector(".confirm")')
+    click(page, "#person-body .pp-acts", "Remove")
+    page.wait(f'!!{PERSON}.querySelector(".confirm")')
+    click(page, "#person-body .confirm", "Remove")
+    page.wait('!document.getElementById("pane-people").hidden')
     page.wait(f'!{team_row("bob")}')
     assert store.person_by_name("bob") is None and store.authenticate(bob_t) is None
     assert page.wait('!document.getElementById("team-ok").hidden && document.getElementById("team-ok").textContent') == "Removed bob."
@@ -630,8 +654,10 @@ def test_team_projects_from_gitlab(tmp_path, w, h):
             assert (p["description"], p["repo"]) == ("billing service that sends the monthly invoices",
                                                      "ssh://git@gitlab.example:2222/team/proj-b.git")
             # the person ticks list it now
-            page.js('document.querySelector("#people-rows [data-person=bob] .p-main").click()')
-            page.wait('[...document.querySelectorAll("#people-rows .proj")].map(l => l.textContent).join() === "proj-a,proj-b,proj-x"')
+            page.js('location.hash = "#settings/people/bob"')
+            page.wait('[...document.querySelectorAll("#person-body .proj")].map(l => l.textContent).join() === "proj-a,proj-b,proj-x"')
+            page.js('history.back()')
+            page.wait('!document.getElementById("pane-projects").hidden')
             # Edit: the description in place
             click(page, '#project-rows [data-project="proj-a"]', "Edit")
             page.wait('!!document.querySelector("#project-rows .confirm input")')
@@ -667,7 +693,7 @@ def test_team_projects_from_gitlab(tmp_path, w, h):
             page.go(f"http://127.0.0.1:{stop.port}/#t={bob_t}&view=team")
             page.wait('document.getElementById("viewer-name").textContent === "bob"')
             time.sleep(1)
-            assert page.js('document.querySelector("[data-go=\\"team/people\\"]").hidden && !document.querySelector("#project-rows .pj-row")')
+            assert page.js('document.querySelector("[data-go=\\"people\\"]").hidden && !document.querySelector("#project-rows .pj-row")')
     finally:
         stop()
         store.close()
@@ -745,7 +771,7 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
     lab.who = "alice-gl"
     base = f"http://127.0.0.1:{stop.port}"
     wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
-    gl = 'document.querySelector("#people-rows [data-person={}] .p-gl")'.format
+    gl = 'document.querySelector("#person-body .p-gl")'
     try:
         with chrome(w, h) as page:
             page.go(base + "/")
@@ -759,24 +785,31 @@ def test_sign_in_with_gitlab(tmp_path, w, h):
             page.wait('document.getElementById("viewer-name")?.textContent === "alice"')
             assert "t=" not in page.js("location.href")
             assert page.js('localStorage.getItem("kaptyorka.token")')
-            # Team: each row has the GitLab username, or a quiet way to add one
-            page.js('document.querySelector("[data-go=\\"team/people\\"]").click()')
-            page.wait(f'!!{gl("bob")}')
+            # People, then each person's page: the GitLab username, or a quiet way to add one
+            page.js('document.querySelector("[data-go=\\"people\\"]").click()')
             carol_row = 'document.querySelector("#people-rows [data-person=carol]")'
+            page.wait(f'!!{carol_row}')
             assert page.js(f'{carol_row}.querySelector(".p-sum").textContent') == "hasn't joined yet"
-            assert "New invite link" in page.js(f'{carol_row}.querySelector(".p-act").textContent')
             assert carol
-            assert page.js(f'{gl("alice")}.textContent') == "@alice-gl"
-            assert page.js(f'{gl("bob")}.textContent') == "GitLab name"
+            open_person(page, "alice")
+            page.wait(f'!!{gl}')
+            assert page.js(f'{gl}.textContent') == "@alice-gl"
+            page.js('document.getElementById("person-back").click()')
+            page.wait('!document.getElementById("pane-people").hidden')
+            open_person(page, "bob")
+            page.wait(f'!!{gl}')
+            assert page.js(f'{gl}.textContent') == "Add GitLab name"
             assert page.js(wide)
             page.screenshot(shots / f"team-gitlab-{tag}.png")
-            page.js(f'{gl("bob")}.click()')
-            page.wait('!!document.querySelector("#people-rows .confirm input")')
+            page.js(f'{gl}.click()')
+            page.wait('!!document.querySelector("#person-body .confirm input")')
             assert page.js('document.activeElement.placeholder') == "GitLab username"
-            page.js('document.querySelector("#people-rows .confirm input").value = "bob-gl"')
+            page.js('document.querySelector("#person-body .confirm input").value = "bob-gl"')
             page.screenshot(shots / f"team-gitlab-edit-{tag}.png")
-            click(page, "#people-rows .confirm", "Save")
-            page.wait(f'{gl("bob")} && {gl("bob")}.textContent === "@bob-gl"')
+            click(page, "#person-body .confirm", "Save")
+            page.wait(f'{gl} && {gl}.textContent === "@bob-gl"')
+            page.js('document.getElementById("person-back").click()')
+            page.wait('!document.getElementById("pane-people").hidden')
             assert store.person_by_name("bob") and [p["gitlab_user"] for p in store.people()
                                                     if p["name"] == "bob"] == ["bob-gl"]
             # Add person is a name only: people link their own GitLab from the invite
@@ -861,7 +894,7 @@ def test_people_link_their_own_gitlab(tmp_path, w, h):
             page.wait('document.getElementById("viewer-name")?.textContent === "dave"')
             assert [p["gitlab_user"] for p in store.people() if p["name"] == "dave"] == ["dave-gl"]
             assert store.invite_valid(code)  # join still works on his machine
-            page.js('document.querySelector("[data-go=\\"account/profile\\"]").click()')
+            page.js('document.querySelector("[data-go=\\"profile\\"]").click()')
             page.wait('document.getElementById("a-profile").textContent.includes("@dave-gl")')
             assert "Connect GitLab" not in page.js('document.getElementById("settings").innerText')
         with chrome(w, h) as page:
@@ -875,7 +908,7 @@ def test_people_link_their_own_gitlab(tmp_path, w, h):
             page.wait('document.getElementById("viewer-name")?.textContent === "erin"'
                       ' && localStorage.getItem("kaptyorka.token") !== null')
             assert [p["gitlab_user"] for p in store.people() if p["name"] == "erin"] == ["erin-gl"]
-            page.js('document.querySelector("[data-go=\\"account/profile\\"]").click()')
+            page.js('document.querySelector("[data-go=\\"profile\\"]").click()')
             page.wait('document.getElementById("a-profile").textContent.includes("@erin-gl")')
             assert "Connect GitLab" not in page.js('document.getElementById("settings").innerText')
             page.screenshot(shots / f"connected-{tag}.png")
@@ -990,8 +1023,8 @@ def test_viewer_keeps_focus_on_its_two_buttons(tmp_path):
 def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
     """bob signs in with GitLab and opens his name: the Account page (its own address; Back and
     reload work) with his profile, machines (rename, remove, online or when last seen, the OS
-    user), this browser, his projects, Add a machine with the join command and Copy, Sign out. The admin's
-    Team row has New invite link, which copies a fresh link and kills the old one. Screenshots to
+    user), this browser, his projects, Add machine with the join command and Copy, Sign out. The admin's
+    person page has New invite link, which copies a fresh link and kills the old one. Screenshots to
     KAPTYORKA_SHOTS."""
     import os
     from helpers import FakeGitLabOAuth
@@ -1037,16 +1070,16 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             page.js('document.getElementById("gitlab-signin").click()')
             page.wait('document.getElementById("viewer-name")?.textContent === "bob"')
             # the name opens a menu; Account settings opens Profile, with its own address
-            assert page.js('document.querySelector("[data-go=\\"team/people\\"]").hidden')  # a member
+            assert page.js('document.querySelector("[data-go=\\"people\\"]").hidden')  # a member
             page.js('document.getElementById("viewer-name").click()')
             page.wait('!document.getElementById("acct-menu").hidden')
             assert page.js('document.getElementById("acct-menu").innerText').split("\n")[:2] == ["bob", "Member \u00b7 gitlab-web"]
             page.js('document.body.click()')  # a click outside closes it
             page.wait('document.getElementById("acct-menu").hidden')
             page.js('document.getElementById("viewer-name").click()')
-            page.js('document.querySelector("[data-go=\\"account/profile\\"]").click()')
-            page.wait('!document.getElementById("pane-account-profile").hidden && document.querySelectorAll("#a-projects .a-row").length === 2')
-            assert page.js("location.hash") == "#settings/account/profile"
+            page.js('document.querySelector("[data-go=\\"profile\\"]").click()')
+            page.wait('!document.getElementById("pane-profile").hidden && document.querySelectorAll("#a-projects .a-row").length === 2')
+            assert page.js("location.hash") == "#settings/profile"
             assert page.js('document.getElementById("home").hidden && document.getElementById("acct-menu").hidden')
             text = page.js(f"{acct}.innerText")
             for want in ("Profile", "bob", "Member", "@bob-gl", "Only an admin changes your role.", "proj-a", "Write",
@@ -1055,31 +1088,31 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             assert "alice" not in text and "gitlab-web" not in text and "All machines" not in text
             assert page.js(wide)
             page.screenshot(shots / f"settings-profile-{tag}.png")
-            page.js('document.querySelector("#set-nav [data-sec=\\"account/browsers\\"]").click()')
-            page.wait('!document.getElementById("pane-account-browsers").hidden')
-            text = page.js('document.getElementById("pane-account-browsers").innerText')
+            page.js('document.querySelector("#set-nav [data-sec=\\"browsers\\"]").click()')
+            page.wait('!document.getElementById("pane-browsers").hidden')
+            text = page.js('document.getElementById("pane-browsers").innerText')
             assert "This browser" in text and "Sign out everywhere else" not in text  # one browser
             page.screenshot(shots / f"settings-browsers-{tag}.png")
-            page.js('document.querySelector("#set-nav [data-sec=\\"account/machines\\"]").click()')
+            page.js('document.querySelector("#set-nav [data-sec=\\"machines\\"]").click()')
             page.wait('document.querySelectorAll("#a-machines .a-row").length === 2')
-            assert page.js("location.hash") == "#settings/account/machines"
-            text = page.js('document.getElementById("pane-account-machines").innerText')
-            for want in ("bob@box-1", "as bob", "online", "bob@box-2", "3h ago", "Rename", "Remove", "Add a machine"):
+            assert page.js("location.hash") == "#settings/machines"
+            text = page.js('document.getElementById("pane-machines").innerText')
+            for want in ("bob@box-1", "online", "bob@box-2", "3h ago", "Rename", "Remove", "Add machine"):
                 assert want in text, want
             page.screenshot(shots / f"settings-machines-{tag}.png")
             # Back walks the sections back to Home; Forward and a reload come back
             page.js("history.back()")
-            page.wait('!document.getElementById("pane-account-browsers").hidden')
+            page.wait('!document.getElementById("pane-browsers").hidden')
             page.js("history.back()")
-            page.wait('!document.getElementById("pane-account-profile").hidden')
+            page.wait('!document.getElementById("pane-profile").hidden')
             page.js("history.back()")
             page.wait('!document.getElementById("home").hidden && document.getElementById("settings").hidden')
             for _ in range(3):
                 page.js("history.forward()")
                 time.sleep(0.2)
-            page.wait('!document.getElementById("pane-account-machines").hidden')
+            page.wait('!document.getElementById("pane-machines").hidden')
             page.js("location.reload()")
-            page.wait('!document.getElementById("pane-account-machines").hidden && document.querySelectorAll("#a-machines .a-row").length === 2')
+            page.wait('!document.getElementById("pane-machines").hidden && document.querySelectorAll("#a-machines .a-row").length === 2')
             # rename a machine inline
             box2 = 'document.querySelector("#a-machines [data-machine]:nth-child(2)")'
             click(page, "#a-machines [data-machine]:nth-child(2)", "Rename")
@@ -1093,7 +1126,7 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             assert "Remove build box? It stops reaching the hub until it joins again." in q
             page.screenshot(shots / f"account-remove-{tag}.png")
             click(page, "#a-machines .confirm", "Cancel")
-            # Add a machine: the join command with a fresh invite for bob
+            # Add machine: a member goes straight to the join command with a fresh invite for bob
             page.js('document.getElementById("add-machine").click()')
             cmd = page.wait('!document.getElementById("a-join").hidden && document.getElementById("join-cmd").textContent')
             assert cmd.startswith(f"kaptyorka join {base}/i/")
@@ -1119,15 +1152,17 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
             page.wait('document.getElementById("lock").dataset.mode === "gitlab"')
             page.js('document.getElementById("gitlab-signin").click()')
             page.wait('document.getElementById("viewer-name")?.textContent === "alice"')
-            page.js('document.querySelector("[data-go=\\"team/people\\"]").click()')
-            page.wait('!!document.querySelector("#people-rows [data-person=bob] .new-link")')
+            page.js('document.querySelector("[data-go=\\"people\\"]").click()')
+            page.wait(f'!!{team_row("bob")}')
             page.wait('document.getElementById("live").className === "live"')
-            row = 'document.querySelector("#people-rows [data-person=bob]")'
+            open_person(page, "bob")
+            row = 'document.querySelector("#person-body .pp-acts")'
             page.call("Browser.grantPermissions", permissions=["clipboardReadWrite", "clipboardSanitizedWrite"],
                       origin=base)
             page.call("Page.bringToFront")
-            page.js(f'{row}.querySelector(".new-link").click()')
-            link = page.wait(f'!!{row}.querySelector(".new-link.copied") && navigator.clipboard.readText()')
+            assert page.js('document.getElementById("add-choice").hidden')
+            page.js(f'[...{row}.querySelectorAll("button")].find(b => b.textContent === "New invite link").click()')
+            link = page.wait(f'!!{row}.querySelector(".btn.copied") && navigator.clipboard.readText()')
             assert link.startswith(f"{base}/i/") and old not in link
             assert not store.invite_valid(old)
             assert page.js(wide)
@@ -1155,6 +1190,7 @@ def test_team_make_and_remove_admin(tmp_path, w, h):
     person(store, "carol")
     store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(bob_t))
     row = 'document.querySelector("#people-rows [data-person=\\"{}\\"]")'.format
+    acts = 'document.querySelector("#person-body .pp-acts")'
     wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
     try:
         with chrome(w, h) as page:
@@ -1162,26 +1198,37 @@ def test_team_make_and_remove_admin(tmp_path, w, h):
             page.wait(f'!!{row("bob")}')
             assert page.js(f'{row("alice")}.querySelector(".p-role").textContent') == "Admin"
             assert page.js(f'!{row("bob")}.querySelector(".p-role")')
-            assert "Remove admin" not in page.js(f'{row("alice")}.textContent')  # the only admin
             assert page.js(wide)
             page.screenshot(shots / f"admin-rows-{tag}.png")
-            click(page, '#people-rows [data-person="bob"]', "Make admin")
-            page.wait(f'!!{row("bob")}.querySelector(".confirm")')
-            assert page.js(f'{row("bob")}.querySelector(".confirm span").textContent') == \
+            open_person(page, "alice")
+            assert "Remove admin" not in page.js(f'{PERSON}.textContent')  # the only admin
+            assert "Admins work in every project." in page.js(f'{PERSON}.textContent')
+            page.js('document.getElementById("person-back").click()')
+            page.wait('!document.getElementById("pane-people").hidden')
+            open_person(page, "bob")
+            click(page, "#person-body .pp-acts", "Make admin")
+            page.wait(f'!!{acts}.querySelector(".confirm")')
+            assert page.js(f'{acts}.querySelector(".confirm span").textContent') == \
                 "Make bob an admin? They can change everything on the hub."
             assert page.js(wide)
             page.screenshot(shots / f"admin-confirm-{tag}.png")
-            click(page, '#people-rows [data-person="bob"] .confirm', "Make admin")
-            page.wait(f'{row("bob")} && !!{row("bob")}.querySelector(".p-role")')
+            click(page, "#person-body .confirm", "Make admin")
+            page.wait('document.getElementById("person-sub").textContent === "Admin"')
             assert store.person_by_name("bob")["role"] == "admin"
             assert page.js('document.getElementById("team-ok").textContent') == "bob is now an admin."
-            assert "Remove admin" in page.js(f'{row("alice")}.textContent')  # now there are two
+            page.js('document.getElementById("person-back").click()')
+            page.wait(f'!document.getElementById("pane-people").hidden && !!{row("bob")}.querySelector(".p-role")')
+            open_person(page, "alice")
+            assert "Remove admin" in page.js(f'{acts}.textContent')  # now there are two
             page.screenshot(shots / f"admin-two-{tag}.png")
-            click(page, '#people-rows [data-person="bob"]', "Remove admin")
-            page.wait(f'!!{row("bob")}.querySelector(".confirm")')
+            page.js('history.back()')
+            page.wait('!document.getElementById("pane-people").hidden')
+            open_person(page, "bob")
+            click(page, "#person-body .pp-acts", "Remove admin")
+            page.wait(f'!!{acts}.querySelector(".confirm")')
             page.screenshot(shots / f"admin-remove-confirm-{tag}.png")
-            click(page, '#people-rows [data-person="bob"] .confirm', "Remove admin")
-            page.wait(f'{row("bob")} && !{row("bob")}.querySelector(".p-role")')
+            click(page, "#person-body .confirm", "Remove admin")
+            page.wait('document.getElementById("person-sub").textContent === "Member"')
             assert store.person_by_name("bob")["role"] == "member"
     finally:
         stop()
@@ -1190,9 +1237,10 @@ def test_team_make_and_remove_admin(tmp_path, w, h):
 
 @pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
 def test_team_machines_add_list_move(tmp_path, w, h):
-    """Machines, Everyone (the admin's view): one row per machine with who uses it, online and
-    its use. The old All machines link lands there. Add team machine shows the join command;
-    Move gives a machine to another person, asked in place. Screenshots to KAPTYORKA_SHOTS."""
+    """Machines, Everyone (the admin's view): one row per account (account@computer) with whose
+    it is, online, its computer's use and its agent tools. The old All machines link lands
+    there. Add machine asks whose account it is; Shared team account shows the join command;
+    Give to… gives a machine to another person, asked in place. Screenshots to KAPTYORKA_SHOTS."""
     import json as _json
     import os
     shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
@@ -1208,23 +1256,34 @@ def test_team_machines_add_list_move(tmp_path, w, h):
     store.heartbeat("gpu-1", [], principal=b, facts={"host": "gpu-1", "os_user": "bob"})
     with store.lock:
         store.db.execute("INSERT INTO device_facts (device_id, facts, updated) VALUES (?,?,?)",
-                         (b.device_id, _json.dumps({"use": {
+                         (b.device_id, _json.dumps({"tools": {"claude-code": "2.1", "codex": "0.9"},
+                                                    "logins": {"claude-code": True, "codex": False}, "use": {
                              "age": 0, "cpus": 16, "mem_mb": 64000,
                              "gpus": [{"index": 0, "util": 90.0, "mem": 0, "total": 0}],
                              "users": {"bob": {"cpu": 6.0, "mem": 20000}}}}), store.clock()))
     row = 'document.querySelector("#team-machine-rows [data-host=\\"{}\\"]")'.format
+    tags = 'document.querySelector("#team-machine-rows [data-host=\\"{}\\"] .m-tools").textContent'.format
     wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
     try:
         with chrome(w, h) as page:
             page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=machines")
             page.wait(f'!!{row("gpu-1")}')
-            assert page.js("location.hash") == "#settings/account/machines"
+            assert page.js("location.hash") == "#settings/machines"
             assert page.js('document.querySelector("#m-scope [data-scope=\\"everyone\\"]").getAttribute("aria-pressed")') == "true"
             assert page.js(f'{row("gpu-1")}.querySelector(".m-who").textContent') == "bob"
+            assert page.js(f'{row("gpu-1")}.querySelector(".pj-name").textContent') == "bob@gpu-1"
+            assert page.js(tags("gpu-1")) == "Claude CodeCodex · not logged in"
             assert page.js(f'{row("gpu-1")}.querySelector(".m-use").textContent') == \
                 "GPU 90% · CPU 38% · memory 31%"
-            # Add team machine: a name, then the command to run on its shared account
-            page.js('document.getElementById("add-team-btn").click()')
+            # Add machine: whose account? Shared team account: a name, then the command to run there
+            page.js('document.getElementById("add-machine").click()')
+            page.wait('!document.getElementById("add-choice").hidden')
+            assert page.js('document.activeElement.id') == "add-own"
+            assert page.js(wide)
+            page.screenshot(shots / f"add-machine-choice-{tag}.png")
+            page.js('document.getElementById("add-shared").click()')
+            page.wait('!document.getElementById("add-team-box").hidden && document.getElementById("add-choice").hidden')
+            assert page.js('document.activeElement.id') == "new-team"
             page.js('document.getElementById("new-team").value = "jet-1"')
             page.js('document.querySelector("#add-team button[type=submit]").click()')
             page.wait('!document.getElementById("add-team-link").hidden')
@@ -1240,15 +1299,18 @@ def test_team_machines_add_list_move(tmp_path, w, h):
             page.wait(f'!!{row("jet-1")}')
             assert page.js(f'{row("jet-1")}.querySelector(".m-who").textContent') == "Team machine"
             assert page.js(f'{row("jet-1")}.querySelector(".chip").textContent') == "Team"
+            assert page.js(f'{row("jet-1")}.querySelector(".pj-name").textContent') == "nvidia@jet-1"
+            assert page.js(f'!{row("jet-1")}.querySelector(".m-tools")')  # its bridge never reported
             assert "jet-1" not in page.js('document.getElementById("people-rows").textContent')
             page.screenshot(shots / f"machines-{tag}.png")
-            # Move bob's machine to carol, asked in place
-            click(page, '#team-machine-rows [data-host="gpu-1"]', "Move")
+            # Give bob's machine to carol, asked in place
+            click(page, '#team-machine-rows [data-host="gpu-1"]', "Give to…")
             page.wait(f'!!{row("gpu-1")}.querySelector(".confirm select")')
             page.js(f'{row("gpu-1")}.querySelector(".confirm select").value = "carol"')
             assert page.js(wide)
             page.screenshot(shots / f"machine-move-{tag}.png")
-            click(page, '#team-machine-rows [data-host="gpu-1"] .confirm', "Move")
+            assert page.js(f'{row("gpu-1")}.querySelector(".confirm span").textContent') == "Give bob@gpu-1 to"
+            click(page, '#team-machine-rows [data-host="gpu-1"] .confirm', "Give")
             page.wait(f'{row("gpu-1")} && {row("gpu-1")}.querySelector(".m-who").textContent === "carol"')
             assert store.db.execute("SELECT person_id FROM devices WHERE id=?",
                                     (b.device_id,)).fetchone()[0] == store.person_by_name("carol")["id"]
@@ -1309,13 +1371,17 @@ def test_settings_sections_and_account_menu(tmp_path, w, h):
             page.js('document.activeElement.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}))')
             page.wait('document.getElementById("acct-menu").hidden')
             assert page.js('document.activeElement.id') == "viewer-name"
-            page.js('document.querySelector("[data-go=\\"team/people\\"]").click()')
-            for sec, ready in [("team/people", '#people-rows [data-person="bob"]'),
-                               ("team/projects", '#project-rows [data-project="proj-b"]'),
-                               ("account/profile", '#a-profile dd'),
-                               ("account/machines", '#a-machines .a-row')]:
+            page.js('document.querySelector("[data-go=\\"people\\"]").click()')
+            # one flat sidebar: no headings
+            assert page.js('document.querySelectorAll("#set-nav .set-group").length') == 0
+            assert page.js('[...document.querySelectorAll("#set-nav a")].filter(a => !a.hidden).map(a => a.textContent)') == \
+                ["Profile", "Machines", "People1", "Projects"]
+            for sec, ready in [("people", '#people-rows [data-person="bob"]'),
+                               ("projects", '#project-rows [data-project="proj-b"]'),
+                               ("profile", '#a-profile dd'),
+                               ("machines", '#a-machines .a-row')]:
                 page.js(f'document.querySelector("#set-nav [data-sec=\\"{sec}\\"]").click()')
-                page.wait(f'!document.getElementById("pane-{sec.replace("/", "-")}").hidden'
+                page.wait(f'!document.getElementById("pane-{sec}").hidden'
                           f' && !!document.querySelector({_json.dumps(ready)})')
                 assert page.js("location.hash") == f"#settings/{sec}"
                 assert page.js(f'document.querySelector("#set-nav [data-sec=\\"{sec}\\"]").getAttribute("aria-current")') == "page"
@@ -1323,14 +1389,25 @@ def test_settings_sections_and_account_menu(tmp_path, w, h):
                 time.sleep(0.4)  # the section's rise has ended
                 page.screenshot(shots / f"settings-{sec.replace('/', '-')}-{tag}.png")
             assert page.js('document.getElementById("n-team").textContent') == "1"
-            # a deep link opens its section after a reload
-            page.go(f"{base}/#settings/team/projects")
-            page.wait('!document.getElementById("pane-team-projects").hidden')
+            # a deep link opens its section after a reload; the old addresses land on the new ones
+            page.go(f"{base}/#settings/projects")
+            page.wait('!document.getElementById("pane-projects").hidden')
+            for old, new in (("team/projects", "projects"), ("team/people", "people"), ("account/profile", "profile"),
+                             ("account/machines", "machines")):
+                page.go(f"{base}/#settings/{old}")
+                page.wait(f'!document.getElementById("pane-{new}").hidden')
+                assert page.js("location.hash") == f"#settings/{new}"
+            # a person's own address opens their page; Back goes to People
+            page.go(f"{base}/#settings/people/bob")
+            page.wait('!document.getElementById("pane-person").hidden && document.getElementById("person-name").textContent === "bob"')
+            assert page.js('document.querySelector("#set-nav [data-sec=\\"people\\"]").getAttribute("aria-current")') == "page"
+            page.go(f"{base}/#settings/people/nobody")
+            page.wait('document.getElementById("person-body").textContent.includes("No one named nobody is on the hub.")')
             # the old All machines address: Machines, Everyone
             page.go(f"{base}/#settings/team/machines")
-            page.wait('!document.getElementById("pane-account-machines").hidden'
+            page.wait('!document.getElementById("pane-machines").hidden'
                       ' && !!document.querySelector(\'#team-machine-rows [data-host="jet-1"]\')')
-            assert page.js("location.hash") == "#settings/account/machines"
+            assert page.js("location.hash") == "#settings/machines"
             assert page.js('document.getElementById("a-machines").hidden')
     finally:
         stop()
@@ -1340,10 +1417,10 @@ def test_settings_sections_and_account_menu(tmp_path, w, h):
 @pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
 def test_one_machines_page_for_members_and_admins(tmp_path, w, h):
     """One Machines page. A member sees their own machines (Rename, Remove) and the team
-    machines of their projects (no actions, a Team tag), with no Mine / Everyone switch and no
-    Add team machine; with none, a sentence points to Add a machine. An admin starts on Mine and
-    switches to Everyone: every machine, who uses it, Move, and Add team machine. Screenshots
-    to KAPTYORKA_SHOTS."""
+    machines of their projects (no actions, a Team tag), with no Mine / Everyone switch; Add
+    machine goes straight to their join command; with none, a sentence points to Add machine.
+    An admin starts on Mine and switches to Everyone: every account, whose it is, Give to…; Add
+    machine asks whose account it is. Screenshots to KAPTYORKA_SHOTS."""
     import os
     shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
     shots.mkdir(parents=True, exist_ok=True)
@@ -1367,14 +1444,14 @@ def test_one_machines_page_for_members_and_admins(tmp_path, w, h):
     store.seen("t-a", "jet-1", "claude", "proj-a", principal=j)
     base = f"http://127.0.0.1:{stop.port}"
     wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
-    pane = 'document.getElementById("pane-account-machines")'
+    pane = 'document.getElementById("pane-machines")'
     acts = lambda attr: page.js(f'document.querySelector({json.dumps("#a-machines [" + attr + "]")}).innerText')
 
     def open_as(name, t):  # a fresh load, so the page takes the new token
         page.go("about:blank")
         page.go(f"{base}/#t={t}")
         page.wait(f'document.getElementById("viewer-label").textContent === {json.dumps(name)}')
-        page.go(f"{base}/#settings/account/machines")
+        page.go(f"{base}/#settings/machines")
         page.wait(f'!{pane}.hidden')
 
     try:
@@ -1383,11 +1460,12 @@ def test_one_machines_page_for_members_and_admins(tmp_path, w, h):
             open_as("bob", bob_t)
             page.wait('document.querySelectorAll("#a-machines .a-row").length === 3')
             assert page.js('document.getElementById("m-scope").hidden')
-            assert page.js('document.getElementById("add-team-btn").hidden')
             assert not page.js('document.getElementById("add-machine").hidden')
             assert page.js('[...document.querySelectorAll("#set-nav a:not([hidden])")].map(a => a.textContent)') == \
                 ["Profile", "Machines"]
-            team = acts('data-team-machine="jet-1"')
+            names = page.js('[...document.querySelectorAll("#a-machines .a-row b")].map(b => b.textContent)')
+            assert "bob@box-1" in names and "nvidia@jet-1" in names
+            team = acts('data-team-machine="nvidia@jet-1"')
             assert "Team" in team and "proj-a" in team and "Rename" not in team and "Remove" not in team
             own = 'document.querySelector("#a-machines [data-machine]:nth-child(2)").innerText'
             assert "Rename" in page.js(own) and "Remove" in page.js(own)
@@ -1395,6 +1473,12 @@ def test_one_machines_page_for_members_and_admins(tmp_path, w, h):
             assert page.js(wide)
             time.sleep(0.4)
             page.screenshot(shots / f"machines-member-mine-{tag}.png")
+            # Add machine: no question for a member, straight to the command
+            page.js('document.getElementById("add-machine").click()')
+            page.wait('!document.getElementById("a-join").hidden && document.getElementById("join-cmd").textContent !== ""')
+            assert page.js('document.getElementById("add-choice").hidden')
+            page.js('document.getElementById("join-done").click()')
+            assert page.js('document.getElementById("a-join").hidden')
             # dave, signed in in a browser only (a sign-in that ends) and in no project: no
             # machines, pointed to Add a machine
             with store.lock:
@@ -1402,15 +1486,14 @@ def test_one_machines_page_for_members_and_admins(tmp_path, w, h):
                                  " WHERE name='dave')", (store.clock() + 3600,))
             open_as("dave", dave_t)
             assert page.wait('document.querySelector("#a-machines .a-none")?.textContent') == \
-                "No machines yet. Click Add a machine and run the command on your computer."
+                "No machines yet. Click Add machine and run the command on your computer."
             assert page.js(wide)
             time.sleep(0.4)
             page.screenshot(shots / f"machines-member-empty-{tag}.png")
             # alice, an admin: Mine first, then Everyone
             open_as("alice", token)
-            page.wait('!document.getElementById("m-scope").hidden && !!document.querySelector("#a-machines [data-team-machine=\\"jet-1\\"]")')
+            page.wait('!document.getElementById("m-scope").hidden && !!document.querySelector("#a-machines [data-team-machine=\\"nvidia@jet-1\\"]")')
             assert page.js('document.querySelector("#m-scope [aria-pressed=\\"true\\"]").textContent') == "Mine"
-            assert not page.js('document.getElementById("add-team-btn").hidden')
             assert page.js('document.getElementById("team-machine-rows").hidden')
             assert page.js(wide)
             time.sleep(0.4)
@@ -1418,33 +1501,43 @@ def test_one_machines_page_for_members_and_admins(tmp_path, w, h):
             page.js('document.querySelector("#m-scope [data-scope=\\"everyone\\"]").click()')
             page.wait('!!document.querySelector(\'#team-machine-rows [data-host="box-1"]\')')
             assert page.js('document.getElementById("a-machines").hidden')
-            assert not page.js('document.getElementById("add-team-btn").hidden')
-            assert page.js(f'{pane}.querySelector("#m-sub").textContent').startswith("Every computer")
+            assert page.js(f'{pane}.querySelector("#m-sub").textContent').startswith("Every account")
             hosts = page.js('[...document.querySelectorAll("#team-machine-rows [data-host]")].map(r => r.dataset.host)')
             assert sorted(hosts) == ["box-1", "box-2", "jet-1"]
             assert page.js('document.querySelector(\'#team-machine-rows [data-host="box-1"] .m-who\').textContent') == "bob"
-            click(page, '#team-machine-rows [data-host="box-1"]', "Move")
+            click(page, '#team-machine-rows [data-host="box-1"]', "Give to…")
             page.wait('!!document.querySelector(\'#team-machine-rows [data-host="box-1"] .confirm\')')
             click(page, '#team-machine-rows [data-host="box-1"] .confirm', "Cancel")
             assert page.js(wide)
             time.sleep(0.4)
             page.screenshot(shots / f"machines-admin-everyone-{tag}.png")
-            # back to Mine; Add team machine there opens it under Everyone, where it will show
+            # back to Mine; Add machine asks whose; Shared team account opens it under Everyone,
+            # where it will show; a second click on Add machine closes it; Esc closes the question
             page.js('document.querySelector("#m-scope [data-scope=\\"mine\\"]").click()')
             assert not page.js('document.getElementById("a-machines").hidden')
-            page.js('document.getElementById("add-team-btn").click()')
+            page.js('document.getElementById("add-machine").click()')
+            assert not page.js('document.getElementById("add-choice").hidden')
+            page.js('document.getElementById("add-choice").dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}))')
+            assert page.js('document.getElementById("add-choice").hidden')
+            page.js('document.getElementById("add-machine").click()')
+            page.js('document.getElementById("add-shared").click()')
             assert not page.js('document.getElementById("add-team-box").hidden')
             assert page.js('document.querySelector("#m-scope [aria-pressed=\\"true\\"]").textContent') == "Everyone"
             assert page.js('document.getElementById("a-machines").hidden')
-            page.js('document.querySelector("#m-scope [data-scope=\\"mine\\"]").click()')
-            assert page.js('document.getElementById("add-team-box").hidden')
+            page.js('document.getElementById("add-machine").click()')
+            assert page.js('document.getElementById("add-team-box").hidden && document.getElementById("add-machine").getAttribute("aria-expanded") === "false"')
+            # My own account: the join command, under Mine
+            page.js('document.getElementById("add-machine").click()')
+            page.js('document.getElementById("add-own").click()')
+            page.wait('!document.getElementById("a-join").hidden && document.getElementById("join-cmd").textContent !== ""')
+            assert page.js('document.querySelector("#m-scope [aria-pressed=\\"true\\"]").textContent') == "Mine"
     finally:
         stop()
         store.close()
 
 
-def test_make_team_machine_button_and_this_hub(tmp_path):
-    """Make team machine shows on a plain member's row only (asked first, refusal shown); the hub
+def test_no_make_team_machine_button_and_this_hub(tmp_path):
+    """The page has no Make team machine (the command line keeps `machine team --from`); the hub
     key's device on the Machines page says This hub. Screenshots to KAPTYORKA_SHOTS."""
     import os
     from kaptyorka import paths
@@ -1456,33 +1549,104 @@ def test_make_team_machine_button_and_this_hub(tmp_path):
     _, token = person(store, "alice", "admin")
     (paths.home() / "admin-token").write_text(token + "\n")  # alice's device is the hub key
     bob, bob_t = person(store, "bob")
-    person(store, "carol")
     store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(bob_t))
-    row = 'document.querySelector("#people-rows [data-person=\\"{}\\"]")'.format
     try:
         with chrome(1440, 900) as page:
             page.go(f"http://127.0.0.1:{stop.port}/#t={token}&view=team")
-            page.wait(f'!!{row("bob")}')
-            assert "Make team machine" not in page.js(f'{row("bob")}.querySelector(".p-act").textContent')
-            page.screenshot(shots / "people-rows-desktop.png")
-            page.js(f'{row("alice")}.querySelector(".p-main").click()')  # yourself: nothing to open
-            assert "Make team machine" not in page.js(f'{row("alice")}.textContent')
-            page.js(f'{row("bob")}.querySelector(".p-main").click()')
-            page.wait(f'!!{row("bob")}.querySelector(".p-projects")')
-            assert "Make team machine" in page.js(f'{row("bob")}.querySelector(".p-projects").textContent')
-            page.screenshot(shots / "people-detail-team-button-desktop.png")
-            click(page, '#people-rows [data-person="bob"]', "Make team machine")
-            page.wait(f'!!{row("bob")}.querySelector(".confirm")')
-            assert page.js(f'{row("bob")}.querySelector(".confirm span").textContent') == (
-                "bob becomes a shared team machine: it leaves People, loses admin, and its sessions"
-                " are visible to everyone with access to the project.")
-            click(page, '#people-rows [data-person="bob"] .confirm', "Make team machine")
-            page.wait(f'!{row("bob")}')
-            assert [p for p in store.people() if p["name"] == "bob"][0]["team"]
-            page.js('location.hash = "#settings/account/machines"')
+            page.wait(f'!!{team_row("bob")}')
+            open_person(page, "bob")
+            assert "Make team machine" not in page.js('document.getElementById("settings").textContent')
+            page.js('location.hash = "#settings/machines"')
             page.wait('!!document.querySelector("#a-machines .a-hub")')
             assert page.js('document.querySelector("#a-machines .a-hub").textContent') == "This hub"
             page.screenshot(shots / "machines-this-hub-desktop.png")
+    finally:
+        stop()
+        store.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_home_mine_everyone_and_the_machine_switch(tmp_path, w, h):
+    """An admin's Home: Mine shows the manager, your own sessions and the team machine sessions
+    in your projects (what a member sees); Everyone shows every session under a header per
+    person and per team machine with its count, folded but your own; both kept on reload. A
+    member gets no switch. A person's page: a switch per team machine is the machine grant, and
+    a poll does not redraw an open view whose data did not change. Screenshots to
+    KAPTYORKA_SHOTS."""
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    _, token = person(store, "alice", "admin")
+    bob, bob_t = person(store, "bob")
+    store.project_register("proj-a", by="alice")
+    store.grant_project("proj-a", bob, "write", "alice")
+    a, b = store.authenticate(token), store.authenticate(bob_t)
+    store.heartbeat("box-1", [], principal=a, facts={"host": "box-1", "os_user": "alice"})
+    store.heartbeat("box-2", [], principal=b, facts={"host": "box-2", "os_user": "bob"})
+    _, code = store.team_machine_add("jet-1", "alice")
+    t, _ = store.invite_redeem(code, "jet-1", host="jet-1", os_user="nvidia")
+    j = store.authenticate(t)
+    store.heartbeat("jet-1", [], principal=j, facts={"host": "jet-1", "os_user": "nvidia"})
+
+    def online():
+        store.seen("a1", "box-1", "codex", "proj-a", principal=a)
+        store.seen("b1", "box-2", "codex", "proj-a", principal=b)
+        store.seen("j1", "jet-1", "claude", "proj-a", principal=j)
+    online()
+    base = f"http://127.0.0.1:{stop.port}"
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    rows = '[...document.querySelectorAll("#agents .row .subline span:first-child")].map(s => s.textContent)'
+    heads = '[...document.querySelectorAll("#agents .g-head")].map(h => h.textContent + "|" + h.getAttribute("aria-expanded"))'
+    try:
+        with chrome(w, h) as page:
+            page.go(f"{base}/#t={token}")
+            page.wait('!document.getElementById("h-scope").hidden && document.querySelectorAll("#agents .row").length === 4')
+            assert page.js('document.querySelector("#h-scope [aria-pressed=true]").textContent') == "Mine"
+            assert page.js(rows) == ["alice@box-1", "nvidia@jet-1"]  # yours and the team machine's; not bob's
+            assert page.js(wide)
+            page.screenshot(shots / f"home-admin-mine-{tag}.png")
+            page.js('document.querySelector("#h-scope [data-scope=everyone]").click()')
+            page.wait('document.querySelectorAll("#agents .g-head").length === 3')
+            assert page.js(heads) == ["You1|true", "bob1|false", "jet-1Team1|false"]
+            page.js('[...document.querySelectorAll("#agents .g-head")].find(h => h.textContent.startsWith("bob")).click()')
+            page.wait('document.querySelectorAll("#agents .row").length === 4')
+            assert "bob@box-2" in page.js(rows)
+            page.screenshot(shots / f"home-admin-everyone-{tag}.png")
+            page.js("location.reload()")  # the switch and the folds are kept in this browser
+            page.wait('document.querySelectorAll("#agents .g-head").length === 3')
+            assert page.js(heads) == ["You1|true", "bob1|true", "jet-1Team1|false"]
+            # bob's page: the team machine's switch is his use of it
+            page.go(f"{base}/#settings/people/bob")
+            sw = 'document.querySelector("#person-body .sw")'
+            page.wait(f'!!{sw}')
+            assert page.js(f'{sw}.getAttribute("aria-checked")') == "false"
+            assert "nvidia@jet-1" in page.js('document.querySelector("#person-body [data-host=\\"jet-1\\"]").textContent')
+            assert "bob@box-2" in page.js('document.getElementById("person-body").textContent')  # his own account, read only
+            page.js(f'{sw}.focus(); {sw}.click()')
+            page.wait(f'{sw}.getAttribute("aria-checked") === "true" && !!document.querySelector("#person-body .pp-cue")')
+            assert store.may_use("jet-1", bob)
+            assert page.js(f'document.activeElement === {sw}')
+            page.wait('!document.querySelector("#person-body .pp-cue")', timeout=5)
+            # an open view is not redrawn by polls that bring nothing new
+            page.js('window.__pp = document.querySelector("#person-body .a-profile")')
+            for _ in range(3):
+                online()
+                time.sleep(2.2)
+            assert page.js('window.__pp === document.querySelector("#person-body .a-profile")')
+            page.screenshot(shots / f"person-{tag}.png")
+            page.js(f'{sw}.click()')
+            page.wait(f'{sw}.getAttribute("aria-checked") === "false" && !!document.querySelector("#person-body .pp-cue")')
+            assert not store.may_use("jet-1", bob)
+        with chrome(w, h) as page:
+            page.go(f"{base}/#t={bob_t}")
+            page.wait('document.querySelectorAll("#agents .row").length === 3')
+            assert page.js('document.getElementById("h-scope").hidden')
+            assert page.js(rows) == ["bob@box-2", "nvidia@jet-1"]
+            page.screenshot(shots / f"home-member-{tag}.png")
     finally:
         stop()
         store.close()

@@ -725,7 +725,9 @@ def test_the_account_panel_holds_only_your_own_data(hub, lab):
     assert (acc["person"], acc["role"], acc["gitlab_user"], acc["add_machine"]) == ("bob", "member", "bob-gl", True)
     # his two machines, not alice's, and not this GitLab sign-in
     assert [(m["name"], m["os_user"], m["online"], m["current"]) for m in acc["machines"]] == [
-        ("bob-laptop", "bob", True, False), ("bob@box-2", "", False, False)]
+        ("bob@box-1", "bob", True, False), ("bob@box-2", "", False, False)]
+    # one name everywhere: account@computer, unless renamed; the name it joined with stays
+    assert (acc["machines"][0]["machine"], acc["machines"][0]["label"], acc["machines"][0]["auto"]) == ("bob-laptop", "", "bob@box-1")
     assert acc["machines"][0]["last_seen"] == hub.now[0] - 5 and ONLINE_S > 5
     assert acc["projects"] == [{"name": "proj-a", "role": "read"}]
     assert [b["current"] for b in acc["browsers"]] == [True]

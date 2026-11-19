@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.22
+
+- **One name for a machine everywhere: `account@computer`**, such as `alice@box-1`, on Home, Machines (Mine and Everyone), a person's page and the warning bar; its label when someone renamed it, the name it joined with when the account or computer is unknown. The hub's own account now reads like the others, with no data change. Rename leaves the box empty to go back to that name.
+- **Home: Mine / Everyone for admins.** Mine is what a member sees: the manager, your own sessions and the team machine sessions in your projects. Everyone groups every session under a foldable header per person and per team machine, each with its count and unread count; all but your own start folded. The choice and the folds are kept in this browser. Members get no switch. Background jobs keep their own group.
+- **A page per person.** In People, a row is the name, a short status and a chevron; a click opens the person's page at its own address (`#settings/people/<name>`, with Back): their role, GitLab user and last seen; their projects as boxes ("Changes save automatically", **Saved ✓** next to the box for 2 seconds, an error right beside it); the team machines with a switch each for their use of it (the same as `kaptyorka grant <person> machine:<host>`), and their own accounts; then **New invite link**, **Make admin** / **Remove admin** and **Remove**.
+- **One Add machine button.** An admin first says whose account it is: **My own account** (its sessions are yours) or **Shared team account** (its sessions are visible to everyone in the project); a member goes straight to their join command. **Move** is now **Give to…**; `kaptyorka machine move` is unchanged.
+- **Agent tools on the Machines page.** Each machine shows the tools its bridge reported: the tool's name when logged in, "Codex · not logged in" in amber, "No agent tool" in red.
+- **Make team machine left the page**; `kaptyorka machine team --from` stays.
+- **One flat Settings sidebar**: Profile, Machines, Signed-in browsers, People, Projects, at `#settings/profile`, `#settings/people` and so on. The old `#settings/account/...` and `#settings/team/...` addresses still work.
+- **No more blinking.** The session list and the people list shared one redraw key, so each poll redrew both; an online machine's last seen also redrew its panel every few seconds. Now a poll redraws only what changed, keeps focus, and waits while a click is in progress.
+- **`kaptyorka start` asks before making a new hub.** On a machine with no hub yet, the first start says it creates a new, separate hub (join the team's with `kaptyorka join <invite link>`) and asks you to type `new hub`. Without a terminal it needs `--new-hub`.
+
 ## 0.9.21
 
 - **Team machines on the page and in the list.** Settings → People has **Make team machine** on a row (admin only, asked first; not for yourself, the manager, a team machine or anyone linked to GitLab). The hub's refusal shows on the page. `kaptyorka people` shows "team" in the ROLE column for team machines. The Machines page marks the hub key's device **This hub**.

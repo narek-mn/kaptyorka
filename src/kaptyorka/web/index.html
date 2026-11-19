@@ -169,8 +169,6 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 #settings { overflow-y: auto; }
 .set { display: grid; grid-template-columns: 216px minmax(0, 760px); justify-content: center; column-gap: var(--s-8); padding: var(--s-8) var(--s-6) var(--s-12); }
 .set-nav { position: sticky; top: 0; align-self: start; display: flex; flex-direction: column; gap: 2px; }
-.set-group { padding: var(--s-4) 10px 6px; font-size: var(--fs-xs); font-weight: var(--fw-semi); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
-.set-group:first-child { padding-top: 0; }
 .set-nav a { position: relative; display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--radius);
   color: var(--muted); text-decoration: none; font-weight: var(--fw-medium); transition: background-color var(--ease), color var(--ease); }
 .set-nav a > svg { color: var(--faint); flex: none; transition: color var(--ease); }
@@ -191,11 +189,9 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 #waiting { margin-bottom: var(--s-6); }
 /* rows: actions show on hover or focus with a mouse; always on touch */
 @media (hover: hover) and (pointer: fine) {
-  .p-line .p-act > .btn, .pj-row .pj-acts > .btn, .a-row .a-acts > .btn { opacity: 0; transition: opacity var(--ease); }
-  .p-line:hover .p-act > .btn, .p-line:focus-within .p-act > .btn, .person.open .p-act > .btn,
+  .pj-row .pj-acts > .btn, .a-row .a-acts > .btn { opacity: 0; transition: opacity var(--ease); }
   .pj-row:hover .pj-acts > .btn, .pj-row:focus-within .pj-acts > .btn,
   .a-row:hover .a-acts > .btn, .a-row:focus-within .a-acts > .btn { opacity: 1; }
-  .p-act .btn.p-gl.unset { opacity: 1; }
 }
 /* a row added or removed slides in or out */
 .row-in { animation: row-in var(--dur-3) var(--ease-out); }
@@ -209,6 +205,7 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 .a-profile dt { color: var(--muted); }
 .a-profile dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .a-profile .quiet { color: var(--faint); }
+.a-profile .on { color: var(--ok); }
 .a-note { margin-top: var(--s-2); font-size: var(--fs-sm); color: var(--faint); }
 .a-row { display: flex; align-items: center; gap: var(--s-3); min-height: 56px; padding: var(--s-2) 10px var(--s-2) var(--s-4);
   border-bottom: 1px solid var(--line); transition: background-color var(--ease); }
@@ -239,6 +236,49 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 .seg .btn[aria-pressed="false"] { color: var(--muted); }
 .seg + .a-sec { margin-top: 0; }
 .a-name { display: flex; align-items: center; gap: 10px; }
+/* a machine's agent tools, as the bridge reports them */
+.m-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+/* Add machine (admin): one question, two answers, each a line of what it means */
+.m-choice { display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-3); }
+.m-choice-q { padding: 2px 2px 0; font-size: var(--fs-md); font-weight: var(--fw-semi); color: var(--ink); }
+.m-opt { display: flex; align-items: center; gap: var(--s-3); width: 100%; padding: var(--s-3); text-align: left; border: 1px solid var(--line-ctl);
+  border-radius: var(--radius-lg); background: var(--surface); transition: border-color var(--ease), background-color var(--ease); }
+.m-opt:hover { border-color: var(--accent-line); background: var(--surface2); }
+.m-opt:active { background: var(--hover); }
+.m-opt > .m-opt-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.m-opt b { font-weight: var(--fw-semi); color: var(--ink); }
+.m-opt small { font-size: var(--fs-md); color: var(--muted); line-height: 1.45; }
+.m-opt > svg { color: var(--faint); }
+.m-opt:hover > svg { color: var(--ink); }
+.m-choice-foot { display: flex; justify-content: flex-end; }
+.a-join .a-join-foot { display: flex; align-items: center; gap: var(--s-2); }
+.a-join .a-join-foot small { flex: 1; }
+/* an on/off switch: the knob right and coral when on */
+.sw { position: relative; flex: none; width: 38px; height: 22px; border-radius: var(--pill); border: 1px solid var(--line-ctl); background: var(--surface2);
+  transition: background-color var(--ease), border-color var(--ease); }
+.sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: var(--round); background: var(--muted);
+  transition: transform var(--ease), background-color var(--ease); }
+.sw:hover { border-color: var(--line-strong); }
+.sw[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.sw[aria-checked="true"]::after { transform: translateX(16px); background: var(--bg); }
+.sw:disabled { opacity: .5; cursor: default; }
+/* a person's page: profile, projects, machines, then the actions */
+.pp-sec { margin-top: var(--s-8); }
+.pp-sec .set-sub { display: flex; align-items: baseline; gap: var(--s-3); }
+.pp-sec .set-sub small { font-size: var(--fs-sm); font-weight: var(--fw-regular); letter-spacing: 0; text-transform: none; color: var(--faint); }
+.pp-boxes { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); padding: var(--s-4); }
+.pp-boxes .quiet { font-size: var(--fs-md); color: var(--faint); }
+.pp-box { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.pp-cue { font-size: var(--fs-sm); color: var(--ok); white-space: nowrap; animation: fade-in var(--dur-2) var(--ease-out); }
+.pp-err { font-size: var(--fs-sm); color: var(--danger); animation: fade-in var(--dur-2) var(--ease-out); }
+.pp-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin-top: var(--s-8); padding-top: var(--s-5); border-top: 1px solid var(--line); }
+.pp-acts .p-rm { margin-left: auto; }
+.pp-acts:has(.confirm) > .btn, .pp-acts:has(.confirm) > .p-rm { display: none; }
+.pp-acts .confirm { justify-content: flex-start; }
+.pp-link { display: flex; align-items: center; gap: var(--s-2); flex-basis: 100%; color: var(--muted); }
+.pp-link input { flex: 1; min-width: 0; height: var(--h-sm); padding: 0 var(--s-2); font: var(--fs-sm) var(--mono); }
+.a-row .a-acts .pp-cue, .a-row .a-acts .pp-err { max-width: 260px; }
+.set-title .back-btn { flex: none; margin: -2px calc(-1 * var(--s-2)) 0 calc(-1 * var(--s-2)); }
 
 .live { display: flex; align-items: center; flex: none; margin-left: -32px; }
 .live i { width: 6px; height: 6px; border-radius: var(--round); background: var(--ok); transition: background-color var(--dur-3); }
@@ -282,6 +322,10 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .chip.idle { color: var(--faint); }
 .chip.idle > .dot { background: var(--faint); }
 .chip.dashed { border-style: dashed; background: none; }
+.chip.warn { color: var(--risk); background: rgba(194, 148, 47, .1); border-color: rgba(194, 148, 47, .38); }
+.chip.warn > .dot { background: var(--risk); }
+.chip.bad { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
+.chip.bad > .dot { background: var(--danger); }
 .chip.n { text-transform: capitalize; }
 
 /* first load: grey bars where the rows will be */
@@ -339,6 +383,11 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .list .bg-head small { font-weight: var(--fw-regular); color: var(--faint); }
 .list .bg-head .count { margin-left: auto; }
 .list .row > .bg-lead { padding: 0 2px; }
+/* Home, an admin: Mine / Everyone over the list; Everyone groups the sessions by person */
+.side-seg { display: flex; align-self: stretch; margin: var(--s-3) 14px 0; }
+.side-seg .btn { flex: 1; }
+.list .g-head .av { margin: -4px 0; }
+.list .g-head .chip { margin-left: 2px; }
 .list .bg-rows.enter .row { animation: bg-in var(--dur-2) var(--ease-out); }
 .quiet-line { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-4) var(--s-3) 18px; font-size: var(--fs-sm); color: var(--faint); }
 .read-only { flex: none; display: flex; align-items: center; gap: var(--s-2); padding: 14px var(--s-6) 18px; border-top: 1px solid var(--line);
@@ -539,13 +588,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .person:last-child { border-bottom: 0; }
 .p-line { display: flex; align-items: center; gap: 10px; padding-right: 10px; transition: background-color var(--ease); }
 .p-line:hover { background: var(--surface2); }
-.person.open .p-line { background: var(--surface2); }
 .p-main { flex: 1; min-width: 0; display: grid; grid-template-columns: 28px minmax(72px, max-content) minmax(0, 1fr) 14px;
   align-items: center; column-gap: 14px; min-height: var(--row); padding: var(--s-2) 6px var(--s-2) var(--s-4); text-align: left; }
-.p-main.still { grid-template-columns: 28px minmax(72px, max-content) minmax(0, 1fr); cursor: default; }
 .p-main:focus-visible { outline-offset: -2px; }
+a.p-main { color: inherit; text-decoration: none; }
 .p-main:active { background: var(--hover); }
-.p-main.still:active { background: none; }
 .p-who { min-width: 0; display: flex; align-items: center; gap: var(--s-2); }
 .p-name { font-weight: var(--fw-semi); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .p-sum { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--fs-md); }
@@ -555,15 +602,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .btn.p-gl:hover { color: var(--ink); }
 .p-main > svg { color: var(--faint); transition: transform var(--ease), color var(--ease); }
 .p-main:hover > svg { color: var(--muted); }
-.p-main[aria-expanded="true"] > svg { transform: rotate(90deg); color: var(--ink); }
-.p-act { flex: none; display: flex; gap: 6px; align-items: center; justify-content: flex-end; min-width: 140px; }
-.p-act .new-link { min-width: 136px; }  /* every chevron in one column */
-.p-line:has(.confirm) .p-act { min-width: 0; }
-.p-act:has(.confirm) > .btn { display: none; }  /* one question at a time on a row */
-.p-act .confirm { max-width: 420px; }
-.p-projects { display: flex; flex-wrap: wrap; gap: 6px; padding: var(--s-1) 10px var(--s-4) 58px; background: var(--surface2);
-  animation: drop var(--dur-2) var(--ease-out); }
-.p-projects .quiet { font-size: var(--fs-md); color: var(--faint); }
 .p-rm { margin-left: auto; display: flex; align-items: center; }
 .proj { display: inline-flex; align-items: center; gap: var(--s-2); height: var(--h-sm); padding: 0 var(--s-3) 0 10px; font-size: var(--fs-md); color: var(--muted);
   border: 1px solid var(--line-ctl); border-radius: var(--pill); background: var(--surface); cursor: pointer; user-select: none;
@@ -575,8 +613,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .proj input:focus { box-shadow: none; }
 .proj input:disabled { cursor: default; }
 .proj small { font-size: var(--fs-xs); }
-.p-link { display: flex; align-items: center; gap: var(--s-2); padding: 0 var(--s-4) var(--s-3) 58px; color: var(--muted); animation: drop var(--dur-2) var(--ease-out); }
-.p-link input, .add-link input { flex: 1; min-width: 0; height: var(--h-sm); padding: 0 var(--s-2); font: var(--fs-sm) var(--mono); }
+.add-link input { flex: 1; min-width: 0; height: var(--h-sm); padding: 0 var(--s-2); font: var(--fs-sm) var(--mono); }
 .add-box { margin-bottom: 14px; background: var(--raised); box-shadow: var(--shadow-2); animation: drop var(--dur-2) var(--ease-out); }
 .add-form, .add-link { display: flex; align-items: center; gap: var(--s-2); padding: 10px 10px 10px 14px; }
 .add-form input { flex: 0 1 260px; min-width: 0; height: var(--h-sm); padding: 0 var(--s-2); font-size: var(--fs-md); }
@@ -693,14 +730,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   .set-nav::-webkit-scrollbar { display: none; }
   .set-nav { -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); }
   /* a person's actions go under their name: the name and summary keep the row */
-  .p-line { flex-wrap: wrap; }
-  .p-line .p-act { flex-basis: 100%; justify-content: flex-start; padding: 0 0 10px 52px; }
-  .p-line .p-act:empty { display: none; }
-  .set-group { display: none; }
   .set-nav a { flex: none; height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--pill); }
   .set-nav a[aria-current="page"] { border-color: var(--accent-line); background: var(--accent-soft); }
   .set-nav a[aria-current="page"]::before { display: none; }
   .set-nav a > svg { display: none; }
+  .pp-acts .p-rm { margin-left: 0; }
   .set-title { flex-wrap: wrap; margin-bottom: var(--s-4); }
   .set-title:has(.btn:not([hidden]) ~ .btn:not([hidden])) > div { flex-basis: 100%; }  /* two buttons: under the title */
   .menu { position: fixed; top: calc(var(--row) + 6px); right: 8px; left: auto; }
@@ -710,12 +744,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   .w-why { flex-basis: 100%; margin-left: 0; white-space: nowrap; }
   .w-acts .btn { min-width: 64px; }
   .p-main { grid-template-columns: 28px minmax(0, max-content) minmax(0, 1fr) 14px; column-gap: 10px; padding-left: 14px; }
-  .p-main.still { grid-template-columns: 28px minmax(0, max-content) minmax(0, 1fr); }
-  .p-projects, .p-link { padding-left: 52px; }
-  .p-line:has(.confirm) { flex-wrap: wrap; }
-  .p-line:has(.confirm) .p-act { flex-basis: 100%; padding: 0 0 10px 14px; }
-  .p-act .confirm { max-width: 100%; justify-content: flex-start; }
-  .p-act { min-width: 0; }
   .add-link { flex-wrap: wrap; }
   .add-who { flex-basis: 100%; }
   .add-link input { flex-basis: 100%; height: var(--h-md); }
@@ -731,8 +759,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   .a-row:has(.confirm) .a-acts { flex-basis: 100%; }
   .a-acts .confirm { max-width: 100%; justify-content: flex-start; }
   .a-profile { column-gap: var(--s-5); }
-  .p-act .new-link { min-width: 0; }
-  .p-act .new-link .lbl { display: none; }
 }
 @keyframes slide-in { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes slide-out { to { transform: translateX(32px); opacity: 0; } }
@@ -812,8 +838,8 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       <button type="button" class="acct" id="viewer-name" aria-haspopup="menu" aria-expanded="false" aria-controls="acct-menu" title="Your account"><span class="av av-person sm" id="viewer-av" aria-hidden="true"></span><span id="viewer-label"></span><span class="count" id="n-acct" hidden></span><svg class="acct-chev" width="12" height="12" aria-hidden="true"><use href="#i-chev"/></svg></button>
       <div class="menu" id="acct-menu" role="menu" aria-labelledby="viewer-name" hidden>
         <div class="menu-who"><b id="menu-name"></b><small id="menu-role"></small></div>
-        <button type="button" role="menuitem" data-go="account/profile"><svg width="16" height="16" aria-hidden="true"><use href="#i-user"/></svg>Account settings</button>
-        <button type="button" role="menuitem" data-go="team/people" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-team"/></svg>Team settings<span class="count" id="n-menu" hidden>0</span></button>
+        <button type="button" role="menuitem" data-go="profile"><svg width="16" height="16" aria-hidden="true"><use href="#i-user"/></svg>Account settings</button>
+        <button type="button" role="menuitem" data-go="people" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-team"/></svg>Team settings<span class="count" id="n-menu" hidden>0</span></button>
         <div class="menu-sep" role="separator"></div>
         <button type="button" role="menuitem" id="signout"><svg width="16" height="16" aria-hidden="true"><use href="#i-signout"/></svg>Sign out</button>
       </div>
@@ -823,6 +849,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   <main>
     <section id="home" role="tabpanel">
       <div class="side">
+        <div class="seg side-seg admin-only" id="h-scope" role="group" aria-label="Show sessions" hidden><button type="button" class="btn small" data-scope="mine" aria-pressed="true">Mine</button><button type="button" class="btn small" data-scope="everyone" aria-pressed="false">Everyone</button></div>
         <div class="list" id="agents" aria-busy="true"><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div></div>
         <div class="quiet-line" id="team-empty" hidden><svg width="14" height="14" aria-hidden="true"><use href="#i-monitor"/></svg><span>No sessions online</span></div>
         <div class="side-foot" id="side-foot" hidden>
@@ -872,16 +899,14 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     <section id="settings" role="tabpanel" aria-label="Settings" hidden>
       <div class="set">
       <nav class="set-nav" id="set-nav" aria-label="Settings">
-        <div class="set-group">Your account</div>
-        <a href="#settings/account/profile" data-sec="account/profile"><svg width="16" height="16" aria-hidden="true"><use href="#i-user"/></svg><span>Profile</span></a>
-        <a href="#settings/account/machines" data-sec="account/machines"><svg width="16" height="16" aria-hidden="true"><use href="#i-monitor"/></svg><span>Machines</span></a>
-        <a href="#settings/account/browsers" data-sec="account/browsers" id="nav-browsers" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-lock"/></svg><span>Signed-in browsers</span></a>
-        <div class="set-group admin-only" hidden>Team</div>
-        <a href="#settings/team/people" data-sec="team/people" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-team"/></svg><span>People</span><span class="count" id="n-team" hidden>0</span></a>
-        <a href="#settings/team/projects" data-sec="team/projects" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-folder"/></svg><span>Projects</span></a>
+        <a href="#settings/profile" data-sec="profile"><svg width="16" height="16" aria-hidden="true"><use href="#i-user"/></svg><span>Profile</span></a>
+        <a href="#settings/machines" data-sec="machines"><svg width="16" height="16" aria-hidden="true"><use href="#i-monitor"/></svg><span>Machines</span></a>
+        <a href="#settings/browsers" data-sec="browsers" id="nav-browsers" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-lock"/></svg><span>Signed-in browsers</span></a>
+        <a href="#settings/people" data-sec="people" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-team"/></svg><span>People</span><span class="count" id="n-team" hidden>0</span></a>
+        <a href="#settings/projects" data-sec="projects" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-folder"/></svg><span>Projects</span></a>
       </nav>
       <div class="set-main" id="set-main">
-        <div class="set-pane" id="pane-account-profile" data-sec="account/profile" hidden>
+        <div class="set-pane" id="pane-profile" data-sec="profile" hidden>
           <div class="set-title"><div><h1>Profile</h1><p>Name, role and projects. Only an admin changes your role.</p></div></div>
         <div class="a-sec">
           <dl class="panel a-profile" id="a-profile"></dl>
@@ -891,16 +916,23 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
           <div class="panel t-list" id="a-projects"><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div></div>
         </div>
         </div>
-        <div class="set-pane" id="pane-account-machines" data-sec="account/machines" hidden>
-          <div class="set-title"><div><h1>Machines</h1><p id="m-sub">The computers you joined from, and the team machines you can use.</p></div><button type="button" class="btn small" id="add-team-btn" aria-expanded="false" aria-controls="add-team-box" hidden><svg width="14" height="14"><use href="#i-plus"/></svg>Add team machine</button><button type="button" class="btn small primary" id="add-machine" aria-expanded="false" aria-controls="a-join"><svg width="14" height="14"><use href="#i-plus"/></svg>Add a machine</button></div>
+        <div class="set-pane" id="pane-machines" data-sec="machines" hidden>
+          <div class="set-title"><div><h1>Machines</h1><p id="m-sub">The computers you joined from, and the team machines you can use.</p></div><button type="button" class="btn small primary" id="add-machine" aria-expanded="false" aria-controls="a-join"><svg width="14" height="14"><use href="#i-plus"/></svg>Add machine</button></div>
           <div class="seg admin-only" id="m-scope" role="group" aria-label="Show machines" hidden><button type="button" class="btn small" data-scope="mine" aria-pressed="true">Mine</button><button type="button" class="btn small" data-scope="everyone" aria-pressed="false">Everyone</button></div>
         <div class="a-sec">
+          <div class="panel add-box m-choice" id="add-choice" role="group" aria-labelledby="add-choice-q" hidden>
+            <div class="m-choice-q" id="add-choice-q">Whose account is it?</div>
+            <button type="button" class="m-opt" id="add-own"><span class="av av-machine" aria-hidden="true"><svg width="14" height="14"><use href="#i-user"/></svg></span><span class="m-opt-text"><b>My own account</b><small>A computer or account only you use, like your laptop. Its sessions are yours.</small></span><svg width="14" height="14" aria-hidden="true"><use href="#i-chev"/></svg></button>
+            <button type="button" class="m-opt" id="add-shared"><span class="av av-machine" aria-hidden="true"><svg width="14" height="14"><use href="#i-team"/></svg></span><span class="m-opt-text"><b>Shared team account</b><small>An account the whole team logs into, like a lab Jetson. Its sessions are visible to everyone in the project.</small></span><svg width="14" height="14" aria-hidden="true"><use href="#i-chev"/></svg></button>
+            <div class="m-choice-foot"><button type="button" class="btn small" id="add-choice-cancel">Cancel</button></div>
+          </div>
           <div class="panel a-join" id="a-join" hidden>
             <div class="cmd"><code id="join-cmd"></code><button type="button" class="btn small" id="join-copy" title="Copy"><svg width="14" height="14"><use href="#i-copy"/></svg>Copy</button></div>
-            <small>Run it on the new machine. Works once, for 24 hours.</small>
+            <div class="a-join-foot"><small>Run it on the new machine, in the account you add. Works once, for 24 hours.</small><button type="button" class="btn small" id="join-done">Done</button></div>
           </div>
           <div class="panel add-box" id="add-team-box" hidden>
             <form class="add-form" id="add-team" autocomplete="off">
+              <span class="add-who">Shared team account</span>
               <input id="new-team" placeholder="Name, for example jetson-1" aria-label="Team machine name" maxlength="40" required>
               <button type="submit" class="btn small primary">Add</button>
               <button type="button" class="btn small" id="add-team-cancel">Cancel</button>
@@ -914,14 +946,14 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
           <div class="err" id="machines-err" hidden></div>
         </div>
         </div>
-        <div class="set-pane" id="pane-account-browsers" data-sec="account/browsers" hidden>
+        <div class="set-pane" id="pane-browsers" data-sec="browsers" hidden>
           <div class="set-title"><div><h1>Signed-in browsers</h1></div><button type="button" class="btn small" id="browsers-out" hidden>Sign out everywhere else</button></div>
         <div class="a-sec" id="a-browsers-sec">
           <div class="panel t-list" id="a-browsers"></div>
           <div class="err" id="a-browsers-err" role="alert" hidden></div>
         </div>
         </div>
-        <div class="set-pane" id="pane-team-people" data-sec="team/people" hidden>
+        <div class="set-pane" id="pane-people" data-sec="people" hidden>
           <div class="set-title"><div><h1>People</h1><p>Who is on the hub, and what waits for your answer.</p></div><button type="button" class="btn small primary" id="add-person-btn" aria-expanded="false" aria-controls="add-box"><svg width="14" height="14"><use href="#i-plus"/></svg>Add person</button></div>
         <div id="waiting" hidden>
           <h2 class="set-sub">Waiting for you</h2>
@@ -941,7 +973,12 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         <div class="panel t-list" id="people-rows"><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div></div>
         <div class="err" id="team-err" hidden></div>
         </div>
-        <div class="set-pane" id="pane-team-projects" data-sec="team/projects" hidden>
+        <div class="set-pane" id="pane-person" data-sec="person" hidden>
+          <div class="set-title"><a class="btn small icon quiet back-btn" id="person-back" href="#settings/people" title="Back to People" aria-label="Back to People"><svg width="14" height="14"><use href="#i-back"/></svg></a><div><h1 id="person-name">Person</h1><p id="person-sub"></p></div></div>
+          <div id="person-body"><div class="panel"><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div><div class="skel" aria-hidden="true"><i></i><i></i><i></i></div></div></div>
+          <div class="err" id="person-err" role="alert" hidden></div>
+        </div>
+        <div class="set-pane" id="pane-projects" data-sec="projects" hidden>
           <div class="set-title"><div><h1>Projects</h1></div><button type="button" class="btn small" id="add-project-btn" aria-expanded="false" aria-controls="add-project-box"><svg width="14" height="14"><use href="#i-plus"/></svg>Add project</button></div>
         <div id="projects" hidden>
           <div class="panel add-box" id="add-project-box" hidden>
@@ -968,10 +1005,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 (function () {
   "use strict";
   var KEY = "kaptyorka.token";
-  /* Home (sessions and chat) for everyone; Settings: your account, and the team for an admin */
-  var ACCOUNT_SECS = ["account/profile", "account/machines", "account/browsers"];
-  var TEAM_SECS = ["team/people", "team/projects"];
-  var token = null, view = "home", sec = "account/profile";
+  /* Home (sessions and chat) for everyone; Settings: your account, and the team for an admin.
+     "person" is one person's page, #settings/people/<name> */
+  var ACCOUNT_SECS = ["profile", "machines", "browsers"];
+  var TEAM_SECS = ["people", "person", "projects"];
+  var token = null, view = "home", sec = "profile", personName = "";
   var feed = null, seen = {}, timer = null, expanded = {}, me = null;
   var conv = "mgr", phoneOpen = false, showNotices = false, askOpen = false;  /* the open chat; a phone shows it over the list; hub notices shown in Activity; the ask form open */
   var fleet = { warnings: [] }, fleetAt = 0;  /* the admin's machine warnings: Home shows those that block */
@@ -979,10 +1017,13 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   var holding = null, holdClose = null;  /* an open inline confirm or edit: refreshes leave its panel alone */
   var bgOpen = store(function (s) { return s.getItem("kaptyorka.bg-open"); }) === "1";  /* this viewer's Background group, open or folded */
   var bgFolded = null, bgEnter = false;  /* the open background chat the viewer folded away anyway; rows fade in once on opening */
-  var openPerson = null, addOpen = false, added = null, cue = null;  /* Team: the person shown open, Add person, its link, "Saved" */
-  var account = null, accountAt = 0, joinCmd = null, linkToken = null;  /* the Account page's data; its Add a machine command; a device link kept only to link GitLab */
+  var addOpen = false, added = null;  /* People: Add person, its link */
+  var account = null, accountAt = 0, joinCmd = null, linkToken = null;  /* the Account page's data; its Add machine command; a device link kept only to link GitLab */
   var myAccess = null;
   var mScope = "mine";  /* Machines: an admin's Mine or Everyone */
+  var hScope = store(function (s) { return s.getItem("kaptyorka.home-scope"); }) === "everyone" ? "everyone" : "mine";  /* Home: an admin's Mine or Everyone */
+  var groupOpen = store(function (s) { var g = JSON.parse(s.getItem("kaptyorka.home-groups") || "null"); return g && typeof g === "object" ? g : null; }) || {};
+  var groupFolded = {};  /* a group folded while its chat was open: it stays folded */
   var attached = null;  /* the file waiting in the compose bar {file, id} */
 
   function store(fn) { try { return fn(window.localStorage); } catch (e) { return null; } }
@@ -994,21 +1035,30 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   } else {
     token = store(function (s) { return s.getItem(KEY); });
   }
-  /* #settings/<scope>/<section>; the older #view=account and #view=team (or any old Admin
-     link, #view=people and the like) still land in the right section */
+  /* #settings/<section> and #settings/people/<name>. The older #settings/account/... and
+     #settings/team/..., #view=account and #view=team (or any old Admin link, #view=people and
+     the like) still land in the right section */
+  var OLD_SECS = { "account/profile": "profile", "account/machines": "machines", "account/browsers": "browsers",
+                   "team/people": "people", "team/projects": "projects" };
   function parseHash(h) {
-    var m = /^#?settings\/((?:account|team)\/[a-z]+)/.exec(h || "");
-    if (m && m[1] === "team/machines") m = null;  /* the old All machines: Machines, Everyone */
-    if (m) return ["settings", m[1]];
-    var v = new URLSearchParams((h || "").replace(/^#/, "")).get("view");
-    if (/^#?settings\/team\/machines/.test(h || "") || v === "machines") { mScope = "everyone"; return ["settings", "account/machines"]; }
+    h = h || "";
+    var p = /^#?settings\/people\/([^/?#]+)/.exec(h);
+    if (p) { try { personName = decodeURIComponent(p[1]); } catch (e) { personName = p[1]; } return ["settings", "person"]; }
+    var m = /^#?settings\/([a-z]+(?:\/[a-z]+)?)/.exec(h);
+    var v = new URLSearchParams(h.replace(/^#/, "")).get("view");
+    if ((m && m[1] === "team/machines") || v === "machines") { mScope = "everyone"; return ["settings", "machines"]; }  /* the old All machines */
+    if (m && OLD_SECS[m[1]]) return ["settings", OLD_SECS[m[1]]];
+    if (m && ACCOUNT_SECS.concat(TEAM_SECS).indexOf(m[1]) >= 0) return ["settings", m[1]];
     if (!v || v === "home") return ["home", null];
-    if (v === "account") return ["settings", "account/profile"];
-    if (v === "projects") return ["settings", "team/" + v];
-    return ["settings", "team/people"];
+    if (v === "account") return ["settings", "profile"];
+    if (v === "projects") return ["settings", v];
+    return ["settings", "people"];
   }
   (function () { var r = parseHash(location.hash); view = r[0]; if (r[1]) sec = r[1]; })();
-  function viewUrl() { return location.pathname + (view === "home" ? "" : "#settings/" + sec); }
+  function viewUrl() {
+    if (view === "home") return location.pathname;
+    return location.pathname + "#settings/" + (sec === "person" ? "people/" + encodeURIComponent(personName) : sec);
+  }
   history.replaceState(null, "", viewUrl());
 
   function $(id) { return document.getElementById(id); }
@@ -1184,7 +1234,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   }
   /* after a confirm closes: draw what the refreshes skipped while it was open */
   function redrawAdmin() {
-    ["team", "projects", "messages", "account"].forEach(function (k) { seen[k] = null; });
+    ["people", "person", "hosts", "projects", "messages", "account"].forEach(function (k) { seen[k] = null; });
     if (feed) render();
     if (account) renderAccount();
   }
@@ -1192,16 +1242,16 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   function quiet(p) { p.catch(function () {}); }
   function isAdmin() { return !!me && me.role === "admin"; }
 
-  function inTeam() { return view === "settings" && sec.indexOf("team/") === 0; }
-  function inAccount() { return view === "settings" && sec.indexOf("account/") === 0; }
-  function inMachines() { return view === "settings" && sec === "account/machines"; }
+  function inTeam() { return view === "settings" && TEAM_SECS.indexOf(sec) >= 0; }
+  function inAccount() { return view === "settings" && ACCOUNT_SECS.indexOf(sec) >= 0; }
+  function inMachines() { return view === "settings" && sec === "machines"; }
   /* Home or one Settings section in the main area. push: a new history entry, so Back returns */
   function show(v, push, s) {
     var was = view + sec;
     if (s) sec = s;
     if (v !== "settings") v = "home";
-    if (TEAM_SECS.indexOf(sec) >= 0 && !isAdmin()) { v = "home"; sec = "account/profile"; }  /* a team link: Home */
-    if (ACCOUNT_SECS.concat(isAdmin() ? TEAM_SECS : []).indexOf(sec) < 0) sec = "account/profile";
+    if (TEAM_SECS.indexOf(sec) >= 0 && !isAdmin()) { v = "home"; sec = "profile"; }  /* a team link: Home */
+    if (ACCOUNT_SECS.concat(isAdmin() ? TEAM_SECS : []).indexOf(sec) < 0) sec = "profile";
     if (holdClose && v + sec !== was) holdClose();  /* a confirm does not wait on a section nobody sees */
     view = v;
     $("home").hidden = v !== "home";
@@ -1214,8 +1264,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       p.hidden = !on;
     });
     document.querySelectorAll("#set-nav a").forEach(function (a) {
-      if (a.dataset.sec === sec) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+      if (a.dataset.sec === (sec === "person" ? "people" : sec)) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
     });
+    if (sec === "person" && v === "settings") { seen.person = null; $("person-err").hidden = true; }
     var url = viewUrl();
     if (push && location.pathname + location.hash !== url) history.pushState(null, "", url);
     else history.replaceState(null, "", url);
@@ -1289,7 +1340,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     var mgr = feed.agents.filter(function (a) { return a.role === "manager"; })[0] || null;
     if (admin) list.push({ key: "activity", name: "Activity", icon: "i-list", cls: "activity", sub: "", tip: "Every message", read: true });
     var ms = mgr ? "up" : feed.manager || "off";
-    list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms, sub: mgr ? mgr.machine : "", act: mgr ? mgr.activity || "" : "",
+    list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms, sub: mgr ? mgr.where || mgr.machine : "", act: mgr ? mgr.activity || "" : "",
                 to: "manager", tip: "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : "") });
     agents.forEach(function (a) {
       var tip = [a.label ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status,
@@ -1298,8 +1349,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
                  isAdmin() ? harness(a.harness) : null].filter(Boolean).join("\n");
       /* a hidden project: the row goes by the session's handle, which also tells two apart */
       var k = hidden(a) ? a.id : a.name;
-      list.push({ key: k, name: rowName(a, shortName(a.name)), online: true, sub: a.machine, to: k, bg: !!a.background, tool: a.tool, act: a.activity || "",
+      list.push({ key: k, name: rowName(a, shortName(a.name)), online: true, sub: a.where || a.machine, to: k, bg: !!a.background, tool: a.tool, act: a.activity || "",
                   who: !a.mine && (isAdmin() || hidden(a)) ? a.person : null, ro: !a.mine && a.writable === false,
+                  sess: true, mine: !!a.mine, team: !!a.team && !hidden(a), owner: a.team ? String(a.person || "").replace(/ \(team\)$/, "") : a.person || "",
                   tip: hidden(a) ? a.person + "'s session in a project you have no role in" : tip });
     });
     var people = {};
@@ -1317,21 +1369,73 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     $("team-empty").hidden = agents.length > 0;
     return list;
   }
+  /* Home's list. A member, and an admin's Mine: the manager, your own sessions and the team
+     machine sessions in your projects. An admin's Everyone: every session, under one foldable
+     header per person and per team machine (your own open at first). Background jobs fold
+     into one group under the chats in both */
+  function homeAll() { return isAdmin() && hScope === "everyone"; }
+  function inMine(e) { return !e.sess || e.mine || e.team; }
+  function homeScope() {
+    $("h-scope").hidden = !isAdmin();
+    [].forEach.call($("h-scope").querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", b.dataset.scope === (homeAll() ? "everyone" : "mine") ? "true" : "false");
+    });
+  }
+  $("h-scope").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b || b.dataset.scope === hScope) return;
+    hScope = b.dataset.scope;
+    store(function (st) { st.setItem("kaptyorka.home-scope", hScope); });
+    homeScope();
+    if (!homeAll() && entryOf[conv] && !inMine(entryOf[conv])) { select("mgr"); return; }  /* the open chat left the list */
+    renderSessions();
+  });
+  function groupKey(e) { return (e.team ? "t:" : "p:") + e.owner; }
+  function saveGroups() { var j = JSON.stringify(groupOpen); store(function (st) { st.setItem("kaptyorka.home-groups", j); }); }
+  /* a row's in-progress click: a redraw under the pointer would swallow it, so it waits */
+  var pressIn = null, pressLater = false;
+  document.addEventListener("pointerdown", function (e) {
+    pressIn = e.target.closest ? e.target.closest("#agents, #people-rows, #person-body, #team-machine-rows, #a-machines") : null;
+  }, true);
+  function pressDone() {
+    if (!pressIn) return;
+    pressIn = null;
+    if (pressLater) { pressLater = false; setTimeout(function () { if (feed) render(); if (account) renderAccount(); }, 0); }
+  }
+  document.addEventListener("pointerup", pressDone, true);
+  document.addEventListener("pointercancel", pressDone, true);
+  function pressing(box) { if (pressIn && pressIn === box) { pressLater = true; return true; } return false; }
   function renderSessions() {
-    if (!changed("team", [entries, conv, askOpen, phoneOpen || wide(), bgOpen, bgFolded])) return;
+    homeScope();
     var box = $("agents");
+    if (pressing(box)) return;
+    if (!changed("sessions", [entries, conv, askOpen, phoneOpen || wide(), bgOpen, bgFolded, hScope, groupOpen, groupFolded])) return;
+    var focusKey = box.contains(document.activeElement) ? document.activeElement.getAttribute("data-key") : null;
     box.textContent = "";
     box.removeAttribute("aria-busy");
     entryOf = {};
     entries.forEach(function (e) { entryOf[e.key] = e; });
-    entries.filter(function (e) { return !e.bg; }).forEach(function (e) { box.appendChild(sessionRow(e)); });
-    var bgs = entries.filter(function (e) { return e.bg; });
+    var all = homeAll(), shown = all || !isAdmin() ? entries : entries.filter(inMine);  /* a member: all they may see */
+    var fg = shown.filter(function (e) { return !e.bg; });
+    if (!all) fg.forEach(function (e) { box.appendChild(sessionRow(e)); });
+    else {
+      fg.filter(function (e) { return !e.sess; }).forEach(function (e) { box.appendChild(sessionRow(e)); });
+      var groups = {}, order = [];
+      fg.filter(function (e) { return e.sess; }).forEach(function (e) {
+        var k = groupKey(e);
+        if (!groups[k]) { groups[k] = { key: k, name: e.owner || "?", team: e.team, own: !!me && !e.team && e.owner === me.person, rows: [] }; order.push(groups[k]); }
+        groups[k].rows.push(e);
+      });
+      order.sort(function (a, b) { return (b.own - a.own) || (a.team - b.team) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0); });
+      order.forEach(function (g) { groupRows(box, g); });
+    }
+    var bgs = shown.filter(function (e) { return e.bg; });
     if (bgs.length) {
       var inBg = conv !== bgFolded && bgs.some(function (e) { return e.key === conv; });
       var open = bgOpen || inBg;  /* the open chat stays in sight */
       var unseen = bgs.reduce(function (n, e) { return n + e.unread; }, 0);
       var head = el("button", { type: "button", "class": "bg-head", "aria-expanded": open ? "true" : "false", "aria-controls": "bg-rows",
-                                title: "Background jobs (claude --bg)" }, [
+                                title: "Background jobs (claude --bg)", "data-key": "bg-head" }, [
         icon("i-chev", 12), "Background", el("small", { text: String(bgs.length) }),
         unseen ? el("span", { "class": "count", title: unseen + " unread", text: String(unseen) }) : null]);
       head.addEventListener("click", function () {
@@ -1341,11 +1445,34 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
         $("agents").querySelector(".bg-head").focus();
       });
       box.appendChild(head);
-      var rows = el("div", { "class": "bg-rows" + (bgEnter ? " enter" : ""), id: "bg-rows", role: "group", "aria-label": "Background" }, open ? bgs.map(sessionRow) : []);
+      var rows = el("div", { "class": "bg-rows" + (bgEnter ? " enter" : ""), id: "bg-rows", role: "group", "aria-label": "Background" }, open ? bgs.map(function (e) { return sessionRow(e); }) : []);
       rows.hidden = !open;
       bgEnter = false;
       box.appendChild(rows);
     }
+    if (focusKey) { var again = [].filter.call(box.querySelectorAll("[data-key]"), function (n) { return n.getAttribute("data-key") === focusKey; })[0]; if (again) again.focus(); }
+  }
+  /* one person's (or team machine's) sessions under a header: count, unread, fold */
+  function groupRows(box, g) {
+    var hasConv = g.rows.some(function (e) { return e.key === conv; });
+    var open = groupOpen[g.key] != null ? !!groupOpen[g.key] : g.own;
+    if (!open && hasConv && groupFolded[g.key] !== conv) open = true;  /* the open chat stays in sight */
+    var unseen = g.rows.reduce(function (n, e) { return n + e.unread; }, 0), id = "g-" + g.key.replace(/[^A-Za-z0-9_-]/g, "_");
+    var head = el("button", { type: "button", "class": "bg-head g-head", "aria-expanded": open ? "true" : "false", "aria-controls": id, "data-key": "g:" + g.key,
+                              title: (g.team ? g.name + ", a team machine" : g.own ? "Your sessions" : g.name + "'s sessions") }, [
+      icon("i-chev", 12), avatar(g.team ? "machine" : "person", g.name, { size: "sm" }), g.own ? "You" : g.name,
+      g.team ? chip("Team", "active") : null, el("small", { text: String(g.rows.length) }),
+      unseen ? el("span", { "class": "count", title: unseen + " unread", text: String(unseen) }) : null]);
+    head.addEventListener("click", function () {
+      groupOpen[g.key] = !open;
+      if (open && hasConv) groupFolded[g.key] = conv; else delete groupFolded[g.key];
+      saveGroups();
+      renderSessions();
+    });
+    box.appendChild(head);
+    var rows = el("div", { "class": "bg-rows", id: id, role: "group", "aria-label": g.name }, open ? g.rows.map(function (e) { return sessionRow(e, true); }) : []);
+    rows.hidden = !open;
+    box.appendChild(rows);
   }
   function lead(e) {
     if (e.key === "activity") return avatar("activity", e.name);
@@ -1364,14 +1491,14 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     if (e.act && e.act !== "idle") return chip("Working", "active", null, bg);
     return bg;
   }
-  function sessionRow(e) {
+  function sessionRow(e, grouped) {
     var on = e.key === conv && !askOpen && (phoneOpen || wide());  /* a phone marks a chat only while it is open */
     var b = el("button", { type: "button", "class": "row" + (e.cls ? " " + e.cls : "") + (on ? " on" : "") + (e.off ? " off" : "") + (e.unread ? " unread" : ""),
                            title: e.tip || null, "aria-current": on ? "true" : null, "data-key": e.key }, [
       el("span", { "class": "lead" }, [lead(e)]),
       el("span", { "class": "meta" }, [el("span", { "class": "name", text: e.name }),
         e.sub || e.who ? el("small", { "class": "subline" }, [e.sub ? el("span", { text: e.sub }) : null,
-                                                          e.who ? el("span", { "class": "who", text: e.who }) : null]) : null]),
+                                                          e.who && !grouped ? el("span", { "class": "who", text: e.who }) : null]) : null]),
       statusChip(e),
       e.unread ? el("span", { "class": "count", title: e.unread + " unread", text: String(e.unread) }) : null]);
     if (!e.off) b.addEventListener("click", function () { select(e.key); });
@@ -1523,6 +1650,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   }
   function renderChat() {
     var e = entryOf[conv] || { name: shortName(conv), sub: "" }, act = conv === "activity";
+    if (!changed("chat-head", [e, conv, askOpen, phoneOpen])) return;  /* the same head: leave it, no flicker */
     var head = $("chat-lead");
     head.textContent = "";
     if (askOpen) {
@@ -1833,7 +1961,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   /* Team: the admin's one screen. What waits for a Yes or No, then the people: add one, give
      them projects, remove them. The rest is decided by the hub or stays in the command line. */
   var PROJECT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
-  var pending = {}, answering = {}, cues = {}, linkFor = null, waitSeen = null;
+  var pending = {}, answering = {}, cues = {}, linkFor = null, waitSeen = null, boxErr = {};  /* boxErr: a box's or switch's error, by its key */
   function isManagerAccount(p) { return p.name === "manager" && p.role === "manager"; }
   function loadProposals(force) {
     if (!isAdmin() || (!force && !inTeam() && Date.now() - proposalsAt < 10000)) return;
@@ -1876,11 +2004,12 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       setTimeout(function () { b.classList.remove("copied"); b.title = "Copy"; b.replaceChild(was, b.firstChild); }, 1500);
     });
   }
-  /* a cue ("Saved", "Copied") on one row for 1.5 s, kept through redraws */
-  function flash(key) {
-    cues[key] = Date.now() + 1500;
+  /* a cue ("Saved", "Copied") on one row for 1.5 s (or ms), kept through redraws */
+  function flash(key, ms) {
+    ms = ms || 1500;
+    cues[key] = Date.now() + ms;
     renderTeam();
-    setTimeout(function () { if (cues[key] && cues[key] <= Date.now()) { delete cues[key]; renderTeam(); } }, 1600);
+    setTimeout(function () { if (cues[key] && cues[key] <= Date.now()) { delete cues[key]; renderTeam(); } }, ms + 100);
   }
   function cueOn(key) { return !!cues[key] && cues[key] > Date.now(); }
   function teamErr(id, msg) { $(id).hidden = !msg; $(id).textContent = msg || ""; }
@@ -1957,7 +2086,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     feed.projects.forEach(function (p) { if (p.members.some(function (m) { return m.person === name; })) held[p.name] = 1; });
     return held;
   }
-  /* one person as the row shows them; redrawn only when this changes */
+  /* one person as the list and their page show them; redrawn only when this changes */
   function personView(p) {
     /* machines only: a GitLab page sign-in (a device that ends) is not a joined machine */
     var now = Date.now() / 1000, live = p.devices.filter(function (d) { return d.revoked_at == null && d.expires == null; });
@@ -1966,159 +2095,110 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       var i = k.indexOf("\n");
       if (k.slice(0, i) === p.name) { if (pending[k]) held[k.slice(i + 1)] = 1; else delete held[k.slice(i + 1)]; }
     });
+    var last = live.reduce(function (n, d) { return Math.max(n, d.last_used || 0); }, 0);
     return { name: p.name, admin: p.role === "admin", self: !!me && p.name === me.person,
              admins: feed.people.filter(function (x) { return x.role === "admin"; }).length,
              online: live.some(function (d) { return d.last_used != null && now - d.last_used < 30; }) ||
                      feed.agents.some(function (a) { return a.person === p.name; }),
-             joined: live.some(function (d) { return d.last_used != null; }),
+             joined: live.some(function (d) { return d.last_used != null; }), last: last || null,
              held: held, projects: names,
+             accounts: live.filter(function (d) { return d.host; }).map(function (d) {
+               return { id: d.id, name: machineName(d), online: d.last_used != null && now - d.last_used < 30, last: d.last_used }; }),
              gitlab: gitlabOn() ? p.gitlab_user || "" : null, linked: !!p.gitlab_user,
              manager: isManagerAccount(p), team: !!p.team };
   }
+  /* how a joined machine is called: its label, else account@computer, else its own name */
+  function machineName(d) { return d.label || (d.os_user && d.host ? d.os_user + "@" + d.host : d.name); }
+  function personErr(msg) { teamErr(sec === "person" ? "person-err" : "team-err", msg); }
   function setProject(v, project, on) {
     var k = v.name + "\n" + project, reg = feed.projects.some(function (p) { return p.name === project; });
     pending[k] = on;
-    teamErr("team-err", "");
+    delete boxErr[k];
+    delete cues["saved:" + k];
     renderTeam();
     var path = apiPath("/api/projects/", project, on ? "/grant" : "/revoke"), body = on ? { person: v.name, role: "write" } : { person: v.name };
     /* a project seen only on a session is registered on its first tick */
     (on && !reg ? api("/api/projects", { name: project }).then(function () { return api(path, body); }) : api(path, body))
       .then(function () { return get("/api/feed"); })
-      .then(function (f) { feed = f; delete pending[k]; flash("saved:" + k); },
-            function (e) { delete pending[k]; teamErr("team-err", e.message); renderTeam(); });
+      .then(function (f) { feed = f; delete pending[k]; flash("saved:" + k, 2000); },
+            function (e) { delete pending[k]; boxErr[k] = e.message; renderTeam(); });
+  }
+  /* a team machine's switch: the person's use of it (kaptyorka grant <person> machine:<host>) */
+  function setMachine(v, host, on) {
+    var k = "m:" + v.name + "\n" + host;
+    pending[k] = on;
+    delete boxErr[k];
+    delete cues["saved:" + k];
+    renderTeam();
+    api(apiPath("/api/machines/", host, on ? "/grant" : "/revoke"), { person: v.name })
+      .then(function () { return get("/api/feed"); })
+      .then(function (f) { feed = f; delete pending[k]; flash("saved:" + k, 2000); },
+            function (e) { delete pending[k]; boxErr[k] = e.message; renderTeam(); });
   }
   /* New invite link: their older links stop working; the fresh one is copied (or shown to copy) */
   function newInvite(v, b) {
     b.setAttribute("aria-busy", "true");
-    teamErr("team-err", "");
+    personErr("");
     api("/api/invites", { person: v.name, replace: true }).then(function (r) { return r.json(); })
       .then(function (x) {
         return copyText(x.url).then(function (ok) {
           if (ok) { linkFor = null; flash("copied:" + v.name); } else { linkFor = { name: v.name, url: x.url }; renderTeam(); }
         });
       })
-      .catch(function (e) { b.removeAttribute("aria-busy"); teamErr("team-err", e.message); });
+      .catch(function (e) { b.removeAttribute("aria-busy"); personErr(e.message); });
+  }
+  function teamOk(text) {
+    var ok = $("team-ok");
+    ok.hidden = false; ok.textContent = text;
+    clearTimeout(ok._t); ok._t = setTimeout(function () { ok.hidden = true; }, 8000);
   }
   function removePerson(v, b) {
     confirmInline(b, "Remove " + v.name + "? They are signed out everywhere.", "Remove", function () {
       return api(apiPath("/api/people/", v.name), null, "DELETE").then(function (r) { return r.json(); }).then(function (r) {
-        if (openPerson === v.name) openPerson = null;
-        var ok = $("team-ok");
-        ok.hidden = false; ok.textContent = removedLine(v.name, r);
-        clearTimeout(ok._t); ok._t = setTimeout(function () { ok.hidden = true; }, 8000);
-      }, function (e) { teamErr("team-err", e.message); throw e; });
+        teamOk(removedLine(v.name, r));
+        if (sec === "person") show("settings", false, "people");
+      }, function (e) { personErr(e.message); throw e; });
     });
   }
   /* Make admin / Remove admin: the hub keeps at least one admin and says so if asked to drop it */
   function setAdmin(v, b, on) {
     var text = on ? "Make " + v.name + " an admin? They can change everything on the hub."
-                  : v.self ? "Remove your own admin role? You lose the Team page."
+                  : v.self ? "Remove your own admin role? You lose People and Projects."
                   : "Remove " + v.name + "'s admin role? They keep their machines.";
     confirmInline(b, text, on ? "Make admin" : "Remove admin", function () {
       return api(apiPath("/api/people/", v.name, "/role"), { role: on ? "admin" : "member" }).then(function (r) { return r.json(); })
         .then(function (r) {
-          teamErr("team-err", "");
-          var ok = $("team-ok");
-          ok.hidden = false;
-          ok.textContent = (on ? v.name + " is now an admin." : v.self ? "You are no longer an admin." : v.name + " is no longer an admin.") + (r.note ? " " + r.note : "");
-          clearTimeout(ok._t); ok._t = setTimeout(function () { ok.hidden = true; }, 8000);
+          personErr("");
+          teamOk((on ? v.name + " is now an admin." : v.self ? "You are no longer an admin." : v.name + " is no longer an admin.") + (r.note ? " " + r.note : ""));
           if (v.self && !on) return get("/api/me").then(start);
           return get("/api/feed").then(function (f) { feed = f; });
-        }, function (e) { teamErr("team-err", e.message); throw e; });
+        }, function (e) { personErr(e.message); throw e; });
     }, on ? { edit: true } : null);
-  }
-  /* Make team machine: a person with no GitLab link becomes a shared team machine (the hub refuses if it cannot) */
-  function makeTeam(v, b) {
-    confirmInline(b, v.name + " becomes a shared team machine: it leaves People, loses admin, and its sessions are visible to everyone with access to the project.",
-                  "Make team machine", function () {
-      return api(apiPath("/api/people/", v.name, "/team")).then(function (r) { return r.json(); })
-        .then(function () {
-          if (openPerson === v.name) openPerson = null;
-          teamErr("team-err", "");
-          var ok = $("team-ok");
-          ok.hidden = false; ok.textContent = v.name + " is now a team machine.";
-          clearTimeout(ok._t); ok._t = setTimeout(function () { ok.hidden = true; }, 8000);
-          return get("/api/feed").then(function (f) { feed = f; });
-        }, function (e) { teamErr("team-err", e.message); throw e; });
-    });
   }
   function gitlabOn() { return !!(gitlab && gitlab.on); }
   function editGitlab(v, b) {
     confirmInline(b, null, "Save", function (text) {
       return api(apiPath("/api/people/", v.name, "/gitlab"), { username: text })
         .then(function () { return get("/api/feed"); })
-        .then(function (f) { feed = f; teamErr("team-err", ""); }, function (e) { teamErr("team-err", e.message); throw e; });
+        .then(function (f) { feed = f; personErr(""); }, function (e) { personErr(e.message); throw e; });
     }, { ask: "GitLab username", value: v.gitlab, edit: true, max: "255" });
   }
+  /* People: one clean row per person (name, a short status, the chevron); a click opens their page */
+  function openPersonPage(name) { personName = name; linkFor = null; show("settings", true, "person"); }
   function personRow(v) {
-    var canTeam = !v.self && !v.manager && !v.team && !v.linked;  /* Make team machine: in the detail view */
-    var expands = !v.admin || canTeam;
-    var open = expands && openPerson === v.name, id = "pp-" + v.name.replace(/[^A-Za-z0-9_-]/g, "_");
     var held = v.projects.filter(function (n) { return v.held[n]; });
     var summary = v.self ? "you" : v.admin ? "every project" : !v.joined ? "hasn't joined yet" : held.length ? held.join(", ") : "no projects";
     var lead = avatar("person", v.name, { dot: v.online });
     lead.title = v.online ? "online" : "offline";
     var who = el("span", { "class": "p-who" }, [el("b", { "class": "p-name", text: v.name }), v.admin ? chip("Admin", "active", "p-role") : null]);
-    var parts = [lead, who,
-                 el("span", { "class": "p-sum" + (v.joined && held.length ? "" : " quiet"), title: summary, text: summary })];
-    var main;
-    if (!expands) main = el("div", { "class": "p-main still" }, parts);
-    else {
-      main = el("button", { type: "button", "class": "p-main", "aria-expanded": open ? "true" : "false", "aria-controls": id,
-                            title: open ? "Hide projects" : "Projects" }, parts.concat([icon("i-chev", 14)]));
-      main.addEventListener("click", function () { openPerson = open ? null : v.name; linkFor = null; renderTeam(); });
-    }
-    /* yourself: Add a machine in the account panel instead */
-    var copied = cueOn("copied:" + v.name), act = null;
-    var invite = v.self ? null : button(copied ? [icon("i-check", 14), el("span", { "class": "lbl", text: "Copied" })]
-                               : [icon("i-link", 14), el("span", { "class": "lbl", text: "New invite link" })],
-                        "new-link" + (copied ? " copied" : ""), function () { newInvite(v, invite); },
-                        { "aria-label": copied ? "Copied" : "New invite link for " + v.name,
-                          title: "Copy a fresh link for " + v.name + " (works once, for 7 days); older links stop working" });
-    if (!v.admin && v.joined) {
-      act = button("Remove", "quiet-danger", function () { removePerson(v, act); }, { "aria-label": "Remove " + v.name });
-    }
-    var gl = null;
-    if (v.gitlab != null) {  /* the GitLab username they sign in with; set once GitLab is set up */
-      gl = button(v.gitlab ? "@" + v.gitlab : "GitLab name", "p-gl" + (v.gitlab ? "" : " unset"),
-                  function () { editGitlab(v, gl); },
-                  { title: v.gitlab ? "Signs in with GitLab as " + v.gitlab + ". Click to change" : "Add their GitLab username so they can sign in with GitLab",
-                    "aria-label": (v.gitlab ? "Change" : "Add") + " " + v.name + "'s GitLab username" });
-    }
-    var role = null;
-    if (!v.admin) role = button("Make admin", "", function () { setAdmin(v, role, true); }, { "aria-label": "Make " + v.name + " an admin" });
-    else if (!v.self || v.admins > 1) role = button("Remove admin", "quiet-danger", function () { setAdmin(v, role, false); },
-                                                   { "aria-label": v.self ? "Remove your own admin role" : "Remove " + v.name + "'s admin role" });
-    var acts = [gl, invite, role, act].filter(Boolean);
-    var row = el("div", { "class": "person" + (open ? " open" : ""), "data-person": v.name }, [
-      el("div", { "class": "p-line" }, [main, acts.length ? el("span", { "class": "p-act" }, acts) : null])]);
-    if (linkFor && linkFor.name === v.name) {
-      var input = el("input", { readonly: "", value: linkFor.url, "aria-label": "Invite link for " + v.name });
-      row.appendChild(el("div", { "class": "p-link" }, [icon("i-link", 14), input]));
-      setTimeout(function () { input.select(); }, 0);
-    }
-    if (open) {
-      var list = el("div", { "class": "p-projects", id: id, role: "group", "aria-label": v.name + "'s projects" });
-      if (!v.admin && !v.projects.length) list.appendChild(el("span", { "class": "quiet", text: "No projects yet" }));
-      (v.admin ? [] : v.projects).forEach(function (n) {
-        var k = v.name + "\n" + n, box = el("input", { type: "checkbox", "data-k": k });
-        box.checked = !!v.held[n];
-        box.disabled = pending[k] !== undefined;
-        box.addEventListener("change", function () { setProject(v, n, box.checked); });
-        list.appendChild(el("label", { "class": "proj" + (box.checked ? " on" : "") }, [box, el("span", { text: n }),
-          cueOn("saved:" + k) ? el("small", { "class": "ok", text: "Saved" }) : null]));
-      });
-      if (!v.joined) {  /* a name typed wrong: it can go before they ever join */
-        var rm = button("Remove", "quiet-danger", function () { removePerson(v, rm); }, { "aria-label": "Remove " + v.name });
-        list.appendChild(el("span", { "class": "p-rm" }, [rm]));
-      }
-      if (canTeam) {  /* a one-off action for the hub's own account: quiet, at the bottom */
-        var tm = button("Make team machine", "", function () { makeTeam(v, tm); }, { "aria-label": "Make " + v.name + " a team machine" });
-        list.appendChild(el("span", { "class": "p-rm" }, [tm]));
-      }
-      row.appendChild(list);
-    }
-    return row;
+    var main = el("a", { "class": "p-main", href: "#settings/people/" + encodeURIComponent(v.name), title: "Open " + v.name,
+                         "aria-label": v.name + ", " + summary }, [lead, who,
+      el("span", { "class": "p-sum" + (v.joined && held.length ? "" : " quiet"), title: summary, text: summary }), icon("i-chev", 14)]);
+    main.addEventListener("click", function (e) {
+      if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  /* a new tab: the address does it */
+      e.preventDefault(); openPersonPage(v.name);
+    });
+    return el("div", { "class": "person", "data-person": v.name }, [el("div", { "class": "p-line" }, [main])]);
   }
   function renderTeam() {
     if (!isAdmin() || !feed || !feed.people) return;
@@ -2127,21 +2207,135 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     $("viewer-name").title = items.length ? items.length + " waiting for your answer" : "Your account";
     var people = feed.people.filter(function (p) { return !isManagerAccount(p) && !p.team; })
       .sort(function (a, b) { return (b.role === "admin") - (a.role === "admin"); }).map(personView);
-    var cueKeys = Object.keys(cues).filter(cueOn);
     if (changed("waiting", [items.map(function (w) { return [w.key, w.who, plain(w.what), w.why]; }), answering])) renderWaiting(items);
     renderMachines();
     renderProjects();
-    if (holding && holding.isConnected && $("people-rows").contains(holding)) return;  /* a Remove question is open */
-    if (!changed("team", [people, openPerson, cueKeys, pending, linkFor])) return;
-    var focus = document.activeElement, fk = focus && focus.dataset ? focus.dataset.k : null;
+    renderPerson();
     var box = $("people-rows");
+    if (pressing(box)) return;
+    if (!changed("people", [people.map(function (v) { return [v.name, v.admin, v.self, v.online, v.joined, v.held, v.projects]; })])) return;
+    var focus = document.activeElement, name = box.contains(focus) && focus.closest(".person") ? focus.closest(".person").dataset.person : null;
     drawRows(box, people.map(personRow), "data-person");
-    if (fk) { var again = box.querySelector('input[data-k="' + fk.replace(/["\\]/g, "\\$&") + '"]'); if (again) again.focus(); }
-    else if (focus && focus.classList && focus.classList.contains("p-main")) {
-      var name = focus.closest && focus.closest(".person") ? focus.closest(".person").dataset.person : null;
-      var b = name != null ? [].filter.call(box.querySelectorAll(".person"), function (r) { return r.dataset.person === name; })[0] : null;
-      if (b && b.querySelector(".p-main")) b.querySelector(".p-main").focus();
+    if (name != null) { var b = [].filter.call(box.querySelectorAll(".person"), function (r) { return r.dataset.person === name; })[0]; if (b) b.querySelector(".p-main").focus(); }
+  }
+  /* a person's page: profile, projects (each box saves at once), machines (a switch per team
+     machine, their own accounts read only), then New invite link, Make/Remove admin, Remove */
+  function teamHosts() {
+    var hosts = {};
+    feed.people.filter(function (p) { return p.team; }).forEach(function (p) {
+      p.devices.filter(function (d) { return d.revoked_at == null && d.expires == null && d.host; }).forEach(function (d) {
+        var h = hosts[d.host] || (hosts[d.host] = { host: d.host, names: [], teams: [], online: false });
+        h.names.push(machineName(d));
+        if (h.teams.indexOf(p.name) < 0) h.teams.push(p.name);
+        h.online = h.online || (d.last_used != null && Date.now() / 1000 - d.last_used < 30);
+      });
+    });
+    return Object.keys(hosts).sort().map(function (k) {
+      var m = (feed.machines || []).filter(function (x) { return x.host === k; })[0] || { grants: [], owner: null };
+      return Object.assign(hosts[k], { grants: m.grants || [], owner: m.owner || null });
+    });
+  }
+  function seenLine(on, last) {
+    if (on) return el("span", { "class": "on", text: "online" });
+    return last ? el("span", null, ["seen ", timeEl(last)]) : "not seen yet";
+  }
+  function renderPerson() {
+    if (!isAdmin() || !feed || !feed.people || view !== "settings" || sec !== "person") return;
+    var body = $("person-body");
+    if (holding && holding.isConnected && $("pane-person").contains(holding)) return;  /* a question is open */
+    if (pressing(body)) return;
+    var p = feed.people.filter(function (x) { return x.name === personName && !isManagerAccount(x) && !x.team; })[0];
+    var v = p ? personView(p) : null, hosts = v ? teamHosts() : [];
+    var cueKeys = Object.keys(cues).filter(cueOn);
+    if (!changed("person", calm([personName, v, hosts, cueKeys, pending, boxErr, linkFor]))) return;
+    var focus = document.activeElement, fk = body.contains(focus) && focus.dataset ? focus.dataset.k : null;
+    $("person-name").textContent = v ? v.name : personName;
+    $("person-sub").textContent = v ? (v.admin ? "Admin" : "Member") + (v.self ? " · you" : "") : "";
+    body.textContent = "";
+    if (!v) {
+      body.appendChild(el("div", { "class": "panel" }, [el("div", { "class": "blank" }, [icon("i-person", 20),
+        el("span", { text: "No one named " + personName + " is on the hub." }),
+        button([icon("i-back", 14), "Back to People"], "", function () { show("settings", true, "people"); })])]));
+      return;
     }
+    /* profile */
+    var prof = el("dl", { "class": "panel a-profile" });
+    var gl = null;
+    if (v.gitlab != null) {
+      gl = button(v.gitlab ? "@" + v.gitlab : "Add GitLab name", "p-gl" + (v.gitlab ? "" : " unset"), function () { editGitlab(v, gl); },
+                  { title: v.gitlab ? "Signs in with GitLab as " + v.gitlab + ". Click to change" : "Add their GitLab username so they can sign in with GitLab",
+                    "aria-label": (v.gitlab ? "Change" : "Add") + " " + v.name + "'s GitLab username" });
+    }
+    [["Role", [v.admin ? "Admin" : "Member"]],
+     ["GitLab", gl ? [gl] : [el("span", { "class": "quiet", text: "Not set up on this hub" })]],
+     ["Last seen", [v.online ? el("span", { "class": "on", text: "online now" }) : v.last ? timeEl(v.last) : el("span", { "class": "quiet", text: v.joined ? "not seen yet" : "hasn't joined yet" })]]
+    ].forEach(function (r) { prof.appendChild(el("dt", { text: r[0] })); prof.appendChild(el("dd", null, r[1])); });
+    body.appendChild(prof);
+    /* projects */
+    var boxes = el("div", { "class": "panel pp-boxes", role: "group", "aria-label": v.name + "'s projects" });
+    if (v.admin) boxes.appendChild(el("span", { "class": "quiet", text: "Admins work in every project." }));
+    else if (!v.projects.length) boxes.appendChild(el("span", { "class": "quiet", text: "No projects yet. Add one under Projects." }));
+    else v.projects.forEach(function (n) {
+      var k = v.name + "\n" + n, box = el("input", { type: "checkbox", "data-k": k });
+      box.checked = !!v.held[n];
+      if (pending[k] !== undefined) box.setAttribute("aria-busy", "true");  /* not disabled: focus stays on it */
+      box.addEventListener("change", function () {
+        if (pending[k] !== undefined) { box.checked = !box.checked; return; }
+        setProject(v, n, box.checked);
+      });
+      boxes.appendChild(el("span", { "class": "pp-box" }, [el("label", { "class": "proj" + (box.checked ? " on" : "") }, [box, el("span", { text: n })]),
+        cueOn("saved:" + k) ? el("span", { "class": "pp-cue", role: "status", text: "Saved ✓" }) : null,
+        boxErr[k] ? el("span", { "class": "pp-err", role: "alert", text: boxErr[k] }) : null]));
+    });
+    body.appendChild(el("div", { "class": "pp-sec" }, [el("h2", { "class": "set-sub" }, ["Projects", v.admin ? null : el("small", { text: "Changes save automatically" })]), boxes]));
+    /* machines */
+    var list = el("div", { "class": "panel t-list" });
+    hosts.forEach(function (h) {
+      var k = "m:" + v.name + "\n" + h.host, fixed = v.admin ? "Admins may use every machine" : h.owner === v.name ? "It is theirs" : null;
+      var on = pending[k] !== undefined ? pending[k] : !!fixed || h.grants.indexOf(v.name) >= 0;
+      var sw = el("button", { type: "button", role: "switch", "class": "sw", "aria-checked": on ? "true" : "false", "data-k": k,
+                              "aria-label": v.name + " may use " + h.names.join(", "), title: fixed || (on ? "On: they may use it" : "Off") });
+      sw.disabled = !!fixed;
+      if (pending[k] !== undefined) sw.setAttribute("aria-busy", "true");
+      sw.addEventListener("click", function () { if (pending[k] === undefined) setMachine(v, h.host, !on); });
+      list.appendChild(el("div", { "class": "a-row", "data-host": h.host }, [avatar("machine", h.host, { dot: h.online }),
+        el("div", { "class": "a-text" }, [el("b", { text: h.names.join(", "), title: h.host }), el("small", { text: "Team machine" + (h.teams.length ? " · " + h.teams.join(", ") : "") })]),
+        el("span", { "class": "a-acts" }, [cueOn("saved:" + k) ? el("span", { "class": "pp-cue", role: "status", text: "Saved ✓" }) : null,
+          boxErr[k] ? el("span", { "class": "pp-err", role: "alert", text: boxErr[k] }) : null, sw])]));
+    });
+    v.accounts.forEach(function (d) {
+      list.appendChild(el("div", { "class": "a-row", "data-machine": String(d.id) }, [avatar("machine", d.name, { dot: d.online }),
+        el("div", { "class": "a-text" }, [el("b", { text: d.name }), el("small", null, [seenLine(d.online, d.last)])]),
+        chip("Own account", "idle")]));
+    });
+    if (!hosts.length && !v.accounts.length) list.appendChild(el("div", { "class": "a-none" }, [icon("i-monitor", 14), el("span", { text: "No machines yet" })]));
+    body.appendChild(el("div", { "class": "pp-sec" }, [el("h2", { "class": "set-sub" }, ["Machines",
+      hosts.length ? el("small", { text: "The switch lets the manager start work for them on that machine's shared accounts. Team accounts take no workers yet." }) : null]), list]));
+    /* actions */
+    var acts = el("div", { "class": "pp-acts" });
+    if (!v.self) {
+      var copied = cueOn("copied:" + v.name);
+      var invite = button(copied ? [icon("i-check", 14), "Copied"] : [icon("i-link", 14), "New invite link"], copied ? "copied" : "", function () { newInvite(v, invite); },
+                          { title: "Copy a fresh link for " + v.name + " (works once, for 7 days); older links stop working" });
+      acts.appendChild(invite);
+    }
+    var role = null;
+    if (!v.admin) role = button("Make admin", "", function () { setAdmin(v, role, true); }, { "aria-label": "Make " + v.name + " an admin" });
+    else if (!v.self || v.admins > 1) role = button("Remove admin", "quiet-danger", function () { setAdmin(v, role, false); },
+                                                   { "aria-label": v.self ? "Remove your own admin role" : "Remove " + v.name + "'s admin role" });
+    if (role) acts.appendChild(role);
+    if (!v.admin) {
+      var rm = button("Remove", "quiet-danger", function () { removePerson(v, rm); }, { "aria-label": "Remove " + v.name });
+      acts.appendChild(el("span", { "class": "p-rm" }, [rm]));
+    }
+    if (linkFor && linkFor.name === v.name) {
+      var input = el("input", { readonly: "", value: linkFor.url, "aria-label": "Invite link for " + v.name });
+      acts.appendChild(el("div", { "class": "pp-link" }, [icon("i-link", 14), input]));
+      setTimeout(function () { input.select(); }, 0);
+    }
+    if (acts.children.length) body.appendChild(acts);
+    tick();
+    if (fk) { var again = [].filter.call(body.querySelectorAll("[data-k]"), function (n) { return n.dataset.k === fk; })[0]; if (again) again.focus(); }
   }
   /* Team > Projects: every project of the GitLab group and every project on the hub. GitLab
      only names them; who may work on one is decided here (the ticks above, or the command line) */
@@ -2153,41 +2347,42 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     machinesAt = Date.now();
     get("/api/team/machines").then(function (m) { machines = m; if (feed) renderTeam(); }, function () { machinesAt = 0; });
   }
-  function hostRow(m) {
+  /* a machine's agent tools as small tags: logged in (green), installed but logged out (amber),
+     none at all (red); nothing when its bridge never reported */
+  function toolTags(tools) {
+    if (!tools) return null;
+    if (!tools.length) return el("div", { "class": "m-tools" }, [chip("No agent tool", "bad")]);
+    return el("div", { "class": "m-tools" }, tools.map(function (t) {
+      return t.logged_in === false ? chip(t.name + " · not logged in", "warn") : chip(t.name, "ok");
+    }));
+  }
+  /* Everyone: one row per joined account (account@computer), whose it is, how busy its computer is */
+  function deviceRow(m, d) {
     var acts = el("span", { "class": "pj-acts" });
-    var movable = m.devices.filter(function (d) { return d.person !== "manager"; });
-    if (movable.length) {
-      var mv = button("Move", "", function () { moveMachine(m, movable, acts); },
-                      { "aria-label": "Move " + m.host + " to another person", title: "Give it to another person, without joining again" });
-      acts.appendChild(mv);
-    }
-    var who = m.team.length ? ["Team machine"].concat(m.people).join(" \u00b7 ") : m.people.join(", ") || "Nobody";
-    var tip = m.devices.map(function (d) { return d.name + " \u2014 " + (d.team ? d.person + " (team)" : d.person) + (d.os_user ? ", as " + d.os_user : ""); }).join("\n");
-    var cue = cueOn("moved:" + m.host) ? el("span", { "class": "ok", text: "Moved" }) : null;
-    if (cue) acts.insertBefore(cue, acts.firstChild);
-    return el("div", { "class": "pj-row m-row" + (m.online ? "" : " off"), "data-host": m.host }, [
-      avatar("machine", m.host, { dot: m.online }), el("div", { "class": "pj-text" }, [
-        el("div", { "class": "pj-top" }, [el("b", { "class": "pj-name", text: m.host, title: tip || null }),
-                                          m.team.length ? chip("Team", "active", "pj-tag") : null]),
-        el("div", { "class": "pj-desc m-line", title: tip || null }, [el("span", { "class": "m-who", text: who }),
-          el("span", { "class": m.use ? "m-use" : "m-state", text: m.use || (m.online ? "Online" : "Offline") })])]),
+    var cue = cueOn("given:" + d.id) ? el("span", { "class": "ok", text: "Given" }) : null;
+    if (cue) acts.appendChild(cue);
+    var give = button("Give to…", "", function () { giveMachine(d, acts); },
+                      { "aria-label": "Give " + d.name + " to another person", title: "Give it to another person, without joining again" });
+    acts.appendChild(give);
+    var whose = d.team ? "Team machine" : d.person;
+    return el("div", { "class": "pj-row m-row" + (d.online ? "" : " off"), "data-machine": String(d.id), "data-host": m.host }, [
+      avatar("machine", d.name, { dot: d.online }), el("div", { "class": "pj-text" }, [
+        el("div", { "class": "pj-top" }, [el("b", { "class": "pj-name", text: d.name, title: d.name === d.os_user + "@" + m.host ? null : d.os_user + "@" + m.host }),
+                                          d.team ? chip("Team", "active", "pj-tag") : null]),
+        el("div", { "class": "pj-desc m-line" }, [el("span", { "class": "m-who", text: whose }),
+          m.use ? el("span", { "class": "m-use", title: "This computer's use", text: m.use }) : el("span", { "class": "m-state" }, [seenLine(d.online, d.last_seen)])]),
+        toolTags(d.tools)]),
       acts]);
   }
-  function moveMachine(m, devs, acts) {
-    var dev = el("select", { "aria-label": "Which machine" }), to = el("select", { "aria-label": "Move to" });
-    options(dev, devs.map(function (d) { return [String(d.id), d.name + " (" + (d.team ? "team" : d.person) + ")"]; }));
-    function fill() {
-      var cur = devs.filter(function (d) { return String(d.id) === dev.value; })[0];
-      options(to, feed.people.filter(function (p) { return !isManagerAccount(p) && (!cur || p.name !== cur.person); })
-        .map(function (p) { return [p.name, p.team ? p.name + " (team)" : p.name]; }));
-    }
-    dev.addEventListener("change", fill);
-    fill();
-    confirmInline(acts, "Move " + (devs.length > 1 ? "" : devs[0].name + " ") + "to", "Move", function () {
-      return api(apiPath("/api/devices/", dev.value, "/move"), { person: to.value }).then(function (r) { return r.json(); })
-        .then(function () { teamErr("machines-err", ""); flash("moved:" + m.host); machinesAt = 0; loadMachines(true); return get("/api/feed"); })
+  function giveMachine(d, acts) {
+    var to = el("select", { "aria-label": "Give to" });
+    options(to, feed.people.filter(function (p) { return !isManagerAccount(p) && p.name !== d.person; })
+      .map(function (p) { return [p.name, p.team ? p.name + " (team machine)" : p.name]; }));
+    confirmInline(acts, "Give " + d.name + " to", "Give", function () {
+      return api(apiPath("/api/devices/", d.id, "/move"), { person: to.value }).then(function (r) { return r.json(); })
+        .then(function () { teamErr("machines-err", ""); flash("given:" + d.id); machinesAt = 0; loadMachines(true); return get("/api/feed"); })
         .then(function (f) { feed = f; }, function (e) { teamErr("machines-err", e.message); throw e; });
-    }, { edit: true, parts: devs.length > 1 ? [dev, to] : [to] });
+    }, { edit: true, parts: [to] });
   }
   /* Machines: Mine (your own and the team machines you can use) or, for an admin, Everyone */
   function machineScope() {
@@ -2195,12 +2390,10 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     [].forEach.call($("m-scope").querySelectorAll("button"), function (b) {
       b.setAttribute("aria-pressed", b.dataset.scope === (all ? "everyone" : "mine") ? "true" : "false");
     });
-    $("m-sub").textContent = all ? "Every computer on the hub: who uses it and how busy it is."
-                                 : "The computers you joined from, and the team machines you can use.";
+    $("m-sub").textContent = all ? "Every account on the hub: whose it is and how busy its computer is."
+                                 : "The accounts you joined from, and the team machines you can use.";
     $("a-machines").hidden = all;
     $("team-machine-rows").hidden = !all;
-    $("add-team-btn").hidden = !isAdmin() || !$("add-team-box").hidden;
-    if (!all && !$("add-team-box").hidden) teamBox(false, true);
     $("machines-err").hidden = !all || !$("machines-err").textContent;
   }
   $("m-scope").addEventListener("click", function (e) {
@@ -2213,22 +2406,31 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   });
   function renderMachines() {
     if (!machines) return;
-    if (holding && holding.isConnected && $("team-machine-rows").contains(holding)) return;
-    if (!changed("hosts", [machines, Object.keys(cues).filter(function (k) { return cueOn(k) && /^moved:/.test(k); })])) return;
     var box = $("team-machine-rows");
-    drawRows(box, machines.length ? machines.map(hostRow)
-                                  : [el("div", { "class": "blank" }, [icon("i-monitor", 20), el("span", { text: "No machines yet" }),
-                                     button([icon("i-plus", 14), "Add team machine"], "", function () { $("add-team-btn").click(); })])], "data-host");
+    if (holding && holding.isConnected && box.contains(holding)) return;
+    if (pressing(box)) return;
+    if (!changed("hosts", calm([machines, Object.keys(cues).filter(function (k) { return cueOn(k) && /^given:/.test(k); })]))) return;
+    var rows = [];
+    machines.forEach(function (m) { m.devices.forEach(function (d) { rows.push(deviceRow(m, d)); }); });
+    drawRows(box, rows.length ? rows
+                              : [el("div", { "class": "blank" }, [icon("i-monitor", 20), el("span", { text: "No machines yet" }),
+                                 button([icon("i-plus", 14), "Add machine"], "", function () { $("add-machine").click(); })])], "data-machine");
+    tick();
     machineScope();
   }
-  function teamBox(open, away) {
-    $("add-team-box").hidden = !open;
-    $("add-team-btn").hidden = open || !isAdmin();
-    $("add-team-btn").setAttribute("aria-expanded", open ? "true" : "false");
+  /* Add machine: an admin first says whose account it is; a member goes straight to the command */
+  function addPanels(which) {
+    $("add-choice").hidden = which !== "choice";
+    $("a-join").hidden = which !== "own";
+    $("add-team-box").hidden = which !== "team";
+    $("add-machine").setAttribute("aria-expanded", which ? "true" : "false");
+    if (which !== "team") { teamAdded = null; $("add-team").reset(); $("add-team").hidden = false; $("add-team-link").hidden = true; teamErr("add-team-err", ""); }
+  }
+  function teamBox(open) {
+    addPanels(open ? "team" : null);
     $("add-team").hidden = !!teamAdded;
     $("add-team-link").hidden = !teamAdded;
-    teamErr("add-team-err", "");
-    if (!open) { teamAdded = null; $("add-team").reset(); $("add-team").hidden = false; $("add-team-link").hidden = true; if (!away) $("add-team-btn").focus(); return; }
+    if (!open) { $("add-machine").focus(); return; }
     if (!teamAdded) $("new-team").focus();
   }
   function showTeamAdded() {
@@ -2393,6 +2595,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       setTimeout(function () { if (n.parentNode) n.parentNode.removeChild(n); }, 200);
     });
     box.dataset.drawn = "1";
+  }
+  /* the same data without the "last seen" of things online now: a bridge reports every few
+     seconds, and a redraw for that alone would blink the panel */
+  function calm(v) {
+    return JSON.parse(JSON.stringify(v, function (k, x) { return (k === "last_seen" || k === "last_used" || k === "last") && this && (this.online || this.current) ? undefined : x; }));
   }
   /* redraw only the parts whose data changed, so scroll and open notes stay put */
   function changed(part, value) {
@@ -2565,13 +2772,13 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   }
   function machineRow(d) {
     var acts = el("span", { "class": "a-acts" });
-    var sub = el("small", null, [d.os_user ? "as " + d.os_user + " \u00b7 " : "", seenText(d)]);
+    var sub = el("small", null, [d.label && d.auto !== d.label ? d.auto + " \u00b7 " : "", seenText(d)]);
     var rename = button([icon("i-edit", 14), "Rename"], "", function () {
       confirmInline(rename, null, "Save", function (text) {
         return api("/api/me/machines/" + d.id + "/label", { label: text })
           .then(function () { accErr("a-machines-err", ""); accountAt = 0; loadAccount(); },
                 function (e) { accErr("a-machines-err", e.message); throw e; });
-      }, { ask: "Machine name", value: d.name, edit: true, max: "80" });
+      }, { ask: d.auto || "Machine name", value: d.label || "", edit: true, max: "80" });
     }, { "aria-label": "Rename " + d.name });
     acts.appendChild(rename);
     if (!d.current && !d.emergency) {  /* not the token this page opened with, nor the hub's emergency sign-in */
@@ -2586,21 +2793,23 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     }
     return el("div", { "class": "a-row", "data-machine": String(d.id) }, [
       avatar("machine", d.name, { dot: !!d.online }),
-      el("div", { "class": "a-text" }, [el("b", { text: d.name, title: d.name === d.machine ? d.name : d.name + " (" + d.machine + ")" }), d.emergency ? chip("This hub", "idle", "a-hub") : null, sub]),
+      el("div", { "class": "a-text" }, [el("b", { text: d.name, title: d.name === d.machine ? d.name : d.name + " (joined as " + d.machine + ")" }), d.emergency ? chip("This hub", "idle", "a-hub") : null, sub,
+        toolTags(d.tools)]),
       acts]);
   }
   /* a team machine you can use: shared by the team, so no Rename or Remove here */
   function teamMachineRow(d) {
-    var sub = el("small", null, [d.os_user ? "as " + d.os_user + " \u00b7 " : "", d.projects.join(", ") + " \u00b7 ", seenText(d)]);
+    var sub = el("small", null, [d.projects.join(", ") + " \u00b7 ", seenText(d)]);
     return el("div", { "class": "a-row", "data-team-machine": d.name, title: "A team machine: everyone with a role in " + d.projects.join(", ") + " uses it" }, [
       avatar("machine", d.name, { dot: !!d.online }),
-      el("div", { "class": "a-text" }, [el("b", { text: d.name }), sub]),
+      el("div", { "class": "a-text" }, [el("b", { text: d.name }), sub, toolTags(d.tools)]),
       chip("Team", "active", "a-tag")]);
   }
   function renderAccount() {
     var a = account, roles = { admin: "Admin", member: "Member", manager: "Manager" };
-    if (!a || (holding && holding.isConnected && $("settings").contains(holding) && !$("pane-team-people").contains(holding) && !$("pane-team-projects").contains(holding) && !$("team-machine-rows").contains(holding))) return;  /* an edit is open */
-    if (!changed("account", [a, me && me.gitlab_connect])) return;
+    if (!a || (holding && holding.isConnected && $("settings").contains(holding) && !$("pane-people").contains(holding) && !$("pane-person").contains(holding) && !$("pane-projects").contains(holding) && !$("team-machine-rows").contains(holding))) return;  /* an edit is open */
+    if (pressing($("a-machines"))) return;
+    if (!changed("account", calm([a, me && me.gitlab_connect]))) return;
     var prof = $("a-profile"), gl = [a.gitlab_user ? "@" + a.gitlab_user : el("span", { "class": "quiet", text: "Not linked" })];
     if (me && me.gitlab_connect) {
       var c = button([icon("i-link", 14), "Connect GitLab"], "", function () { connectGitlab(c); }, { title: "Sign in with GitLab from now on" });
@@ -2615,7 +2824,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     box.textContent = "";
     if (!a.machines.length && !a.team_machines.length)
       box.appendChild(el("div", { "class": "a-none" }, [icon("i-monitor", 14), el("span", { text: a.add_machine
-        ? "No machines yet. Click Add a machine and run the command on your computer." : "No machines yet" })]));
+        ? "No machines yet. Click Add machine and run the command on your computer." : "No machines yet" })]));
     a.machines.forEach(function (d) { box.appendChild(machineRow(d)); });
     a.team_machines.forEach(function (d) { box.appendChild(teamMachineRow(d)); });
     $("add-machine").hidden = !a.add_machine;
@@ -2645,18 +2854,30 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
               function (e) { accErr("a-browsers-err", e.message); throw e; });
     });
   });
-  /* Add a machine: a fresh invite for yourself as the join command. The same one is shown again
-     until a machine joins or it ends, so opening it twice does not use up the limit */
+  /* Add machine, my own account: a fresh invite for yourself as the join command. The same one is
+     shown again until a machine joins or it ends, so opening it twice does not use up the limit */
   function showJoin() {
     $("join-cmd").textContent = joinCmd.command;
-    $("a-join").hidden = false;
-    $("add-machine").setAttribute("aria-expanded", "true");
+    addPanels("own");
     $("join-copy").focus();
   }
   $("add-machine").addEventListener("click", function () {
-    var b = $("add-machine");
-    if (!$("a-join").hidden) { $("a-join").hidden = true; b.setAttribute("aria-expanded", "false"); return; }
+    if ($("add-machine").getAttribute("aria-expanded") === "true") { addPanels(null); return; }  /* a second click closes it */
     accErr("a-machines-err", "");
+    if (isAdmin()) { addPanels("choice"); $("add-own").focus(); return; }
+    ownJoin();
+  });
+  $("add-own").addEventListener("click", ownJoin);
+  $("add-shared").addEventListener("click", function () {  /* a team machine shows under Everyone */
+    if (mScope !== "everyone") { mScope = "everyone"; machineScope(); loadMachines(true); }
+    teamAdded = null; teamBox(true);
+  });
+  $("add-choice-cancel").addEventListener("click", function () { addPanels(null); $("add-machine").focus(); });
+  $("join-done").addEventListener("click", function () { addPanels(null); $("add-machine").focus(); });
+  $("add-choice").addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); addPanels(null); $("add-machine").focus(); } });
+  function ownJoin() {
+    var b = $("add-machine");
+    if (mScope === "everyone") { mScope = "mine"; machineScope(); }  /* your own shows under Mine */
     var n = account ? account.machines.length : -1;
     if (joinCmd && joinCmd.machines === n && joinCmd.expires > Date.now() / 1000 + 60) { showJoin(); return; }
     b.setAttribute("aria-busy", "true");
@@ -2664,7 +2885,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       .then(function (x) { joinCmd = { command: x.command, expires: x.expires, machines: n }; showJoin(); })
       .catch(function (x) { if (x.message !== "unauthorized") accErr("a-machines-err", x.message); })
       .then(function () { b.removeAttribute("aria-busy"); });
-  });
+  }
   $("join-copy").addEventListener("click", function () {
     var b = $("join-copy");
     copyText(joinCmd ? joinCmd.command : "").then(function (ok) {
@@ -2679,10 +2900,6 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
   $("text").addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
   });
-  $("add-team-btn").addEventListener("click", function () {  /* a team machine shows under Everyone */
-    if (mScope !== "everyone") { mScope = "everyone"; machineScope(); loadMachines(true); }
-    teamAdded = null; teamBox(true);
-  });
   $("add-team-cancel").addEventListener("click", function () { teamBox(false); });
   $("add-team-box").addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); teamBox(false); } });
   $("add-team").addEventListener("submit", function (e) {
@@ -2694,6 +2911,7 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
       .then(function (x) { btn.disabled = false; teamAdded = x; showTeamAdded(); machinesAt = 0; loadMachines(true); },
             function (err) { btn.disabled = false; teamErr("add-team-err", err.message); });
   });
+  $("person-back").addEventListener("click", function (e) { e.preventDefault(); show("settings", true, "people"); });
   $("add-person-btn").addEventListener("click", function () { added = null; addBox(true); });
   $("add-person-cancel").addEventListener("click", function () { addBox(false); });
   $("add-box").addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); addBox(false); } });
@@ -2755,11 +2973,11 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
     me = m;
     seen = {}; feed = null; myAccess = null; account = null; joinCmd = null; conv = "mgr"; phoneOpen = false; askOpen = false;
     readMap = store(function (s) { var r = JSON.parse(s.getItem("kaptyorka.read." + m.person) || "null"); return r && typeof r === "object" ? r : null; });
-    fleet = { warnings: [] }; fleetAt = 0; proposals = []; proposalsAt = 0; openPerson = null; gitlab = null; gitlabAt = 0;
+    fleet = { warnings: [] }; fleetAt = 0; proposals = []; proposalsAt = 0; gitlab = null; gitlabAt = 0; boxErr = {};
     $("viewer-label").textContent = m.person;
     $("viewer-av").className = "av av-person sm tint-" + tintOf(m.person);
     $("viewer-av").setAttribute("data-i", initials(m.person));
-    $("a-join").hidden = true;
+    addPanels(null);
     $("menu-name").textContent = m.person;
     $("menu-role").textContent = (m.role === "admin" ? "Admin" : m.role === "manager" ? "Manager" : "Member") + " \u00b7 " + m.device;
     document.querySelectorAll(".admin-only").forEach(function (n) { n.hidden = m.role !== "admin"; });

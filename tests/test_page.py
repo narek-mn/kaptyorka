@@ -159,34 +159,37 @@ def team_code(html):
     return html[html.index("/* Team: the admin's one screen."):html.index("/* redraw only the parts whose data changed")]
 
 
-def test_settings_split_account_and_team(hub):
+def test_settings_one_flat_sidebar(hub):
     """The top bar keeps Home; the account button opens a menu (Account settings, Team settings
-    for an admin, Sign out). Settings is one area with a sidebar: Your account (Profile,
-    Machines, Signed-in browsers) and Team (People with the waiting count, Projects), each at
-    its own address. One Machines page: an admin switches Mine / Everyone there, and the old
-    All machines address lands on it. What left the page long ago stays gone."""
+    for an admin, Sign out). Settings is one area with one flat sidebar, no headings: Profile,
+    Machines, Signed-in browsers, then People (with the waiting count) and Projects for an
+    admin, each at its own address; the old #settings/account/... and #settings/team/...
+    addresses still land there. One Machines page: an admin switches Mine / Everyone there, and
+    the old All machines address lands on it. What left the page long ago stays gone."""
     html = page(hub)
     top = re.search(r'<nav role="tablist">.*?</nav>', html, re.S).group(0)
     assert re.findall(r'data-view="(\w+)"', top) == ["home"]
     menu = re.search(r'<div class="menu" id="acct-menu".*?id="signout"[^\n]*', html, re.S).group(0)
     assert 'role="menu"' in menu and 'aria-haspopup="menu"' in html
-    assert re.findall(r'data-go="([a-z/]+)"', menu) == ["account/profile", "team/people"]
+    assert re.findall(r'data-go="([a-z/]+)"', menu) == ["profile", "people"]
     assert ">Account settings<" in menu and ">Team settings<" in menu and 'id="signout"' in menu
     nav = re.search(r'<nav class="set-nav".*?</nav>', html, re.S).group(0)
-    assert re.findall(r'href="#settings/([a-z/]+)"', nav) == [
-        "account/profile", "account/machines", "account/browsers",
-        "team/people", "team/projects"]
+    assert re.findall(r'href="#settings/([a-z/]+)"', nav) == ["profile", "machines", "browsers", "people", "projects"]
+    assert "set-group" not in nav and "Your account" not in nav and ">Team<" not in nav
+    for old, new in (("account/profile", "profile"), ("account/machines", "machines"), ("account/browsers", "browsers"),
+                     ("team/people", "people"), ("team/projects", "projects")):
+        assert f'"{old}": "{new}"' in html
     assert 'id="pane-team-machines"' not in html and ">All machines<" not in html
-    pane = re.search(r'id="pane-account-machines".*?id="machines-err"', html, re.S).group(0)
+    pane = re.search(r'id="pane-machines".*?id="machines-err"', html, re.S).group(0)
     assert 'id="m-scope"' in pane and ">Mine<" in pane and ">Everyone<" in pane
-    assert 'id="add-team-btn"' in pane and 'id="team-machine-rows"' in pane
-    assert '{ mScope = "everyone"; return ["settings", "account/machines"]; }' in html
+    assert 'id="team-machine-rows"' in pane and 'id="add-team-btn"' not in pane
+    assert '{ mScope = "everyone"; return ["settings", "machines"]; }' in html
     assert 'id="n-team"' in nav and 'id="n-acct"' in html  # the waiting count, twice in sight
-    people = re.search(r'id="pane-team-people".*?id="team-err"', html, re.S).group(0)
+    people = re.search(r'id="pane-people".*?id="team-err"', html, re.S).group(0)
     assert people.index("Waiting for you") < people.index('id="people-rows"')
     assert ">Add person<" in people and "<select" not in people  # no role picker
-    assert 'return ["settings", "team/people"];' in html  # an old #view=team link
-    assert 'if (v === "account") return ["settings", "account/profile"];' in html
+    assert 'return ["settings", "people"];' in html  # an old #view=team link
+    assert 'if (v === "account") return ["settings", "profile"];' in html
     # the menu: arrows, Esc and a click outside
     assert 'e.key === "ArrowDown"' in html and 'e.key === "Escape"' in html
     assert '!$("acct-menu").contains(e.target)' in html
@@ -195,6 +198,19 @@ def test_settings_split_account_and_team(hub):
                  '"/api/log', '"/api/settings"', '"/api/workers', '"/auto_update"', '"/shared"', '"/owner"',
                  '"/api/rules', '"/api/notes', "Decided", "Shared token", "Machine use"):
         assert gone not in html, gone
+
+
+def test_one_add_machine_button(hub):
+    """One Add machine: an admin answers whose account it is (two options, a line each); a member
+    goes straight to their own join command."""
+    html = page(hub)
+    pane = re.search(r'id="pane-machines".*?id="machines-err"', html, re.S).group(0)
+    assert pane.count(">Add machine<") == 1 and "Add a machine" not in html and "Add team machine" not in html
+    choice = re.search(r'id="add-choice".*?id="add-choice-cancel"', pane, re.S).group(0)
+    assert ">My own account<" in choice and ">Shared team account<" in choice
+    assert "Its sessions are yours." in choice and "Its sessions are visible to everyone in the project." in choice
+    assert 'if (isAdmin()) { addPanels("choice"); $("add-own").focus(); return; }' in html
+    assert '$("add-own").addEventListener("click", ownJoin);' in html
 
 
 def test_team_waiting_lines_and_answers(hub):
@@ -213,35 +229,76 @@ def test_team_waiting_lines_and_answers(hub):
     assert '$("waiting").hidden = !items.length;' in code
 
 
-def test_team_people_rows(hub):
+def test_team_people_rows_and_person_page(hub):
     code = team_code(page(hub))
-    # New invite link at any time, Remove once they joined; none on yourself
+    # a clean row (name, short status, chevron) opens the person's own page at its address
     assert '"hasn\'t joined yet"' in code and 'v.self ? "you"' in code
-    assert '"New invite link"' in code and 'v.self ? null : button(' in code and 'button("Remove", "quiet-danger"' in code
-    assert '"Remove " + v.name + "? They are signed out everywhere."' in code
+    assert 'href: "#settings/people/" + encodeURIComponent(v.name)' in code and "openPersonPage(v.name)" in code
     assert "return !isManagerAccount(p) && !p.team;" in code  # nor the manager account, nor team machines
-    # a tick gives write; a project seen only on a session is registered on its first tick
+    # the page: profile, projects, machines, then the actions
+    for words in ('["Role", ', '["GitLab", ', '["Last seen", ', '"Changes save automatically"', '"Projects"', '"Machines"',
+                  '"New invite link"', 'button("Make admin"', 'button("Remove admin"', 'button("Remove", "quiet-danger"'):
+        assert words in code, words
+    assert '"Remove " + v.name + "? They are signed out everywhere."' in code
+    # a tick gives write; a project seen only on a session is registered on its first tick;
+    # "Saved" for 2 s next to that box, an error inline next to it
     assert 'on ? { person: v.name, role: "write" } : { person: v.name }' in code
     assert 'api("/api/projects", { name: project })' in code
-    assert 'flash("saved:" + k)' in code and 'text: "Saved"' in code
+    assert 'flash("saved:" + k, 2000)' in code and 'text: "Saved ✓"' in code and "boxErr[k] = e.message" in code
+    # a team machine's switch is the existing machine grant
+    assert 'api(apiPath("/api/machines/", host, on ? "/grant" : "/revoke"), { person: v.name })' in code
+    assert 'role: "switch"' in code and "Team accounts take no workers yet." in code
     # the page may run on plain http: the copy falls back to a hidden field
     assert 'document.execCommand("copy")' in code and "window.isSecureContext" in code
 
 
-def test_team_machine_button_and_hub_label(hub):
+def test_no_make_team_machine_button(hub):
     html = page(hub)
-    code = team_code(html)
-    assert 'button("Make team machine", ""' in code and code.index("if (canTeam) {") > code.index("p-projects") and "var canTeam = !v.self && !v.manager && !v.team && !v.linked;" in code
-    assert 'api(apiPath("/api/people/", v.name, "/team"))' in code and "teamErr(\"team-err\", e.message)" in code
-    assert (" becomes a shared team machine: it leaves People, loses admin, and its sessions are"
-            " visible to everyone with access to the project.") in code
-    assert "confirm(" not in code
+    assert "Make team machine" not in html and '"/team")' not in html
     assert 'd.emergency ? chip("This hub"' in html
+
+
+def test_give_to_replaces_move(hub):
+    code = team_code(page(hub))
+    assert 'button("Give to…", ""' in code and '"Give " + d.name + " to", "Give"' in code
+    assert 'button("Move"' not in code
+    assert 'api(apiPath("/api/devices/", d.id, "/move"), { person: to.value })' in code
+
+
+def test_one_name_for_a_machine(hub):
+    html = page(hub)
+    assert 'function machineName(d) { return d.label || (d.os_user && d.host ? d.os_user + "@" + d.host : d.name); }' in html
+    assert "sub: a.where || a.machine" in html and "sub: mgr ? mgr.where || mgr.machine" in html
+
+
+def test_home_mine_and_everyone(hub):
+    """An admin's Home switches Mine (what a member sees) and Everyone (a header per person and
+    per team machine, folded but your own); the choice and the folds are kept per browser."""
+    html = page(hub)
+    side = re.search(r'<div class="side">.*?id="agents"', html, re.S).group(0)
+    assert 'id="h-scope"' in side and "admin-only" in side and ">Mine<" in side and ">Everyone<" in side
+    code = html[html.index("function homeAll()"):html.index("function lead(e) {")]
+    assert "function inMine(e) { return !e.sess || e.mine || e.team; }" in code
+    assert 'st.setItem("kaptyorka.home-scope", hScope)' in code and '"kaptyorka.home-groups"' in code
+    assert "var open = groupOpen[g.key] != null ? !!groupOpen[g.key] : g.own;" in code
+    assert 'el("small", { text: String(g.rows.length) })' in code and "unseen ?" in code
+
+
+def test_open_views_do_not_blink(hub):
+    """A poll redraws a part only when its data changed: each part has its own key (the session
+    list and the people list once shared one, so every poll redrew both), online things drop
+    their ever-moving last seen, and a press on a list holds its redraw until the click lands."""
+    html = page(hub)
+    keys = re.findall(r'changed\("([a-z-]+)"', html)
+    assert len(keys) == len(set(keys)), keys
+    assert 'changed("sessions"' in html and 'changed("people"' in html and 'changed("person", calm(' in html
+    assert 'changed("account", calm(' in html and 'changed("hosts", calm(' in html
+    assert "function pressing(box)" in html and "if (pressing(box)) return;" in html
 
 
 def test_old_admin_links_open_team(hub):
     html = page(hub)
-    assert 'return ["settings", "team/people"];' in html
+    assert 'return ["settings", "people"];' in html
 
 
 def test_chat_shows_sending_sent_delivered_and_working(hub):

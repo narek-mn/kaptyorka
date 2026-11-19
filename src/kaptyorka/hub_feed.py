@@ -4,7 +4,7 @@ from typing import Optional
 
 from kaptyorka import __version__, admin_ops
 from kaptyorka.manager import ManagerStore
-from kaptyorka.store import PRIVATE, Agent, Principal, Store, private_name, session_id
+from kaptyorka.store import PRIVATE, Agent, Principal, Store, machine_name, private_name, session_id
 
 
 def agent_row(a: Agent, now: float) -> dict:
@@ -28,7 +28,9 @@ def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: 
     `manager_id`: the manager person's id; their session gets role "manager"."""
     mine = a.person_id == principal.person_id
     row = {**agent_row(a, now), "id": session_id(a.key), "mine": mine,
-           "person": names.get(a.person_id, "")}
+           "person": names.get(a.person_id, ""),
+           "where": store.device_label(a.device_id) or machine_name("", a.os_user, a.host, a.machine),
+           "team": a.person_id is not None and store.is_team(a.person_id)}
     if not visible(store, principal, a.person_id, a.project):
         row["project"] = PRIVATE
         row["name"] = private_name(a.name, a.machine, a.tool, a.project)

@@ -5,7 +5,8 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from kaptyorka import paths
-from kaptyorka.store import MAX_ABOUT, ONLINE_S, KaptyorkaError, Principal
+from kaptyorka.store import MAX_ABOUT, ONLINE_S, KaptyorkaError, Principal, machine_name
+from kaptyorka.workers import device_tools
 
 LIVE = ("starting", "up", "unattended", "abandoned")  # workers.LIVE; workers imports the store
 MANAGER = "manager"  # manager.PERSON; manager imports the store
@@ -318,8 +319,9 @@ def account(store, principal: Principal) -> dict:
         p = store.db.execute("SELECT name, role, gitlab_user FROM people WHERE id=?",
                              (principal.person_id,)).fetchone()
         devices = store.db.execute(
-            f"SELECT id, name, label, os_user, last_used FROM devices WHERE person_id=? AND {_MACHINE}"
+            f"SELECT id, name, label, os_user, host, last_used FROM devices WHERE person_id=? AND {_MACHINE}"
             " ORDER BY name", (principal.person_id,)).fetchall()
+        tools = {d["id"]: device_tools(store.db, d["id"]) for d in devices}
         browsers = store.db.execute(
             f"SELECT id, created, last_used FROM devices WHERE person_id=? AND {_BROWSER}"
             " AND (expires IS NULL OR expires>?) ORDER BY created DESC",
@@ -327,15 +329,18 @@ def account(store, principal: Principal) -> dict:
         team = _team_machines(store, principal.person_id)
     return {
         "person": p["name"], "role": p["role"], "gitlab_user": p["gitlab_user"],
-        "machines": [{"id": d["id"], "name": d["label"] or d["name"], "machine": d["name"],
-                      "os_user": d["os_user"], "last_seen": d["last_used"],
+        "machines": [{"id": d["id"], "name": machine_name(d["label"], d["os_user"], d["host"], d["name"]),
+                      "machine": d["name"], "label": d["label"],
+                      "auto": machine_name("", d["os_user"], d["host"], d["name"]),
+                      "os_user": d["os_user"], "last_seen": d["last_used"], "tools": tools[d["id"]],
                       "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S,
                       "current": d["id"] == principal.device_id,
                       "emergency": d["id"] == emergency}
                      for d in devices],
         "browsers": [{"id": b["id"], "created": b["created"], "last_used": b["last_used"],
                       "current": b["id"] == principal.device_id} for b in browsers],
-        "team_machines": [{"name": d["label"] or d["name"], "os_user": d["os_user"],
+        "team_machines": [{"name": machine_name(d["label"], d["os_user"], d["host"], d["name"]),
+                           "os_user": d["os_user"], "tools": d["tools"],
                            "last_seen": d["last_used"], "projects": d["projects"],
                            "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S}
                           for d in team],
@@ -350,7 +355,7 @@ def _team_machines(store, person_id: int) -> List[dict]:
     machine with the projects of theirs it works in."""
     out = []
     for d in store.db.execute(
-            "SELECT d.id, d.name, d.label, d.os_user, d.last_used, d.person_id FROM devices d"
+            "SELECT d.id, d.name, d.label, d.os_user, d.host, d.last_used, d.person_id FROM devices d"
             " JOIN people p ON p.id=d.person_id WHERE p.team=1 AND p.removed_at IS NULL"
             f" AND d.host!='' AND d.person_id!=? AND {_MACHINE} ORDER BY d.name",
             (person_id,)).fetchall():
@@ -358,7 +363,7 @@ def _team_machines(store, person_id: int) -> List[dict]:
             "SELECT DISTINCT project FROM agents WHERE person_id=? ORDER BY project", (d["person_id"],))
             if store._role(r["project"], person_id) is not None]
         if projects:
-            out.append({**dict(d), "projects": projects})
+            out.append({**dict(d), "projects": projects, "tools": device_tools(store.db, d["id"])})
     return out
 
 
@@ -382,7 +387,7 @@ def machine_label(store, principal: Principal, device_id: int, label: str) -> st
         store.db.execute("UPDATE devices SET label=? WHERE id=?", (label, device_id))
     shown = row["label"] or row["name"]
     store.log_add(principal.person_name, "machine_label", f"{shown} -> {label or row['name']}")
-    return label or row["name"]
+    return machine_name(label, row["os_user"], row["host"], row["name"])
 
 
 def machine_remove(store, principal: Principal, device_id: int) -> None:

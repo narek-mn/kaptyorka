@@ -183,6 +183,16 @@ def private_name(name: str, machine: str, tool: str, project: str) -> str:
     return f"{machine}/{tool}/{PRIVATE}{suffix}"
 
 
+def machine_name(label: str, os_user: str, host: str, fallback: str) -> str:
+    """How a machine (one joined account) is called everywhere: its label when someone renamed
+    it, else account@computer, else the name it joined with."""
+    if label:
+        return label
+    if os_user and host:
+        return f"{os_user}@{host}"
+    return fallback
+
+
 def session_id(key: str) -> str:
     """A session's stable public handle, "#" and 8 hex digits: it names a session without
     its project, and the key cannot be read back from it."""
@@ -631,6 +641,15 @@ class Store:
                             "owner_person_id": m["owner_person_id"], "devices": devs,
                             "online": online})
             return out
+
+    def device_label(self, device_id: Optional[int]) -> str:
+        """A joined machine's name as machine_name gives it; "" when unknown."""
+        if device_id is None:
+            return ""
+        with self.lock:
+            d = self.db.execute("SELECT name, label, os_user, host FROM devices WHERE id=?",
+                                (device_id,)).fetchone()
+        return machine_name(d["label"], d["os_user"], d["host"], d["name"]) if d else ""
 
     def _granted(self, host: str, person_id: int) -> bool:
         return self.db.execute("SELECT 1 FROM machine_access WHERE host=? AND person_id=?",

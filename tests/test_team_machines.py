@@ -130,7 +130,7 @@ def test_overview_lists_hosts_people_team_and_use(store, team):
     [m] = [m for m in ws.overview() if m["host"] == "jet-1"]
     assert m["people"] == ["bob"] and m["team"] == ["jet-1"] and m["online"]
     assert m["use"] == "GPU 90% · CPU 25% · memory 40%"
-    assert sorted(d["name"] for d in m["devices"]) == ["jet-1", "jet-1-bob"]
+    assert sorted(d["name"] for d in m["devices"]) == ["bob@jet-1", "nvidia@jet-1"]  # account@computer
     assert usage.short(None) == "" and usage.short({"users": {}}) == ""
 
 
@@ -213,12 +213,12 @@ def test_account_lists_the_team_machines_you_can_use(store, team):
     def tm(name):
         return [(m["name"], m["os_user"], m["projects"])
                 for m in admin_ops.account(store, who(store, name))["team_machines"]]
-    assert tm("bob") == [("jet-1", "nvidia", ["proj-a"])]  # not proj-b: no role there
+    assert tm("bob") == [("nvidia@jet-1", "nvidia", ["proj-a"])]  # not proj-b: no role there
     assert tm("carol") == []
-    assert tm("alice") == [("jet-1", "nvidia", ["proj-a", "proj-b"])]
+    assert tm("alice") == [("nvidia@jet-1", "nvidia", ["proj-a", "proj-b"])]
     assert admin_ops.account(store, team[1])["team_machines"] == []  # not itself
     store.grant_project("proj-b", who(store, "carol").person_id, "read", "alice")
-    assert tm("carol") == [("jet-1", "nvidia", ["proj-b"])]
+    assert tm("carol") == [("nvidia@jet-1", "nvidia", ["proj-b"])]
 
 
 def test_a_person_becomes_a_team_machine(store, tmp_path, monkeypatch):
@@ -284,3 +284,56 @@ def test_only_a_person_without_gitlab_or_the_shared_token_becomes_a_team_machine
     with pytest.raises(KaptyorkaError, match="you are the last admin"):
         admin_ops.set_role(store, "dan", "member", who(store, "dan"))
     store.close()
+
+
+def test_one_name_for_a_machine_everywhere(store, team):
+    """A machine is account@computer everywhere (the feed's sessions, Mine, Everyone), its label
+    when renamed, its joined name when the computer is unknown. The hub's own account, joined
+    with another name, reads account@computer with no data change."""
+    from kaptyorka.store import machine_name
+    assert machine_name("", "alice", "box-1", "hub-dev") == "alice@box-1"
+    assert machine_name("work box", "alice", "box-1", "hub-dev") == "work box"
+    assert machine_name("", "", "box-1", "hub-dev") == "hub-dev" == machine_name("", "alice", "", "hub-dev")
+    alice = store.person_by_name("alice")["id"]
+    token = store.device_add(alice, "hub-dev")
+    p = store.authenticate(token)
+    store.heartbeat("hub-dev", [], principal=p, facts={"host": "box-1", "os_user": "alice"})
+    store.seen("a-1", "hub-dev", "claude", "proj-a", principal=p)
+    rows = {a["name"]: a for a in feed(store, who(store, "alice"))["agents"]}
+    assert rows["hub-dev/claude/proj-a"]["where"] == "alice@box-1" and not rows["hub-dev/claude/proj-a"]["team"]
+    assert {a["where"] for a in rows.values() if a["team"]} == {"nvidia@jet-1"}
+    mine = admin_ops.account(store, who(store, "alice"))["machines"]
+    assert [m["name"] for m in mine if m["machine"] == "hub-dev"] == ["alice@box-1"]
+    ws = WorkerStore(store)
+    every = [d["name"] for h in ws.overview() for d in h["devices"]]
+    assert "alice@box-1" in every and "nvidia@jet-1" in every
+    with store.lock:
+        store.db.execute("UPDATE devices SET label='lab box' WHERE id=?", (p.device_id,))
+    assert feed(store, who(store, "alice"))["agents"][-1]["where"] == "lab box"
+
+
+def test_machines_show_their_agent_tools(store, team):
+    """The tools a machine's bridge reported, with their display names and logins: on your own
+    machines and the team machines you can use (Mine), and on every account (Everyone). Nothing
+    when the bridge never reported; [] when it has no tool. No one else's machines leak."""
+    import json
+    from kaptyorka.workers import tool_tags
+    assert tool_tags(None) is None and tool_tags({"os_user": "x"}) is None
+    assert tool_tags({"tools": {}}) == []
+    assert tool_tags({"tools": {"codex": "0.9", "claude-code": "2.1"}, "logins": {"codex": False}}) == [
+        {"tool": "claude-code", "name": "Claude Code", "logged_in": None},
+        {"tool": "codex", "name": "Codex", "logged_in": False}]
+    ws = WorkerStore(store)
+    bob = store.person_by_name("bob")["id"]
+    bt = store.authenticate(store.device_add(bob, "bob-pc"))
+    store.heartbeat("bob-pc", [], principal=bt, facts={"host": "box-2", "os_user": "bob"})
+    ws.facts_seen(bt.device_id, {"tools": {"claude-code": "2.1"}, "logins": {"claude-code": True}}, {})
+    ws.facts_seen(team[1].device_id, {"tools": {"claude-code": "2.1"}, "logins": {"claude-code": False}}, {})
+    acc = admin_ops.account(store, who(store, "bob"))
+    assert [m["tools"] for m in acc["machines"] if m["machine"] == "bob-pc"] == [
+        [{"tool": "claude-code", "name": "Claude Code", "logged_in": True}]]
+    assert [m["machine"] for m in acc["machines"] if m["tools"] is None] == ["bob-laptop"]  # never reported
+    assert acc["team_machines"][0]["tools"] == [{"tool": "claude-code", "name": "Claude Code", "logged_in": False}]
+    assert "alice" not in json.dumps(acc) and "carol" not in json.dumps(acc)
+    every = {d["name"]: d["tools"] for h in ws.overview() for d in h["devices"]}
+    assert every["bob@box-2"][0]["logged_in"] is True and every["nvidia@jet-1"][0]["logged_in"] is False

@@ -11,7 +11,7 @@ from kaptyorka import usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES
 from kaptyorka.orders import sign
 from kaptyorka.secrets_check import check_secrets
-from kaptyorka.store import MANAGER_ACCOUNT, ONLINE_S, PROJECT_NAME, KaptyorkaError, Principal, Store, _check_length, _person
+from kaptyorka.store import MANAGER_ACCOUNT, ONLINE_S, PROJECT_NAME, KaptyorkaError, Principal, Store, _check_length, _person, machine_name
 
 MAX_FACT = 200
 MAX_ERROR = 500  # a no-show error names the folder and the log
@@ -155,6 +155,26 @@ def clean_use(use) -> Optional[dict]:
     return out
 
 
+def tool_tags(facts: Optional[dict]) -> Optional[List[dict]]:
+    """The agent tools a machine's bridge reported, for the Machines page: each installed tool
+    with its display name and whether it is logged in (None: unknown). None when the bridge
+    never reported (nothing is known); [] when it reported no tool."""
+    if not facts or not isinstance(facts.get("tools"), dict):
+        return None
+    logins = facts.get("logins") if isinstance(facts.get("logins"), dict) else {}
+    return [{"tool": t, "name": TOOL_NAMES.get(t, t), "logged_in": logins.get(t)}
+            for t in sorted(facts["tools"], key=lambda t: (t not in TOOL_NAMES, t))]
+
+
+def device_tools(db, device_id) -> Optional[List[dict]]:
+    """tool_tags of one device, read with the caller holding the store lock."""
+    try:
+        row = db.execute("SELECT facts FROM device_facts WHERE device_id=?", (device_id,)).fetchone()
+    except Exception:  # no facts table yet: no bridge ever reported
+        return None
+    return tool_tags(json.loads(row["facts"])) if row else None
+
+
 def clean_facts(facts: dict) -> dict:
     """Only the known keys, with the right types; strings cut to 200."""
     facts = facts if isinstance(facts, dict) else {}
@@ -264,6 +284,7 @@ class WorkerStore:
                 " WHERE d.revoked_at IS NULL AND d.legacy=0 AND d.expires IS NULL AND d.host!=''"
                 " AND p.removed_at IS NULL AND NOT (p.name=? AND p.role='manager')"
                 " ORDER BY d.host, d.id", (MANAGER_ACCOUNT,)).fetchall()
+            devs = [{**dict(d), "tools": device_tools(self.db, d["id"])} for d in devs]
         hosts: dict = {}
         for d in devs:
             h = hosts.setdefault(d["host"], {"host": d["host"], "people": [], "team": [],
@@ -271,10 +292,11 @@ class WorkerStore:
             online = d["last_used"] is not None and d["last_used"] > now - ONLINE_S
             h["online"] = h["online"] or online
             (h["team"] if d["team"] else h["people"]).append(d["person"])
-            h["devices"].append({"id": d["id"], "name": d["label"] or d["name"],
-                                 "person": d["person"], "team": bool(d["team"]),
+            h["devices"].append({"id": d["id"],
+                                 "name": machine_name(d["label"], d["os_user"], d["host"], d["name"]),
+                                 "label": d["label"], "person": d["person"], "team": bool(d["team"]),
                                  "os_user": d["os_user"], "online": online,
-                                 "last_seen": d["last_used"]})
+                                 "last_seen": d["last_used"], "tools": d["tools"]})
         out = []
         for h in hosts.values():
             here = self.host_use(h["host"], now)
@@ -1018,7 +1040,7 @@ class WorkerStore:
                 (now - 86400,)).fetchall()
         for d in devices:
             host, user = d["host"], d["os_user"]
-            who = f"{host} ({user})"
+            who = machine_name("", user, host, host)
 
             def add(out, text, blocks=False):
                 out.append({"host": host, "os_user": user, "person": d["person"] or "",
