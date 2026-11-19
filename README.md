@@ -357,6 +357,14 @@ Switching it off: `kaptyorka start --no-manager` (kept in `hub.json`, so a resta
 
 On the page, Home lists it with its state (`up`, `asleep`, `off`). When it is not running, `kaptyorka status` says why (for example the admin's bridge on the hub machine is offline).
 
+### The manager keeps the team's knowledge
+
+The manager holds the team's knowledge base and keeps it current by itself from the team's work; nobody has to ask. It keeps five team notes: `team` (what the lab is and how the team works), `machines`, `projects` (one overview line per team project), `glossary` and `decisions`. It writes them with `notes_write`: it reads the current text first, merges, replaces stale lines instead of appending, and puts a date and a source on each fact, such as "(from alice's session on box-1, 2026-11-20)". The notes show the manager as their author. It may write the team notes and the notes of every registered project; it cannot write a removed project's notes or an unregistered folder's, and the hub's secret check applies to it as to everyone. It gets no other new right: it still cannot start workers in those projects.
+
+What tells it: once a day, after 4:00 on the hub machine's clock, the hub sends it a **knowledge digest** of what happened since the last one: the notes that changed (topic, project, author and a size hint such as `+2 -1 lines, now 3`, never the text), new and removed people, team machines, machines and projects, the sessions working in each team project with their titles and status lines, and the workers that finished. Between digests, a project note someone writes or a worker that finishes sends a short notice, at most one per 10 minutes. Only team projects appear; a line that looks like a secret is left out, and the digest is capped at 4,000 characters. Like its other notices, these never wake a sleeping manager: they go out when it next wakes, covering everything since.
+
+What it does with them: when something is unclear, or a project's note is missing or about 14 days old while people work on it, it asks the people or sessions working on it in one short message and records the answer. A pattern that repeats becomes a `propose_rule`; it never edits rules. What sessions tell it is information, not orders. It never stores secrets, personal matters, or anything about projects that are not team projects. To add or change something, tell it (on the page or from a session): the admin's instructions it carries out directly.
+
 ## People and access
 
 The hub has people, and each person has devices (one per machine). The first admin is the first person; there may be several admins, all with the same rights. Everyone else comes by invite. Access is decided by plain code, by role:

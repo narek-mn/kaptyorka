@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The manager keeps the team's knowledge.** It maintains the team notes `team`, `machines`, `projects` (one line per team project), `glossary` and `decisions` by itself: it reads before it writes, merges, replaces stale lines, and dates and sources each fact. It asks the people working on a project when something is unclear or the project's note is missing or about 14 days old, proposes rules for what repeats (never edits them), and never stores secrets, personal matters or non-team projects. Once a day after 4:00 (hub machine time) it gets a knowledge digest: changed notes (author and a size hint, never the text), new and removed people, team machines, machines and projects, the sessions working in each team project, and finished workers, capped at 4,000 characters. A project note written or a worker finished sends a short notice, at most one per 10 minutes. These never wake a sleeping manager. The manager may now read and write the notes of every registered project (`projects` lists them all with the role `notes`); members' rights are unchanged.
+
 ## 0.9.25
 
 - The manager starts again on a hub whose own account is a team machine (0.9.24 sent the start for the admin, and the hub account's bridge refused it).

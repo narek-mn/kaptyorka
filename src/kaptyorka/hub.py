@@ -23,7 +23,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from kaptyorka import __version__, admin_ops, brief, identity, manager, paths, signin, usage
+from kaptyorka import __version__, admin_ops, brief, identity, knowledge, manager, paths, signin, usage
 from kaptyorka.gitlab import GitLabError, GitLabSource
 from kaptyorka import rules as rules_mod
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
@@ -358,6 +358,29 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         push("weekly", manager.WEEKLY_S,
              "weekly review: read log(500) for repeated conflicts and corrections; file"
              " propose_rule for what repeats; never edit rules")
+        knowledge_pushes(key, now)
+
+    def knowledge_pushes(key: str, now: float) -> None:
+        """The daily knowledge digest after the quiet hour, and between digests one light
+        notice at most every 10 minutes. Only to an awake manager: a sleeping one gets them
+        when it wakes, covering everything since (they never wake it)."""
+        last, light = mm.stamp(knowledge.DIGEST_KEY), mm.stamp(knowledge.LIGHT_KEY)
+        if last is None:  # a new hub, or an upgrade: start counting now
+            mm.set_stamp(knowledge.DIGEST_KEY, now)
+            mm.set_stamp(knowledge.LIGHT_KEY, now)
+            return
+        if knowledge.digest_due(last, now):
+            text = knowledge.digest(store, last, now)
+            if text:
+                ws.notify(key, text)
+            mm.set_stamp(knowledge.DIGEST_KEY, now)
+            mm.set_stamp(knowledge.LIGHT_KEY, now)  # the digest covers them
+            return
+        since = max(light or last, last)
+        text = knowledge.light(store, since)
+        if text and mm.push_once("knowledge-light", now, knowledge.LIGHT_GAP_S):
+            ws.notify(key, text)
+            mm.set_stamp(knowledge.LIGHT_KEY, now)
 
     def manager_tick(now: float) -> None:
         if started["first"]:
