@@ -54,7 +54,7 @@ def test_home_two_pane_chat(hub):
     assert 'placeholder="Message manager"' in home
     assert 'id="chat-back"' in home and 'id="chat-name"' in home  # the chat's header; Back on a phone
     # detail on hover: the full name, person, folder, tool and doing
-    assert "var tip = [a.label ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status," in html
+    assert "var tip = [a.label || a.title ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status," in html
     # the admin sees whose a line is (a member too for a hidden project's session) and an
     # Activity chat of every message; no "all" line
     assert "who: !a.mine && (isAdmin() || hidden(a)) ? a.person : null" in html and 'sessionRow("all"' not in html
@@ -74,6 +74,12 @@ def test_home_warns_only_what_blocks(hub):
     assert 'var rows = (isAdmin() ? fleet.warnings : feed.warnings || []).filter(function (w) { return w.blocks; });' in html
     assert 'id="warns"' in html and 'id="warn-banner"' not in html
     assert "run agents (no tool logged in)" in html and "kaptyorka.login-warn-dismissed" in html  # one line, its x kept here
+
+
+def test_home_names_a_session_by_its_title(hub):
+    html = page(hub)
+    assert 'a.label || (hidden(a) ? a.tool + " session" : a.title || plain)' in html  # label, title, folder
+    assert 'shortName(a.name) + " \\u00b7 "' in html  # the folder moves to the grey line
 
 
 def test_no_function_name_is_declared_twice(hub):
@@ -283,7 +289,7 @@ def test_machines_grouped_with_filter_chips(hub):
 def test_one_name_for_a_machine(hub):
     html = page(hub)
     assert 'function machineName(d) { return d.label || (d.os_user && d.host ? d.os_user + "@" + d.host : d.name); }' in html
-    assert "sub: a.where || a.machine" in html and "sub: mgr ? mgr.where || mgr.machine" in html
+    assert "+ (a.where || a.machine)," in html and "sub: mgr ? mgr.where || mgr.machine" in html
 
 
 def test_home_mine_and_everyone(hub):

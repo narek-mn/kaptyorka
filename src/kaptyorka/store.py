@@ -19,6 +19,7 @@ LEASE_S = 60
 MAX_TEXT = 32_000
 MAX_ABOUT = 500
 MAX_LABEL = 40
+MAX_TITLE = 80
 MAX_FILE = 5_000_000
 FILE_TYPES = ("png", "jpg", "jpeg", "gif", "webp", "svg", "txt", "md", "log", "json", "csv", "pdf",
               "mp4", "webm", "mov", "m4v", "ogg")
@@ -109,6 +110,7 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 # columns added after 0.1: an older database gets them by ALTER TABLE when it is opened
 ADDED_COLUMNS = [
     ("agents", "label", "TEXT NOT NULL DEFAULT ''"),
+    ("agents", "title", "TEXT NOT NULL DEFAULT ''"),
     ("agents", "person_id", "INTEGER"),
     ("agents", "os_user", "TEXT NOT NULL DEFAULT ''"),
     ("agents", "host", "TEXT NOT NULL DEFAULT ''"),
@@ -179,6 +181,11 @@ def clean(value, cap: int) -> str:
     return _one_line(str(value if value is not None else ""))[:cap]
 
 
+def clean_title(value: str, cap: int) -> str:
+    """A session title from a bridge: printable characters on one line, at most `cap`."""
+    return " ".join("".join(c if c.isprintable() else " " for c in value).split())[:cap]
+
+
 def private_name(name: str, machine: str, tool: str, project: str) -> str:
     """The session name with its project hidden: machine/tool/(private), keeping a -N suffix."""
     base = f"{machine}/{tool}/{project}"
@@ -245,6 +252,7 @@ class Agent:
     cwd: str = ""
     device_id: Optional[int] = None
     background: bool = False
+    title: str = ""
 
 
 @dataclass
@@ -1201,7 +1209,7 @@ class Store:
                      row["status"], row["activity"], row["last_seen"],
                      now - row["last_seen"] < ONLINE_S, row["label"], row["person_id"],
                      row["os_user"], row["host"], row["started"], row["cwd"], row["device_id"],
-                     bool(row["background"]))
+                     bool(row["background"]), row["title"])
 
     def _online_rows(self, now):
         return self.db.execute("SELECT * FROM agents WHERE last_seen > ? ORDER BY rowid",
@@ -1216,7 +1224,7 @@ class Store:
         return name
 
     def _touch(self, key, machine, tool, project, now, activity=None, label=None, cwd=None,
-               background=None):
+               background=None, title=None):
         row = self.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
         if row is None:
             name = self._free_name(key, machine, tool, project, now)
@@ -1225,6 +1233,8 @@ class Store:
                 " started, cwd, background) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (key, name, machine, tool, project, activity or "", now, label or "", now,
                  cwd or "", int(bool(background))))
+            if title:
+                self.db.execute("UPDATE agents SET title=? WHERE key=?", (title, key))
             return
         name = row["name"]
         if now - row["last_seen"] >= ONLINE_S:  # was offline: its name may have been taken
@@ -1240,6 +1250,8 @@ class Store:
             self.db.execute("UPDATE agents SET cwd=? WHERE key=?", (cwd, key))
         if background is not None:
             self.db.execute("UPDATE agents SET background=? WHERE key=?", (int(background), key))
+        if title is not None:
+            self.db.execute("UPDATE agents SET title=? WHERE key=?", (title, key))
 
     def _host_of_device(self, device_id) -> str:
         row = self.db.execute("SELECT host FROM devices WHERE id=?", (device_id,)).fetchone()
@@ -1320,6 +1332,8 @@ class Store:
                      "label": clean(s.get("label"), MAX_LABEL),
                      "cwd": None if s.get("cwd") is None else clean(s["cwd"], MAX_CWD),
                      "background": s.get("background") is True,
+                     "title": (None if not isinstance(s.get("title"), str)
+                               else clean_title(s["title"], MAX_TITLE)),
                      "activity": (None if s.get("activity") is None
                                   else clean(s["activity"], MAX_ACTIVITY))}
                     for s in sessions]
@@ -1346,7 +1360,7 @@ class Store:
                 if others and not manager_held:
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],
-                            s["label"], s["cwd"], s["background"])
+                            s["label"], s["cwd"], s["background"], s["title"])
                 if host:
                     self.db.execute("UPDATE agents SET host=?, os_user=? WHERE key=?",
                                     (host, os_user, s["key"]))

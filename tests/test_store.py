@@ -344,3 +344,14 @@ def test_offline_manager_label_not_matched_while_switched_off(store, clock):
     clock.t += 31
     with pytest.raises(KaptyorkaError, match="no session named manager"):
         store.send_from_web("alice", "manager", "hi")
+
+
+def test_title_is_kept_cleaned_and_capped(store):
+    def title(t):
+        store.heartbeat("pc", [{"key": "a", "tool": "claude-code", "project": "p", "title": t}])
+        return store.agent("a").title
+    assert title("Fix the build") == "Fix the build"
+    assert title("x\x00y\n" + "z" * 200).startswith("x y z") and len(title("z" * 200)) == 80
+    assert title("") == ""  # cleared by the bridge
+    store.heartbeat("pc", [{"key": "a", "tool": "claude-code", "project": "p"}])  # an older bridge sends none
+    assert store.agent("a").title == ""

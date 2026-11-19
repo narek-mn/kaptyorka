@@ -1853,3 +1853,43 @@ def test_login_warnings_make_one_line(tmp_path, w, h):
     finally:
         stop()
         store.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_home_shows_claude_codes_title_else_the_folder(tmp_path, w, h):
+    """A session with a title: the title is the name, the folder and account@computer the grey
+    line, in the list and the chat header. Without one: the folder, as before."""
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    aid, token = person(store, "alice", "admin")
+    store.project_register("proj-a", by="alice")
+    store.project_register("proj-b", by="alice")
+    p = store.authenticate(store.device_add(aid, "alice-box-1"))
+    store.heartbeat("alice-box-1", [
+        {"key": "claude:s-1", "tool": "claude-code", "project": "proj-a", "title": "Fix the robot assembly"},
+        {"key": "claude:s-2", "tool": "claude-code", "project": "proj-b"}],
+        principal=p, facts={"host": "box-1", "os_user": "alice"})
+    rows = '[...document.querySelectorAll(".list .row")].map(r => r.innerText.replace(/\\s+/g, " "))'
+    base = f"http://127.0.0.1:{stop.port}"
+    try:
+        with chrome(w, h) as page:
+            page.go(f"{base}/#t={token}")
+            page.wait(f'{rows}.some(t => t.includes("proj-b"))')
+            got = page.js(rows)
+            titled = [t for t in got if "Fix the robot assembly" in t][0]
+            assert "proj-a" in titled and "alice@box-1" in titled and titled.index("Fix") < titled.index("proj-a")
+            plain = [t for t in got if "proj-b" in t][0]
+            assert "alice@box-1" in plain and "Fix" not in plain
+            page.js('[...document.querySelectorAll(".list .row")].find(r => r.innerText.includes("Fix the robot")).click()')
+            page.wait('document.getElementById("chat-name").textContent === "Fix the robot assembly"')
+            assert "proj-a" in page.js('document.getElementById("chat-sub").textContent')
+            time.sleep(0.4)
+            page.screenshot(shots / f"home-title-{tag}.png")
+    finally:
+        stop()
+        store.close()

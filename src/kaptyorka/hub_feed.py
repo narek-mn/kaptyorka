@@ -10,7 +10,7 @@ from kaptyorka.store import PRIVATE, Agent, Principal, Store, machine_name, priv
 def agent_row(a: Agent, now: float) -> dict:
     return {"name": a.name, "machine": a.machine, "tool": a.tool, "project": a.project,
             "status": a.status, "activity": a.activity, "label": a.label,
-            "background": a.background, "last_seen_s": round(now - a.last_seen)}
+            "background": a.background, "title": a.title, "last_seen_s": round(now - a.last_seen)}
 
 
 def visible(store: Store, principal: Principal, person_id, project: str) -> bool:
@@ -34,6 +34,7 @@ def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: 
     if not visible(store, principal, a.person_id, a.project):
         row["project"] = PRIVATE
         row["name"] = private_name(a.name, a.machine, a.tool, a.project)
+        row["title"] = ""  # a hidden project: nothing of the session
     elif workers and a.key in workers:
         row["worker"] = workers[a.key]
     if manager_id is not None and a.person_id == manager_id:

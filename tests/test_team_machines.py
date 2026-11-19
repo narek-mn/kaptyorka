@@ -542,3 +542,15 @@ def test_a_session_on_a_visible_team_machine_still_needs_its_project_role(store)
     [m] = admin_ops.account(store, who(store, "bob"))["team_machines"]  # the machine shows to both
     assert m["projects"] == [] and "gros" not in repr(WorkerStore(store).machine_rows(who(store, "bob")))
     assert admin_ops.account(store, who(store, "carol"))["team_machines"][0]["projects"] == ["gros"]
+
+
+def test_title_shows_only_to_those_who_may_see_the_session(store, team):
+    """A session's title reaches the feed with the session and no wider: a member without a
+    role in its project sees nothing of it."""
+    p = team[1]
+    store.heartbeat("jet-1", [{"key": "t-a", "tool": "claude", "project": "proj-a", "title": "Secret plan"}], principal=p)
+    store.heartbeat("jet-1", [{"key": "t-b", "tool": "claude", "project": "proj-b", "title": "Other plan"}], principal=p)
+    titles = lambda n: sorted(a["title"] for a in feed(store, who(store, n))["agents"] if a["person"] == "jet-1 (team)")
+    assert titles("bob") == ["Secret plan"]  # proj-a only
+    assert titles("carol") == []
+    assert titles("alice") == ["Other plan", "Secret plan"]

@@ -30,6 +30,7 @@ class Session:
     label: str = ""  # the session name Claude Code shows, if any
     cwd: str = ""  # the folder the session runs in; "" when unknown
     background: bool = False  # a background job (claude --bg), not a terminal session
+    title: str = ""  # Claude Code's own title for the session (/rename, else its automatic one)
 
 
 class DeliveryError(Exception):

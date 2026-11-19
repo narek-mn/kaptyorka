@@ -354,3 +354,59 @@ def test_hooks_own_duplicate_of_portable_removed(home, fake_claude_cli):
     settings.write_text(json.dumps({"hooks": {"SessionStart": [_portable("start"), own]}}))
     ClaudeAdapter(home, run=fake_claude_cli.run).configure("/k")
     assert json.loads(settings.read_text())["hooks"]["SessionStart"] == [_portable("start")]
+
+
+def _transcript(home, sid, lines, cwd="/w/proj-a"):
+    import re
+    d = home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", cwd)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{sid}.jsonl").write_text("\n".join(lines) + "\n")
+    return d / f"{sid}.jsonl"
+
+
+def test_title_is_newest_custom_else_newest_ai_and_skips_garbage():
+    from kaptyorka.adapters.claude import parse_title
+    ai = lambda t: json.dumps({"type": "ai-title", "aiTitle": t, "sessionId": "s"})
+    custom = lambda t: json.dumps({"type": "custom-title", "customTitle": t, "sessionId": "s"})
+    assert parse_title("\n".join([ai("one"), "not json {", ai("two"), '{"type":"ai-title"', "[1]"])) == "two"
+    assert parse_title("\n".join([custom("mine"), ai("later auto")])) == "mine"  # /rename beats automatic
+    assert parse_title("\n".join([custom("old"), custom("new"), ai("x")])) == "new"
+    assert parse_title("\n".join([ai(5), json.dumps({"type": "ai-title", "aiTitle": None})])) == ""
+    assert parse_title("") == ""
+    long = parse_title(ai("a\x00b\x1b[31m" + "x" * 200))
+    assert len(long) == 80 and "\x00" not in long and "\x1b" not in long
+
+
+def test_session_reports_its_transcript_title(home, tmp_path):
+    sock = live_sock(tmp_path)
+    write_session_file(home, pid=os.getpid(), sock=sock, session_id="sid-1")
+    assert [s.title for s in ClaudeAdapter(home).sessions()] == [""]  # no transcript yet: folder name shows
+    path = _transcript(home, "sid-1", [json.dumps({"type": "ai-title", "aiTitle": "Fix the build"})])
+    ad = ClaudeAdapter(home)
+    assert [s.title for s in ad.sessions()] == ["Fix the build"]
+    with open(path, "a") as f:
+        f.write(json.dumps({"type": "custom-title", "customTitle": "kaptyorka-dgx"}) + "\n")
+    assert [s.title for s in ad.sessions()] == ["kaptyorka-dgx"]  # the file changed: read again
+
+
+def test_title_read_is_bounded_to_the_tail(home, monkeypatch):
+    from kaptyorka.adapters import claude
+    ai = lambda t: json.dumps({"type": "ai-title", "aiTitle": t})
+    filler = ["x" * 1000] * 600  # about 600 KB, more than the tail
+    path = _transcript(home, "sid-2", [ai("head title")] + filler + [ai("tail title")])
+    reads = []
+    real_open = open
+
+    def spy(p, mode="r", *a, **k):
+        f = real_open(p, mode, *a, **k)
+        orig = f.read
+        f.read = lambda n=-1: (reads.append(n), orig(n))[1]
+        return f
+    monkeypatch.setattr("builtins.open", spy)
+    assert claude.read_title(path, path.stat().st_size) == "tail title"
+    assert reads and all(0 < n <= claude.TITLE_TAIL for n in reads)  # never the whole file
+    # a title only near the start is found by the one extra bounded read of the head
+    path = _transcript(home, "sid-3", [ai("head title")] + filler)
+    reads.clear()
+    assert claude.read_title(path, path.stat().st_size) == "head title"
+    assert all(0 < n <= claude.TITLE_TAIL for n in reads)

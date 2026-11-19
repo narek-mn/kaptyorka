@@ -2,6 +2,7 @@
 import shlex
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -13,6 +14,68 @@ from kaptyorka.adapters.base import (DeliveryError, Session, connect_unix, drop_
                                      mentions_hook, merge_json, write_atomic)
 
 CLAUDE_CODE_TESTED = "2.1.319"
+TITLE_TAIL = 256 * 1024  # how much of a transcript's end is read for its title
+TITLE_HEAD = 64 * 1024  # the first read also looks at the start, where the automatic title is
+MAX_TITLE = 80
+
+
+def clean_title(value) -> str:
+    """One line of printable text, at most MAX_TITLE characters."""
+    if not isinstance(value, str):
+        return ""
+    return " ".join("".join(c if c.isprintable() else " " for c in value).split())[:MAX_TITLE]
+
+
+def parse_title(text: str) -> str:
+    """The newest custom-title (/rename), else the newest ai-title, in transcript lines; lines
+    that are not JSON or not those records are skipped."""
+    custom = auto = ""
+    for line in text.splitlines():
+        if '"custom-title"' not in line and '"ai-title"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("type") == "custom-title" and clean_title(rec.get("customTitle")):
+            custom = clean_title(rec.get("customTitle"))
+        elif rec.get("type") == "ai-title" and clean_title(rec.get("aiTitle")):
+            auto = clean_title(rec.get("aiTitle"))
+    return custom or auto
+
+
+def read_title(path: Path, size: int) -> str:
+    """Parse the last TITLE_TAIL bytes of the file (a first partial line dropped); when they hold
+    no title, the first TITLE_HEAD bytes too."""
+    with open(path, "rb") as f:
+        start = max(0, size - TITLE_TAIL)
+        f.seek(start)
+        text = f.read(TITLE_TAIL).decode("utf-8", "replace")
+        if start:
+            text = text.split("\n", 1)[-1]
+        found = parse_title(text)
+        if not found and start:
+            f.seek(0)
+            found = parse_title(f.read(TITLE_HEAD).decode("utf-8", "replace").rsplit("\n", 1)[0])
+    return found
+
+
+def _transcript(home: Path, session_id: str, cwd: str, cache: dict) -> Optional[Path]:
+    """The session's transcript: ~/.claude/projects/<folder with / and . as ->/<id>.jsonl."""
+    old = cache.get(session_id)
+    if old is not None and old[2].exists():
+        return old[2]
+    root = home / ".claude" / "projects"
+    if not session_id.replace("-", "").isalnum():
+        return None
+    guess = root / re.sub(r"[^A-Za-z0-9]", "-", cwd) / f"{session_id}.jsonl"
+    if guess.exists():
+        return guess
+    for p in root.glob(f"*/{session_id}.jsonl"):
+        return p
+    return None
 
 
 def _newer(version: str) -> bool:
@@ -149,9 +212,28 @@ class ClaudeAdapter:
             if offhub.decide(session_id, pid, data):
                 off.add(f"claude:{session_id}")
             out.append(Session(f"claude:{session_id}", self.tool, os.path.basename(cwd.rstrip("/")),
-                               data.get("status", ""), label, cwd, data.get("kind") == "bg"))
+                               data.get("status", ""), label, cwd, data.get("kind") == "bg",
+                               self._title(session_id, cwd)))
         self.off_keys = off
         return out
+
+    def _title(self, session_id: str, cwd: str) -> str:
+        """Claude Code's title for the session, read from the end of its transcript only when
+        the file changed. Never raises and never reads the whole file."""
+        cache = self.__dict__.setdefault("_titles", {})
+        try:
+            path = _transcript(self.home, session_id, cwd, cache)
+            if path is None:
+                return ""
+            st = path.stat()
+            old = cache.get(session_id)
+            if old is not None and old[0] == (st.st_size, st.st_mtime):
+                return old[1]
+            title = read_title(path, st.st_size) or (old[1] if old else "")
+            cache[session_id] = ((st.st_size, st.st_mtime), title, path)
+            return title
+        except (OSError, ValueError):
+            return ""
 
     def _find(self, key: str):
         """(pid, socket path) of the session file whose sessionId is in the key."""

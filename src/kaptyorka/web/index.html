@@ -1288,8 +1288,8 @@ a.p-main { color: inherit; text-decoration: none; }
   }
 
   function hidden(a) { return a.project === "(private)"; }
-  /* how a session is called: its label, else its folder; a hidden project by its tool */
-  function rowName(a, plain) { return a.label || (hidden(a) ? a.tool + " session" : plain); }
+  /* how a session is called: its label, else Claude Code's own title, else its folder; a hidden project by its tool */
+  function rowName(a, plain) { return a.label || (hidden(a) ? a.tool + " session" : a.title || plain); }
   /* a session's short name: the folder part of machine/tool/folder */
   function shortName(name) { var p = (name || "").split("/"); return p.length >= 3 ? p.slice(2).join("/") : name; }
 
@@ -1344,13 +1344,14 @@ a.p-main { color: inherit; text-decoration: none; }
     list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms, sub: mgr ? mgr.where || mgr.machine : "", act: mgr ? mgr.activity || "" : "",
                 to: "manager", tip: "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : "") });
     agents.forEach(function (a) {
-      var tip = [a.label ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status,
+      var tip = [a.label || a.title ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status,
                  a.activity ? "doing: " + a.activity : null,
                  a.doors && a.doors.length ? "doors: " + a.doors.join(", ") : null,
                  isAdmin() ? harness(a.harness) : null].filter(Boolean).join("\n");
       /* a hidden project: the row goes by the session's handle, which also tells two apart */
       var k = hidden(a) ? a.id : a.name;
-      list.push({ key: k, name: rowName(a, shortName(a.name)), online: true, sub: a.where || a.machine, to: k, bg: !!a.background, tool: a.tool, act: a.activity || "",
+      list.push({ key: k, name: rowName(a, shortName(a.name)), online: true,
+                  sub: (a.title && !a.label && !hidden(a) ? shortName(a.name) + " \u00b7 " : "") + (a.where || a.machine), to: k, bg: !!a.background, tool: a.tool, act: a.activity || "",
                   who: !a.mine && (isAdmin() || hidden(a)) ? a.person : null, ro: !a.mine && a.writable === false,
                   sess: true, mine: !!a.mine, team: !!a.team && !hidden(a), owner: a.team ? String(a.person || "").replace(/ \(team\)$/, "") : a.person || "",
                   tip: hidden(a) ? a.person + "'s session in a project you have no role in" : tip });
