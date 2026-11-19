@@ -1532,9 +1532,11 @@ class Store:
             return self._team_reach(row, viewer)
         if self._is_team(viewer) and pid is not None:  # the team machine looking out: the
             # sessions of people with a role in a project it works in, in that project
+            if self._hidden(viewer, pid):  # hidden stays hidden, even behind an open door
+                return False
             project = self.db.execute("SELECT project FROM agents WHERE key=?",
                                       (row["key"],)).fetchone()
-            if project is not None and not self._hidden(viewer, pid) and self._role(project["project"], pid) is not None \
+            if project is not None and self._role(project["project"], pid) is not None \
                     and self.db.execute("SELECT 1 FROM agents WHERE person_id=? AND project=?",
                                         (viewer, project["project"])).fetchone():
                 return True
@@ -1952,6 +1954,8 @@ class Store:
         if self._is_team(sp) and not sender["key"].startswith("web:") \
                 and self._team_reach(sender, tp):
             return True
+        if (self._is_team(tp) and self._hidden(tp, sp)) or (self._is_team(sp) and self._hidden(sp, tp)):
+            return False  # hidden stays hidden, even behind an open door
         return self.db.execute(
             "SELECT 1 FROM doors WHERE closed_at IS NULL AND ("
             "(scope='session' AND ((a_key=? AND b_key=?) OR (a_key=? AND b_key=?))) OR"

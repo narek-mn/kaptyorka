@@ -1267,3 +1267,9 @@ def test_cli_people_role_help_says_how_to_recover(capsys):
     assert entry_with_exit(["people", "role", "-h"]) == 0
     assert ("Lost every admin? On the hub machine run `kaptyorka people role <you> admin --hub-key`."
             in capsys.readouterr().out)
+
+
+def test_start_after_a_restore_never_asks(monkeypatch, home):
+    served, asked = _first_start(monkeypatch, True, "")
+    (paths.home() / "hub.db").write_bytes(b"")
+    assert entry_with_exit(["start"]) in (0, None) and asked == [] and len(served) == 1

@@ -372,6 +372,16 @@ def test_a_team_machine_hidden_from_one_person(store, team):
     store.team_machine_set_visible("jet-1", "bob", True, "alice")
     assert sees() == (1, ["jet-1/claude/proj-a"], True, True, True, True)
     assert admin_ops.log_sentence(store.log(1)[0]) == "alice showed jet-1 to bob"
+    # an open group door does not get around the hide
+    store.open_door_group(bob.person_id, jet, "alice")
+    store.team_machine_set_visible("jet-1", "bob", False, "alice")
+    assert not store.may_message("b-1", "t-a") and not store.may_message("t-a", "b-1")
+    assert not store.page_may_message("bob", bob.person_id, "t-a", jet)
+    assert not store.listed(bob.person_id, "t-a", jet) and not store.listed(jet, "b-1", bob.person_id)
+    store.team_machine_set_visible("jet-1", "bob", True, "alice")
+    assert store.may_message("b-1", "t-a") and store.may_message("t-a", "b-1")
+    assert store.page_may_message("bob", bob.person_id, "t-a", jet)
+    store.team_machine_set_visible("jet-1", "bob", False, "alice")
     # the manager never routes bob's work there
     store.team_machine_set_visible("jet-1", "bob", False, "alice")
     with store.lock:

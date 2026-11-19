@@ -184,6 +184,7 @@ def _start(args) -> int:
               "To turn its bridge back on: kaptyorka join", file=sys.stderr)
         return 1
     if first and not saved and hub_unit is None and not getattr(args, "new_hub", False) \
+            and not (paths.home() / "hub.db").exists() \
             and not _confirm_new_hub():
         return 1
     args.port = args.port or saved.get("port", 8765)
