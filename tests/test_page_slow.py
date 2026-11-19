@@ -1588,25 +1588,27 @@ def test_machines_grouped_by_computer_with_filters(tmp_path, w, h):
             assert page.js('document.getElementById("add-choice").hidden')
             page.js('document.getElementById("join-done").click()')
 
-            # carol: one machine, offline; Online is empty
+            # carol: box-2 (offline) and the team machines she may use, no sessions needed
             open_as("carol")
             pick("online")
-            assert page.wait('document.querySelector("#a-machines .a-none")?.textContent') == "No machines online right now."
-            assert page.js(f'{hosts}.length') == 0
+            page.wait(f'{hosts}.length === 1')
+            assert page.js(hosts) == ["jetson-1"] and tops("jetson-1") == ["nvidia@jetson-1 Team"]
             assert page.js(wide)
             time.sleep(0.4)
-            page.screenshot(shots / f"machines-online-empty-{tag}.png")
+            page.screenshot(shots / f"machines-online-{tag}.png")
             pick("all")
-            assert page.js(hosts) == ["box-2"]
+            assert page.js(hosts) == ["jetson-1", "box-1", "box-2", "jetson-2"]
 
-            # dave: no machine yet, pointed to Add machine (whatever the filter)
+            # dave: no machine of his own, only the team machines; Mine is empty and says so
             open_as("dave")
-            pick("online")
-            assert page.wait('document.querySelector("#a-machines .a-none")?.textContent') == \
-                "No machines yet. Click Add machine and run the command on your computer."
+            pick("mine")
+            msg = page.wait('document.querySelector("#a-machines .a-none")?.textContent')
+            assert msg and "Add machine" not in msg
             assert page.js(wide)
             time.sleep(0.4)
             page.screenshot(shots / f"machines-member-empty-{tag}.png")
+            pick("all")
+            assert page.js(hosts) == ["jetson-1", "box-1", "jetson-2"]
     finally:
         stop()
         store.close()
@@ -1794,6 +1796,60 @@ def test_machines_gpu_queue_line(tmp_path, w, h):
             assert "carol" not in page.js('document.getElementById("a-machines").textContent')
             assert page.js(wide)
             page.screenshot(shots / f"machines-gpu-queue-member-{tag}.png")
+    finally:
+        stop()
+        store.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_login_warnings_make_one_line(tmp_path, w, h):
+    """Six accounts with no logged-in tool: one line over the chat with a link to Machines and a
+    x that remembers the accounts; a chat on one of them still shows that account's own bar with
+    the login command. One such account keeps its own bar. Screenshots to KAPTYORKA_SHOTS."""
+    import json as _json
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    aid, token = person(store, "alice", "admin")
+    store.project_register("proj-a", by="alice")
+    devs = []
+    for i in range(1, 7):
+        p = store.authenticate(store.device_add(aid, f"alice-box-{i}"))
+        store.heartbeat(f"box-{i}", [], principal=p, facts={"host": f"box-{i}", "os_user": "alice"})
+        with store.lock:
+            store.db.execute("INSERT OR REPLACE INTO device_facts (device_id, facts, updated) VALUES (?,?,?)",
+                             (p.device_id, _json.dumps({"host": f"box-{i}", "os_user": "alice", "version": "0.9.24",
+                                                        "tools": {"claude-code": "2.1"}, "logins": {"claude-code": False}}),
+                              store.clock()))
+        devs.append(p)
+    store.seen("s-1", "alice-box-1", "claude", "proj-a", principal=devs[0])
+    warns = 'document.querySelectorAll("#warns li")'
+    base = f"http://127.0.0.1:{stop.port}"
+    try:
+        with chrome(w, h) as page:
+            page.go(f"{base}/#t={token}")
+            page.wait(f'{warns}.length === 1')
+            line = page.js('document.querySelector("#warns li").textContent')
+            assert "6 accounts can't run agents (no tool logged in)" in line and "See machines" in line
+            time.sleep(0.4)
+            page.screenshot(shots / f"login-warn-one-line-{tag}.png")
+            # a chat on one of them: that account's own bar, with the command and the group
+            page.wait('[...document.querySelectorAll(".list .row")].some(r => r.textContent.includes("proj-a"))')
+            page.js('[...document.querySelectorAll(".list .row")].find(r => r.textContent.includes("proj-a")).click()')
+            page.wait(f'{warns}.length === 2')
+            assert "alice@box-1" in page.js('document.querySelector("#warns li").textContent')
+            assert "claude auth login" in page.js('document.getElementById("warns").textContent')
+            page.js('document.querySelector("#warns .login-group button").click()')
+            page.wait(f'{warns}.length === 1')
+            assert "claude auth login" in page.js('document.getElementById("warns").textContent')
+            page.js("location.reload()")
+            page.wait('document.querySelectorAll(".list .row").length > 0')
+            time.sleep(1.5)
+            assert not page.js('document.querySelector("#warns .login-group")')  # stays dismissed
     finally:
         stop()
         store.close()

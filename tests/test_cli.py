@@ -38,7 +38,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.9.23" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.9.24" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
@@ -570,6 +570,10 @@ def test_cli_invites_table_and_cancel(admin_hub, monkeypatch, capsys):
     admin_hub["answers"][("DELETE", "/api/invites/x")] = (404, "no open invite with that code")
     assert entry_with_exit(["invites", "--cancel", "x"]) == 1
     assert "no open invite with that code" in capsys.readouterr().err
+    assert entry_with_exit(["invites", "--cancel", "-abc"]) == 0  # a code that starts with "-"
+    assert admin_hub["calls"][-1] == ("DELETE", "/api/invites/-abc", None)
+    assert entry_with_exit(["invites", "--cancel=-abd"]) == 0
+    assert admin_hub["calls"][-1] == ("DELETE", "/api/invites/-abd", None)
 
 
 def test_cli_invites_empty(admin_hub, capsys):

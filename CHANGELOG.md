@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.24
+
+- **Team machines are visible to every member by default again.** A team machine shows on a member's Machines (`/api/me/account`, `GET /api/machines`, `kaptyorka fleet list`) even with no sessions yet, unless an admin hid it from them. It lists only the projects the member has a role in. Its sessions are unchanged: only people with a role in the session's project see or message them. `request_access` for a visible team machine no longer says "no machine named".
+- **One line for accounts with no logged-in tool.** With two or more such accounts the admin sees one line over the chat, "6 accounts can't run agents (no tool logged in) · See machines", with a × that stays hidden (kept in this browser) until another account joins the list. A chat on one of those accounts still shows its own bar with the login command; one account alone keeps its bar. Other warnings are unchanged.
+- **Invite codes never start with "-".** `kaptyorka invites --cancel <code>` also takes such an old code as `--cancel=-abc` or `--cancel -abc`.
+
 ## 0.9.23
 
 - **Machines, grouped by computer.** The Mine / Everyone switch is gone. Each computer gets a card: its name, a size hint for admins (`2 GPUs 24 GB · 32 CPUs · 128 GB RAM`, `Jetson · 8 CPUs · 16 GB RAM`) from the last use its bridges reported, the GPU queue line and, for admins, the use line. Under it one row per account with its online dot or last seen, a **Team**, **Mine** or owner tag, its session count and agent tools; Rename and Remove stay on your own. Members see their own and the team machines they can use; admins see every account. Chips filter **All**, **Team**, **Mine** or **Online**, kept in this browser. **Give to…** left the page; `kaptyorka machine move` stays. The old `#settings/team/machines` address opens Machines with All.

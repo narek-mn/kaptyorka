@@ -473,6 +473,8 @@ class Store:
         """A new invite. With `limit`, refused while the person already has that many unused,
         unexpired invites."""
         code = secrets.token_urlsafe(16)
+        while code.startswith("-"):  # a code the command line would read as an option
+            code = secrets.token_urlsafe(16)
         now = self.clock()
         with self.lock:
             row = self.db.execute("SELECT name, role FROM people WHERE id=?", (person_id,)).fetchone()

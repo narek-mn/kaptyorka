@@ -535,3 +535,15 @@ def test_prune_loop_purges_deleted_notes(monkeypatch):
 
     prune_loop(Fake(), stop, interval_s=0.01, report=lambda line: None)
     assert len(purged) == 1
+
+
+def test_invite_codes_never_start_with_a_dash(tmp_path, monkeypatch):
+    import secrets
+    from kaptyorka.store import Store
+    from helpers import person
+    s = Store(tmp_path / "hub.db")
+    pid, _ = person(s, "bob")
+    draws = iter(["-bad" + "x" * 12, "good" + "x" * 12])
+    monkeypatch.setattr(secrets, "token_urlsafe", lambda n=32: next(draws))
+    assert s.invite_create(pid).startswith("good")
+    s.close()

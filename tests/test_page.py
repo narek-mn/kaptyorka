@@ -73,6 +73,7 @@ def test_home_warns_only_what_blocks(hub):
     html = page(hub)
     assert 'var rows = (isAdmin() ? fleet.warnings : feed.warnings || []).filter(function (w) { return w.blocks; });' in html
     assert 'id="warns"' in html and 'id="warn-banner"' not in html
+    assert "run agents (no tool logged in)" in html and "kaptyorka.login-warn-dismissed" in html  # one line, its x kept here
 
 
 def test_no_function_name_is_declared_twice(hub):

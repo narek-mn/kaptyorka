@@ -1232,7 +1232,7 @@ def entry() -> None:
     pg.add_argument("username", help="their GitLab username, or '' to unlink")
     pg.set_defaults(run=_people_gitlab)
     iv = sub.add_parser("invites", help="list the invite links nobody has used yet; --cancel stops one")
-    iv.add_argument("--cancel", metavar="code", help="cancel the invite with this code (see the CODE column)")
+    iv.add_argument("--cancel", metavar="code", help="cancel the invite with this code (see the CODE column; a code starting with - also works as --cancel=CODE)")
     iv.set_defaults(run=_invites)
     grants = []
     for name, run, what, shape in (
@@ -1364,6 +1364,11 @@ def entry() -> None:
         admin.add_argument("--hub-key", action="store_true", default=argparse.SUPPRESS,
                            help="on the hub machine: use the hub key (~/.kaptyorka/admin-token),"
                                 " which has every admin right; only with this machine's own hub")
-    args = p.parse_args()
+    argv = sys.argv[1:]
+    for i, a in enumerate(argv[:-1]):  # `--cancel -abc`: a code may start with "-"
+        if a == "--cancel" and argv[i + 1].startswith("-") and argv[i + 1] not in ("-h", "--help"):
+            argv[i:i + 2] = ["--cancel=" + argv[i + 1]]
+            break
+    args = p.parse_args(argv)
     _USE_HUB_KEY["on"] = bool(getattr(args, "hub_key", False))
     sys.exit(args.run(args))

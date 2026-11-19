@@ -422,6 +422,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 #warns li { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 5px var(--s-4) 5px var(--s-6); font-size: var(--fs-md); color: var(--risk);
   background: rgba(194, 148, 47, .09); border-bottom: 1px solid rgba(194, 148, 47, .35); animation: drop var(--dur-2) var(--ease-out); }
 #warns li > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#warns a { color: inherit; text-decoration: underline; }
 #warns code { flex: none; border-radius: var(--radius); max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; font: var(--fs-sm) var(--mono);
   color: var(--ink); background: var(--bg); border: 1px solid var(--line); user-select: all; }
 #log { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-6) 18px; }
@@ -1837,14 +1838,37 @@ a.p-main { color: inherit; text-decoration: none; }
   function renderWarns() {
     var rows = (isAdmin() ? fleet.warnings : feed.warnings || []).filter(function (w) { return w.blocks; });
     var box = $("warns");
-    if (!changed("warns", rows)) return;
+    var isLogin = function (w) { return /: no agent tool is logged in\./.test(w.text); };
+    var nameOf = function (w) { return w.text.split(": no agent tool")[0]; };
+    var dismissed = store(function (st) { return JSON.parse(st.getItem("kaptyorka.login-warn-dismissed") || "[]"); }) || [];
+    var login = rows.filter(isLogin), others = rows.filter(function (w) { return !isLogin(w); }), shown = others, group = [];
+    if (login.length < 2) shown = rows;
+    else {
+      /* the open chat's own account keeps its bar (with the login command); the rest is one line */
+      var cur = feed.agents.filter(function (a) { return a.name === conv || a.id === conv; })[0];
+      var own = cur ? login.filter(function (w) { return nameOf(w) === cur.where || nameOf(w) === cur.machine; }) : [];
+      group = login.filter(function (w) { return own.indexOf(w) < 0; });
+      shown = others.concat(own);
+      if (group.every(function (w) { return dismissed.indexOf(nameOf(w)) >= 0; })) group = [];
+    }
+    if (!changed("warns", [shown, group.map(nameOf)])) return;
     box.textContent = "";
-    rows.forEach(function (w) {
+    shown.forEach(function (w) {
       var fix = /`([^`]+)`/.exec(w.text), code = fix ? el("code", { text: fix[1] }) : null;
       var copy = code ? button([icon("i-copy", 14)], "icon", function () { copyCode(code, copy); }, { title: "Copy" }) : null;
       box.appendChild(el("li", { title: w.text }, [icon("i-warn", 14),
         el("span", { text: w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, "") }), code, copy]));
     });
+    if (group.length) {
+      var more = el("a", { href: "#settings/machines", text: "See machines" });
+      more.addEventListener("click", function () { mFilter = "all"; store(function (st) { st.setItem("kaptyorka.machines-filter", "all"); }); });
+      var x = button([icon("i-x", 14)], "icon", function () {
+        store(function (st) { st.setItem("kaptyorka.login-warn-dismissed", JSON.stringify(dismissed.concat(group.map(nameOf)))); });
+        seen.warns = null; renderWarns();
+      }, { title: "Dismiss", "aria-label": "Dismiss" });
+      box.appendChild(el("li", { "class": "login-group", title: group.map(nameOf).join("\n") }, [icon("i-warn", 14),
+        el("span", { text: group.length + (group.length === 1 ? " account can't" : " accounts can't") + " run agents (no tool logged in) \u00b7 " }, [more]), x]));
+    }
   }
   function grow() { var t = $("text"); t.style.height = "48px"; t.style.height = Math.max(48, Math.min(t.scrollHeight + 2, 200)) + "px"; }
   function sendErr(msg) { $("send-err").hidden = !msg; $("send-err").textContent = msg || ""; }

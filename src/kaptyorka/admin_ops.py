@@ -363,9 +363,9 @@ def account(store, principal: Principal, ws=None) -> dict:
 
 
 def _team_machines(store, person_id: int) -> List[dict]:
-    """Lock held. The team machines the person may use: those with a session in a project they
-    have a role in, the rule that shows them those sessions (Store._team_reach). Each joined
-    machine with the projects of theirs it works in."""
+    """Lock held. The team machines the person may use: every joined team machine unless an
+    admin hid it from them, with or without sessions. Each comes with only those of its
+    projects the person has a role in (their sessions stay behind Store._team_reach)."""
     out = []
     for d in store.db.execute(
             "SELECT d.id, d.name, d.label, d.os_user, d.host, d.last_used, d.person_id FROM devices d"
@@ -377,8 +377,7 @@ def _team_machines(store, person_id: int) -> List[dict]:
         projects = [r["project"] for r in store.db.execute(
             "SELECT DISTINCT project FROM agents WHERE person_id=? ORDER BY project", (d["person_id"],))
             if store._role(r["project"], person_id) is not None]
-        if projects:
-            out.append({**dict(d), "projects": projects, "tools": device_tools(store.db, d["id"])})
+        out.append({**dict(d), "projects": projects, "tools": device_tools(store.db, d["id"])})
     return out
 
 

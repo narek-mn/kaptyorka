@@ -230,14 +230,14 @@ def test_routes(tmp_path):
 
 
 def test_account_lists_the_team_machines_you_can_use(store, team):
-    """The Machines page: a member sees a team machine when it has a session in a project they
-    have a role in, with only those projects; nobody else sees it there."""
+    """The Machines page: a member sees every team machine, with only the projects they have a
+    role in (none for carol); the machine is not itself."""
     def tm(name):
         return [(m["name"], m["os_user"], m["projects"])
                 for m in admin_ops.account(store, who(store, name))["team_machines"]]
     assert tm("bob") == [("nvidia@jet-1", "nvidia", ["proj-a"])]  # not proj-b: no role there
     assert admin_ops.account(store, who(store, "bob"))["team_machines"][0]["host"] == "jet-1"  # its card on Machines
-    assert tm("carol") == []
+    assert tm("carol") == [("nvidia@jet-1", "nvidia", [])]  # the machine shows, no project name leaks
     assert tm("alice") == [("nvidia@jet-1", "nvidia", ["proj-a", "proj-b"])]
     assert admin_ops.account(store, team[1])["team_machines"] == []  # not itself
     store.grant_project("proj-b", who(store, "carol").person_id, "read", "alice")
@@ -476,8 +476,8 @@ def _join(store, name, host, os_user):
 
 
 def test_machines_list_shows_a_member_only_their_own_and_allowed_team_accounts(store, team):
-    """A shared computer lists only the member's own account; a team machine shows when they
-    have a role in one of its projects and it is not hidden from them; admins see all."""
+    """A shared computer lists only the member's own account; every team machine shows unless
+    it is hidden from them; admins see all."""
     store.heartbeat("jet-1", [], principal=team[1], facts={"host": "jet-1", "os_user": "nvidia"})
     _join(store, "alice", "box-1", "alice-u")
     _join(store, "bob", "box-1", "bob-u")
@@ -489,7 +489,7 @@ def test_machines_list_shows_a_member_only_their_own_and_allowed_team_accounts(s
     assert rows["jet-1"] == [("jet-1", "nvidia")]  # allowed team machine (role in proj-a)
     text = repr(WorkerStore(store).machine_rows(who(store, "bob")))
     assert "alice-u" not in text and "carol" not in text
-    assert "jet-1" not in _member_rows(store, "carol")  # no role in any of its projects
+    assert _member_rows(store, "carol")["jet-1"] == [("jet-1", "nvidia")]  # no project role needed
     store.team_machine_set_visible("jet-1", "bob", False, "alice")
     assert "jet-1" not in _member_rows(store, "bob")  # hidden from bob
     assert _member_rows(store, "bob")["box-1"] == [("bob", "bob-u")]
@@ -507,3 +507,38 @@ def test_fleet_list_of_a_member_has_only_their_rows(store, team):
         d.setdefault("online", False)
     text = "\n".join(fleet.list(rows))
     assert "bob-u" in text and "carol" not in text
+
+
+def test_a_new_team_machine_with_no_sessions_shows_to_members(store):
+    person(store, "alice", "admin")
+    bob, _ = person(store, "bob")
+    store.project_register("proj-a", by="alice")
+    store.grant_project("proj-a", bob, "write", "alice")
+    _, code = store.team_machine_add("jet-1", "alice")
+    t, _ = store.invite_redeem(code, "jet-1", host="jet-1", os_user="nvidia")
+    store.heartbeat("jet-1", [], principal=store.authenticate(t), facts={"host": "jet-1", "os_user": "nvidia"})
+    [m] = admin_ops.account(store, who(store, "bob"))["team_machines"]
+    assert m["host"] == "jet-1" and m["projects"] == []
+    store.request_access(bob, "machine", "jet-1")  # visible: no "no machine named"
+    assert [r["host"] for r in WorkerStore(store).machine_rows(who(store, "bob"))] == ["jet-1"]
+    store.team_machine_set_visible("jet-1", "bob", False, "alice")
+    assert admin_ops.account(store, who(store, "bob"))["team_machines"] == []
+    with pytest.raises(KaptyorkaError, match="no machine named jet-1"):  # hidden: not there
+        store.request_access(bob, "machine", "jet-1")
+    assert WorkerStore(store).machine_rows(who(store, "bob")) == []
+
+
+def test_a_session_on_a_visible_team_machine_still_needs_its_project_role(store):
+    person(store, "alice", "admin")
+    bob, _ = person(store, "bob")
+    carol, _ = person(store, "carol")
+    store.project_register("gros", by="alice")
+    store.grant_project("gros", carol, "write", "alice")
+    _, code = store.team_machine_add("jet-1", "alice")
+    token, _ = store.invite_redeem(code, "jet-1", host="jet-1", os_user="nvidia")
+    store.seen("t-g", "jet-1", "claude", "gros", principal=store.authenticate(token))
+    sessions = lambda n: [a for a in feed(store, who(store, n))["agents"] if a["person"] == "jet-1 (team)"]
+    assert sessions("bob") == [] and len(sessions("carol")) == 1
+    [m] = admin_ops.account(store, who(store, "bob"))["team_machines"]  # the machine shows to both
+    assert m["projects"] == [] and "gros" not in repr(WorkerStore(store).machine_rows(who(store, "bob")))
+    assert admin_ops.account(store, who(store, "carol"))["team_machines"][0]["projects"] == ["gros"]
