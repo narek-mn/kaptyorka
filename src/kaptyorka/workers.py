@@ -627,7 +627,8 @@ class WorkerStore:
                        folder: str, first_message: str) -> dict:
         """The manager worker on the admin's own bridge (`device`: a devices row, as
         ManagerStore.admin_device gives it). Its boss is the admin's page; `link` gives its
-        session to the manager person. The order runs in `folder` exactly, where the hook and
+        session to the manager person. The order's person is the device's owner (the bridge
+        refuses any other), its boss the admin. The order runs in `folder` exactly, where the hook and
         the MCP shim pick the manager's config. An ended manager row is replaced."""
         from kaptyorka.manager import WORKER  # here: manager imports the store
         with self.lock:
@@ -637,6 +638,9 @@ class WorkerStore:
                 raise KaptyorkaError("the manager is already running")
             self._signing(device["id"])  # before anything is written
             admin = self._person_name(admin_person_id)
+            owner = self.db.execute(  # the bridge only takes its own person's orders
+                "SELECT p.name FROM devices d JOIN people p ON p.id=d.person_id WHERE d.id=?",
+                (device["id"],)).fetchone()["name"]
             task = "the team's manager"
             self.db.execute("UPDATE launches SET done_at=?, ok=0, error='replaced' WHERE"
                             " worker=? AND done_at IS NULL", (now, WORKER))
@@ -648,7 +652,7 @@ class WorkerStore:
                 (WORKER, "manager", task, f"web:{admin}", manager_person_id, device["id"],
                  device["host"], "claude-code", folder, now))
             self._queue(device["id"], WORKER, "launch", {
-                "issued": now, "worker": WORKER, "person": admin, "tool": "claude-code",
+                "issued": now, "worker": WORKER, "person": owner, "tool": "claude-code",
                 "project": "manager", "folder": folder, "worktree": False, "task": task,
                 "boss": admin, "resume": None, "first_message": first_message,
                 "manager": True})

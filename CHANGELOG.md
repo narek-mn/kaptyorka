@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.25
+
+- The manager starts again on a hub whose own account is a team machine (0.9.24 sent the start for the admin, and the hub account's bridge refused it).
+
 ## 0.9.24
 
 - **The manager starts again when the hub's own account became a team machine.** It always launches through the live bridge running as the hub's own OS user on the hub machine (the account with the admin token, the manager folder and the hub), whoever owns that device. Before, it picked the most recently used admin's bridge and failed with "no manager folder ... on this machine" once a human admin joined from another account on the same computer. Only with no such bridge (old setups) does it use an admin's or the hub key's bridge, and the hub logs that. The manager's boss stays an admin: the device owner when an admin, else the oldest human admin. `kaptyorka status` on the hub machine shows the manager line again when the machine's person is no admin.

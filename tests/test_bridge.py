@@ -540,6 +540,24 @@ def test_bridge_refuses_other_persons_order_unless_shared(team):
     assert team.acks == [(item["id"], True, True, "")] and len(team.popen.calls) == 1
 
 
+def test_bridge_accepts_the_manager_order_for_its_own_account(team):
+    from helpers import person
+
+    from kaptyorka.workers import WorkerStore
+
+    admin_id, _ = person(team.hub.store, "carol", "admin")
+    with team.hub.store.lock:
+        dev = dict(team.hub.store.db.execute("SELECT * FROM devices WHERE person_id=? AND secret_hash!=''",
+                                             (team.pid,)).fetchone())
+    folder = team.launcher.home / ".kaptyorka" / "manager"
+    folder.mkdir(parents=True)
+    WorkerStore(team.hub.store).create_manager(admin_id, admin_id, dev, str(folder), "hi")
+    item = team.order()
+    assert item["person"] == "alice" and item["boss"] == "carol"  # alice's account, carol's boss
+    team.bridge._order(item)
+    assert team.acks == [(item["id"], True, True, "")] and len(team.popen.calls) == 1
+
+
 def test_crash_while_launching_is_acked_and_does_not_stop_the_poll(team, monkeypatch):
     def boom(order, sessions=()):
         raise ZeroDivisionError("division by zero")

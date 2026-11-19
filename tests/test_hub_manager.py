@@ -305,11 +305,11 @@ def test_manager_launches_through_the_hub_accounts_bridge(hub, monkeypatch):
     hub.tick()
     assert orders(hub, human) == []
     [o] = orders(hub, svc)
-    assert o["worker"] == "manager" and o["person"] in admin_ops.admins(hub.store) \
-        and o["person"] != "svc"  # the boss is a human admin, never the team machine
+    assert o["worker"] == "manager" and o["person"] == "svc"  # the device owner: its bridge takes no other
+    assert o["boss"] in admin_ops.admins(hub.store) and o["boss"] != "svc"  # a human admin
     with hub.store.lock:
         row = hub.store.db.execute("SELECT device_id, boss_key FROM workers WHERE name='manager'").fetchone()
-    assert row["device_id"] == svc.device_id and row["boss_key"] == "web:" + o["person"]
+    assert row["device_id"] == svc.device_id and row["boss_key"] == "web:" + o["boss"]
 
 
 def write_hub_key(hub, b):
