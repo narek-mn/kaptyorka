@@ -293,6 +293,7 @@ def test_v2_login_check_never_starts_the_service(home, monkeypatch):
 
     def login_output(command, args, run, **kw):
         seen.append(args)
+        assert kw.get("timeout") == 15  # it boots a private server first
         return out["text"]
     monkeypatch.setattr(opencode, "login_output", login_output)
     a = OpenCodeAdapter(home)
@@ -304,9 +305,9 @@ def test_v2_login_check_never_starts_the_service(home, monkeypatch):
     assert seen == [["auth", "list", "--standalone", "--format", "json"]]
     out["text"] = json.dumps([{"id": "openai", "name": "OpenAI", "connections": [
         {"type": "env", "name": "OPENAI_API_KEY"}]}])
-    assert a.logged_in(None) is False  # a provider variable only
+    assert a.logged_in(None) is None  # a provider variable only: unknown, never "not logged in"
     out["text"] = "[]\n"
-    assert a.logged_in(None) is False
+    assert a.logged_in(None) is None
     for broken in (None, "", "Error: something\n", '{"x": 1}'):
         out["text"] = broken
         assert a.logged_in(None) is None

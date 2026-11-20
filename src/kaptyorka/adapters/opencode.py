@@ -41,6 +41,7 @@ from kaptyorka.adapters.base import (DeliveryError, Session, add_alias, login_ou
                                      remove_alias, write_atomic)
 
 TIMEOUT_S = 5
+V2_LOGIN_TIMEOUT_S = 15  # `auth list --standalone` starts a private server first
 ALIAS = "alias opencode='opencode --port 0'"
 SESSION_ID = re.compile(r"^ses_[A-Za-z0-9]+$")  # OpenCode's own ids: "ses_" + base62
 WRAPPER_MARK = "kaptyorka-opencode-wrapper"
@@ -544,17 +545,21 @@ def _v2_logged_in(run: Callable) -> Optional[bool]:
     auth/shared.ts:9-12, ServerConnection.resolve; --standalone: server-connection.ts:51-53).
     The JSON lists integrations with their connections, each {type: "credential", ...} (stored)
     or {type: "env", ...} (a provider variable): packages/schema/src/connection.ts:18-37.
-    A stored credential is logged in; none (env only) is not; unreadable output is None."""
-    out = login_output("opencode", ["auth", "list", "--standalone", "--format", "json"], run)
+    A stored credential is logged in; anything else (env keys only, none, unreadable) is None,
+    never False: env keys and free models are real ways to use OpenCode. 15 s: --standalone
+    boots a private server first."""
+    out = login_output("opencode", ["auth", "list", "--standalone", "--format", "json"], run,
+                       timeout=V2_LOGIN_TIMEOUT_S)
     try:
         rows = json.loads(out or "")
     except ValueError:
         return None
     if not isinstance(rows, list):
         return None
-    return any(isinstance(c, dict) and c.get("type") == "credential"
-               for r in rows if isinstance(r, dict) and isinstance(r.get("connections"), list)
-               for c in r["connections"])
+    stored = any(isinstance(c, dict) and c.get("type") == "credential"
+                 for r in rows if isinstance(r, dict) and isinstance(r.get("connections"), list)
+                 for c in r["connections"])
+    return True if stored else None
 
 
 class OpenCodeAdapter:
@@ -585,7 +590,8 @@ class OpenCodeAdapter:
         `opencode auth login` writes in 1.x), else what `opencode auth list` counts ("N
         credentials", then "M environment variables" for provider keys in the environment).
         Never False on V1: OpenCode also runs free models and providers set in opencode.json
-        with no login, so finding none is "unknown", not "not logged in". V2: _v2_logged_in."""
+        with no login, so finding none is "unknown", not "not logged in". V2: the same rule, see
+        _v2_logged_in."""
         data = Path(os.environ.get("XDG_DATA_HOME") or self.home / ".local" / "share")
         try:
             auth = json.loads((data / "opencode" / "auth.json").read_text())
