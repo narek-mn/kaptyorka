@@ -2380,6 +2380,8 @@ class Store:
             return
         if principal.role == "manager" and self._registered(project):
             return  # the knowledge keeper reads and writes every team project's notes
+        if principal.role == "manager" and project == MANAGER_ACCOUNT:
+            return  # its own state note (open tasks per person): nobody else's to read
         if self._archived(project) and not self._may(project, principal, write):
             raise KaptyorkaError(f"project {project} was removed; its notes are kept for the admin")
         if not self._registered(project) and not self._archived(project):

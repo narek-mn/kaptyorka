@@ -7,7 +7,7 @@ import shlex
 import time
 from typing import List, Optional, Tuple
 
-from kaptyorka import usage
+from kaptyorka import paths, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES
 from kaptyorka.orders import sign
 from kaptyorka.secrets_check import check_secrets
@@ -563,8 +563,10 @@ class WorkerStore:
         os_user = dev["os_user"] if dev else ""
         # bridge-reported values: quoted; `=` makes tmux match the whole name, not a prefix
         dest, name = shlex.quote(f"{os_user}@{row['host']}"), shlex.quote(row["name"])
-        attach = f"ssh -t -- {dest} " + (f"claude attach {name}" if row["tool"] == "claude-code"
-                                         else f"tmux attach -t ={name}")
+        attach = f"ssh -t -- {dest} " + (
+            f"tmux attach -t ={paths.MANAGER_TMUX}" if row["manager"]
+            else f"claude attach {name}" if row["tool"] == "claude-code"
+            else f"tmux attach -t ={name}")
         return {"name": row["name"], "project": row["project"], "task": row["task"],
                 "host": row["host"], "os_user": os_user, "tool": row["tool"],
                 "folder": row["folder"], "worktree": bool(row["worktree"]), "manager": bool(row["manager"]),
@@ -1086,8 +1088,10 @@ class WorkerStore:
             self._end(name, "", "bridge offline", now)
             notes.append(f"the bridge is offline; the session may still run on {w['host']}")
         else:
-            self._queue(w["device_id"], name, "close", {
-                "issued": now, "worker": name, "tool": w["tool"], "key": w["key"]})
+            body = {"issued": now, "worker": name, "tool": w["tool"], "key": w["key"]}
+            if w["manager"]:
+                body["manager"] = True  # its own tmux session, not a `claude --bg` job
+            self._queue(w["device_id"], name, "close", body)
         out = self._dict(self._row(name))
         if w["worktree"]:
             notes.append(f"its worktree {w['folder']} stays in place")

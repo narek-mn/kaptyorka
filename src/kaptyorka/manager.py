@@ -3,6 +3,7 @@ keep-alive decisions, work-request queue and deduped pushes. Kept out of store.p
 ManagerStore shares the Store's database, lock and clock."""
 import getpass
 import json
+import math
 import os
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -22,8 +23,10 @@ DIR = paths.MANAGER_DIR  # under paths.home()
 CONFIG = paths.MANAGER_CONFIG  # under paths.home(), outside the session's working folder
 ASLEEP = "the manager is asleep; a message or request wakes it"
 RELAUNCH_S = 120
-MAX_LAUNCHES_PER_HOUR = 2
 MAX_REFUSALS_PER_HOUR = 3  # launches the hub machine's bridge refused: no session ran
+CRASH_S = 300  # a run that ended this soon after it started crashed (the hub sees it ~90 s late)
+GIVE_UP = 5  # crashes in a row: from then on one try an hour, and the page says why
+BACKOFF_MAX_S = 3600
 REQUEST_TTL_S = 3600
 REMIND_AFTER_S = 86400
 WEEKLY_S = 7 * 86400
@@ -84,6 +87,24 @@ record the answer.
 personal matters, or anything about projects that are not team projects.
 - When the admin tells you to add or change something in the knowledge base, do it directly.
 
+## Several things at once
+
+You are the only manager: the only one who writes the team notes, proposes rules and routes \
+work. Many people write to you at the same time, so keep every turn short.
+
+- A quick thing (a question, a decision, a reply you can give now): answer it in this turn.
+- Anything longer: first `send` the person one line, "working on it", then do it.
+- Code or project work: never yours, and never on the hub machine. Ask the person's own \
+session to start it with `work`, so a worker runs on their machine.
+- Your own jobs with several steps (merging the knowledge digest into the notes, the weekly \
+`log(500)` review): give each one to a subagent with the Agent tool, one subagent per job, \
+and pick its model on purpose (a small fast one for merging text, a stronger one for the \
+review). A subagent has your tools and no others. You stay free for messages meanwhile.
+- Keep an open-tasks list, one short block per person, in your own state note: \
+`state_write("manager", text)` with the five headings, the tasks under Where it stands. \
+Read it with `state("manager")` when you start, and update it when a task opens or ends. \
+Only you can read it.
+
 ## Your limits
 
 - Never edit rules. A proposal is the most you do.
@@ -105,8 +126,7 @@ The team rules above bind you too.
 # `--strict-mcp-config --mcp-config` (with `--setting-sources project,local`, the admin's user
 # settings are not read): the kaptyorka tools only. The hooks are the ones `join` installs for
 # Claude Code.
-DENY = ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Read", "Glob", "Grep",
-        "Agent", "Task"]
+DENY = ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Read", "Glob", "Grep"]
 SETTINGS_FILE = paths.MANAGER_SETTINGS
 MCP_FILE = paths.MANAGER_MCP
 
@@ -412,6 +432,67 @@ class ManagerStore:
     def launches_last_hour(self, now: float) -> int:
         return sum(1 for t in self._launches() if now - t < 3600)
 
+    def _last_run(self) -> Optional[dict]:
+        """The manager worker row once it ended, with whether the bridge refused its launch."""
+        with self.lock:
+            row = self.db.execute("SELECT created, state, error, up_at, closed_at FROM workers"
+                                  " WHERE name=?", (WORKER,)).fetchone()
+            if row is None or row["state"] not in ("closed", "failed"):
+                return None
+            launch = self.db.execute("SELECT ok FROM launches WHERE worker=? AND kind='launch'"
+                                     " ORDER BY id DESC LIMIT 1", (WORKER,)).fetchone()
+        return {**dict(row), "refused": launch is not None and launch["ok"] == 0}
+
+    def judge_run(self) -> None:
+        """Once per ended run: a crash (it never showed up, or its session ended within
+        CRASH_S of its start) adds to the streak; a run that lasted clears it; a launch the
+        bridge refused, a trust failure (it has its own stop) or a close leaves it."""
+        run = self._last_run()
+        if run is None or self._get("manager_judged") == repr(run["created"]):
+            return
+        self._set("manager_judged", repr(run["created"]))
+        ended = run["closed_at"] if run["closed_at"] is not None else self.clock()
+        if run["state"] == "failed":
+            crash = not run["refused"] and "does not trust" not in (run["error"] or "")
+        elif run["error"] == "session gone":
+            crash = ended - (run["up_at"] or run["created"]) < CRASH_S
+            if not crash:
+                self._set("manager_crashes", "[]")
+                return
+        else:
+            return
+        if crash:
+            reason = run["error"] if run["state"] == "failed" else \
+                "its session ended within minutes of its start"
+            self._set("manager_crashes", json.dumps(self.crashes() + [ended]))
+            self._set("manager_crash_error", reason[:300])
+
+    def crashes(self) -> List[float]:
+        """When each crash in the current streak happened."""
+        try:
+            return [float(t) for t in json.loads(self._get("manager_crashes") or "[]")]
+        except (ValueError, TypeError):
+            return []
+
+    def backoff(self, now: float) -> str:
+        """Why a relaunch waits after crashes in a row, or "" when it may go: 2, 4, 8, 16
+        minutes, then an hour between tries."""
+        crashes = self.crashes()
+        if not crashes:
+            return ""
+        n = len(crashes)
+        wait = BACKOFF_MAX_S if n >= GIVE_UP else min(RELAUNCH_S * 2 ** (n - 1), BACKOFF_MAX_S)
+        left = crashes[-1] + wait - now
+        if left <= 0:
+            return ""
+        if n >= GIVE_UP:
+            last = self._get("manager_crash_error") or ""
+            return (f"the manager crashed {n} times in a row (last: {last}); it tries again once"
+                    " an hour by itself; see ~/.kaptyorka/workers/manager.log on the hub machine")
+        mins = math.ceil(left / 60)
+        return (f"the manager crashed {n} time{'s' if n > 1 else ''} in a row; it tries again in"
+                f" {mins} minute{'s' if mins > 1 else ''} by itself")
+
     def refusals_last_hour(self, now: float) -> int:
         """The manager's launch orders the bridge refused (acked not ok, so no session
         ran) in the last hour; an order replaced before any bridge took it is not one."""
@@ -451,8 +532,13 @@ class ManagerStore:
                                    " ('starting','up')", (WORKER,)).fetchone()
         if live is not None:
             return False, "the manager is already running"
+        self.judge_run()
         if self.asleep(now):
             return False, ASLEEP
+        # only crashes slow it down, so normal wake-ups never wait
+        wait = self.backoff(now)
+        if wait:
+            return False, wait
         # the bridge's no-show timeout ends with the launch wait: count it from the failure
         failed = self.last_failure()
         if failed is not None and failed["failed_at"] is not None \
@@ -470,16 +556,12 @@ class ManagerStore:
         if launches and now - max(launches) < RELAUNCH_S:
             return False, ("the manager was launched less than 2 minutes ago; it tries again"
                            " by itself")
-        # a refused launch ran no session, so it does not use up the two launches; refusals
-        # have their own limit, so one that repeats still stops
-        refused = self.refusals_last_hour(now)
-        if refused >= MAX_REFUSALS_PER_HOUR:
+        # a refused launch ran no session, so it is no crash; it has its own limit, so one
+        # that repeats still stops
+        if self.refusals_last_hour(now) >= MAX_REFUSALS_PER_HOUR:
             return False, ("the hub machine's bridge refused to start the manager 3 times in"
                            " the last hour; its log says why; it tries again by itself within"
                            " the hour")
-        if self.launches_last_hour(now) - refused >= MAX_LAUNCHES_PER_HOUR:
-            return False, ("the manager was launched twice in the last hour; it tries again by"
-                           " itself within the hour")
         return True, ""
 
     def launch_reason(self, now: float) -> str:

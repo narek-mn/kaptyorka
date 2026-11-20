@@ -46,12 +46,12 @@ def test_readme_done_check_and_brief_cache_wording():
 def test_readme_manager_section():
     r = (ROOT / "README.md").read_text()
     m = r.split("## The manager", 1)[1].split("\n## ", 1)[0]
-    for s in ["claude attach manager", "--no-manager", "work_decide", "~/.kaptyorka/manager/", "manager-config.json",
+    for s in ["tmux attach -t =kaptyorka-manager", "--no-manager", "work_decide", "~/.kaptyorka/manager/", "manager-config.json",
               "cannot answer other people's knocks", "It messages and files proposals",
               "signs in as the manager, so exit it", "`kaptyorka start --manager`",
               "`--settings ~/.kaptyorka/manager/settings.json`",
               "`--strict-mcp-config --mcp-config ~/.kaptyorka/manager/mcp.json`", "`--setting-sources project,local`",
-              "`--tools=ToolSearch`",
+              "`--tools=ToolSearch,Agent`",
               "do not skip this one-time trust step",
               "closes a manager session still running",
               "an offline bridge and a day-old proposal or request are sent once a day",

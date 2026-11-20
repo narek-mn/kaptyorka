@@ -1,6 +1,6 @@
-"""One real manager session: the hub starts it through the admin's own bridge with real
-`claude --bg`, and it signs in as person `manager`. Run with: pytest -m slow. Everything
-started here is stopped in `finally`."""
+"""One real manager session: the hub starts it through the admin's own bridge with a real
+interactive `claude` in tmux, and it signs in as person `manager`. Run with: pytest -m slow.
+Everything started here is stopped in `finally`."""
 import contextlib
 import json
 import shutil
@@ -61,7 +61,7 @@ def _brief(url, headers):
 @pytest.mark.skipif(shutil.which("claude") is None, reason="claude is not on PATH")
 def test_real_manager_session(monkeypatch):
     real_home = Path.home()
-    # Claude Code refuses --bg in an untrusted folder; a folder under the (trusted) repo is
+    # Claude Code waits on its trust dialog in an untrusted folder; one under the (trusted) repo is
     # fine, and .superpowers is git-ignored.
     khome = Path(tempfile.mkdtemp(prefix="manager-slow-", dir=REPO / ".superpowers"))
     monkeypatch.setenv("KAPTYORKA_HOME", str(khome))
@@ -141,7 +141,8 @@ def test_real_manager_session(monkeypatch):
         for job in _jobs(folder):
             for step in ("stop", "rm"):
                 _quiet(["claude", step, job])
-        _quiet(["systemctl", "--user", "stop", "kaptyorka-worker-manager-*.scope"], 30)
+        # never stop the scope: it can hold Claude Code's shared supervisor or the tmux server
+        _quiet(["tmux", "kill-session", "-t", "=kaptyorka-manager"], 30)
         stop()
         store.close()
         shutil.rmtree(khome, ignore_errors=True)

@@ -113,8 +113,7 @@ def test_may_launch_rules(store, ms, clock):
     with store.lock:
         store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'",
                          (clock[0] + 400,))
-    ok, why = ms.may_launch(clock[0] + 400)
-    assert not ok and "twice" in why
+    assert ms.may_launch(clock[0] + 400) == (True, "")  # normal wake-ups never wait
     assert ms.launches_last_hour(clock[0] + 400) == 2
     assert ms.launches_last_hour(clock[0] + 4000) == 0
     with store.lock:
@@ -142,8 +141,9 @@ def test_no_relaunch_within_two_minutes_of_a_failure(store, ms, clock):
     manager_row(store, "failed", t - 150, closed_at=t - 30, error="did not show up")
     assert ms.last_failure() == {"created": t - 150, "error": "did not show up",
                                  "failed_at": t - 30}
-    assert ms.may_launch(t) == (False, "the manager failed less than 2 minutes ago;"
-                                       " it tries again by itself")
+    assert ms.may_launch(t) == (False, "the manager crashed 1 time in a row; it tries again"
+                                       " in 2 minutes by itself")
+    assert ms.crashes() == [t - 30]
     clock[0] = t + 91  # 121 s after the failure; the bridge still online
     with store.lock:
         store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'", (clock[0],))
@@ -170,8 +170,7 @@ def test_launch_reason_texts(store, ms, clock):
     with store.lock:
         store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'",
                          (clock[0] + 400,))
-    assert ms.launch_reason(clock[0] + 400) == ("the manager was launched twice in the last"
-                                                " hour; it tries again by itself within the hour")
+    assert ms.launch_reason(clock[0] + 400) == ""
     ms.set_blocked("trust")
     assert ms.launch_reason(clock[0] + 400).startswith(
         "Claude Code does not trust the manager's folder;")
@@ -306,7 +305,7 @@ HOOKS_WANTED = {
 SETTINGS_WANTED = {
     "permissions": {"allow": ["mcp__kaptyorka__*"],
                     "deny": ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
-                             "Read", "Glob", "Grep", "Agent", "Task"],
+                             "Read", "Glob", "Grep"],
                     "defaultMode": "default"},
     "hooks": HOOKS_WANTED}
 MCP_WANTED = {"mcpServers": {"kaptyorka": {"command": EXE, "args": ["mcp"]}}}

@@ -183,20 +183,14 @@ def test_manager_relaunch_limits(hub, clock):
     assert http.request("POST", hub.url + "/bridge/worker", b.token,
                         {"worker": "manager", "key": "claude:m2"})[0] == 204
     assert state(hub) == "up" and hub.ws.by_name("manager")["key"] == "claude:m2"
-    # gone again: two launches within the hour, so no third
+    # gone again after a normal run: two wake-ups in an hour never hold the third
     clock[0] += ONLINE_S + GONE_S + 130
     beat(hub, b)
     hub.ws.notify("claude:m2", "wake up")
     hub.tick()
-    assert orders(hub, b) == [] and state(hub) == "closed"
-    assert hub.mm.may_launch(clock[0]) == (False, "the manager was launched twice in the"
-                                                  " last hour; it tries again by itself"
-                                                  " within the hour")
-    # an hour later it may start again; two failures in an hour: the page hears it once
-    clock[0] += 3600
-    beat(hub, b)
-    hub.tick()
     [o3] = orders(hub, b)
+    assert hub.mm.crashes() == []
+    # two failures in an hour: the page hears it once
     ack(hub, b, o3, ok=False, error="claude: not found")
     hub.tick()
     assert "worker `manager` failed to start: claude: not found" in page_texts(hub)
@@ -885,6 +879,7 @@ def test_hub_started_off_closes_a_running_manager(hub):
     restarted()
     [close] = [x for x in orders(hub, b) if x.get("kind") == "close"]
     assert close["worker"] == "manager" and close["key"] == "claude:m1"
+    assert close["manager"] is True  # the bridge ends its tmux session, not a --bg job
     with hub.store.lock:
         rows = [(r["person"], r["kind"], r["detail"]) for r in hub.store.db.execute(
             "SELECT * FROM log WHERE kind='manager' ORDER BY id")]
@@ -1016,18 +1011,63 @@ def test_refusals_stop_after_three_in_an_hour(hub, clock):
     assert relaunch(hub, b, clock) is not None
 
 
-def test_a_real_crash_loop_still_waits_an_hour(hub, clock):
+def test_a_crash_loop_backs_off_and_says_why_when_it_gives_up(hub, clock):
     b = admin_bridge(hub)
     hub.mm.set_enabled(True, "test")
     hub.tick()
-    [o1] = orders(hub, b)
-    no_show(hub, b, o1)
-    no_show(hub, b, relaunch(hub, b, clock))
-    assert relaunch(hub, b, clock) is None
-    assert hub.mm.may_launch(clock[0]) == (False, "the manager was launched twice in the"
-                                                  " last hour; it tries again by itself"
-                                                  " within the hour")
+    [o] = orders(hub, b)
+    for n, wait in enumerate((120, 240, 480, 960), start=1):
+        no_show(hub, b, o)
+        hub.tick()
+        assert len(hub.mm.crashes()) == n
+        clock[0] += wait - 10
+        beat(hub, b)
+        hub.tick()
+        assert orders(hub, b) == []
+        assert hub.mm.may_launch(clock[0])[1].startswith(
+            f"the manager crashed {n} time{'s' if n > 1 else ''} in a row; it tries again in 1"
+            " minute by")
+        clock[0] += 10
+        beat(hub, b)
+        hub.tick()
+        [o] = orders(hub, b)
+    no_show(hub, b, o)
+    hub.tick()
+    clock[0] += 3000
+    beat(hub, b)
+    hub.tick()
+    assert orders(hub, b) == []
+    assert hub.mm.may_launch(clock[0]) == (
+        False, "the manager crashed 5 times in a row (last: manager did not show up); it tries"
+               " again once an hour by itself; see ~/.kaptyorka/workers/manager.log on the hub"
+               " machine")
     assert hub.mm.refusals_last_hour(clock[0]) == 0
+    clock[0] += 600
+    beat(hub, b)
+    hub.tick()
+    assert len(orders(hub, b)) == 1
+
+
+def test_a_session_that_ends_soon_after_its_start_is_a_crash(hub, clock):
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    ack(hub, b, o)
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "manager", "key": "claude:m1"})[0] == 204
+    clock[0] += 200  # its session went quiet within minutes of the start
+    beat(hub, b)
+    hub.tick()
+    assert state(hub) == "closed" and len(hub.mm.crashes()) == 1
+    hub.ws.notify("claude:m1", "wake up")
+    hub.tick()
+    assert orders(hub, b) == []  # the backoff holds the wake-up
+    assert hub.mm.may_launch(clock[0])[1].startswith("the manager crashed 1 time in a row")
+    clock[0] += 120
+    beat(hub, b)
+    hub.tick()
+    assert len(orders(hub, b)) == 1
 
 
 # a person already named manager
@@ -1495,3 +1535,32 @@ def test_a_queue_report_going_stale_mid_request_does_not_crash(hub, monkeypatch)
     assert ask(hub, bob).startswith("busy: box-1 is in use by the GPU queue (10/10 in use)")
     text = inbox(mgr, me)[0]
     assert "GPU queue: alice 10/10 (names for admins only; to anyone else say: 10/10 in use)" in text
+
+
+def test_the_managers_row_attaches_to_its_tmux_session(hub):
+    running_manager(hub)
+    assert hub.ws.by_name("manager")["attach"].endswith("tmux attach -t =kaptyorka-manager")
+
+
+def test_never_a_second_manager_launch_while_one_is_live(hub, clock):
+    b = running_manager(hub)
+    for _ in range(3):
+        clock[0] += 3600
+        beat(hub, b, [{"key": "claude:m1", "tool": "claude-code", "project": "manager"}])
+        hub.ws.notify("claude:m1", "wake up")
+        hub.tick()
+    assert [x for x in orders(hub, b) if x.get("kind") == "launch"] == []
+    assert hub.mm.may_launch(clock[0]) == (False, "the manager is already running")
+
+
+def test_the_managers_state_note_is_its_own(hub):
+    """Its open tasks per person: the manager reads and writes it; nobody else reads it."""
+    running_manager(hub)
+    text = ("## What it is\nthe manager\n## Where it stands\nalice: reach bob\n## Decisions\n-\n"
+            "## Open problems\n-\n## How to run and test\n-\n")
+    hub.store.notes_write("claude:m1", "state", text, "manager")
+    mp = hub.store._person_principal(hub.mm.person_id())
+    assert hub.store.notes_read("state", mp, "manager").text == text
+    pid, _ = person(hub.store, "alice", "member")
+    with pytest.raises(Exception, match="not registered"):
+        hub.store.notes_read("state", hub.store._person_principal(pid), "manager")
