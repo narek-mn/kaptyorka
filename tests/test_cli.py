@@ -253,17 +253,28 @@ def test_login_copy_prints_and_exits_by_result(monkeypatch, capsys):
 
     seen = []
 
-    def fake(target, force=False, **kw):
-        seen.append((target, force))
+    def fake(target, force=False, tool="claude", **kw):
+        seen.append((target, force, tool))
         return fake.result
 
+    def fake_all(target, force=False, **kw):
+        seen.append((target, force, "all"))
+        return fake_all.result
+
     monkeypatch.setattr(login_copy, "copy", fake)
+    monkeypatch.setattr(login_copy, "copy_all", fake_all)
     fake.result = (True, "alice@box-1: Claude Code is logged in there")
-    assert entry_with_exit(["login-copy", "alice@box-1"]) == 0
+    assert entry_with_exit(["login-copy", "alice@box-1", "--tool", "claude"]) == 0
     assert capsys.readouterr().out == "alice@box-1: Claude Code is logged in there\n"
     fake.result = (False, "x")
+    assert entry_with_exit(["login-copy", "alice@box-1", "--force", "--tool", "codex"]) == 1
+    fake_all.result = (True, ["alice@box-1: Claude Code is logged in there", "alice@box-1: Codex is not installed there"])
+    assert entry_with_exit(["login-copy", "alice@box-1"]) == 0
+    assert capsys.readouterr().out.splitlines()[-2:] == fake_all.result[1]
+    fake_all.result = (False, ["y"])
     assert entry_with_exit(["login-copy", "alice@box-1", "--force"]) == 1
-    assert seen == [("alice@box-1", False), ("alice@box-1", True)]
+    assert seen == [("alice@box-1", False, "claude"), ("alice@box-1", True, "codex"),
+                    ("alice@box-1", False, "all"), ("alice@box-1", True, "all")]
 
 
 def test_fleet_list_prints_devices(monkeypatch, home, capsys):

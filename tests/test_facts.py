@@ -235,6 +235,10 @@ def test_login_states_per_output(monkeypatch, tmp_path):
     assert codex.logged_in(Run({"login": (1, "", "Not logged in\n")})) is False  # its real shape
     assert codex.logged_in(Run({"login": OSError()})) is None
     assert codex.logged_in(Run({"login": (0, "something else\n")})) is None
+    # an API-key login says so instead of "Logged in" (codex-rs/cli/src/login.rs)
+    assert codex.logged_in(Run({"login": (0, "", "API key configured - sk-a***z\n")})) is True
+    assert codex.logged_in(Run({"login": (0, "", "Logged in using ChatGPT\n")})) is True
+    assert codex.logged_in(Run({"login": (1, "", "Error checking login status: bad\n")})) is None
     assert opencode.logged_in(Run({"auth": (0, "└  2 credentials\n")})) is True
     assert opencode.logged_in(Run({"auth": (0, "no list here\n")})) is None
     assert opencode.logged_in(Run({"auth": OSError()})) is None

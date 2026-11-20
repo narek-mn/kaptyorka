@@ -52,6 +52,17 @@ def default_socket(home: Optional[Path] = None) -> Path:
     return codex_home(home) / "app-server-control" / "app-server-control.sock"
 
 
+def login_state(out: str, returncode: int = 0) -> Optional[bool]:
+    """`codex login status` (all on stderr): "Not logged in" and exit 1 when logged out; exit 0
+    with "Logged in using ..." or, for an API key, "API key configured - <part of the key>".
+    Anything else (an error) is unknown. Keep only this yes or no from the output."""
+    if "Not logged in" in out:
+        return False
+    if returncode == 0 and ("Logged in" in out or "API key configured" in out):
+        return True
+    return None
+
+
 class RpcError(Exception):
     """The app-server answered with a JSON-RPC error."""
 
@@ -207,11 +218,8 @@ class CodexAdapter:
         return shutil.which("codex") is not None
 
     def logged_in(self, run: Callable) -> Optional[bool]:
-        # not logged in: exit 1 and "Not logged in" on stderr
-        out = login_output("codex", ["login", "status"], run, any_exit=True) or ""
-        if "Not logged in" in out:
-            return False
-        return True if "Logged in" in out else None
+        out = login_output("codex", ["login", "status"], run, any_exit=True)
+        return login_state(out or "")  # the exit code is not kept: the text decides
 
     def _state(self, state: str) -> None:
         if state != self._daemon:
@@ -258,8 +266,11 @@ class CodexAdapter:
             with Rpc(self.socket_path) as rpc:
                 if tid not in rpc.call("thread/loaded/list", {})["data"]:
                     raise DeliveryError(f"codex session {key}: not loaded in the app-server")
-                rpc.call("turn/start", {"threadId": tid,
-                                        "input": [{"type": "text", "text": text}]})
+                try:  # during a running turn the app-server steers it: an error is a refusal
+                    rpc.call("turn/start", {"threadId": tid,
+                                            "input": [{"type": "text", "text": text}]})
+                except RpcError as e:
+                    raise DeliveryError(f"codex session {key} refused: {e}") from e
         except (OSError, ValueError, KeyError, TypeError, AttributeError, RpcError) as e:
             raise DeliveryError(f"codex session {key}: {e}") from e
 

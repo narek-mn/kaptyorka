@@ -239,7 +239,21 @@ def test_hook_hub_says_so_when_the_cli_fails(joined, monkeypatch, capsys):
         raise OSError("gone")
     stdin = json.dumps({"session_id": "t-1", "cwd": "/w/proj-a", "prompt": "$hub"})
     hook.main("codex", "prompt", stdin, run=broken)
-    assert json.loads(capsys.readouterr().out)["reason"] == "kaptyorka: /hub did not run"
+    assert json.loads(capsys.readouterr().out)["reason"] == "kaptyorka: $hub did not run"  # Codex's own word
+
+
+def test_codex_dollar_hub_team_gets_the_join_time(joined, monkeypatch, capsys):
+    seen = []
+
+    def cli(argv, **kw):
+        seen.append((argv[1:], kw["timeout"], kw["env"].get(offhub.SESSION_KEY)))
+        return subprocess.CompletedProcess(argv, 0, "this session joined proj-a\n", "")
+    stdin = json.dumps({"session_id": "t-1", "cwd": "/w/notes", "prompt": "$hub team proj-a"})
+    monkeypatch.setattr(hook.http, "request", lambda *a, **k: pytest.fail("no hub call"))
+    hook.main("codex", "prompt", stdin, run=cli)
+    out = json.loads(capsys.readouterr().out)
+    assert out["decision"] == "block" and out["reason"] == "this session joined proj-a"
+    assert seen == [(["hub", "team", "proj-a"], hook.HUB_TEAM_S, "codex:t-1")]
 
 
 def test_an_off_opencode_session_hook_is_silent(joined, monkeypatch, capsys):

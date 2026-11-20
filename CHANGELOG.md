@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **`kaptyorka login-copy` copies Codex and OpenCode logins too.** Without `--tool` it copies every tool logged in on this machine, one line per tool (logged in there, already logged in there, not installed there, or failed), and exits 0 unless one failed; `--tool claude|codex|opencode` copies one, and `--tool claude` behaves as before. Only the login file is copied (Codex's `auth.json`, OpenCode 1's `auth.json`), the same way as Claude Code's: over ssh stdin only, saved readable only by that user, checked there afterwards. Linux only. Codex with its login in the system keyring and OpenCode 2 (login in its database) are refused with a clear line.
+- Codex logged in with an API key now counts as logged in (its status says "API key configured", not "Logged in"), so the machine list no longer shows it as unknown.
+- A message the Codex app-server refuses shows "the agent tool refused the message" instead of "the session isn't reachable".
+- When `$hub` cannot run in Codex, the line says `$hub`, not `/hub`.
+
 ## 0.9.26
 
 - **The manager keeps the team's knowledge.** It maintains the team notes `team`, `machines`, `projects` (one line per team project), `glossary` and `decisions` by itself: it reads before it writes, merges, replaces stale lines, and dates and sources each fact. It asks the people working on a project when something is unclear or the project's note is missing or about 14 days old, proposes rules for what repeats (never edits them), and never stores secrets, personal matters or non-team projects. Once a day after 4:00 (hub machine time) it gets a knowledge digest: changed notes (author and a size hint, never the text), new and removed people, team machines, machines and projects, the sessions working in each team project, and finished workers, capped at 4,000 characters. A project note written or a worker finished sends a short notice, at most one per 10 minutes. These never wake a sleeping manager. The manager may now read and write the notes of every registered project (`projects` lists them all with the role `notes`); members' rights are unchanged.

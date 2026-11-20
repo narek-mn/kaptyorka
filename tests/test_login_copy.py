@@ -134,3 +134,219 @@ def test_copied_but_still_logged_out(tmp_path):
     ok, line = login_copy.copy(TARGET, run=run, config_dir=creds(tmp_path))
     assert not ok and line == ("alice@box-1: copied, but Claude Code there still says it is not logged in; "
                                "run claude auth login there")
+
+
+# Codex and OpenCode. Status shapes are the tools' own: codex-rs/cli/src/login.rs prints
+# everything on stderr; OpenCode 1.19 `auth list` ends with "N credentials".
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
+
+from kaptyorka.login_copy import (CODEX_STATUS, CODEX_WRITE, OPENCODE_STATUS,  # noqa: E402
+                                  OPENCODE_WRITE, STATUS)
+
+OK = SimpleNamespace(returncode=0, stdout="", stderr="")
+CODEX_IN = SimpleNamespace(returncode=0, stdout="", stderr="Logged in using ChatGPT\n")
+CODEX_OUT = SimpleNamespace(returncode=1, stdout="", stderr="Not logged in\n")
+OC1 = SimpleNamespace(returncode=0, stdout="1.19.5\n", stderr="")
+OC2 = SimpleNamespace(returncode=0, stdout="2.3.2\n", stderr="")
+
+
+def oc_list(n, version="1.19.5"):
+    return SimpleNamespace(returncode=0, stdout=f"{version}\n\x1b[0m\n┌  Credentials ~/x\n│\n└  {n} credentials\n",
+                           stderr="")
+
+
+def fake(local, remote):
+    """local: argv[0] -> result; remote: ssh command -> list of results, used in order."""
+    calls = []
+    remote = {k: list(v) for k, v in remote.items()}
+
+    def run(argv, **kw):
+        calls.append((argv, kw))
+        if argv[0] != "ssh":
+            got = local[argv[0]]
+            if isinstance(got, Exception):
+                raise got
+            return got
+        answers = remote[argv[-1]]
+        return answers.pop(0) if len(answers) > 1 else answers[0]
+
+    run.calls = calls
+    return run
+
+
+def sent(run, command):
+    return [kw.get("input") for argv, kw in run.calls if argv[0] == "ssh" and argv[-1] == command]
+
+
+def tool_dir(tmp_path, name, text=SECRET):
+    d = tmp_path / name
+    d.mkdir()
+    (d / "auth.json").write_text(text)
+    return d
+
+
+def test_codex_copies_only_on_stdin(tmp_path):
+    run = fake({"codex": CODEX_IN}, {CODEX_STATUS: [CODEX_OUT, CODEX_IN], CODEX_WRITE: [OK]})
+    got = login_copy.copy(TARGET, run=run, config_dir=tool_dir(tmp_path, "codex"), tool="codex")
+    assert got == (True, "alice@box-1: Codex is logged in there")
+    assert sent(run, CODEX_WRITE) == [SECRET]
+    assert '"${CODEX_HOME:-$HOME/.codex}"' in CODEX_WRITE and 'mv -f "$t" "$d/auth.json"' in CODEX_WRITE
+    assert all(SECRET not in a for argv, _ in run.calls for a in argv)
+    assert ["codex", "login", "status"] in [argv for argv, _ in run.calls]
+
+
+def test_codex_refuses_a_logged_in_target_and_force_still_checks(tmp_path):
+    d = tool_dir(tmp_path, "codex")
+    api = SimpleNamespace(returncode=0, stdout="", stderr="API key configured - sk-a***z\n")
+    run = fake({"codex": CODEX_IN}, {CODEX_STATUS: [api]})
+    ok, line = login_copy.copy(TARGET, run=run, config_dir=d, tool="codex")
+    assert not ok and line == "alice@box-1: Codex is already logged in there; add --force to replace that login"
+    assert not sent(run, CODEX_WRITE)
+    run = fake({"codex": CODEX_IN}, {CODEX_STATUS: [api, CODEX_OUT], CODEX_WRITE: [OK]})
+    ok, line = login_copy.copy(TARGET, force=True, run=run, config_dir=d, tool="codex")
+    assert not ok and line == "alice@box-1: copied, but Codex there still says it is not logged in; run codex login there"
+    assert len(sent(run, CODEX_STATUS)) == 2
+
+
+def test_codex_unknown_state_never_echoes_its_output(tmp_path):
+    bad = SimpleNamespace(returncode=1, stdout="", stderr="Error checking login status: sk-a***z broken\n")
+    for force in (False, True):
+        run = fake({"codex": CODEX_IN}, {CODEX_STATUS: [bad]})
+        ok, line = login_copy.copy(TARGET, force=force, run=run, config_dir=tool_dir(tmp_path, f"c{force}"), tool="codex")
+        assert not ok and line == ("alice@box-1: could not read Codex's login state there; "
+                                   "run codex login status there to see why")
+        assert not sent(run, CODEX_WRITE)
+
+
+def test_codex_keyring_means_nothing_to_copy(tmp_path):
+    want = (False, "Codex keeps its login in the system keyring on this machine, so there is no file to copy")
+    for mode, with_file in (("keyring", True), ("ephemeral", False), ("auto", False)):
+        d = tmp_path / mode
+        d.mkdir()
+        if with_file:
+            (d / "auth.json").write_text(SECRET)
+        (d / "config.toml").write_text(f'model = "x"\ncli_auth_credentials_store = "{mode}"\n[profiles.a]\n')
+        run = fake({"codex": CODEX_IN}, {})
+        assert login_copy.copy(TARGET, run=run, config_dir=d, tool="codex") == want
+        assert not run.calls
+    # auto with a file falls back to it; a key inside a table is not the top-level setting
+    for name, toml in (("auto2", 'cli_auth_credentials_store = "auto"\n'),
+                       ("table", '[x]\ncli_auth_credentials_store = "keyring"\n')):
+        d = tool_dir(tmp_path, name)
+        (d / "config.toml").write_text(toml)
+        run = fake({"codex": CODEX_IN}, {CODEX_STATUS: [CODEX_OUT, CODEX_IN], CODEX_WRITE: [OK]})
+        assert login_copy.copy(TARGET, run=run, config_dir=d, tool="codex")[0]
+
+
+def test_codex_not_logged_in_here_or_not_installed_there(tmp_path):
+    d = tool_dir(tmp_path, "codex")
+    run = fake({"codex": CODEX_OUT}, {})
+    assert login_copy.copy(TARGET, run=run, config_dir=d, tool="codex") == (
+        False, "Codex is not logged in on this machine; run codex login first")
+    assert all(argv[0] != "ssh" for argv, _ in run.calls)
+    run = fake({"codex": CODEX_IN}, {CODEX_STATUS: [SimpleNamespace(returncode=127, stdout="", stderr="")]})
+    assert login_copy.copy(TARGET, run=run, config_dir=d, tool="codex") == (
+        False, "alice@box-1: Codex is not installed there")
+
+
+def test_opencode1_copies_to_a_target_with_no_stored_login(tmp_path):
+    d = tool_dir(tmp_path, "oc", '{"anthropic": {"type": "api", "key": "' + SECRET + '"}}')
+    run = fake({"opencode": OC1}, {OPENCODE_STATUS: [oc_list(0), oc_list(1)], OPENCODE_WRITE: [OK]})
+    assert login_copy.copy(TARGET, run=run, config_dir=d, tool="opencode") == (True, "alice@box-1: OpenCode is logged in there")
+    assert sent(run, OPENCODE_WRITE) == [(d / "auth.json").read_text()]
+    assert '"${XDG_DATA_HOME:-$HOME/.local/share}/opencode"' in OPENCODE_WRITE
+    assert "$HOME/.opencode/bin" in OPENCODE_STATUS and "1.*) opencode auth list" in OPENCODE_STATUS
+
+
+def test_opencode_refuses_stored_login_unknown_and_version_2(tmp_path):
+    d = tool_dir(tmp_path, "oc", '{"a": {"type": "api", "key": "k"}}')
+    run = fake({"opencode": OC1}, {OPENCODE_STATUS: [oc_list(2)]})
+    ok, line = login_copy.copy(TARGET, run=run, config_dir=d, tool="opencode")
+    assert not ok and line.endswith("OpenCode is already logged in there; add --force to replace that login")
+    unknown = SimpleNamespace(returncode=0, stdout="1.19.5\nsomething else\n", stderr="")
+    for force in (False, True):  # unknown is never "not logged in"
+        run = fake({"opencode": OC1}, {OPENCODE_STATUS: [unknown]})
+        ok, line = login_copy.copy(TARGET, force=force, run=run, config_dir=d, tool="opencode")
+        assert not ok and line == ("alice@box-1: could not read OpenCode's login state there; "
+                                   "run opencode auth list there to see why")
+        assert not sent(run, OPENCODE_WRITE)
+    v2 = ("alice@box-1: OpenCode 2 keeps its login in its database, not in a file; "
+          "login-copy copies OpenCode 1 logins only for now")
+    run = fake({"opencode": OC1}, {OPENCODE_STATUS: [OC2]})
+    assert login_copy.copy(TARGET, force=True, run=run, config_dir=d, tool="opencode") == (False, v2)
+    run = fake({"opencode": OC2}, {})
+    assert login_copy.copy(TARGET, run=run, config_dir=d, tool="opencode") == (False, v2.replace(TARGET, "OpenCode"))
+    assert all(argv[0] != "ssh" for argv, _ in run.calls)
+
+
+def test_opencode_empty_file_is_no_login(tmp_path):
+    run = fake({"opencode": OC1}, {})
+    assert login_copy.copy(TARGET, run=run, config_dir=tool_dir(tmp_path, "oc", "{}"), tool="opencode") == (
+        False, "OpenCode is not logged in on this machine; run opencode auth login first")
+
+
+def test_codex_and_opencode_are_linux_only(tmp_path):
+    for tool in ("codex", "opencode"):
+        run = fake({}, {})
+        got = login_copy.copy(TARGET, run=run, config_dir=tool_dir(tmp_path, tool), tool=tool, platform="darwin")
+        assert got[0] is False and got[1].endswith("login-copy works from Linux only for now")
+        assert not run.calls
+
+
+def test_copy_all_one_line_per_logged_in_tool(tmp_path):
+    (tmp_path / "claude").mkdir()
+    dirs = {"claude": creds(tmp_path / "claude"), "codex": tool_dir(tmp_path, "codex"), "opencode": tmp_path / "none"}
+    missing = SimpleNamespace(returncode=127, stdout="", stderr="")
+    run = fake({"claude": LOCAL_OK, "codex": CODEX_IN, "opencode": OC1},
+               {STATUS: [LOGGED_OUT, LOCAL_OK], REMOTE_WRITE: [OK], CODEX_STATUS: [missing]})
+    assert login_copy.copy_all(TARGET, run=run, dirs=dirs, platform="linux") == (
+        True, ["alice@box-1: Claude Code is logged in there", "alice@box-1: Codex is not installed there"])
+    # already logged in there is skipped, not failed; a failed copy fails the whole run
+    run = fake({"claude": LOCAL_OK, "codex": CODEX_IN},
+               {STATUS: [LOCAL_OK], CODEX_STATUS: [CODEX_OUT], CODEX_WRITE: [SimpleNamespace(returncode=1, stdout="", stderr="disk full")]})
+    ok, lines = login_copy.copy_all(TARGET, run=run, dirs=dirs, platform="linux")
+    assert not ok and lines == ["alice@box-1: Claude Code is already logged in there; add --force to replace that login",
+                                "alice@box-1: copy failed: disk full"]
+    run = fake({}, {})
+    nothing = {"claude": tmp_path / "n1", "codex": tmp_path / "n2", "opencode": tmp_path / "n3"}
+    assert login_copy.copy_all(TARGET, run=run, dirs=nothing, platform="linux") == (
+        False, ["no tool is logged in on this machine; log in to Claude Code, Codex or OpenCode first"])
+    assert login_copy.copy_all("-oX", run=run, dirs=nothing) == (False, ["-oX: not a user@host"])
+    assert not run.calls
+
+
+@pytest.mark.parametrize("command,where", [(CODEX_WRITE, ".codex"), (OPENCODE_WRITE, ".local/share/opencode"),
+                                           (REMOTE_WRITE, ".claude")])
+def test_write_step_in_a_real_shell(tmp_path, command, where):
+    """The write step itself (a plain sh line, run here instead of over ssh): 600, no temp left."""
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    subprocess.run(["sh", "-c", command], input=SECRET, text=True, env=env, check=True)
+    target = tmp_path / where
+    files = sorted(p.name for p in target.iterdir())
+    assert files == [".credentials.json" if where == ".claude" else "auth.json"]
+    assert (target / files[0]).read_text() == SECRET and (target / files[0]).stat().st_mode & 0o777 == 0o600
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "mv").write_text("#!/bin/sh\nexit 1\n")
+    (bin_dir / "mv").chmod(0o755)
+    env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
+    r = subprocess.run(["sh", "-c", command], input="NEW", text=True, env=env)
+    assert r.returncode == 1 and sorted(p.name for p in target.iterdir()) == files
+    assert (target / files[0]).read_text() == SECRET
+    assert Path(target).stat().st_mode & 0o077 == 0
+
+
+def test_copy_all_notes_what_cannot_be_copied_without_failing(tmp_path):
+    codex = tool_dir(tmp_path, "codex")
+    (codex / "config.toml").write_text('cli_auth_credentials_store = "keyring"\n')
+    (tmp_path / "claude").mkdir()
+    dirs = {"claude": creds(tmp_path / "claude"), "codex": codex, "opencode": tool_dir(tmp_path, "oc", '{"a": {}}')}
+    run = fake({"claude": LOCAL_OK, "opencode": OC2}, {STATUS: [LOGGED_OUT, LOCAL_OK], REMOTE_WRITE: [OK]})
+    ok, lines = login_copy.copy_all(TARGET, run=run, dirs=dirs, platform="linux")
+    assert ok and lines[0] == "alice@box-1: Claude Code is logged in there"
+    assert lines[1].startswith("Codex keeps its login in the system keyring") and lines[2].startswith("OpenCode: OpenCode 2")
+    # only notes: nothing was copied, so not a success
+    dirs["claude"] = tmp_path / "none"
+    assert login_copy.copy_all(TARGET, run=fake({"opencode": OC2}, {}), dirs=dirs, platform="linux")[0] is False

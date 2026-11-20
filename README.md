@@ -552,7 +552,7 @@ kaptyorka fleet list
 
 `fleet add` installs kaptyorka on each target and joins it as that person, with an invite made for the job. `--key-from` is a file with one `NAME=value` line, for example an API key. It goes only to the bridge service's environment on the target (the unit file is mode 0600). `fleet list` shows the machines, who owns them and their version; run as a member, it lists only your own accounts and the team machines you may use. A re-join keeps that key. To replace it, run `fleet add` again with a new `--key-from`; to clear it, run `kaptyorka remove` on that machine, then `join` again.
 
-`kaptyorka login-copy alice@box-1` copies your Claude Code login from this machine to the same user on that machine, over ssh, so Claude Code there is logged in as you without a browser. The login goes straight from this machine to that one, never through the hub, and is saved there readable only by that user. It refuses when Claude Code is not logged in here, is not installed there, or is already logged in there (`--force` replaces that login). Use it only for machines and accounts that are yours. Claude Code only for now, and both machines must be Linux: a Mac keeps the Claude login in its keychain, so it cannot be copied from one, and a file copied to one would not be used.
+`kaptyorka login-copy alice@box-1` copies your logins of Claude Code, Codex and OpenCode from this machine to the same user on that machine, over ssh, so the tools there are logged in as you without a browser. It copies every tool that is logged in here and prints one line per tool: logged in there, already logged in there (skipped), not installed there, or why it failed; `--tool claude`, `--tool codex` or `--tool opencode` copies one. Only the login file moves (Claude Code's `.credentials.json`, Codex's `auth.json` in `$CODEX_HOME`, OpenCode's `auth.json` in `$XDG_DATA_HOME/opencode`), never settings, history or sessions. The login goes straight from this machine to that one, never through the hub, and is saved there readable only by that user. It refuses a tool that is already logged in there (`--force` replaces that login) and checks the login there afterwards. Use it only for machines and accounts that are yours. Limits: both machines must be Linux (a Mac keeps the Claude login in its keychain). Codex set to keep its login in the system keyring (`cli_auth_credentials_store`) has no file to copy. OpenCode 2 keeps its login in its database, so only OpenCode 1 logins are copied for now.
 
 Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by default for members' machines and off for the admin's. The page no longer has a switch for it.
 
@@ -621,7 +621,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
 | `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |
 | `kaptyorka fleet list` | Admin: list machines |
-| `kaptyorka login-copy <user@host>` | Copy your Claude Code login to another machine of yours over ssh (`--force` replaces one already there) |
+| `kaptyorka login-copy <user@host>` | Copy your Claude Code, Codex and OpenCode logins to another machine of yours over ssh (`--tool` picks one, `--force` replaces one already there) |
 | `kaptyorka backup <user@host:path>` | Copy the hub's data to another machine; `--nightly` every day at 03:00 |
 | `kaptyorka restore <file>` | Put a backup back (stop the hub first) |
 

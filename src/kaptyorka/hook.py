@@ -126,7 +126,7 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
         if event == "prompt" and tool in ("codex", "cursor"):
             words = hub_words(data.get("prompt"))
             if words is not None:  # /hub typed into the chat: answered here, never sent on
-                line = _hub_line(ident, words, run) or "kaptyorka: /hub did not run"
+                line = _hub_line(ident, words, run) or f"kaptyorka: {optin.command(ident.key)} did not run"
                 if tool == "codex":
                     return json.dumps({"decision": "block", "reason": line, "systemMessage": line})
                 return json.dumps({"continue": False, "user_message": line})

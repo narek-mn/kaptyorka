@@ -1110,8 +1110,13 @@ def _fleet_add(args) -> int:
 def _login_copy(args) -> int:
     from kaptyorka import login_copy
 
-    ok, line = login_copy.copy(args.target, force=args.force)
-    print(line)
+    if args.tool:
+        ok, line = login_copy.copy(args.target, force=args.force, tool=args.tool)
+        lines = [line]
+    else:
+        ok, lines = login_copy.copy_all(args.target, force=args.force)
+    for line in lines:
+        print(line)
     return 0 if ok else 1
 
 
@@ -1353,8 +1358,10 @@ def entry() -> None:
     fa.add_argument("--key-from", help="file with one NAME=value line, sent to the bridge's environment")
     fa.set_defaults(run=_fleet_add)
     fs.add_parser("list", help="list the team's machines and who owns them").set_defaults(run=_fleet_list)
-    lc = sub.add_parser("login-copy", help="copy this machine's Claude Code login to another machine of yours over ssh")
+    lc = sub.add_parser("login-copy", help="copy this machine's Claude Code, Codex and OpenCode logins to another machine of yours over ssh")
     lc.add_argument("target", help="user@host")
+    lc.add_argument("--tool", choices=["claude", "codex", "opencode"],
+                    help="copy only this tool's login (default: every tool logged in here)")
     lc.add_argument("--force", action="store_true", help="replace a login that is already there")
     lc.set_defaults(run=_login_copy)
     rl = sub.add_parser("rules", help="upload the team rules and skills to the hub").add_subparsers(

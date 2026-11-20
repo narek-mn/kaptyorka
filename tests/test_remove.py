@@ -306,3 +306,22 @@ def test_leave_with_only_the_saved_token_says_how_join_and_remove_differ(home, c
                           " keeps its token for http://h:1.")
     assert "kaptyorka join turns them back on; kaptyorka remove forgets the token too" in out
     assert paths.load_config()["token"] == "t"  # kept: forgetting it would need a new invite
+
+
+def test_codex_unconfigure_leaves_foreign_files_and_tables(home, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setenv("CODEX_HOME", str(home / ".codex"))
+    conf = home / ".codex"
+    (conf / "skills/hub/agents").mkdir(parents=True)
+    (conf / "skills/hub/SKILL.md").write_text("---\nname: hub\n---\nsomeone's own skill\n")
+    (conf / "skills/hub/agents/openai.yaml").write_text("policy: theirs\n")
+    a = CodexAdapter(home=home, socket_path=conf / "none.sock")
+    a.configure("/opt/x/kaptyorka")
+    # Codex's own /hooks approval and the person's settings, written after our block
+    with open(conf / "config.toml", "a") as f:
+        f.write('[hooks.state."theirs:stop:0:0"]\ntrusted_hash = "h"\n\n[profiles.p]\nmodel = "y"\n')
+    a.unconfigure()
+    assert (conf / "config.toml").read_text() == (
+        '[hooks.state."theirs:stop:0:0"]\ntrusted_hash = "h"\n\n[profiles.p]\nmodel = "y"\n')
+    assert (conf / "skills/hub/SKILL.md").read_text().endswith("someone's own skill\n")
+    assert (conf / "skills/hub/agents/openai.yaml").read_text() == "policy: theirs\n"

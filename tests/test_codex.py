@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from fakes.codex_app_server import FakeCodex
-from kaptyorka import hook, identity
+from kaptyorka import hook, identity, paths
 from kaptyorka.adapters import base, codex
 from kaptyorka.adapters.base import DeliveryError, Session
 from kaptyorka.adapters.codex import CodexAdapter
@@ -67,8 +67,16 @@ def test_deliver_starts_turn(fake_codex):
 
 def test_deliver_rpc_error_raises(fake_codex):
     fake_codex.error = {"code": -32600, "message": "thread busy"}
-    with pytest.raises(DeliveryError, match="thread busy"):
+    with pytest.raises(DeliveryError, match="thread busy") as e:
         CodexAdapter().deliver("codex:th-a", "hi")
+    # the app-server answered and said no: the sender sees a refusal, not "isn't reachable"
+    assert paths.push_reason(str(e.value)) == "the agent tool refused the message"
+
+
+def test_deliver_unreachable_daemon_is_not_a_refusal(codex_home):
+    with pytest.raises(DeliveryError) as e:
+        CodexAdapter().deliver("codex:th-a", "hi")
+    assert paths.push_reason(str(e.value)) == paths.UNREACHABLE
 
 
 def test_deliver_unloaded_thread_raises(fake_codex):
