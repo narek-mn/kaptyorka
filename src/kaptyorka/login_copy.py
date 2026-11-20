@@ -22,12 +22,16 @@ CODEX_WRITE = remote_write("${CODEX_HOME:-$HOME/.codex}", "auth.json")
 OPENCODE_WRITE = remote_write("${XDG_DATA_HOME:-$HOME/.local/share}/opencode", "auth.json")
 STATUS = PATH_FIX + "claude auth status"
 CODEX_STATUS = PATH_FIX + "codex login status"
-# OpenCode's own installer puts it in ~/.opencode/bin. Only an OpenCode 1 lists its auth.json
-OPENCODE_STATUS = ('export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"; '
-                   'command -v opencode >/dev/null || exit 127; v=$(opencode --version) || exit 1; '
-                   'echo "$v"; case "$v" in 1.*) opencode auth list </dev/null;; esac')
+# OpenCode's own installer puts it in ~/.opencode/bin. Its version comes first: OpenCode 1
+# keeps logins in auth.json, OpenCode 2 in its database, reached through a private server
+# (--standalone) that ends with the command, so no background service is ever started.
+OC_PATH = 'export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"; '
+OPENCODE_STATUS = (OC_PATH + 'command -v opencode >/dev/null || exit 127; v=$(opencode --version) || exit 1; '
+                   'echo "$v"; case "$v" in 1.*) opencode auth list </dev/null;; '
+                   '2.*) opencode auth list --standalone --format json </dev/null;; esac')
+OPENCODE_IMPORT = OC_PATH + "opencode auth import --standalone"  # reads stdin
+OPENCODE_EXPORT = ["opencode", "auth", "export", "--standalone"]
 NOT_LINUX = "login-copy works from Linux only for now"
-OPENCODE_2 = "OpenCode 2 keeps its login in its database, not in a file; login-copy copies OpenCode 1 logins only for now"
 
 
 def _logged_in(result) -> Optional[bool]:
@@ -51,12 +55,27 @@ def _opencode_major(result) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def _opencode_logged_in(result) -> Optional[bool]:
-    """Stored credentials from an OpenCode 1 `auth list` ("N credentials"): True for one or
-    more, False for "0 credentials", None when that line is missing. Provider keys in the
-    environment are no stored login and do not count."""
-    if result.returncode != 0 or _opencode_major(result) != 1:
+def _opencode2_ids(result) -> Optional[set]:
+    """Ids of the stored credentials in an OpenCode 2 `auth list --format json` (after the
+    version line): integrations, each with `connections` of type "credential" (stored, with an
+    id) or "env" (a provider key in the environment). None when it is not that list."""
+    try:
+        listed = json.loads("\n".join((result.stdout or "").strip().splitlines()[1:]))
+        return {c["id"] for i in listed for c in i.get("connections", []) if c.get("type") == "credential"}
+    except (ValueError, TypeError, KeyError, AttributeError):
         return None
+
+
+def _opencode_logged_in(result) -> Optional[bool]:
+    """Whether OpenCode there has a stored login. OpenCode 1 `auth list` ends with "N
+    credentials"; OpenCode 2 lists credential connections. None when unreadable. Provider keys
+    in the environment are no stored login and do not count."""
+    major = _opencode_major(result)
+    if result.returncode != 0 or major not in (1, 2):
+        return None
+    if major == 2:
+        ids = _opencode2_ids(result)
+        return None if ids is None else bool(ids)
     out = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout or "")
     m = re.search(r"(\d+)\s+credentials?\b", out)
     return int(m.group(1)) > 0 if m else None
@@ -107,47 +126,70 @@ def _codex_store(codex_dir: Path) -> str:
     return "file"
 
 
-def _local(t: Tool, cred: Path, run, platform: str) -> Tuple[str, str]:
-    """("ok", "") when this machine's login file may be copied; else (kind, line): absent (no
-    login here), note (a login that cannot be copied by design: a Mac, a keyring, OpenCode 2)."""
-    not_here = f"{t.label} is not logged in on this machine; run {t.login} first"
-    if t.name != "claude" and platform == "darwin":
-        return "note", f"{t.label}: {NOT_LINUX}"
-    store = _codex_store(cred.parent) if t.name == "codex" else "file"
-    if store in ("keyring", "ephemeral") or store == "auto" and not cred.is_file():
-        return "note", "Codex keeps its login in the system keyring on this machine, so there is no file to copy"
-    if not cred.is_file():
-        if platform == "darwin":
-            return "note", "this Mac keeps the Claude login in the keychain; login-copy works from Linux only for now"
-        return "absent", f"no {t.label} login on this machine; run {t.login} first"
-    argv = {"claude": ["claude", "auth", "status"], "codex": ["codex", "login", "status"],
-            "opencode": ["opencode", "--version"]}[t.name]
+def _local_opencode(cred: Path, run, not_here: str) -> Tuple[str, str, Optional[dict]]:
+    """OpenCode 1: its auth.json, read at copy time. OpenCode 2: `auth export` (secrets) kept
+    only in memory and only for the import's stdin."""
     try:
-        local = run(argv, capture_output=True, text=True, timeout=10)
+        r = run(["opencode", "--version"], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
-        return "absent", not_here
-    if t.name == "opencode":
-        major = _opencode_major(local)
-        if major is not None and major >= 2:
-            return "note", f"{t.label}: {OPENCODE_2}"
+        return "absent", not_here, None
+    major = _opencode_major(r)
+    if major == 1:
         try:  # OpenCode 1 reads only this file: a non-empty one is a login
             stored = json.loads(cred.read_text())
         except (OSError, ValueError):
             stored = None
-        return ("ok", "") if major == 1 and isinstance(stored, dict) and stored else ("absent", not_here)
-    return ("ok", "") if t.state(local) is True else ("absent", not_here)
+        return ("ok", "", {"major": 1}) if isinstance(stored, dict) and stored else ("absent", not_here, None)
+    if major != 2:
+        return "absent", not_here, None
+    try:
+        r = run(OPENCODE_EXPORT, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        r = None
+    try:  # its error text may quote what it read: never shown
+        ids = [e["id"] for e in json.loads(r.stdout)] if r is not None and r.returncode == 0 else None
+    except (ValueError, TypeError, KeyError):
+        ids = None
+    if ids is None:
+        return "failed", "OpenCode: could not export this machine's login (opencode auth export failed)", None
+    return ("ok", "", {"major": 2, "text": r.stdout, "ids": set(ids)}) if ids else ("absent", not_here, None)
+
+
+def _local(t: Tool, cred: Path, run, platform: str) -> Tuple[str, str, Optional[dict]]:
+    """("ok", "", what) when this machine's login may be copied; else (kind, line, None): absent
+    (no login here), note (a login that cannot be copied by design: a Mac, a keyring), failed."""
+    not_here = f"{t.label} is not logged in on this machine; run {t.login} first"
+    if t.name != "claude" and platform == "darwin":
+        return "note", f"{t.label}: {NOT_LINUX}", None
+    if t.name == "opencode":
+        return _local_opencode(cred, run, not_here)
+    store = _codex_store(cred.parent) if t.name == "codex" else "file"
+    if store in ("keyring", "ephemeral") or store == "auto" and not cred.is_file():
+        return "note", "Codex keeps its login in the system keyring on this machine, so there is no file to copy", None
+    if not cred.is_file():
+        if platform == "darwin":
+            return "note", "this Mac keeps the Claude login in the keychain; login-copy works from Linux only for now", None
+        return "absent", f"no {t.label} login on this machine; run {t.login} first", None
+    argv = ["claude", "auth", "status"] if t.name == "claude" else ["codex", "login", "status"]
+    try:
+        local = run(argv, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return "absent", not_here, None
+    return ("ok", "", {}) if t.state(local) is True else ("absent", not_here, None)
 
 
 def _copy(target: str, t: Tool, force: bool, run, cred: Path, platform: str) -> Tuple[str, str]:
     """(kind, one result line); kind: copied, skipped (logged in there), missing (not installed
     there), absent (no login here), note (cannot be copied from here), failed."""
-    kind, line = _local(t, cred, run, platform)
+    kind, line, here = _local(t, cred, run, platform)
     if kind != "ok":
         return kind, line
+    v2 = here.get("major") == 2
 
     def ssh(command: str, **kw):
-        try:
-            return run(fleet._ssh(target, command), capture_output=True, text=True, timeout=30, **kw), None
+        try:  # an OpenCode 2 private server takes a while to start
+            return run(fleet._ssh(target, command), capture_output=True, text=True,
+                       timeout=90 if t.name == "opencode" else 30, **kw), None
         except subprocess.TimeoutExpired:
             reason = "timed out"
         except OSError as e:
@@ -159,8 +201,10 @@ def _copy(target: str, t: Tool, force: bool, run, cred: Path, platform: str) -> 
         return "failed", err
     if r.returncode == 127:
         return "missing", f"{target}: {t.label} is not installed there"
-    if t.name == "opencode" and (_opencode_major(r) or 0) >= 2:
-        return "failed", f"{target}: {OPENCODE_2}"
+    there = _opencode_major(r) if t.name == "opencode" else None
+    if t.name == "opencode" and there in (1, 2) and there != here["major"]:
+        return "note", (f"{target}: OpenCode {there} there and OpenCode {here['major']} here keep logins "
+                        "differently (a file, a database); login-copy copies OpenCode only between the same major version")
     state = t.state(r)
     if state is True and not force:
         return "skipped", f"{target}: {t.label} is already logged in there; add --force to replace that login"
@@ -171,19 +215,24 @@ def _copy(target: str, t: Tool, force: bool, run, cred: Path, platform: str) -> 
             return "failed", f"{target}: could not read Claude Code's login state there: {fleet._first_line(r.stderr)}"
         # Codex's status shows part of an API key: never echo it, nor OpenCode's provider list
         return "failed", f"{target}: could not read {t.label}'s login state there; run {t.check} there to see why"
-    try:
-        text = cred.read_text()
-    except OSError as e:
-        return "failed", f"could not read the login file here: {e.strerror or 'error'}"
-    r, err = ssh(t.write, input=text)
+    if v2:
+        text = here["text"]
+    else:
+        try:
+            text = cred.read_text()
+        except OSError as e:
+            return "failed", f"could not read the login file here: {e.strerror or 'error'}"
+    r, err = ssh(OPENCODE_IMPORT if v2 else t.write, input=text)
     if err:
         return "failed", err
     if r.returncode != 0:
+        if v2:  # its error text may quote the credentials it was given: never shown
+            return "failed", f"{target}: copy failed: opencode auth import there exited with {r.returncode}"
         return "failed", f"{target}: copy failed: {fleet._first_line(r.stderr)}"
     r, err = ssh(t.status)
     if err:
         return "failed", err
-    if t.state(r) is True:
+    if (here["ids"] <= (_opencode2_ids(r) or set()) if v2 else t.state(r) is True):
         return "copied", f"{target}: {t.label} is logged in there"
     return "failed", (f"{target}: copied, but {t.label} there still says it is not logged in; "
                       f"run {t.login} there")

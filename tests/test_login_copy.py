@@ -142,8 +142,8 @@ from pathlib import Path  # noqa: E402
 
 import pytest  # noqa: E402
 
-from kaptyorka.login_copy import (CODEX_STATUS, CODEX_WRITE, OPENCODE_STATUS,  # noqa: E402
-                                  OPENCODE_WRITE, STATUS)
+from kaptyorka.login_copy import (CODEX_STATUS, CODEX_WRITE, OPENCODE_IMPORT,  # noqa: E402
+                                  OPENCODE_STATUS, OPENCODE_WRITE, STATUS)
 
 OK = SimpleNamespace(returncode=0, stdout="", stderr="")
 CODEX_IN = SimpleNamespace(returncode=0, stdout="", stderr="Logged in using ChatGPT\n")
@@ -165,7 +165,7 @@ def fake(local, remote):
     def run(argv, **kw):
         calls.append((argv, kw))
         if argv[0] != "ssh":
-            got = local[argv[0]]
+            got = local.get(" ".join(argv), local.get(argv[0], FileNotFoundError(argv[0])))  # not installed
             if isinstance(got, Exception):
                 raise got
             return got
@@ -260,7 +260,7 @@ def test_opencode1_copies_to_a_target_with_no_stored_login(tmp_path):
     assert "$HOME/.opencode/bin" in OPENCODE_STATUS and "1.*) opencode auth list" in OPENCODE_STATUS
 
 
-def test_opencode_refuses_stored_login_unknown_and_version_2(tmp_path):
+def test_opencode_refuses_stored_login_unknown_and_version_3(tmp_path):
     d = tool_dir(tmp_path, "oc", '{"a": {"type": "api", "key": "k"}}')
     run = fake({"opencode": OC1}, {OPENCODE_STATUS: [oc_list(2)]})
     ok, line = login_copy.copy(TARGET, run=run, config_dir=d, tool="opencode")
@@ -272,13 +272,75 @@ def test_opencode_refuses_stored_login_unknown_and_version_2(tmp_path):
         assert not ok and line == ("alice@box-1: could not read OpenCode's login state there; "
                                    "run opencode auth list there to see why")
         assert not sent(run, OPENCODE_WRITE)
-    v2 = ("alice@box-1: OpenCode 2 keeps its login in its database, not in a file; "
-          "login-copy copies OpenCode 1 logins only for now")
-    run = fake({"opencode": OC1}, {OPENCODE_STATUS: [OC2]})
-    assert login_copy.copy(TARGET, force=True, run=run, config_dir=d, tool="opencode") == (False, v2)
-    run = fake({"opencode": OC2}, {})
-    assert login_copy.copy(TARGET, run=run, config_dir=d, tool="opencode") == (False, v2.replace(TARGET, "OpenCode"))
+    run = fake({"opencode": OC1}, {OPENCODE_STATUS: [SimpleNamespace(returncode=0, stdout="3.0.0\n", stderr="")]})
+    assert not login_copy.copy(TARGET, force=True, run=run, config_dir=d, tool="opencode")[0]
+    assert not sent(run, OPENCODE_WRITE)
+
+
+# OpenCode 2 (v2.3.2, packages/cli/src/commands/handlers/auth/{export,import,list}.ts): export
+# prints the stored credentials as a JSON array; import reads that from stdin and skips ids
+# already there; `auth list --format json` lists integrations with their connections.
+EXPORT = "opencode auth export --standalone"
+EXPORTED = SimpleNamespace(returncode=0, stdout=json.dumps([{"id": "cred_1", "integrationID": "anthropic",
+                                                              "value": {"type": "key", "key": SECRET}}]), stderr="")
+
+
+def oc2_list(*connections):
+    body = [{"id": "anthropic", "name": "Anthropic", "connections": list(connections)}] if connections else []
+    return SimpleNamespace(returncode=0, stdout="2.3.2\n" + json.dumps(body), stderr="")
+
+
+STORED = {"type": "credential", "id": "cred_1", "label": "work", "method": "key"}
+ENV = {"type": "env", "name": "ANTHROPIC_API_KEY"}
+
+
+def test_opencode2_copies_through_export_and_import_on_stdin(tmp_path):
+    run = fake({"opencode": OC2, EXPORT: EXPORTED},
+               {OPENCODE_STATUS: [oc2_list(ENV), oc2_list(ENV, STORED)], OPENCODE_IMPORT: [OK]})
+    got = login_copy.copy(TARGET, run=run, config_dir=tmp_path / "none", tool="opencode")
+    assert got == (True, "alice@box-1: OpenCode is logged in there")
+    assert sent(run, OPENCODE_IMPORT) == [EXPORTED.stdout] and not sent(run, OPENCODE_WRITE)
+    assert all(SECRET not in a for argv, _ in run.calls for a in argv)
+    # a private server per command, never the background service
+    assert "--standalone" in OPENCODE_IMPORT and "2.*) opencode auth list --standalone --format json" in OPENCODE_STATUS
+
+
+def test_opencode2_refuses_a_stored_login_and_force_still_checks(tmp_path):
+    other = {**STORED, "id": "cred_9"}
+    run = fake({"opencode": OC2, EXPORT: EXPORTED}, {OPENCODE_STATUS: [oc2_list(other)]})
+    ok, line = login_copy.copy(TARGET, run=run, config_dir=tmp_path, tool="opencode")
+    assert not ok and line == "alice@box-1: OpenCode is already logged in there; add --force to replace that login"
+    assert not sent(run, OPENCODE_IMPORT)
+    # --force imports, then checks that this machine's credentials are there now
+    run = fake({"opencode": OC2, EXPORT: EXPORTED}, {OPENCODE_STATUS: [oc2_list(other)], OPENCODE_IMPORT: [OK]})
+    ok, line = login_copy.copy(TARGET, force=True, run=run, config_dir=tmp_path, tool="opencode")
+    assert not ok and line.startswith("alice@box-1: copied, but OpenCode there still says it is not logged in")
+    assert len(sent(run, OPENCODE_STATUS)) == 2
+
+
+def test_opencode2_never_shows_export_or_import_errors(tmp_path):
+    leaky = SimpleNamespace(returncode=1, stdout="", stderr=f"Expected array, got {SECRET}")
+    run = fake({"opencode": OC2, EXPORT: leaky}, {})
+    assert login_copy.copy(TARGET, run=run, config_dir=tmp_path, tool="opencode") == (
+        False, "OpenCode: could not export this machine's login (opencode auth export failed)")
     assert all(argv[0] != "ssh" for argv, _ in run.calls)
+    run = fake({"opencode": OC2, EXPORT: EXPORTED}, {OPENCODE_STATUS: [oc2_list()], OPENCODE_IMPORT: [leaky]})
+    ok, line = login_copy.copy(TARGET, run=run, config_dir=tmp_path, tool="opencode")
+    assert not ok and line == "alice@box-1: copy failed: opencode auth import there exited with 1"
+    run = fake({"opencode": OC2, EXPORT: SimpleNamespace(returncode=0, stdout="[]", stderr="")}, {})
+    assert login_copy.copy(TARGET, run=run, config_dir=tmp_path, tool="opencode") == (
+        False, "OpenCode is not logged in on this machine; run opencode auth login first")
+
+
+def test_opencode_versions_must_match(tmp_path):
+    want = ("alice@box-1: OpenCode {} there and OpenCode {} here keep logins differently (a file, a database); "
+            "login-copy copies OpenCode only between the same major version")
+    d = tool_dir(tmp_path, "oc", '{"a": {"type": "api", "key": "k"}}')
+    run = fake({"opencode": OC1}, {OPENCODE_STATUS: [oc2_list()]})
+    assert login_copy.copy(TARGET, force=True, run=run, config_dir=d, tool="opencode") == (False, want.format(2, 1))
+    run = fake({"opencode": OC2, EXPORT: EXPORTED}, {OPENCODE_STATUS: [oc_list(0)]})
+    assert login_copy.copy(TARGET, run=run, config_dir=d, tool="opencode") == (False, want.format(1, 2))
+    assert not sent(run, OPENCODE_WRITE) and not sent(run, OPENCODE_IMPORT)
 
 
 def test_opencode_empty_file_is_no_login(tmp_path):
@@ -313,6 +375,8 @@ def test_copy_all_one_line_per_logged_in_tool(tmp_path):
     nothing = {"claude": tmp_path / "n1", "codex": tmp_path / "n2", "opencode": tmp_path / "n3"}
     assert login_copy.copy_all(TARGET, run=run, dirs=nothing, platform="linux") == (
         False, ["no tool is logged in on this machine; log in to Claude Code, Codex or OpenCode first"])
+    assert all(argv[0] != "ssh" for argv, _ in run.calls)
+    run = fake({}, {})
     assert login_copy.copy_all("-oX", run=run, dirs=nothing) == (False, ["-oX: not a user@host"])
     assert not run.calls
 
@@ -343,10 +407,13 @@ def test_copy_all_notes_what_cannot_be_copied_without_failing(tmp_path):
     (codex / "config.toml").write_text('cli_auth_credentials_store = "keyring"\n')
     (tmp_path / "claude").mkdir()
     dirs = {"claude": creds(tmp_path / "claude"), "codex": codex, "opencode": tool_dir(tmp_path, "oc", '{"a": {}}')}
-    run = fake({"claude": LOCAL_OK, "opencode": OC2}, {STATUS: [LOGGED_OUT, LOCAL_OK], REMOTE_WRITE: [OK]})
+    run = fake({"claude": LOCAL_OK, "opencode": OC1},
+               {STATUS: [LOGGED_OUT, LOCAL_OK], REMOTE_WRITE: [OK], OPENCODE_STATUS: [oc2_list()]})
     ok, lines = login_copy.copy_all(TARGET, run=run, dirs=dirs, platform="linux")
     assert ok and lines[0] == "alice@box-1: Claude Code is logged in there"
-    assert lines[1].startswith("Codex keeps its login in the system keyring") and lines[2].startswith("OpenCode: OpenCode 2")
+    assert lines[1].startswith("Codex keeps its login in the system keyring")
+    assert lines[2].startswith("alice@box-1: OpenCode 2 there and OpenCode 1 here")
     # only notes: nothing was copied, so not a success
     dirs["claude"] = tmp_path / "none"
-    assert login_copy.copy_all(TARGET, run=fake({"opencode": OC2}, {}), dirs=dirs, platform="linux")[0] is False
+    run = fake({"opencode": OC1}, {OPENCODE_STATUS: [oc2_list()]})
+    assert login_copy.copy_all(TARGET, run=run, dirs=dirs, platform="linux")[0] is False
