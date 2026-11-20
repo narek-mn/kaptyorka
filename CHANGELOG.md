@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Auto-update is on for admins' machines too.** Before, a machine owned by an admin did not update itself when the hub got newer; now every machine does unless its setting says off.
+
 ## 0.9.27
 
 - **`/hub` works in OpenCode 2, with a hub indicator.** OpenCode 2's terminal UI gets kaptyorka's TUI plugin (`~/.config/opencode/plugins/kaptyorka-hub/tui.js`): `/hub`, `/hub on`, `/hub off` and `/hub team [project|off]` run `kaptyorka hub` for the open session and show the answer as a toast, and the prompt footer shows **hub**, **hub off** or **hub ✗** like Claude Code's status line (`kaptyorka hub-state opencode:<session id>`). On OpenCode 2 the old `commands/hub.md` is removed (only kaptyorka's own), since OpenCode would list it next to the plugin's `/hub`; OpenCode 1 is unchanged. A folder or file of that name that kaptyorka did not write is left alone; `leave` removes only its own. The bridge writes it at start.

@@ -406,7 +406,7 @@ class WorkerStore:
                         if isinstance(d["facts"].get("gpu_queue"), dict):  # counts, no names
                             d["facts"]["gpu_queue"] = usage.queue_counts(d["facts"]["gpu_queue"])
                     d["auto_update"] = (bool(s["auto_update"]) if s["auto_update"] is not None
-                                        else s["role"] != "admin")
+                                        else True)
         return rows
 
     def _only_mine(self, rows: List[dict], person_id: int) -> List[dict]:
@@ -908,7 +908,7 @@ class WorkerStore:
                                    (device_id,)).fetchone() is not None
 
     def auto_update(self, device_id: int) -> bool:
-        """The device's setting; unset, on for a member's device and off for the admin's."""
+        """The device's setting; unset, on for every device (admins' too)."""
         with self.lock:
             s = self.db.execute(
                 "SELECT s.auto_update, p.role FROM devices d JOIN people p ON p.id=d.person_id"
@@ -916,7 +916,7 @@ class WorkerStore:
                 (device_id,)).fetchone()
             if s is None:
                 return False
-            return bool(s["auto_update"]) if s["auto_update"] is not None else s["role"] != "admin"
+            return bool(s["auto_update"]) if s["auto_update"] is not None else True
 
     def by_key(self, key: str) -> Optional[dict]:
         with self.lock:

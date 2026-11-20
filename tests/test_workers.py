@@ -162,7 +162,7 @@ def test_effective_auto_update_default_by_role(store, ws):
     ws.facts_seen(member_dev, {"tmux": True}, {"proj-a": "/w/proj-a"})
     rows = ws.machine_rows(principal(store, admin))
     devs = {d["id"]: d for m in rows for d in m["devices"]}
-    assert devs[admin_dev]["auto_update"] is False
+    assert devs[admin_dev]["auto_update"] is True  # on for admins too
     assert devs[member_dev]["auto_update"] is True
     assert devs[member_dev]["online"] is True
     assert devs[member_dev]["facts"] == {"tmux": True}
