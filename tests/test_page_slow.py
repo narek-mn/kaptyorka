@@ -1651,6 +1651,9 @@ def test_machines_warnings(tmp_path, w, h):
     hosts = '[...document.querySelectorAll("#a-machines .m-group:not(.row-out)")].map(g => g.dataset.host)'
     card = 'document.querySelector(\'#a-machines [data-host="{}"]\')'.format
     chips = '[...document.querySelectorAll("#a-machines .m-warns button")].map(b => b.textContent)'
+    # no tool logged in has no chip of its own: the tool tag that says so opens it (counted once a row)
+    tagged = 'document.querySelectorAll("#a-machines .m-acct:has(.m-tools button.chip.warn)").length'
+    bob_row = 'document.querySelector(\'#a-machines [data-machine="%d"]\')'
 
     def open_as(name):
         page.go("about:blank")
@@ -1672,9 +1675,20 @@ def test_machines_warnings(tmp_path, w, h):
             open_as("alice")
             page.wait(f'{chips}.length > 0')
             got = page.js(chips)
-            assert count() == len(got)
+            assert count() == len(got) + page.js(tagged)
             assert "kaptyorka 0.9.0 \u00b7 auto-update failed" in got
-            assert "bridge offline" in got and "no tool logged in" in got and "worker proj-a-w1 failed" in got
+            assert "bridge offline" in got and "worker proj-a-w1 failed" in got and "no tool logged in" not in got
+            ttag = (bob_row % ids["bob"]) + '.querySelector(".m-tools button.chip.warn")'
+            assert page.js(f'{ttag}.textContent') == "Claude Code · not logged in"
+            page.js(f'{ttag}.click()')
+            page.wait(f'!!{bob_row % ids["bob"]}.querySelector(".m-warn-text code")')
+            assert page.js(f'{bob_row % ids["bob"]}.querySelector(".m-warn-text code").textContent') == "claude auth login"
+            # lab reported no tool at all: its one "No agent tool" tag opens what to do
+            lab = bob_row % ids["lab"]
+            assert page.js(f'{lab}.querySelectorAll(".m-tools .chip").length') == 1
+            page.js(f'{lab}.querySelector(".m-tools button.chip.bad").click()')
+            page.wait(f'!!{lab}.querySelector(".m-warn-text")')
+            assert "has no agent tool" in page.js(f'{lab}.querySelector(".m-warn-text").innerText')
             row = 'document.querySelector(\'#a-machines [data-machine="%d"]\')' % ids["alice"]
             b = f'{row}.querySelector(".m-warns button")'
             assert "auto-update failed). Run `kaptyorka update` there." in page.js(f'{b}.title')
@@ -1707,8 +1721,8 @@ def test_machines_warnings(tmp_path, w, h):
             open_as("bob")
             page.wait(f'{chips}.length > 0')
             got = page.js(chips)
-            assert count() == len(got)
-            assert sorted(got) == ["bridge offline", "no tool logged in", "worker proj-a-w1 failed"]
+            assert count() == len(got) + page.js(tagged) == 3
+            assert sorted(got) == ["bridge offline", "worker proj-a-w1 failed"]
             pane = page.js('document.getElementById("pane-machines").innerText')
             assert "alice" not in pane and "jetson-2" not in pane and "0.9.0" not in pane
             page.js('document.getElementById("m-warn-chip").click()')

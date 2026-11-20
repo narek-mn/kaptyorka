@@ -239,8 +239,9 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 .m-warns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .m-tagline { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .m-tagline > .m-tools, .m-tagline > .m-warns { display: contents; }
-button.chip.warn { cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-medium); }
+button.chip.warn, button.chip.bad { cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-medium); }
 button.chip.warn:hover { border-color: var(--risk); }
+button.chip.bad:hover { border-color: var(--danger); }
 .m-warn-text { display: flex; align-items: center; flex-wrap: wrap; gap: 6px var(--s-2); margin-top: 6px; font-size: var(--fs-sm); color: var(--risk); line-height: 1.45; }
 .m-warn-text > svg { flex: none; }
 .m-warn-text > span { flex: 1 1 calc(100% - 30px); min-width: 0; }
@@ -2818,15 +2819,26 @@ a.p-main { color: inherit; text-decoration: none; }
     return n;
   }
   /* a row's warnings: an amber chip each, its full text on hover; a click opens the text and
-     the command that fixes it, with Copy. `lead`: the row's tool tags, on the same line */
+     the command that fixes it, with Copy. `lead`: the row's tool tags, on the same line. No
+     tool logged in gets no chip of its own: the tool tags that say so ("Codex · not logged
+     in", "No agent tool") open it instead */
   function warnChips(list, lead) {
     if (!list || !list.length) return lead || null;
+    function toggle(w) { return function () { if (warnOpen[w.text]) delete warnOpen[w.text]; else warnOpen[w.text] = 1; renderMachines(); }; }
+    var login = list.filter(function (w) { return w.tag || /: no agent tool is logged in\./.test(w.text); })[0], onTag = false;
+    if (login && lead) [].forEach.call(lead.querySelectorAll(".chip.warn, .chip.bad"), function (c) {
+      var b = el("button", { type: "button", "class": c.className, title: login.text, "aria-expanded": warnOpen[login.text] ? "true" : "false" });
+      while (c.firstChild) b.appendChild(c.firstChild);
+      b.addEventListener("click", toggle(login));
+      c.parentNode.replaceChild(b, c);
+      onTag = true;
+    });
     var chips = el("div", { "class": "m-warns" });
     list.forEach(function (w) {
-      var open = !!warnOpen[w.text];
-      var b = el("button", { type: "button", "class": "chip warn", title: w.text, "aria-expanded": open ? "true" : "false" },
+      if (w === login && onTag) return;
+      var b = el("button", { type: "button", "class": "chip warn", title: w.text, "aria-expanded": warnOpen[w.text] ? "true" : "false" },
                  [el("span", { "class": "dot" }), w.short || w.text]);
-      b.addEventListener("click", function () { if (warnOpen[w.text]) delete warnOpen[w.text]; else warnOpen[w.text] = 1; renderMachines(); });
+      b.addEventListener("click", toggle(w));
       chips.appendChild(b);
     });
     return el("div", null, [lead ? el("div", { "class": "m-tagline" }, [lead, chips]) : chips].concat(list.filter(function (w) { return warnOpen[w.text]; }).map(function (w) {
@@ -2835,6 +2847,12 @@ a.p-main { color: inherit; text-decoration: none; }
       return el("div", { "class": "m-warn-text" }, [icon("i-warn", 14),
         el("span", { text: w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, "") + (code ? ". Run this there:" : "") }), code, copy]);
     })));
+  }
+  /* a bridge that reported no agent tool: its "No agent tool" tag opens this (the page's own
+     line, not a hub warning, so not counted) */
+  function noTool(d, warns) {
+    if (!d.tools || d.tools.length) return warns;
+    return (warns || []).concat([{ tag: true, text: d.name + " has no agent tool. Install Claude Code, Codex or OpenCode in that account." }]);
   }
   /* one account under its computer: online or last seen, whose it is, its sessions and tools */
   function acctRow(r, warns) {
@@ -2849,7 +2867,7 @@ a.p-main { color: inherit; text-decoration: none; }
     return el("div", attrs, [
       el("span", { "class": "m-dot" + (d.online ? " on" : ""), "aria-hidden": "true" }),
       el("div", { "class": "a-text" }, [el("div", { "class": "a-top" }, [el("b", { text: d.name }), tag, d.emergency ? chip("This hub", "idle", "a-hub") : null]),
-                                       sub, warnChips(warns, toolTags(d.tools))]),
+                                       sub, warnChips(noTool(d, warns), toolTags(d.tools))]),
       r.who === "mine" ? ownActs(d) : null]);
   }
   /* a computer's card: its name, size, use and GPU queue, then its accounts */
