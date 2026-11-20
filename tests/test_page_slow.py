@@ -136,7 +136,8 @@ def test_member_sees_only_home(member_page):
     time.sleep(2.5)  # a poll or two
     assert page.js('document.getElementById("live").className') == "live"  # the hub answers
     fetched = page.js('[...new Set(performance.getEntriesByType("resource").map(e => new URL(e.name).pathname))]')
-    assert set(fetched) <= {"/api/me", "/api/feed", "/fonts/archivo-latin.woff2", "/favicon.ico"}, fetched
+    # /api/warnings is the member's own scoped list (the Machines count), not an admin route
+    assert set(fetched) <= {"/api/me", "/api/feed", "/api/warnings", "/fonts/archivo-latin.woff2", "/favicon.ico"}, fetched
 
 
 def test_manager_asleep_on_home(tmp_path, monkeypatch):
@@ -1504,7 +1505,7 @@ def test_machines_grouped_by_computer_with_filters(tmp_path, w, h):
             # alice, the admin, All: every account on the hub
             open_as("alice")
             page.wait(f'{hosts}.length === 4')
-            assert page.js('[...document.querySelectorAll("#m-filter button")].map(b => b.textContent)') == ["All", "Team", "Mine", "Online"]
+            assert page.js('[...document.querySelectorAll("#m-filter button:not([hidden])")].map(b => b.textContent.replace(/ \\d+$/, ""))') == ["All", "Team", "Mine", "Online", "Warnings"]
             assert page.js('document.querySelector("#m-filter [aria-pressed=\\"true\\"]").dataset.f') == "all"
             assert page.js(hosts) == ["box-1", "jetson-1", "box-2", "jetson-2"]  # online first, then by name
             assert tops("box-1") == ["lab@box-1 Team", "alice@box-1 Mine", "bob@box-1 bob"]  # team, yours, others
@@ -1575,7 +1576,8 @@ def test_machines_grouped_by_computer_with_filters(tmp_path, w, h):
             assert "jetson-2" not in pane and "alice" not in pane and "carol" not in pane
             assert page.js('!document.querySelector("#a-machines .m-use") && !document.querySelector("#a-machines .m-kind")')
             assert page.js(f'{card("box-1")}.querySelector(".m-queue").textContent') == "GPU queue: 7/10 in use · 1 waiting"
-            assert page.js('[...document.querySelectorAll("#set-nav a:not([hidden])")].map(a => a.textContent)') == ["Profile", "Machines"]
+            assert page.js('[...document.querySelectorAll("#set-nav a:not([hidden])")].map(a => a.querySelector("span").textContent)') == ["Profile", "Machines"]
+            assert page.js('document.getElementById("n-machines").textContent') == "2"  # lab offline, his own login
             assert page.js(wide)
             time.sleep(0.4)
             page.screenshot(shots / f"machines-member-{tag}.png")
@@ -1611,6 +1613,125 @@ def test_machines_grouped_by_computer_with_filters(tmp_path, w, h):
             page.screenshot(shots / f"machines-member-empty-{tag}.png")
             pick("all")
             assert page.js(hosts) == ["jetson-1", "box-1", "jetson-2"]
+    finally:
+        stop()
+        store.close()
+
+
+@pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
+def test_machines_warnings(tmp_path, w, h):
+    """Machines shows each warning as an amber chip on its account's row (the full text on
+    hover, a click opens it with the fix and Copy); a warning of no account (a worker with no
+    OS user) on its computer's card. A Warnings chip filters to them and stays on reload; the
+    count shows beside Machines in Settings. An admin sees all; bob only his own and the team
+    machines he can use, no other person's name. Screenshots to KAPTYORKA_SHOTS."""
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    shots.mkdir(parents=True, exist_ok=True)
+    tag = "phone" if w < 720 else "desktop"
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    tokens, online = machines_demo(store)
+    with store.lock:
+        ids = {r["os_user"]: r["id"] for r in store.db.execute(
+            "SELECT id, os_user FROM devices WHERE host='box-1'")}
+        f = json.loads(store.db.execute("SELECT facts FROM device_facts WHERE device_id=?",
+                                        (ids["alice"],)).fetchone()["facts"])
+        store.db.execute("UPDATE device_facts SET facts=? WHERE device_id=?", (json.dumps(
+            {**f, "version": "0.9.0", "update_failed": "auto-update failed"}), ids["alice"]))
+        bob = store.db.execute("SELECT id FROM people WHERE name='bob'").fetchone()["id"]
+        cols = {"name": "proj-a-w1", "project": "proj-a", "task": "t", "boss_key": "web:bob",
+                "boss_person": bob, "device_id": 9999, "host": "box-1", "tool": "codex",
+                "state": "failed", "created": store.clock(), "error": "no tmux there"}
+        store.db.execute(f"INSERT INTO workers ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                         list(cols.values()))
+    base = f"http://127.0.0.1:{stop.port}"
+    wide = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+    hosts = '[...document.querySelectorAll("#a-machines .m-group:not(.row-out)")].map(g => g.dataset.host)'
+    card = 'document.querySelector(\'#a-machines [data-host="{}"]\')'.format
+    chips = '[...document.querySelectorAll("#a-machines .m-warns button")].map(b => b.textContent)'
+    # no tool logged in has no chip of its own: the tool tag that says so opens it (counted once a row)
+    tagged = 'document.querySelectorAll("#a-machines .m-acct:has(.m-tools button.chip.warn)").length'
+    bob_row = 'document.querySelector(\'#a-machines [data-machine="%d"]\')'
+
+    def open_as(name):
+        page.go("about:blank")
+        page.go(f"{base}/#t={tokens[name]}")
+        page.wait(f'document.getElementById("viewer-label").textContent === {json.dumps(name)}')
+        online()
+        page.go(f"{base}/#settings/machines")
+        page.wait('!document.getElementById("pane-machines").hidden && !document.querySelector("#a-machines .skel")')
+        page.wait('!document.getElementById("m-warn-chip").hidden')
+        page.js('document.querySelector(\'#m-filter [data-f="all"]\').click()')
+
+    def count():
+        n = page.js('document.getElementById("n-machines").textContent')
+        assert page.js('document.getElementById("m-warn-chip").textContent') == f"Warnings {n}"
+        return int(n)
+
+    try:
+        with chrome(w, h) as page:
+            open_as("alice")
+            page.wait(f'{chips}.length > 0')
+            got = page.js(chips)
+            assert count() == len(got) + page.js(tagged)
+            assert "kaptyorka 0.9.0 \u00b7 auto-update failed" in got
+            assert "bridge offline" in got and "worker proj-a-w1 failed" in got and "no tool logged in" not in got
+            ttag = (bob_row % ids["bob"]) + '.querySelector(".m-tools button.chip.warn")'
+            assert page.js(f'{ttag}.textContent') == "Claude Code · not logged in"
+            page.js(f'{ttag}.click()')
+            page.wait(f'!!{bob_row % ids["bob"]}.querySelector(".m-warn-text code")')
+            assert page.js(f'{bob_row % ids["bob"]}.querySelector(".m-warn-text code").textContent') == "claude auth login"
+            # lab reported no tool at all: its one "No agent tool" tag opens what to do
+            lab = bob_row % ids["lab"]
+            assert page.js(f'{lab}.querySelectorAll(".m-tools .chip").length') == 1
+            page.js(f'{lab}.querySelector(".m-tools button.chip.bad").click()')
+            page.wait(f'!!{lab}.querySelector(".m-warn-text")')
+            assert "has no agent tool" in page.js(f'{lab}.querySelector(".m-warn-text").innerText')
+            row = 'document.querySelector(\'#a-machines [data-machine="%d"]\')' % ids["alice"]
+            b = f'{row}.querySelector(".m-warns button")'
+            assert "auto-update failed). Run `kaptyorka update` there." in page.js(f'{b}.title')
+            # the worker has no OS user: it sits on its computer's card
+            assert page.js(f'{card("box-1")}.querySelector(".m-head .m-warns").innerText') == "worker proj-a-w1 failed"
+            page.js(f'{b}.click()')
+            page.wait(f'!!{row}.querySelector(".m-warn-text code")')
+            assert page.js(f'{row}.querySelector(".m-warn-text code").textContent') == "kaptyorka update"
+            assert page.js(f'{row}.querySelector(".m-warn-text").innerText').startswith(
+                "alice@box-1 runs kaptyorka 0.9.0; the hub runs")
+            assert page.js(f'{row}.querySelector(".m-warns button").getAttribute("aria-expanded")') == "true"
+            assert page.js(wide)
+            time.sleep(0.4)
+            page.screenshot(shots / f"machines-warnings-admin-{tag}.png")
+            # Warnings: only the accounts with one (and box-1's card for its worker); kept on reload
+            page.js('document.getElementById("m-warn-chip").click()')
+            assert page.js('localStorage.getItem("kaptyorka.machines-filter")') == "warnings"
+            assert "box-2" not in page.js(hosts) and "jetson-1" not in page.js(hosts)
+            assert page.js(f'[...{card("box-1")}.querySelectorAll(".m-acct")].every(r => r.querySelector(".m-warns"))')
+            page.js("window.before = 1; location.reload()")
+            page.wait('!window.before && document.querySelector("#m-filter [aria-pressed=\\"true\\"]")?.dataset.f === "warnings"')
+            page.wait(f'{hosts}.length > 0')
+            time.sleep(0.4)
+            page.screenshot(shots / f"machines-warnings-admin-filter-{tag}.png")
+            # the count shows beside Machines from any Settings section
+            page.go(f"{base}/#settings/profile")
+            page.wait('!document.getElementById("pane-profile").hidden')
+            assert not page.js('document.getElementById("n-machines").hidden')
+
+            open_as("bob")
+            page.wait(f'{chips}.length > 0')
+            got = page.js(chips)
+            assert count() == len(got) + page.js(tagged) == 3
+            assert sorted(got) == ["bridge offline", "worker proj-a-w1 failed"]
+            pane = page.js('document.getElementById("pane-machines").innerText')
+            assert "alice" not in pane and "jetson-2" not in pane and "0.9.0" not in pane
+            page.js('document.getElementById("m-warn-chip").click()')
+            page.wait(f'{hosts}.length > 0')
+            assert page.js(hosts) == ["box-1"]
+            page.js('document.querySelector("#a-machines .m-warns button").click()')
+            assert page.js(wide)
+            time.sleep(0.4)
+            page.screenshot(shots / f"machines-warnings-member-{tag}.png")
     finally:
         stop()
         store.close()

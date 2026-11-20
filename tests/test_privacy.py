@@ -1,5 +1,6 @@
 """Private by default: a member sees and reaches only their own sessions, the manager's and
 those behind a door the admin opened."""
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -121,7 +122,11 @@ def test_member_warnings_are_their_own(team):
     w = feed(team, "alice")["warnings"]
     assert w and all(x["person"] == "alice" for x in w)
     assert "warnings" not in feed(team, "admin")
-    assert http.request("GET", team.hub.url + "/api/warnings", team.tokens["alice"])[0] == 403
+    status, scoped = http.request("GET", team.hub.url + "/api/warnings", team.tokens["alice"])
+    assert status == 200 and scoped and all(x["person"] == "alice" for x in scoped)
+    assert "bob" not in json.dumps(scoped)  # no other person's name or OS user
+    status, every = http.request("GET", team.hub.url + "/api/warnings", team.tokens["admin"])
+    assert {x["person"] for x in every} >= {"alice", "bob"}
 
 
 # Task 2: only the admin opens doors; members ask the manager

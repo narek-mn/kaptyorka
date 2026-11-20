@@ -231,7 +231,9 @@ class Bridge:
         projects = self.hub.get("projects", [])
         folders = facts.folders(projects if isinstance(projects, list) else [], shown, Path.home())
         body = {"machine": self.cfg["machine"], "sessions": sessions, "tools": tools,
-                "facts": self._sendable(self._machine_facts(shown), {s.cwd for s in shown}),
+                "facts": {**self._sendable(self._machine_facts(shown), {s.cwd for s in shown}),
+                          **({"update_failed": paths.update_reason(self._problems["update"])}
+                             if self._problems.get("update") else {})},
                 "folders": {p: f for p, f in folders.items()
                             if team is not None and paths.team_name(p) in team}}
         if gone:
@@ -531,6 +533,8 @@ class Bridge:
         try:
             r = self.runner([str(exe), "update"], capture_output=True, text=True, timeout=UPDATE_TIMEOUT_S)
             error = "" if r.returncode == 0 else (r.stderr or r.stdout or "").strip() or f"exit {r.returncode}"
+            if not error and "already the latest" in (r.stdout or ""):
+                error = "no newer release found"  # this process still runs the old version
         except Exception as e:
             error = str(e)
         if error:

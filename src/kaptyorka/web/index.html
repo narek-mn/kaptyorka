@@ -232,6 +232,21 @@ nav { display: flex; align-items: stretch; gap: var(--s-1); }
 .m-chip:hover { border-color: var(--line-strong); color: var(--ink); }
 .m-chip[aria-pressed="true"] { border-color: var(--accent-line); background: var(--accent-soft); color: var(--ink); }
 .m-filter + .a-sec { margin-top: 0; }
+.m-chip.warn { color: var(--risk); }
+.m-chip.warn[aria-pressed="true"] { border-color: rgba(194, 148, 47, .38); background: rgba(194, 148, 47, .1); color: var(--risk); }
+.count.warn { background: var(--risk); }
+/* a machine's warnings: an amber chip each (the full text on hover), a tap opens the text and its fix */
+.m-warns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.m-tagline { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.m-tagline > .m-tools, .m-tagline > .m-warns { display: contents; }
+button.chip.warn, button.chip.bad { cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-medium); }
+button.chip.warn:hover { border-color: var(--risk); }
+button.chip.bad:hover { border-color: var(--danger); }
+.m-warn-text { display: flex; align-items: center; flex-wrap: wrap; gap: 6px var(--s-2); margin-top: 6px; font-size: var(--fs-sm); color: var(--risk); line-height: 1.45; }
+.m-warn-text > svg { flex: none; }
+.m-warn-text > span { flex: 1 1 calc(100% - 30px); min-width: 0; }
+.m-warn-text > code { margin-left: 22px; }
+.m-warn-text code { border-radius: var(--radius); padding: 2px 7px; font: var(--fs-sm) var(--mono); color: var(--ink); background: var(--surface2); border: 1px solid var(--line); }
 .m-list { display: flex; flex-direction: column; gap: var(--s-3); }
 .m-head { display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-3) var(--s-4); background: var(--surface2); border-bottom: 1px solid var(--line); }
 .m-head > .av { margin-top: 1px; }
@@ -900,7 +915,7 @@ a.p-main { color: inherit; text-decoration: none; }
       <div class="set">
       <nav class="set-nav" id="set-nav" aria-label="Settings">
         <a href="#settings/profile" data-sec="profile"><svg width="16" height="16" aria-hidden="true"><use href="#i-user"/></svg><span>Profile</span></a>
-        <a href="#settings/machines" data-sec="machines"><svg width="16" height="16" aria-hidden="true"><use href="#i-monitor"/></svg><span>Machines</span></a>
+        <a href="#settings/machines" data-sec="machines"><svg width="16" height="16" aria-hidden="true"><use href="#i-monitor"/></svg><span>Machines</span><span class="count warn" id="n-machines" hidden></span></a>
         <a href="#settings/browsers" data-sec="browsers" id="nav-browsers" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-lock"/></svg><span>Signed-in browsers</span></a>
         <a href="#settings/people" data-sec="people" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-team"/></svg><span>People</span><span class="count" id="n-team" hidden>0</span></a>
         <a href="#settings/projects" data-sec="projects" class="admin-only" hidden><svg width="16" height="16" aria-hidden="true"><use href="#i-folder"/></svg><span>Projects</span></a>
@@ -920,7 +935,7 @@ a.p-main { color: inherit; text-decoration: none; }
         </div>
         <div class="set-pane" id="pane-machines" data-sec="machines" hidden>
           <div class="set-title"><div><h1>Machines</h1><p id="m-sub">Your accounts and the team machines you can use, by computer.</p></div><button type="button" class="btn small primary" id="add-machine" aria-expanded="false" aria-controls="a-join"><svg width="14" height="14"><use href="#i-plus"/></svg>Add machine</button></div>
-          <div class="m-filter" id="m-filter" role="group" aria-label="Show"><button type="button" class="m-chip" data-f="all" aria-pressed="true">All</button><button type="button" class="m-chip" data-f="team" aria-pressed="false">Team</button><button type="button" class="m-chip" data-f="mine" aria-pressed="false">Mine</button><button type="button" class="m-chip" data-f="online" aria-pressed="false">Online</button></div>
+          <div class="m-filter" id="m-filter" role="group" aria-label="Show"><button type="button" class="m-chip" data-f="all" aria-pressed="true">All</button><button type="button" class="m-chip" data-f="team" aria-pressed="false">Team</button><button type="button" class="m-chip" data-f="mine" aria-pressed="false">Mine</button><button type="button" class="m-chip" data-f="online" aria-pressed="false">Online</button><button type="button" class="m-chip warn" data-f="warnings" aria-pressed="false" id="m-warn-chip" hidden>Warnings</button></div>
         <div class="a-sec">
           <div class="panel add-box m-choice" id="add-choice" role="group" aria-labelledby="add-choice-q" hidden>
             <div class="m-choice-q" id="add-choice-q">Whose account is it?</div>
@@ -1012,7 +1027,7 @@ a.p-main { color: inherit; text-decoration: none; }
   var token = null, view = "home", sec = "profile", personName = "";
   var feed = null, seen = {}, timer = null, expanded = {}, me = null;
   var conv = "mgr", phoneOpen = false, showNotices = false, askOpen = false;  /* the open chat; a phone shows it over the list; hub notices shown in Activity; the ask form open */
-  var fleet = { warnings: [] }, fleetAt = 0;  /* the admin's machine warnings: Home shows those that block */
+  var fleet = { warnings: [] }, fleetAt = 0;  /* the machine warnings this viewer may see (the hub scopes them); an admin's Home shows those that block */
   var proposals = [], proposalsAt = 0;  /* rule proposals: open ones wait for the admin's Yes or No */
   var holding = null, holdClose = null;  /* an open inline confirm or edit: refreshes leave its panel alone */
   var bgOpen = store(function (s) { return s.getItem("kaptyorka.bg-open"); }) === "1";  /* this viewer's Background group, open or folded */
@@ -1020,7 +1035,8 @@ a.p-main { color: inherit; text-decoration: none; }
   var addOpen = false, added = null;  /* People: Add person, its link */
   var account = null, accountAt = 0, joinCmd = null, linkToken = null;  /* the Account page's data; its Add machine command; a device link kept only to link GitLab */
   var myAccess = null;
-  var M_FILTERS = ["all", "team", "mine", "online"];  /* Machines: one filter, kept per browser */
+  var M_FILTERS = ["all", "team", "mine", "online", "warnings"];  /* Machines: one filter, kept per browser */
+  var warnOpen = {};  /* Machines: the warnings whose full text is open */
   var mFilter = (function (f) { return M_FILTERS.indexOf(f) >= 0 ? f : "all"; })(store(function (s) { return s.getItem("kaptyorka.machines-filter"); }));
   var hScope = store(function (s) { return s.getItem("kaptyorka.home-scope"); }) === "everyone" ? "everyone" : "mine";  /* Home: an admin's Mine or Everyone */
   var groupOpen = store(function (s) { var g = JSON.parse(s.getItem("kaptyorka.home-groups") || "null"); return g && typeof g === "object" ? g : null; }) || {};
@@ -2004,11 +2020,17 @@ a.p-main { color: inherit; text-decoration: none; }
       if (feed) renderTeam();
     }, function () {});
   }
-  /* the admin's machine warnings, every 10 s; Home shows only those that block */
+  /* the machine warnings this viewer may see, every 10 s: Machines shows them all (and their
+     count beside it in Settings); an admin's Home only those that block */
   function loadWarnings() {
-    if (!isAdmin() || Date.now() - fleetAt < 10000) return;
+    if (Date.now() - fleetAt < 10000) return;
     fleetAt = Date.now();
-    get("/api/warnings").then(function (w) { fleet = { warnings: w }; if (feed) renderWarns(); }, function () {});
+    get("/api/warnings").then(function (w) {
+      fleet = { warnings: w, loaded: true };
+      if (feed) renderWarns();
+      warnCount();
+      if (inMachines()) renderMachines();
+    }, function () {});
   }
   /* the page runs on plain http on the LAN, where navigator.clipboard is missing: copy through
      a hidden field then. Resolves true when it copied. */
@@ -2773,8 +2795,67 @@ a.p-main { color: inherit; text-decoration: none; }
   function sessionCount(d) {
     return feed ? (feed.agents || []).filter(function (a) { return a.where === d.name; }).length : 0;
   }
+  /* the warnings the Machines page places: on the account they name (computer and OS user),
+     else on the computer's card; one that fits neither is left out (Home shows it if it blocks) */
+  function placedWarnings(hosts) {
+    var acct = {}, host = {}, out = { acct: {}, host: {}, n: 0 };
+    hosts.forEach(function (h) { host[h.host] = 1; h.rows.forEach(function (r) { acct[h.host + "\n" + (r.d.os_user || "")] = 1; }); });
+    (fleet.warnings || []).forEach(function (w) {
+      var k = w.host + "\n" + (w.os_user || "");
+      if (w.os_user && acct[k]) (out.acct[k] = out.acct[k] || []).push(w);
+      else if (host[w.host]) (out.host[w.host] = out.host[w.host] || []).push(w);
+      else return;
+      out.n++;
+    });
+    return out;
+  }
+  /* the count beside Machines in Settings and on the Warnings chip; none: both hidden */
+  function warnCount() {
+    var n = account && (!isAdmin() || machines) ? placedWarnings(machineHosts()).n : (fleet.warnings || []).length;
+    $("n-machines").textContent = n || ""; $("n-machines").hidden = !n;
+    $("n-machines").title = n ? n + (n === 1 ? " warning" : " warnings") : "";
+    $("m-warn-chip").textContent = "Warnings " + n; $("m-warn-chip").hidden = !n;
+    if (!n && fleet.loaded && mFilter === "warnings" && account) setFilter("all");
+    return n;
+  }
+  /* a row's warnings: an amber chip each, its full text on hover; a click opens the text and
+     the command that fixes it, with Copy. `lead`: the row's tool tags, on the same line. No
+     tool logged in gets no chip of its own: the tool tags that say so ("Codex · not logged
+     in", "No agent tool") open it instead */
+  function warnChips(list, lead) {
+    if (!list || !list.length) return lead || null;
+    function toggle(w) { return function () { if (warnOpen[w.text]) delete warnOpen[w.text]; else warnOpen[w.text] = 1; renderMachines(); }; }
+    var login = list.filter(function (w) { return w.tag || /: no agent tool is logged in\./.test(w.text); })[0], onTag = false;
+    if (login && lead) [].forEach.call(lead.querySelectorAll(".chip.warn, .chip.bad"), function (c) {
+      var b = el("button", { type: "button", "class": c.className, title: login.text, "aria-expanded": warnOpen[login.text] ? "true" : "false" });
+      while (c.firstChild) b.appendChild(c.firstChild);
+      b.addEventListener("click", toggle(login));
+      c.parentNode.replaceChild(b, c);
+      onTag = true;
+    });
+    var chips = el("div", { "class": "m-warns" });
+    list.forEach(function (w) {
+      if (w === login && onTag) return;
+      var b = el("button", { type: "button", "class": "chip warn", title: w.text, "aria-expanded": warnOpen[w.text] ? "true" : "false" },
+                 [el("span", { "class": "dot" }), w.short || w.text]);
+      b.addEventListener("click", toggle(w));
+      chips.appendChild(b);
+    });
+    return el("div", null, [lead ? el("div", { "class": "m-tagline" }, [lead, chips]) : chips].concat(list.filter(function (w) { return warnOpen[w.text]; }).map(function (w) {
+      var fix = /`([^`]+)`/.exec(w.text), code = fix ? el("code", { text: fix[1] }) : null;
+      var copy = code ? button([icon("i-copy", 14)], "icon", function () { copyCode(code, copy); }, { title: "Copy", "aria-label": "Copy" }) : null;
+      return el("div", { "class": "m-warn-text" }, [icon("i-warn", 14),
+        el("span", { text: w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, "") + (code ? ". Run this there:" : "") }), code, copy]);
+    })));
+  }
+  /* a bridge that reported no agent tool: its "No agent tool" tag opens this (the page's own
+     line, not a hub warning, so not counted) */
+  function noTool(d, warns) {
+    if (!d.tools || d.tools.length) return warns;
+    return (warns || []).concat([{ tag: true, text: d.name + " has no agent tool. Install Claude Code, Codex or OpenCode in that account." }]);
+  }
   /* one account under its computer: online or last seen, whose it is, its sessions and tools */
-  function acctRow(r) {
+  function acctRow(r, warns) {
     var d = r.d, n = sessionCount(d);
     var tag = r.who === "team" ? chip("Team", "active", "a-tag") : r.who === "mine" ? chip("Mine", "", "a-tag") : chip(r.person, "", "a-tag a-person");
     var sub = el("small", null, [r.who === "mine" && d.label && d.auto !== d.label ? d.auto + " · " : "", seenText(d),
@@ -2786,17 +2867,18 @@ a.p-main { color: inherit; text-decoration: none; }
     return el("div", attrs, [
       el("span", { "class": "m-dot" + (d.online ? " on" : ""), "aria-hidden": "true" }),
       el("div", { "class": "a-text" }, [el("div", { "class": "a-top" }, [el("b", { text: d.name }), tag, d.emergency ? chip("This hub", "idle", "a-hub") : null]),
-                                       sub, toolTags(d.tools)]),
+                                       sub, warnChips(noTool(d, warns), toolTags(d.tools))]),
       r.who === "mine" ? ownActs(d) : null]);
   }
   /* a computer's card: its name, size, use and GPU queue, then its accounts */
-  function hostCard(h, rows) {
+  function hostCard(h, rows, placed) {
     var on = h.rows.some(function (r) { return r.d.online; });
     return el("div", { "class": "panel m-group", "data-host": h.host }, [
       el("div", { "class": "m-head" }, [avatar("machine", h.host, { dot: on }), el("div", { "class": "m-head-text" }, [
         el("div", { "class": "m-host" }, [el("b", { text: h.host }), h.kind ? el("span", { "class": "m-kind", text: h.kind }) : null]),
-        h.use ? el("span", { "class": "m-use", title: "How busy this computer is", text: h.use }) : null, queueLine(h.queue)])])
-    ].concat(rows.map(acctRow)));
+        h.use ? el("span", { "class": "m-use", title: "How busy this computer is", text: h.use }) : null, queueLine(h.queue),
+        warnChips(placed.host[h.host])])])
+    ].concat(rows.map(function (r) { return acctRow(r, placed.acct[h.host + "\n" + (r.d.os_user || "")]); })));
   }
   function setFilter(f) {
     mFilter = f;
@@ -2809,7 +2891,7 @@ a.p-main { color: inherit; text-decoration: none; }
     if (holdClose) holdClose();
     setFilter(b.dataset.f);
   });
-  var M_EMPTY = { team: "No team machines yet.", mine: "You have no machines of your own yet.", online: "No machines online right now." };
+  var M_EMPTY = { team: "No team machines yet.", mine: "You have no machines of your own yet.", online: "No machines online right now.", warnings: "No warnings right now." };
   /* Machines: one card per computer (something online first, then by name), its accounts
      filtered by All, Team, Mine or Online; a computer with nothing left is not shown */
   function renderMachines() {
@@ -2819,16 +2901,19 @@ a.p-main { color: inherit; text-decoration: none; }
     var box = $("a-machines");
     if (holding && holding.isConnected && box.contains(holding)) return;
     if (pressing(box)) return;
-    var hosts = machineHosts(), keep = function (r) {
-      return mFilter === "team" ? r.who === "team" : mFilter === "mine" ? r.who === "mine" : mFilter === "online" ? !!r.d.online : true;
-    };
-    var shown = hosts.map(function (h) { return { h: h, rows: h.rows.filter(keep), on: h.rows.some(function (r) { return r.d.online; }) }; })
-      .filter(function (g) { return g.rows.length; })
+    var hosts = machineHosts(), placed = placedWarnings(hosts);
+    warnCount();
+    var keep = function (h) { return function (r) {
+      return mFilter === "team" ? r.who === "team" : mFilter === "mine" ? r.who === "mine" : mFilter === "online" ? !!r.d.online
+        : mFilter === "warnings" ? !!placed.acct[h.host + "\n" + (r.d.os_user || "")] : true;
+    }; };
+    var shown = hosts.map(function (h) { return { h: h, rows: h.rows.filter(keep(h)), on: h.rows.some(function (r) { return r.d.online; }) }; })
+      .filter(function (g) { return g.rows.length || (mFilter === "warnings" && placed.host[g.h.host]); })
       .sort(function (a, b) { return (b.on - a.on) || (a.h.host < b.h.host ? -1 : a.h.host > b.h.host ? 1 : 0); });
-    if (!changed("hosts", calm([mFilter, shown, (feed && feed.agents || []).map(function (a) { return a.where; })]))) return;
+    if (!changed("hosts", calm([mFilter, shown, placed, warnOpen, (feed && feed.agents || []).map(function (a) { return a.where; })]))) return;
     var none = !hosts.length ? (account.add_machine ? "No machines yet. Click Add machine and run the command on your computer." : "No machines yet")
                              : M_EMPTY[mFilter];
-    drawRows(box, shown.length ? shown.map(function (g) { return hostCard(g.h, g.rows); })
+    drawRows(box, shown.length ? shown.map(function (g) { return hostCard(g.h, g.rows, placed); })
                                : [el("div", { "class": "panel" }, [el("div", { "class": "a-none" }, [icon("i-monitor", 14), el("span", { text: none })])])], "data-host");
     tick();
   }
@@ -2995,7 +3080,7 @@ a.p-main { color: inherit; text-decoration: none; }
     me = m;
     seen = {}; feed = null; myAccess = null; account = null; joinCmd = null; conv = "mgr"; phoneOpen = false; askOpen = false;
     readMap = store(function (s) { var r = JSON.parse(s.getItem("kaptyorka.read." + m.person) || "null"); return r && typeof r === "object" ? r : null; });
-    fleet = { warnings: [] }; fleetAt = 0; proposals = []; proposalsAt = 0; gitlab = null; gitlabAt = 0; boxErr = {};
+    fleet = { warnings: [] }; fleetAt = 0; warnOpen = {}; proposals = []; proposalsAt = 0; gitlab = null; gitlabAt = 0; boxErr = {};
     $("viewer-label").textContent = m.person;
     $("viewer-av").className = "av av-person sm tint-" + tintOf(m.person);
     $("viewer-av").setAttribute("data-i", initials(m.person));

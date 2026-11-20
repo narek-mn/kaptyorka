@@ -7,7 +7,7 @@ import shlex
 import time
 from typing import List, Optional, Tuple
 
-from kaptyorka import usage
+from kaptyorka import paths, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES
 from kaptyorka.orders import sign
 from kaptyorka.secrets_check import check_secrets
@@ -225,6 +225,8 @@ def clean_facts(facts: dict) -> dict:
     q = clean_queue(facts.get("gpu_queue"))
     if q is not None:
         out["gpu_queue"] = q
+    if facts.get("update_failed") in paths.UPDATE_REASONS:  # a fixed reason, never raw text
+        out["update_failed"] = facts["update_failed"]
     return out
 
 
@@ -1193,13 +1195,17 @@ class WorkerStore:
     def warnings(self, now: float, hub_version: str) -> List[dict]:
         """Things a person should look at: failed launches, offline bridges, old versions,
         missing hooks or tmux, unattended or abandoned workers. `blocks`: the person cannot
-        work until it is fixed (a failed launch, an offline bridge, no tool logged in)."""
+        work until it is fixed (a failed launch, an offline bridge, no tool logged in).
+        `short`: the few words the Machines page shows on the account's row. `device_id` (its
+        account) or `boss_id` (a worker's boss) say whose it is, for warnings_for. An old
+        version also carries `version` and its short fixed `reason`."""
         failed, offline, rest = [], [], []
         with self.lock:
             devices = self.db.execute(
                 "SELECT d.id, d.host, d.os_user, d.shared, d.version, d.last_used, p.name AS person,"
-                " f.facts FROM devices d LEFT JOIN people p ON p.id=d.person_id"
+                " p.team, f.facts, s.auto_update FROM devices d LEFT JOIN people p ON p.id=d.person_id"
                 " LEFT JOIN device_facts f ON f.device_id=d.id"
+                " LEFT JOIN device_settings s ON s.device_id=d.id"
                 " WHERE d.revoked_at IS NULL AND d.legacy=0 ORDER BY d.id").fetchall()
             workers = self.db.execute(
                 "SELECT w.*, p.name AS person, d.os_user FROM workers w"
@@ -1212,40 +1218,78 @@ class WorkerStore:
             host, user = d["host"], d["os_user"]
             who = machine_name("", user, host, host)
 
-            def add(out, text, blocks=False):
+            def add(out, text, short, blocks=False, **more):
                 out.append({"host": host, "os_user": user, "person": d["person"] or "",
-                            "text": text, "blocks": blocks})
-            if (d["facts"] and d["last_used"] is not None  # only bridges report facts
-                    and d["last_used"] < now - OFFLINE_S):
+                            "text": text, "short": short, "blocks": blocks, "device_id": d["id"],
+                            "team": bool(d["team"]), **more})
+            gone = (d["facts"] and d["last_used"] is not None  # only bridges report facts
+                    and d["last_used"] < now - OFFLINE_S)
+            if gone:
                 add(offline, f"bridge on {who} has been offline for"
-                    f" {int((now - d['last_used']) // 60)} minutes", True)
+                    f" {int((now - d['last_used']) // 60)} minutes", "bridge offline", True)
             facts = json.loads(d["facts"]) if d["facts"] else {}
             v = facts.get("version") or d["version"] or ""
             if _version_tuple(v) and _version_tuple(v) < _version_tuple(hub_version):
-                add(rest, f"{who} runs kaptyorka {v}; the hub runs {hub_version}")
+                reason = (paths.UPDATE_OFFLINE if gone
+                          else facts["update_failed"] if facts.get("update_failed") in paths.UPDATE_REASONS
+                          else paths.UPDATE_OFF if d["auto_update"] == 0
+                          else paths.UPDATE_WAITING)
+                tail = {paths.UPDATE_OFF: "auto-update off"}.get(reason, reason)
+                if reason in (paths.UPDATE_OFFLINE, paths.UPDATE_WAITING):
+                    tail = f"hub {hub_version}"
+                add(rest, f"{who} runs kaptyorka {v}; the hub runs {hub_version} ({reason})."
+                    " Run `kaptyorka update` there.", f"kaptyorka {v} \u00b7 {tail}",
+                    version=v, reason=reason)
             for tool, ok in (facts.get("hooks_ok") or {}).items():
                 if ok is False:
-                    add(rest, f"{tool} on {who} is set up but its kaptyorka hooks are missing")
+                    add(rest, f"{tool} on {who} is set up but its kaptyorka hooks are missing",
+                        f"{tool} hooks missing")
             # one logged-in tool is enough; warn only when every tool that knows is logged out,
             # suggesting the login of the first such tool installed there
             known = {t: ok for t, ok in (facts.get("logins") or {}).items() if ok is not None}
             out = [t for t, ok in known.items() if ok is False and t in LOGIN_COMMANDS]
             if out and not any(known.values()):
                 add(rest, f"{who}: no agent tool is logged in."
-                    f" Run `{LOGIN_COMMANDS[out[0]]}` there.", True)
+                    f" Run `{LOGIN_COMMANDS[out[0]]}` there.", "no tool logged in", True)
             if d["shared"] and facts.get("tmux") is False:
-                add(rest, f"{who} has no tmux: only Claude Code workers can run there")
+                add(rest, f"{who} has no tmux: only Claude Code workers can run there", "no tmux")
         for w in workers:
             item = {"host": w["host"], "os_user": w["os_user"] or "", "person": w["person"] or "",
-                    "blocks": w["state"] == "failed"}
+                    "blocks": w["state"] == "failed", "boss_id": w["boss_person"]}
             if w["state"] == "failed":
                 failed.append({**item, "text": f"worker {w['name']} on {w['host']} failed to"
-                               f" start: {w['error']}"})
+                               f" start: {w['error']}", "short": f"worker {w['name']} failed"})
             elif w["state"] == "abandoned":
-                rest.append({**item, "text": f"worker {w['name']} on {w['host']} was abandoned"})
+                rest.append({**item, "text": f"worker {w['name']} on {w['host']} was abandoned",
+                             "short": f"worker {w['name']} abandoned"})
             else:
                 hhmm = time.strftime("%H:%M", time.localtime(w["unattended_since"] or now))
                 rest.append({**item, "text": f"worker {w['name']} on {w['host']} is unattended"
-                             f" since {hhmm}"})
+                             f" since {hhmm}", "short": f"worker {w['name']} unattended"})
         rest.sort(key=lambda x: x["host"])
         return failed + offline + rest
+
+    def warnings_for(self, principal: Principal, now: float, hub_version: str) -> List[dict]:
+        """The warnings this viewer may see. An admin: all. Anyone else: their own accounts,
+        the team machines they may use (an admin's hide list wins) and their own workers;
+        a team machine's warning without the team account's name."""
+        rows = self.warnings(now, hub_version)
+        if principal.is_admin() and not principal.legacy:
+            return rows
+        from kaptyorka.admin_ops import _team_machines
+        me = principal.person_id
+        with self.lock:
+            mine = {r["id"] for r in self.db.execute(
+                "SELECT id FROM devices WHERE person_id=?", (me,))}
+            team = {d["id"] for d in _team_machines(self.store, me)}
+        out = []
+        for w in rows:
+            if w.get("boss_id") == me or w.get("device_id") in mine:
+                person = principal.person_name
+            elif w.get("device_id") in team:
+                person = ""
+            else:
+                continue
+            out.append({k: v for k, v in w.items() if k not in ("device_id", "boss_id")}
+                       | {"person": person})
+        return out
