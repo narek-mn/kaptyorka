@@ -1,5 +1,6 @@
 """The launcher: folders, worktrees, command lines and detaching, with fake run/popen."""
 import json
+import re
 import subprocess
 
 import pytest
@@ -159,8 +160,9 @@ def test_detach_uses_systemd_scope_on_linux_and_setsid_on_mac(home, with_systemd
     popen = FakePopen()
     make(home, popen=popen).detach(["tmux", "new-session"], "/w", "proj-a-w1")
     argv, kw = popen.calls[0]
-    assert argv == ["systemd-run", "--user", "--scope", "--quiet", "--unit",
-                    "kaptyorka-worker-proj-a-w1", "tmux", "new-session"]
+    assert argv[:5] == ["systemd-run", "--user", "--scope", "--quiet", "--unit"]
+    assert re.fullmatch(r"kaptyorka-worker-proj-a-w1-[0-9a-f]{8}", argv[5])
+    assert argv[6:] == ["tmux", "new-session"]
     assert kw["cwd"] == "/w" and kw["stdin"] == subprocess.DEVNULL
     assert kw["stderr"] == subprocess.STDOUT and not kw.get("start_new_session")
     assert kw["stdout"].name == str(home / ".kaptyorka" / "workers" / "proj-a-w1.log")
@@ -172,26 +174,34 @@ def test_detach_uses_systemd_scope_on_linux_and_setsid_on_mac(home, with_systemd
     assert mac.proc.waited == 60
 
 
-def test_detach_clears_a_leftover_scope(home, with_systemd):
-    run, popen = FakeRun(), FakePopen()
-    make(home, run=run, popen=popen).detach(["tmux", "new-session"], "/w", "w1")
-    assert run.calls == [["systemctl", "--user", "stop", "kaptyorka-worker-w1.scope"],
-                         ["systemctl", "--user", "reset-failed", "kaptyorka-worker-w1.scope"]]
-    assert popen.calls[0][0][:6] == ["systemd-run", "--user", "--scope", "--quiet", "--unit",
-                                     "kaptyorka-worker-w1"]
+class FakeSystemd(FakePopen):
+    """systemd-run as systemd 255 does it: a scope name still loaded (an earlier run's scope
+    still stopping) is refused; a started scope stays loaded."""
+
+    def __init__(self):
+        super().__init__()
+        self.loaded = set()
+
+    def __call__(self, argv, **kw):
+        unit = argv[argv.index("--unit") + 1]
+        if unit in self.loaded:
+            self.rc, self.output = 1, (f"Failed to start transient scope unit: Unit {unit}.scope"
+                                       " was already loaded or has a fragment file.\n")
+        else:
+            self.rc, self.output = 0, BG
+            self.loaded.add(unit)
+        return super().__call__(argv, **kw)
 
 
-@pytest.mark.parametrize("err", [OSError("no systemctl"),
-                                 subprocess.TimeoutExpired("systemctl", 5)])
-def test_detach_ignores_a_failed_scope_stop(home, with_systemd, err):
-    seen = []
-
-    def run(cmd, **kw):
-        seen.append(kw.get("timeout"))
-        raise err
-    popen = FakePopen()
-    make(home, run=run, popen=popen).detach(["tmux", "new-session"], "/w", "w1")
-    assert seen == [5, 5] and popen.calls[0][0][0] == "systemd-run"
+def test_a_relaunch_while_the_last_scope_is_still_loaded_starts(home, with_systemd):
+    run, systemd = FakeRun(), FakeSystemd()
+    launcher = make(home, run=run, popen=systemd)
+    launcher.detach(["claude", "--bg"], "/w", "manager")
+    assert len(systemd.loaded) == 1  # the first run's scope has not gone yet
+    assert "backgrounded" in launcher.detach(["claude", "--bg"], "/w", "manager")
+    units = [argv[argv.index("--unit") + 1] for argv, _ in systemd.calls]
+    assert len(units) == 2 and units[0] != units[1]
+    assert run.calls == []  # the old scope is left to end by itself, never stopped here
 
 
 def test_detach_without_systemd_run_starts_a_new_session(home, no_systemd):

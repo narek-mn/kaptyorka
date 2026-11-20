@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Auto-update is on for admins' machines too.** Before, a machine owned by an admin did not update itself when the hub got newer; now every machine does unless its setting says off.
+- **The manager no longer gets stuck for an hour after waking soon after its last run.** Each worker start now gets its own systemd scope name (`kaptyorka-worker-<name>-<random>`): the old fixed name was still held by the last run's scope while it stopped (up to 90 s), so `systemd-run` refused the start. A start the bridge refuses before any session runs no longer counts toward the manager's two launches an hour; three refusals in an hour still make it wait.
 
 ## 0.9.27
 

@@ -404,7 +404,8 @@ order rule (below).
 A worker must outlive the bridge: the bridge service is restarted on every
 update, and systemd kills its whole control group by default. So the bridge
 starts the worker outside its own service: on Linux through
-`systemd-run --user --scope --unit kaptyorka-worker-<name>`, on macOS by
+`systemd-run --user --scope --unit kaptyorka-worker-<name>-<random>` (a new
+name per launch: a stopping scope keeps its name for up to 90 s), on macOS by
 detaching into its own process group (and the launchd plist sets
 `AbandonProcessGroup`). A slow test restarts the bridge and checks the
 worker is still alive. Then the bridge heartbeats so the hub sees the

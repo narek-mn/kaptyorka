@@ -23,6 +23,7 @@ CONFIG = paths.MANAGER_CONFIG  # under paths.home(), outside the session's worki
 ASLEEP = "the manager is asleep; a message or request wakes it"
 RELAUNCH_S = 120
 MAX_LAUNCHES_PER_HOUR = 2
+MAX_REFUSALS_PER_HOUR = 3  # launches the hub machine's bridge refused: no session ran
 REQUEST_TTL_S = 3600
 REMIND_AFTER_S = 86400
 WEEKLY_S = 7 * 86400
@@ -411,6 +412,14 @@ class ManagerStore:
     def launches_last_hour(self, now: float) -> int:
         return sum(1 for t in self._launches() if now - t < 3600)
 
+    def refusals_last_hour(self, now: float) -> int:
+        """The manager's launch orders the bridge refused (acked not ok, so no session
+        ran) in the last hour; an order replaced before any bridge took it is not one."""
+        with self.lock:
+            return self.db.execute(
+                "SELECT COUNT(*) FROM launches WHERE worker=? AND kind='launch' AND ok=0"
+                " AND error!='replaced' AND created>?", (WORKER, now - 3600)).fetchone()[0]
+
     def record_launch(self, now: float) -> None:
         self._set("manager_launches",
                   json.dumps([t for t in self._launches() if now - t < 3600] + [now]))
@@ -461,7 +470,14 @@ class ManagerStore:
         if launches and now - max(launches) < RELAUNCH_S:
             return False, ("the manager was launched less than 2 minutes ago; it tries again"
                            " by itself")
-        if self.launches_last_hour(now) >= MAX_LAUNCHES_PER_HOUR:
+        # a refused launch ran no session, so it does not use up the two launches; refusals
+        # have their own limit, so one that repeats still stops
+        refused = self.refusals_last_hour(now)
+        if refused >= MAX_REFUSALS_PER_HOUR:
+            return False, ("the hub machine's bridge refused to start the manager 3 times in"
+                           " the last hour; its log says why; it tries again by itself within"
+                           " the hour")
+        if self.launches_last_hour(now) - refused >= MAX_LAUNCHES_PER_HOUR:
             return False, ("the manager was launched twice in the last hour; it tries again by"
                            " itself within the hour")
         return True, ""

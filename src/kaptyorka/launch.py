@@ -1,6 +1,7 @@
 """Start and stop worker sessions for signed orders: folder, worktree, command line, detach."""
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -131,16 +132,12 @@ class Launcher:
         wait = CLAUDE_WAIT_S if argv[0] == "claude" else TMUX_WAIT_S
         kw = {}
         if self.platform.startswith("linux") and shutil.which("systemd-run"):
-            # worker names are the primary key, so the only scope that can carry this name
-            # belongs to an ended row; stopping it is safe, and systemd-run refuses a name in use
-            for verb in ("stop", "reset-failed"):  # reset-failed: a failed unit also keeps the name
-                try:
-                    self.run(["systemctl", "--user", verb, f"kaptyorka-worker-{name}.scope"],
-                             capture_output=True, timeout=5)
-                except Exception:
-                    pass
+            # one scope name per launch: a stopping scope keeps its name for up to its stop
+            # timeout (90 s) and systemd-run refuses a name still loaded, so a fixed name failed
+            # a relaunch soon after the last run. The old scope goes when its last process ends;
+            # a close order ends a worker, so nothing here stops it.
             argv = ["systemd-run", "--user", "--scope", "--quiet", "--unit",
-                    f"kaptyorka-worker-{name}", *argv]
+                    f"kaptyorka-worker-{name}-{secrets.token_hex(4)}", *argv]
         else:
             kw["start_new_session"] = True
         log_path = logs / f"{name}.log"

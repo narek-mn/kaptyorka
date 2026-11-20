@@ -141,7 +141,7 @@ def test_real_manager_session(monkeypatch):
         for job in _jobs(folder):
             for step in ("stop", "rm"):
                 _quiet(["claude", step, job])
-        _quiet(["systemctl", "--user", "stop", "kaptyorka-worker-manager.scope"], 30)
+        _quiet(["systemctl", "--user", "stop", "kaptyorka-worker-manager-*.scope"], 30)
         stop()
         store.close()
         shutil.rmtree(khome, ignore_errors=True)

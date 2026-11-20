@@ -965,6 +965,71 @@ def test_other_launch_failure_does_not_block(hub):
     assert hub.mm.blocked() is None
 
 
+# a launch the bridge refused ran no session: it does not use up the hourly launches
+
+SCOPE_TAKEN = ("Failed to start transient scope unit: Unit kaptyorka-worker-manager.scope was"
+               " already loaded or has a fragment file.")
+
+
+def relaunch(hub, b, clock):
+    """Past the two minutes after a failure: the next order, or None."""
+    clock[0] += 121
+    beat(hub, b)
+    hub.tick()
+    items = orders(hub, b)
+    return items[0] if items else None
+
+
+def no_show(hub, b, item):
+    """The bridge took the order, the session never came: a real failed start."""
+    ack(hub, b, item)
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "manager", "error": "manager did not show up"})[0] == 204
+
+
+def test_a_refused_launch_does_not_use_up_the_hourly_launches(hub, clock):
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o1] = orders(hub, b)
+    no_show(hub, b, o1)
+    o2 = relaunch(hub, b, clock)
+    ack(hub, b, o2, ok=False, error=SCOPE_TAKEN)
+    assert hub.mm.launches_last_hour(clock[0]) == 2 and hub.mm.refusals_last_hour(clock[0]) == 1
+    o3 = relaunch(hub, b, clock)  # counted as two launches, it would wait an hour here
+    assert o3 is not None and o3["id"] not in (o1["id"], o2["id"])
+
+
+def test_refusals_stop_after_three_in_an_hour(hub, clock):
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    for _ in range(3):
+        ack(hub, b, o, ok=False, error="claude: not found")
+        o = relaunch(hub, b, clock)
+    assert o is None
+    ok, reason = hub.mm.may_launch(clock[0])
+    assert not ok and reason.startswith("the hub machine's bridge refused to start the manager"
+                                        " 3 times in the last hour")
+    clock[0] += 3600
+    assert relaunch(hub, b, clock) is not None
+
+
+def test_a_real_crash_loop_still_waits_an_hour(hub, clock):
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o1] = orders(hub, b)
+    no_show(hub, b, o1)
+    no_show(hub, b, relaunch(hub, b, clock))
+    assert relaunch(hub, b, clock) is None
+    assert hub.mm.may_launch(clock[0]) == (False, "the manager was launched twice in the"
+                                                  " last hour; it tries again by itself"
+                                                  " within the hour")
+    assert hub.mm.refusals_last_hour(clock[0]) == 0
+
+
 # a person already named manager
 
 def test_person_named_manager_reported_once_a_day(hub, clock, capsys):
