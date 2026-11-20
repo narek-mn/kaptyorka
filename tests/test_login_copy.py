@@ -2,11 +2,21 @@ import json
 import subprocess
 from types import SimpleNamespace
 
+import pytest
+
 from kaptyorka import fleet, login_copy
 from kaptyorka.login_copy import REMOTE_WRITE
 
 SECRET = "SECRET-TOKEN-TEXT"
 TARGET = "alice@box-1"
+
+
+@pytest.fixture(autouse=True)
+def _linux_unless_said(monkeypatch):
+    """login-copy defaults to the running OS (darwin on macOS CI); tests that don't name one mean Linux."""
+    real_copy, real_all = login_copy.copy, login_copy.copy_all
+    monkeypatch.setattr(login_copy, "copy", lambda *a, platform="linux", **k: real_copy(*a, platform=platform, **k))
+    monkeypatch.setattr(login_copy, "copy_all", lambda *a, platform="linux", **k: real_all(*a, platform=platform, **k))
 LOCAL_OK = SimpleNamespace(returncode=0, stdout=json.dumps({"loggedIn": True}), stderr="")
 LOGGED_OUT = SimpleNamespace(returncode=1, stdout=json.dumps({"loggedIn": False}), stderr="")
 
@@ -140,7 +150,7 @@ def test_copied_but_still_logged_out(tmp_path):
 # everything on stderr; OpenCode 1.19 `auth list` ends with "N credentials".
 from pathlib import Path  # noqa: E402
 
-import pytest  # noqa: E402
+
 
 from kaptyorka.login_copy import (CODEX_STATUS, CODEX_WRITE, OPENCODE_IMPORT,  # noqa: E402
                                   OPENCODE_STATUS, OPENCODE_WRITE, STATUS)
