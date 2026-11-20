@@ -79,6 +79,20 @@ Overnight mode only adds limits. It never loosens anything.
 - kaptyorka never starts a session with `--dangerously-skip-permissions`
   and never edits the developer's permission settings.
 
+**When rules clash** (the overnight list allows X, but a team or project rule
+forbids it, or a deny rule in Claude Code settings blocks something the task
+needs), the safer rule wins and the session skips X. Then:
+
+- Claude tells kaptyorka about the skip with a short kaptyorka call, because
+  the hook cannot read rules written as text. kaptyorka writes it to the local log.
+- **Team sessions:** kaptyorka also sends the hub a short event with fixed
+  text and only the project name (no secrets, no paths). The manager gets
+  it and tells that developer once, in plain words:
+  `Your overnight task allowed X, but the project rule "No pushes on Friday"
+  forbids it, so the session skipped it.`
+- **Personal sessions:** the local log only. Nothing goes to the hub or the manager.
+- In both cases the clash is in the morning report.
+
 ## What happens when the session would get stuck
 
 | Situation | What kaptyorka does |
@@ -104,6 +118,9 @@ Decisions made for you
 Skipped, needs your yes
   - git push --force to main (class 2)
   - rm -rf ~/recordings/old (protected folder)
+Rule clashes
+  - you allowed moving the motors, but the project rule
+    "No hardware without a person" forbids it: skipped
 Events
   - 01:10 usage limit, continued 02:05
 ```
