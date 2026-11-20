@@ -284,3 +284,29 @@ def test_hub_state_joined_opencode_session_in_a_personal_folder(joined, project)
     assert hubstate.state(KEY, cwd="/w/my-notes", spawn=never) == "lost"
     offhub.switch_key(KEY, True)  # /hub off still wins
     assert hubstate.state(KEY, cwd="/w/my-notes", spawn=never) == "off"
+
+
+def test_v2_login_check_never_starts_the_service(home, monkeypatch):
+    monkeypatch.setattr(opencode, "major", lambda: 2)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    seen, out = [], {"text": ""}
+
+    def login_output(command, args, run, **kw):
+        seen.append(args)
+        return out["text"]
+    monkeypatch.setattr(opencode, "login_output", login_output)
+    a = OpenCodeAdapter(home)
+    # the shape of `auth list --format json` (cli/src/commands/handlers/auth/list.ts:22-34)
+    out["text"] = json.dumps([{"id": "anthropic", "name": "Anthropic", "connections": [
+        {"type": "env", "name": "ANTHROPIC_API_KEY"},
+        {"type": "credential", "id": "cred_1", "label": "alice", "method": "oauth"}]}])
+    assert a.logged_in(None) is True
+    assert seen == [["auth", "list", "--standalone", "--format", "json"]]
+    out["text"] = json.dumps([{"id": "openai", "name": "OpenAI", "connections": [
+        {"type": "env", "name": "OPENAI_API_KEY"}]}])
+    assert a.logged_in(None) is False  # a provider variable only
+    out["text"] = "[]\n"
+    assert a.logged_in(None) is False
+    for broken in (None, "", "Error: something\n", '{"x": 1}'):
+        out["text"] = broken
+        assert a.logged_in(None) is None

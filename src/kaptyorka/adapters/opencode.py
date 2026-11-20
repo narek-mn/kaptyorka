@@ -537,6 +537,26 @@ def session_key(pid: int, cwd: str) -> Optional[str]:
         return None
 
 
+def _v2_logged_in(run: Callable) -> Optional[bool]:
+    """OpenCode 2: `opencode auth list --standalone --format json`. Without --standalone every
+    auth command connects to, and so starts, the long-lived background service
+    (sst/opencode v2.3.2 packages/cli/src/commands/handlers/auth/list.ts:19-34 via
+    auth/shared.ts:9-12, ServerConnection.resolve; --standalone: server-connection.ts:51-53).
+    The JSON lists integrations with their connections, each {type: "credential", ...} (stored)
+    or {type: "env", ...} (a provider variable): packages/schema/src/connection.ts:18-37.
+    A stored credential is logged in; none (env only) is not; unreadable output is None."""
+    out = login_output("opencode", ["auth", "list", "--standalone", "--format", "json"], run)
+    try:
+        rows = json.loads(out or "")
+    except ValueError:
+        return None
+    if not isinstance(rows, list):
+        return None
+    return any(isinstance(c, dict) and c.get("type") == "credential"
+               for r in rows if isinstance(r, dict) and isinstance(r.get("connections"), list)
+               for c in r["connections"])
+
+
 class OpenCodeAdapter:
     tool = "opencode"
     prefix = "opencode"
@@ -564,8 +584,8 @@ class OpenCodeAdapter:
         """True when OpenCode has a credential: its auth.json ($XDG_DATA_HOME/opencode, which
         `opencode auth login` writes in 1.x), else what `opencode auth list` counts ("N
         credentials", then "M environment variables" for provider keys in the environment).
-        Never False: OpenCode also runs free models and providers set in opencode.json with no
-        login, so finding none is "unknown", not "not logged in"."""
+        Never False on V1: OpenCode also runs free models and providers set in opencode.json
+        with no login, so finding none is "unknown", not "not logged in". V2: _v2_logged_in."""
         data = Path(os.environ.get("XDG_DATA_HOME") or self.home / ".local" / "share")
         try:
             auth = json.loads((data / "opencode" / "auth.json").read_text())
@@ -573,6 +593,8 @@ class OpenCodeAdapter:
                 return True
         except (OSError, ValueError):
             pass
+        if major() >= 2:
+            return _v2_logged_in(run)
         out = re.sub(r"\x1b\[[0-9;]*m", "", login_output("opencode", ["auth", "list"], run) or "")
         counts = [int(n) for n in re.findall(r"(\d+)\s+(?:credentials?|environment variables?)\b", out)]
         return True if any(counts) else None
