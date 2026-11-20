@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **`/hub` works in OpenCode 2, with a hub indicator.** OpenCode 2's terminal UI gets kaptyorka's TUI plugin (`~/.config/opencode/plugins/kaptyorka-hub/tui.js`): `/hub`, `/hub on`, `/hub off` and `/hub team [project|off]` run `kaptyorka hub` for the open session and show the answer as a toast, and the prompt footer shows **hub**, **hub off** or **hub ✗** like Claude Code's status line (`kaptyorka hub-state opencode:<session id>`). On OpenCode 2 the old `commands/hub.md` is removed (only kaptyorka's own), since OpenCode would list it next to the plugin's `/hub`; OpenCode 1 is unchanged. A folder or file of that name that kaptyorka did not write is left alone; `leave` removes only its own. The bridge writes it at start.
+- **`kaptyorka doctor` on OpenCode 2** checks the TUI plugin for `tool: opencode /hub`, and "opencode server" fails while OpenCode 2 runs without its background service (`--standalone` or the service disabled), with `opencode service start` as the fix.
+
 ## 0.9.26
 
 - **The manager keeps the team's knowledge.** It maintains the team notes `team`, `machines`, `projects` (one line per team project), `glossary` and `decisions` by itself: it reads before it writes, merges, replaces stale lines, and dates and sources each fact. It asks the people working on a project when something is unclear or the project's note is missing or about 14 days old, proposes rules for what repeats (never edits them), and never stores secrets, personal matters or non-team projects. Once a day after 4:00 (hub machine time) it gets a knowledge digest: changed notes (author and a size hint, never the text), new and removed people, team machines, machines and projects, the sessions working in each team project, and finished workers, capped at 4,000 characters. A project note written or a worker finished sends a short notice, at most one per 10 minutes. These never wake a sleeping manager. The manager may now read and write the notes of every registered project (`projects` lists them all with the role `notes`); members' rights are unchanged.

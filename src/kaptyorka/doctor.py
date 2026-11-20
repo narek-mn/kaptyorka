@@ -92,9 +92,12 @@ def hub_installed(adapter, home: Path) -> bool:
         return (_marked(home / ".claude" / "commands" / "hub.md", COMMAND_MARK)
                 and isinstance(line, dict) and _our_status(line.get("command")))
     if tool == "opencode":
-        from kaptyorka.adapters.opencode import COMMAND_MARK
+        from kaptyorka.adapters.opencode import COMMAND_MARK, TUI_DIR, TUI_MARK, major
 
         conf = home / ".config" / "opencode"
+        if major() >= 2:  # the TUI plugin has /hub and the indicator; the server plugin the brief
+            return (_marked(conf / "plugins" / TUI_DIR / "tui.js", TUI_MARK)
+                    and _marked(conf / "plugins" / "kaptyorka.js", 'id: "kaptyorka"'))
         return (_marked(conf / "commands" / "hub.md", COMMAND_MARK)
                 and _marked(conf / "plugins" / "kaptyorka.js", "kaptyorka hub"))
     if tool == "codex":
@@ -181,21 +184,27 @@ def checks(cfg: dict, adapters: list, home: Path, run: Callable = subprocess.run
 
 
 def _opencode_server() -> Check:
-    """A running OpenCode TUI with no local server (no --port, no V2 service) is invisible to
-    the bridge: nothing reaches it. Only the person can restart it; --fix never kills it."""
-    from kaptyorka.adapters.opencode import deaf_tuis
+    """A running OpenCode TUI the bridge cannot reach (V1: no --port; V2: no background
+    service) gets nothing pushed. Only the person can restart it; --fix never kills it."""
+    from kaptyorka.adapters.opencode import deaf_tuis, major
 
     try:
-        deaf = deaf_tuis()
+        v2 = major() >= 2
+        deaf = deaf_tuis(v2)
     except Exception:
-        deaf = []
+        v2, deaf = False, []
     if not deaf:
         return Check("opencode server", True)
     n = len(deaf)
+    windows = f" ({n} windows)" if n > 1 else ""
+    if v2:
+        return Check("opencode server", False,
+                     "OpenCode 2 is running without its background service, so the hub can't"
+                     " reach it" + windows,
+                     "run `opencode service start`, then restart OpenCode without --standalone")
     return Check("opencode server", False,
                  "OpenCode is running without its local server, so the hub can't reach it"
-                 + (f" ({n} windows)" if n > 1 else ""),
-                 "close it and start it again from a new terminal")
+                 + windows, "close it and start it again from a new terminal")
 
 
 def _show(results: List[Check]) -> None:

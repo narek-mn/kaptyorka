@@ -1178,8 +1178,8 @@ def _statusline(args) -> int:
 def entry() -> None:
     argv = sys.argv[1:]
     # a status line runs these on every update: skip building the whole parser
-    if len(argv) == 2 and argv[0] == "hub-state" and not argv[1].startswith("-"):
-        sys.exit(_hub_state(argparse.Namespace(session_id=argv[1])))
+    if len(argv) in (2, 3) and argv[0] == "hub-state" and not any(a.startswith("-") for a in argv[1:]):
+        sys.exit(_hub_state(argparse.Namespace(session_id=argv[1], seen_ms=(argv[2:] or [None])[0])))
     if argv[:1] == ["statusline"] and "-h" not in argv[1:2] and "--help" not in argv[1:2]:
         sys.exit(_statusline(argparse.Namespace(command=argv[1:])))
     p = argparse.ArgumentParser(prog="kaptyorka", description="A team hub for coding agents: run the hub, invite people, give them access to projects.")
@@ -1329,7 +1329,8 @@ def entry() -> None:
     # for status lines, set up by join; no help text keeps them out of the list
     hs = sub.add_parser("hub-state", description="print on, off or lost: whether a Claude Code session"
                         " is on the hub (for status lines; never waits on the network)")
-    hs.add_argument("session_id", help="the Claude Code session id")
+    hs.add_argument("session_id", help="the Claude Code session id, or opencode:<session id>")
+    hs.add_argument("seen_ms", nargs="?", help="OpenCode: when its window first showed the session (ms)")
     hs.set_defaults(run=_hub_state)
     sl = sub.add_parser("statusline", description="Claude Code status line: runs your own command"
                         " (after --) and adds the hub field; join sets it up")
