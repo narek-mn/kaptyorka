@@ -153,7 +153,7 @@ def test_doctor_fails_for_a_tui_without_a_server(monkeypatch):
 
 
 def test_doctor_lists_the_check_and_fix_kills_nothing(home, monkeypatch):
-    monkeypatch.setattr(opencode, "deaf_tuis", lambda: [11])
+    monkeypatch.setattr(opencode, "deaf_tuis", lambda v2=None: [11])
     monkeypatch.setattr(http, "request", lambda *a, **k: (200, {}))
     kills = []
     monkeypatch.setattr(os, "kill", lambda *a: kills.append(a))

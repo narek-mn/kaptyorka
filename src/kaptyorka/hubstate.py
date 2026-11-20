@@ -7,6 +7,9 @@
         the bridge, the shim and the hooks)
   lost  it should be on, but the hub does not list it or cannot be reached
 and nothing at all without a kaptyorka config, or before the first answer from the hub.
+`kaptyorka hub-state opencode:<session id> [<first seen, ms>]` does the same for an OpenCode 2
+session (its TUI plugin shows the word in the prompt footer); off there is /hub off or a folder
+that is not a team project.
 
 It never waits on the network. The hub's list of online sessions (GET /api/feed: a member sees
 their own sessions, which is enough) is cached in ~/.kaptyorka/hub-state.json for every session
@@ -116,22 +119,40 @@ def refresh(timeout: float = 5) -> dict:
 
 
 def state(session_id: str, cwd: str = "", now: Optional[float] = None,
-          spawn: Callable[[], None] = _spawn) -> Optional[str]:
-    """"on", "off", "lost", or None (no kaptyorka config, or no answer from the hub yet)."""
+          spawn: Callable[[], None] = _spawn, seen_ms: Optional[float] = None) -> Optional[str]:
+    """"on", "off", "lost", or None (no kaptyorka config, or no answer from the hub yet).
+    session_id is a Claude Code id, or a whole "opencode:ses_..." key (seen_ms: when its window
+    first showed it, which starts the grace time)."""
     cfg = paths.load_config()
     if not session_id or not cfg.get("hub") or not cfg.get("token"):
         return None
     from kaptyorka.store import session_id as handle_of  # the hub's own handle
 
     now = time.time() if now is None else now
-    key = f"claude:{session_id}"
-    found = offhub.session(session_id)
-    data = found[1] if found else {}
-    if found is not None and offhub.decide(session_id, found[0], data):
-        return "off"
+    if session_id.startswith("opencode:"):
+        from kaptyorka.adapters.opencode import valid_id
+
+        key, data = session_id, {"startedAt": seen_ms}
+        if not valid_id(key.split(":", 1)[1]):
+            return None
+        if offhub.kept_off(key):
+            return "off"
+    else:
+        key = f"claude:{session_id}"
+        found = offhub.session(session_id)
+        data = found[1] if found else {}
+        if found is not None and offhub.decide(session_id, found[0], data):
+            return "off"
     cwd = str(data.get("cwd") or cwd or "")
     project = os.path.basename(cwd.rstrip("/"))
-    if project and offhub.personal(project, cwd, key):
+    if key.startswith("opencode:") and cwd:
+        from kaptyorka.identity import project_of
+
+        project = project_of(cwd) or project  # as the bridge names it (a copy by its git remote)
+    from kaptyorka import optin
+
+    joined = optin.get(key)  # /hub team [project]: the hub checked it, the folder no longer decides
+    if joined is None and project and offhub.personal(project, cwd, key):
         return "off"
     cache = read_cache()
     if cache is None or now - cache["at"] >= FRESH_S:
@@ -149,7 +170,12 @@ def state(session_id: str, cwd: str = "", now: Optional[float] = None,
 
 
 def main_state(args) -> int:
-    word = state(args.session_id, os.getcwd())
+    seen = getattr(args, "seen_ms", None)
+    try:
+        seen_ms = float(seen) if seen else None
+    except ValueError:
+        seen_ms = None
+    word = state(args.session_id, os.getcwd(), seen_ms=seen_ms)
     if word:
         print(word)
     return 0

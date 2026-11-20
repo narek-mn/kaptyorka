@@ -309,3 +309,16 @@ def test_leave_unwraps_without_the_saved_file(home, fake_claude_cli):
     (paths.home() / "statusline.json").unlink()
     a.unconfigure()
     assert settings(home)["statusLine"] == {"type": "command", "command": "mine --x"}
+
+
+@pytest.mark.parametrize("project", ["", "proj-a"])  # /hub team, /hub team proj-a
+def test_a_joined_session_in_a_personal_folder_is_not_off(joined, home, project):
+    from kaptyorka import optin
+
+    write_session_file(home, os.getpid(), cwd="/w/my-notes", session_id=SID)
+    put_cache([handle_of(KEY)])
+    assert hubstate.state(SID, spawn=never) == "off"
+    optin.save(KEY, project, os.getpid())
+    assert hubstate.state(SID, spawn=never) == "on"
+    put_cache([])
+    assert hubstate.state(SID, spawn=never) == "lost"

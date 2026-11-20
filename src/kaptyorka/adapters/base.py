@@ -69,7 +69,7 @@ LOGIN_COMMANDS = {"claude-code": "claude auth login", "codex": "codex login",
 
 
 def login_output(command: str, args: List[str], run: Callable, any_exit: bool = False,
-                 with_stderr: bool = True) -> Optional[str]:
+                 with_stderr: bool = True, timeout: float = 5) -> Optional[str]:
     """Stdout of the tool's login status command; None if it is missing, fails or hangs.
     any_exit: the output whatever the exit code, stderr added unless with_stderr is False.
     The output may name the account: callers keep only a yes or no from it."""
@@ -77,7 +77,7 @@ def login_output(command: str, args: List[str], run: Callable, any_exit: bool = 
     if not exe:
         return None
     try:
-        r = run([exe, *args], capture_output=True, text=True, timeout=5)
+        r = run([exe, *args], capture_output=True, text=True, timeout=timeout)
     except Exception:  # a hang, a missing file, undecodable output: never stop the heartbeat
         return None
     if any_exit:

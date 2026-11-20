@@ -4,7 +4,22 @@ V1: each TUI runs its own server, but only when started with `--port` (OpenCode 
 `server.port` from opencode.json for `opencode serve` and `web` only, never for the TUI). So
 kaptyorka installs a small `opencode` wrapper in ~/.local/bin, ahead of the real binary on
 PATH, that adds `--port 0`; where it cannot, the older shell alias does it for new terminals.
-V2: one shared background service, found through its service.json.
+V2: one shared background service, found through its service.json; the TUI is only a client
+of it. Its `/hub` and hub indicator come from a TUI plugin (TUI_V2), since only the TUI can
+show anything and knows which session is open.
+
+Checked against OpenCode's own source (github.com/sst/opencode, tags v1.19.6 and v2.3.2):
+- V2 service registration: packages/client/src/effect/service.ts:142-148 (url, pid, password;
+  Basic auth user "opencode", service-probe.ts:52), file name service.json in the state dir
+  (packages/cli/src/services/service-config.ts:41-44,116-131). A TUI uses a private server
+  instead only with --standalone or `disabled` in the service config
+  (packages/cli/src/services/server-connection.ts:51-53).
+- V2 routes: GET /api/session (directory, limit, order) and POST /api/session/:id/prompt
+  (text, delivery, resume): packages/protocol/src/groups/session.ts:128,342-352.
+- V2 plugins: a .js file in plugins/ is a server plugin only (packages/core/src/plugin/
+  source-directory.ts:23-24, module.ts:114-118); a TUI part must be a folder with tui.js, which
+  the server leaves to the TUI (packages/core/src/config/plugin/source.ts:170-172,
+  packages/plugin/src/host.ts:56-58, packages/tui/src/plugin/discovery.ts:24-53).
 """
 import base64
 import re
@@ -26,6 +41,7 @@ from kaptyorka.adapters.base import (DeliveryError, Session, add_alias, login_ou
                                      remove_alias, write_atomic)
 
 TIMEOUT_S = 5
+V2_LOGIN_TIMEOUT_S = 15  # `auth list --standalone` starts a private server first
 ALIAS = "alias opencode='opencode --port 0'"
 SESSION_ID = re.compile(r"^ses_[A-Za-z0-9]+$")  # OpenCode's own ids: "ses_" + base62
 WRAPPER_MARK = "kaptyorka-opencode-wrapper"
@@ -119,7 +135,7 @@ description: Show or switch whether this session is on the kaptyorka hub ([on|of
 ---
 {COMMAND_MARK}
 kaptyorka: /hub did not run, because kaptyorka's OpenCode plugin did not answer. Restart
-OpenCode; on OpenCode 2 /hub does not work yet.
+OpenCode.
 
 Tell the user the line above, word for word, and nothing else.
 """
@@ -150,6 +166,116 @@ export default {
     await ctx.session.hook("context", async (event) => {
       if (brief[event.sessionID]) event.system.push({ type: "text", text: brief[event.sessionID] });
     });
+  },
+};
+"""
+
+
+TUI_MARK = "kaptyorka-opencode-tui"
+TUI_DIR = "kaptyorka-hub"  # ~/.config/opencode/plugins/<this>/tui.js: a TUI-only plugin folder
+# OpenCode 2's TUI plugin API, sst/opencode v2.3.2 packages/plugin/src/tui/context.ts:
+# keymap.layer with a `slash` command (407-432; a slash command with `arguments` runs before
+# the server's commands, packages/tui/src/component/prompt/index.tsx:1136-1149), ui.toast
+# (271-283), ui.slot "prompt.footer.status" (191-201, 540), storage.memory (31-51) and
+# data.on (63-66). A slot renders OpenTUI elements: createElement/insert/effect/setProp from
+# @opentui/solid 0.8.4 (what its JSX compiles to). OpenCode's Bun build provides that module to
+# plugins (@opentui/solid scripts/runtime-plugin-support-configure.js); its Node build does
+# not (packages/tui/src/plugin/runtime-plugin-support.node.ts), so there it is toasts only.
+TUI_V2 = """\
+// %(mark)s: /hub and the hub indicator in OpenCode 2's terminal UI. Written by
+// `kaptyorka join`; `kaptyorka leave` removes it.
+import { execFile } from "node:child_process";
+const KAPTYORKA = %(exe)s;
+const LABEL = { on: "hub", off: "hub off", lost: "hub \\u2717" };
+const run = (args, sessionID, cwd, ms) => new Promise((resolve) => {
+  try {
+    const child = execFile(KAPTYORKA, args, { cwd, timeout: ms,
+      env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } },
+      (err, stdout) => resolve({ ok: !err, out: String(stdout || "").trim() }));
+    if (child.stdin) child.stdin.end();
+  } catch {
+    resolve({ ok: false, out: "" });
+  }
+});
+export default {
+  id: "kaptyorka.hub",
+  setup: async (ctx) => {
+    const [state, setState] = ctx.storage.memory("state", { initial: { words: {} } });
+    const seen = {};  // session id -> when this window first showed it (ms)
+    let shown = "", solid = null;
+    const where = (sid) => {
+      const s = ctx.data.session.get(sid);
+      return (s && s.location && s.location.directory) || (ctx.location && ctx.location.directory)
+        || process.cwd();
+    };
+    const refresh = async (sid) => {  // on, off or lost, as in Claude Code's status line
+      const r = await run(["hub-state", "opencode:" + sid, String(seen[sid] || Date.now())], sid,
+        where(sid), 4000);
+      setState((d) => { d.words[sid] = r.ok ? r.out : ""; });
+    };
+    // `kaptyorka hub [on|off|team [project|off]]` for this session, shown as a toast
+    const hub = async (sid, words) => {
+      const r = await run(["hub", ...words], sid, where(sid), words[0] === "team" ? 8000 : 4000);
+      const line = r.out || "kaptyorka: /hub did not run";
+      ctx.ui.toast.show({ title: "kaptyorka hub", message: line, duration: 8000,
+        variant: !r.ok ? "error" : /off the hub/.test(line) ? "warning" : "success" });
+      if (solid) refresh(sid);
+    };
+    ctx.keymap.layer(() => ({
+      mode: "global",
+      commands: [{
+        id: "kaptyorka.hub",
+        title: "kaptyorka hub",
+        description: "Show or switch whether this session is on the kaptyorka hub ([on|off|team [project|off]])",
+        slash: { name: "hub", arguments: true },
+        run: async (input) => {
+          const route = ctx.ui.router.current();
+          if (route.type !== "session") {
+            ctx.ui.toast.show({ title: "kaptyorka hub", variant: "warning",
+              message: "kaptyorka: start a chat first; /hub works for one session" });
+            return;
+          }
+          await hub(route.sessionID, String(input || "").split(/\\s+/).filter(Boolean));
+        },
+      }],
+    }));
+    try {
+      solid = await import("@opentui/solid");
+    } catch {}
+    if (!solid || !solid.createElement || !solid.insert || !solid.effect || !solid.setProp) {
+      solid = null;  // no OpenTUI for plugins here: a new chat says whether it is on the hub
+      return ctx.data.on("session.created", (event) => {
+        const info = event.data || {};
+        const route = ctx.ui.router.current();
+        if (!info.parentID && route.type === "session" && route.sessionID === info.sessionID)
+          hub(info.sessionID, []);
+      });
+    }
+    const text = ctx.theme && ctx.theme.text;
+    const color = (word) => !text ? undefined : word === "on" ? text.feedback.success.base
+      : word === "lost" ? text.feedback.warning.base : text.muted;
+    ctx.ui.slot({
+      append: "prompt.footer.status",
+      render: (input) => {
+        const word = () => {
+          const sid = input.sessionID;
+          if (!sid) return "";
+          if (!(sid in seen)) {
+            seen[sid] = Date.now();
+            refresh(sid);
+          }
+          shown = sid;
+          return state.words[sid] || "";
+        };
+        const el = solid.createElement("text");
+        solid.setProp(el, "flexShrink", 0);
+        solid.effect(() => solid.setProp(el, "fg", color(word())));
+        solid.insert(el, () => LABEL[word()] || "");
+        return el;
+      },
+    });
+    const timer = setInterval(() => { if (shown) refresh(shown); }, 15000);
+    return () => clearInterval(timer);
   },
 };
 """
@@ -284,11 +410,15 @@ def _opencode_pids() -> List[int]:
     return [int(p) for p in r.stdout.split()]
 
 
-def deaf_tuis() -> List[int]:
-    """Running OpenCode TUIs the hub cannot reach: no V2 service and no listening port (started
-    without --port, e.g. from a terminal opened before kaptyorka joined)."""
+def deaf_tuis(v2: Optional[bool] = None) -> List[int]:
+    """Running OpenCode TUIs the hub cannot reach. V1: no listening port (started without
+    --port, e.g. from a terminal opened before kaptyorka joined). V2: every TUI while no
+    background service runs (--standalone, or the service is disabled): each then talks to a
+    private server of its own, and the bridge reaches V2 only through the service."""
     if service():
         return []
+    if major() >= 2 if v2 is None else v2:
+        return _tuis()
     return [pid for pid in _tuis() if not _listen_ports(pid)]
 
 
@@ -408,6 +538,30 @@ def session_key(pid: int, cwd: str) -> Optional[str]:
         return None
 
 
+def _v2_logged_in(run: Callable) -> Optional[bool]:
+    """OpenCode 2: `opencode auth list --standalone --format json`. Without --standalone every
+    auth command connects to, and so starts, the long-lived background service
+    (sst/opencode v2.3.2 packages/cli/src/commands/handlers/auth/list.ts:19-34 via
+    auth/shared.ts:9-12, ServerConnection.resolve; --standalone: server-connection.ts:51-53).
+    The JSON lists integrations with their connections, each {type: "credential", ...} (stored)
+    or {type: "env", ...} (a provider variable): packages/schema/src/connection.ts:18-37.
+    A stored credential is logged in; anything else (env keys only, none, unreadable) is None,
+    never False: env keys and free models are real ways to use OpenCode. 15 s: --standalone
+    boots a private server first."""
+    out = login_output("opencode", ["auth", "list", "--standalone", "--format", "json"], run,
+                       timeout=V2_LOGIN_TIMEOUT_S)
+    try:
+        rows = json.loads(out or "")
+    except ValueError:
+        return None
+    if not isinstance(rows, list):
+        return None
+    stored = any(isinstance(c, dict) and c.get("type") == "credential"
+                 for r in rows if isinstance(r, dict) and isinstance(r.get("connections"), list)
+                 for c in r["connections"])
+    return True if stored else None
+
+
 class OpenCodeAdapter:
     tool = "opencode"
     prefix = "opencode"
@@ -435,8 +589,9 @@ class OpenCodeAdapter:
         """True when OpenCode has a credential: its auth.json ($XDG_DATA_HOME/opencode, which
         `opencode auth login` writes in 1.x), else what `opencode auth list` counts ("N
         credentials", then "M environment variables" for provider keys in the environment).
-        Never False: OpenCode also runs free models and providers set in opencode.json with no
-        login, so finding none is "unknown", not "not logged in"."""
+        Never False on V1: OpenCode also runs free models and providers set in opencode.json
+        with no login, so finding none is "unknown", not "not logged in". V2: the same rule, see
+        _v2_logged_in."""
         data = Path(os.environ.get("XDG_DATA_HOME") or self.home / ".local" / "share")
         try:
             auth = json.loads((data / "opencode" / "auth.json").read_text())
@@ -444,6 +599,8 @@ class OpenCodeAdapter:
                 return True
         except (OSError, ValueError):
             pass
+        if major() >= 2:
+            return _v2_logged_in(run)
         out = re.sub(r"\x1b\[[0-9;]*m", "", login_output("opencode", ["auth", "list"], run) or "")
         counts = [int(n) for n in re.findall(r"(\d+)\s+(?:credentials?|environment variables?)\b", out)]
         return True if any(counts) else None
@@ -601,8 +758,11 @@ class OpenCodeAdapter:
         return []
 
     def install_hub(self, kaptyorka: str, v2: Optional[bool] = None) -> List[str]:
-        """The plugin (which runs /hub and shows the hub toasts) and the /hub command; also run
-        at bridge start, so an update brings them. A hub.md someone else wrote is left alone."""
+        """The plugin and /hub; also run at bridge start, so an update (or a new OpenCode major)
+        brings them. V1: the plugin answers /hub (commands/hub.md) and shows toasts. V2: the TUI
+        plugin (plugins/kaptyorka-hub/tui.js) has /hub and the indicator, and our hub.md goes,
+        since OpenCode 2 would list it next to the plugin's /hub. Files someone else wrote are
+        left alone."""
         conf = self.home / ".config" / "opencode"
         lines = []
         plugin = conf / "plugins" / "kaptyorka.js"
@@ -612,6 +772,8 @@ class OpenCodeAdapter:
             plugin.parent.mkdir(parents=True, exist_ok=True)
             plugin.write_text(text)
             lines.append(f"OpenCode: kaptyorka plugin written to {plugin}")
+        if v2:
+            return lines + self._write_tui(kaptyorka) + self._drop_command()
         command = conf / "commands" / "hub.md"
         try:
             old = command.read_text() if command.exists() else None
@@ -623,18 +785,56 @@ class OpenCodeAdapter:
                 lines.append(f"OpenCode: /hub command written to {command}")
         except OSError as e:
             self.log(f"could not write {command}: {e}")
-        return lines
+        return lines + self._drop_tui()
 
-    def unconfigure(self) -> List[str]:
-        lines = []
-        conf = self.home / ".config" / "opencode"
-        command = conf / "commands" / "hub.md"
+    def tui_plugin(self) -> Path:
+        return self.home / ".config" / "opencode" / "plugins" / TUI_DIR / "tui.js"
+
+    def _write_tui(self, kaptyorka: str) -> List[str]:
+        f = self.tui_plugin()
+        text = TUI_V2 % {"mark": TUI_MARK, "exe": json.dumps(kaptyorka)}
+        try:
+            old = f.read_text(errors="replace") if f.exists() else None
+            others = f.parent.is_dir() and any(p.name != "tui.js" for p in f.parent.iterdir())
+            if (old is not None and TUI_MARK not in old[:400]) or (old is None and others):
+                self.log(f"left alone, not written by kaptyorka: {f.parent}")
+                return []
+            if old == text:
+                return []
+            f.parent.mkdir(parents=True, exist_ok=True)
+            write_atomic(f, text)
+        except OSError as e:
+            self.log(f"could not write {f}: {e}")
+            return []
+        return [f"OpenCode: /hub and the hub indicator written to {f}"]
+
+    def _drop_tui(self) -> List[str]:
+        f = self.tui_plugin()
+        try:
+            if TUI_MARK not in f.read_text(errors="replace")[:400]:
+                return []
+            f.unlink()
+        except OSError:
+            return []
+        try:
+            f.parent.rmdir()  # only when nothing else is in it
+        except OSError:
+            pass
+        return [f"OpenCode: /hub plugin removed ({f})"]
+
+    def _drop_command(self) -> List[str]:
+        command = self.home / ".config" / "opencode" / "commands" / "hub.md"
         try:
             if COMMAND_MARK in command.read_text():
                 command.unlink()
-                lines.append(f"OpenCode: /hub command removed ({command})")
+                return [f"OpenCode: /hub command removed ({command})"]
         except OSError:
             pass
+        return []
+
+    def unconfigure(self) -> List[str]:
+        conf = self.home / ".config" / "opencode"
+        lines = self._drop_command() + self._drop_tui()
 
         def drop_mcp(data: dict) -> bool:
             servers = data.get("mcp")
