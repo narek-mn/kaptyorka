@@ -985,6 +985,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                              "repos": store.team_repos(),  # and folders whose remote is one
                              "keep": ws.live_keys_on(principal.device_id) if own else [],
                              "you": principal.person_name, "shared": principal.shared,
+                             "legacy": principal.legacy,  # a 0.1 token: keep the machine name
                              "skills_version": rs.skills_version(),
                              # its computer's GPU queue, read by one bridge per computer
                              "gpu_queue": ws.gpu_queue_ask(principal.device_id, store.clock())

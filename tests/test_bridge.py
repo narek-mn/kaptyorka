@@ -900,3 +900,70 @@ def test_claude_busy_and_idle_reach_the_feed_as_activity(hub, home):
     write_session_file(home, pid=os.getpid(), status="idle")
     bridge.heartbeat()
     assert hub.store.agent(f"claude:sid-{os.getpid()}").activity == "idle"
+
+
+# --- a computer renamed after join -------------------------------------------------------
+
+def computer(monkeypatch, host, user="alice"):
+    monkeypatch.setattr(bridge_mod.identity, "facts",
+                        lambda: {"host": host, "os_user": user, "version": kaptyorka.__version__})
+
+
+def test_renamed_only_follows_an_automatic_name(monkeypatch):
+    computer(monkeypatch, "box-new")
+    assert bridge_mod.renamed("alice@box-old") == "alice@box-new"
+    assert bridge_mod.renamed("alice@box-new") is None
+    for chosen in ("box-1", "bob@box-old", "alice-laptop", "alice@a@b", ""):
+        assert bridge_mod.renamed(chosen) is None, chosen
+
+
+def test_own_token_follows_a_new_host_name_and_keeps_the_device(hub, home, monkeypatch):
+    from kaptyorka import offhub, optin, paths
+
+    person = hub.store.person_create("alice")
+    token = hub.store.device_add(person, "alice@box-old")
+    conf = {"hub": hub.url, "token": token, "machine": "alice@box-old"}  # no secret: the hub decides
+    paths.save_config(conf)
+    computer(monkeypatch, "box-old")
+    a = FakeAdapter(sessions=[Session("codex:1", "codex", "proj-a")])
+    b = Bridge(dict(conf), [a], bridge_mod.log)
+    b.heartbeat()
+    assert hub.store.online()[0].machine == "alice@box-old"
+    # the laptop is renamed; a Cursor folder was off the hub and one had joined the team
+    offhub.switch_key("cursor:alice@box-old:/w/notes", True)
+    optin.save("cursor:alice@box-old:/w/plans", "proj-a", os.getpid())  # a live Cursor
+    computer(monkeypatch, "box-new")
+    b.heartbeat()  # the hub's answer says the token is the machine's own: renamed now
+    assert b.cfg["machine"] == "alice@box-new" == paths.load_config()["machine"]
+    b.heartbeat()
+    online = hub.store.online()
+    assert [x.machine for x in online] == ["alice@box-new"] and online[0].key == "codex:1"
+    devices = hub.store.db.execute("SELECT id, host FROM devices WHERE person_id=?", (person,)).fetchall()
+    assert [d["host"] for d in devices] == ["box-new"]  # one device, the same token
+    assert offhub.kept_off("cursor:alice@box-new:/w/notes")  # still off: nothing came back on
+    assert not offhub.kept_off("cursor:alice@box-old:/w/notes")
+    assert optin.get("cursor:alice@box-new:/w/plans") == "proj-a"
+
+
+def test_a_legacy_token_keeps_its_name(hub, home, monkeypatch):
+    from kaptyorka import paths
+
+    computer(monkeypatch, "box-new")
+    conf = {"hub": hub.url, "token": hub.token, "machine": "alice@box-old"}
+    paths.save_config(conf)
+    b = Bridge(dict(conf), [fake_codex()], bridge_mod.log)
+    b._refresh_name()  # before any answer: no secret, so wait for the hub
+    b.heartbeat()  # the shared 0.1 token: the hub maps it to its person by this name
+    assert b.hub.get("legacy") is True
+    assert b.cfg["machine"] == "alice@box-old" == paths.load_config()["machine"]
+
+
+def test_an_older_hub_renames_only_a_config_with_a_secret(home, monkeypatch):
+    from kaptyorka import paths
+
+    computer(monkeypatch, "box-new")
+    for conf, want in (({"hub": "http://h", "token": "t", "machine": "alice@box-old", "secret": "s"}, "alice@box-new"),
+                       ({"hub": "http://h", "token": "t", "machine": "alice@box-old"}, "alice@box-old")):
+        b = Bridge(dict(conf), [], bridge_mod.log)
+        b._refresh_name()  # what run() does at start, before the first heartbeat
+        assert b.cfg["machine"] == want

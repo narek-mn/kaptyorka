@@ -80,7 +80,7 @@ It prints `added alice to the team` (only for a new person) and the link, `http:
 
 Steps 1 and 3 work in either order: signing in does not use the link up.
 
-Each machine gets a token of its own, tied to Alice, and a signing secret. Both are saved in `~/.kaptyorka/config.json`. The machine name defaults to `user@host`; add `--name <name>` to change it. `kaptyorka people` lists each person with their role, how many devices they have and when one was last used.
+Each machine gets a token of its own, tied to Alice, and a signing secret. Both are saved in `~/.kaptyorka/config.json`. The machine name defaults to `user@host`; add `--name <name>` to change it. When the computer is renamed later, the bridge follows: at its start (and on each heartbeat) a `user@<old host>` name becomes `user@<new host>`, the same device and its sessions keep their access, and Cursor folders keep their `/hub off`. A name you chose with `--name` stays unless it is `<this account>@<something>`, and so does any name on a shared 0.1 token, which the hub maps to its person by that name. `kaptyorka people` lists each person with their role, how many devices they have and when one was last used.
 
 Opening the invite link in a browser shows the same `join` command, and **Sign in with GitLab** when it is set up; without it, a button that opens the page as Alice (that one uses the link up).
 

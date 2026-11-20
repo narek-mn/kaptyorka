@@ -6,6 +6,7 @@
 - Codex logged in with an API key now counts as logged in (its status says "API key configured", not "Logged in"), so the machine list no longer shows it as unknown.
 - A message the Codex app-server refuses shows "the agent tool refused the message" instead of "the session isn't reachable".
 - When `$hub` cannot run in Codex, the line says `$hub`, not `/hub`.
+- **A renamed computer's sessions take its new name.** The machine name saved at join (`user@host`) used to stay after the computer got a new host name, so Claude Code sessions (and every other tool's) still showed `user@<old host>`. The bridge now renames it to `user@<new host>` at start and on each heartbeat, saves the config and logs it; the hub renames that device's sessions on the next heartbeat, with the same token and device, so nothing is duplicated and no access is lost. Cursor folders switched off with `/hub off` (or joined with `/hub team`) stay so under the new name. A name chosen with `--name` stays unless it has the form `<this account>@<host>` (as `fleet add` gives), nor is the name of a machine on the shared 0.1 token (the hub's heartbeat answer now says `legacy`; with an older hub, only a config with a signing secret is renamed).
 
 ## 0.9.26
 

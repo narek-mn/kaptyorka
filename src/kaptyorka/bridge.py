@@ -40,6 +40,17 @@ def log(line: str) -> None:
     print(line, file=sys.stderr)
 
 
+def renamed(machine: str) -> Optional[str]:
+    """This computer's automatic name now (account@computer, as join picks it), when `machine`
+    is that account's automatic name from an older host name; None otherwise: a name someone
+    chose (no account@ at its start) stays."""
+    f = identity.facts()
+    user, host = f.get("os_user"), f.get("host")
+    if not user or not host or machine == f"{user}@{host}":
+        return None
+    return f"{user}@{host}" if re.fullmatch(re.escape(user) + r"@[^@\s]+", machine or "") else None
+
+
 def joined_adapters(cfg: dict, adapters: List[Adapter]) -> List[Adapter]:
     """The adapters for the tools join --only named; without --only, all of them."""
     tools = cfg.get("tools")
@@ -240,12 +251,32 @@ class Bridge:
             self._gpu_queue_ask = ask
             self._facts_at = None  # switched on, changed or off: read it next beat
         self._sessions = objs
+        self._refresh_name()
         self._report("heartbeat", None if status in (200, 204)
                      else f"hub answered {status} to heartbeat" + _said(status, answer))
         self._sync_skills()
         self._check_pending(objs)
         if again and team is None and held and self._team()[0] is not None:
             self.heartbeat(again=False)  # the list came just now: report its sessions at once
+
+    def _refresh_name(self) -> None:
+        """Follow a new host name: the machine name join saved (account@computer) would keep
+        naming every session after the old one. Only for this machine's own token: a shared
+        0.1 token is mapped to its person by that name. The hub says which (an older hub does
+        not: then only a config with a signing secret, which only own tokens have). The hub
+        renames this device's sessions on the next heartbeat; Cursor's keys name the machine,
+        so their /hub choices move along."""
+        legacy = self.hub.get("legacy")
+        if legacy is True or (not isinstance(legacy, bool) and not self.cfg.get("secret")):
+            return
+        old = self.cfg["machine"]
+        new = renamed(old)
+        if new is None:
+            return
+        offhub.rename_machine(old, new)
+        self.cfg["machine"] = new  # the launcher shares this dict
+        paths.save_config(self.cfg)
+        self.log(f"this computer's name changed: machine {old} is now {new}")
 
     def _sync_skills(self) -> None:
         """Fetch the team skills when the hub's version differs from the one written here."""
@@ -520,6 +551,7 @@ class Bridge:
             self.stop.wait(HEARTBEAT_S)
 
     def run(self) -> None:
+        self._refresh_name()  # before the first heartbeat names any session
         beat = threading.Thread(target=self._beat, daemon=True)
         beat.start()
         try:

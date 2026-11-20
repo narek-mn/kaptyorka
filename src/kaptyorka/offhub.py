@@ -181,6 +181,18 @@ def _file(key: str) -> Path:
     return _dir() / (key.split(":", 1)[1] if key.startswith("claude:") else quote(key, safe=""))
 
 
+def rename_machine(old: str, new: str) -> None:
+    """The machine got a new name: Cursor's keys contain it, so each folder keeps its /hub off
+    (and a /hub team join) under the new name; nothing comes back on by the rename."""
+    from kaptyorka import optin
+
+    was, now = quote(f"cursor:{old}:", safe=""), quote(f"cursor:{new}:", safe="")
+    for d in (_dir(), optin._dir()):
+        for f in d.iterdir():
+            if f.name.startswith(was):
+                f.replace(d / (now + f.name[len(was):]))
+
+
 def kept_off(key: str) -> bool:
     """Another tool's session (OpenCode, Codex, Cursor) switched off with /hub off."""
     if key.startswith("claude:"):
