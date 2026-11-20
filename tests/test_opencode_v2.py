@@ -269,3 +269,18 @@ def test_cli_hub_state_takes_the_opencode_key(joined, tmp_path, monkeypatch, cap
     monkeypatch.chdir(tmp_path)  # not a team project
     assert entry_with_exit(["hub-state", KEY]) == 0
     assert capsys.readouterr().out == "off\n"
+
+
+@pytest.mark.team_only
+@pytest.mark.parametrize("project", ["", "proj-a"])  # /hub team, /hub team proj-a
+def test_hub_state_joined_opencode_session_in_a_personal_folder(joined, project):
+    from kaptyorka import optin
+
+    put_cache([handle_of(KEY)])
+    assert hubstate.state(KEY, cwd="/w/my-notes", spawn=never) == "off"
+    optin.save(KEY, project, os.getpid())
+    assert hubstate.state(KEY, cwd="/w/my-notes", spawn=never) == "on"
+    put_cache([])
+    assert hubstate.state(KEY, cwd="/w/my-notes", spawn=never) == "lost"
+    offhub.switch_key(KEY, True)  # /hub off still wins
+    assert hubstate.state(KEY, cwd="/w/my-notes", spawn=never) == "off"

@@ -149,7 +149,10 @@ def state(session_id: str, cwd: str = "", now: Optional[float] = None,
         from kaptyorka.identity import project_of
 
         project = project_of(cwd) or project  # as the bridge names it (a copy by its git remote)
-    if project and offhub.personal(project, cwd, key):
+    from kaptyorka import optin
+
+    joined = optin.get(key)  # /hub team [project]: the hub checked it, the folder no longer decides
+    if joined is None and project and offhub.personal(project, cwd, key):
         return "off"
     cache = read_cache()
     if cache is None or now - cache["at"] >= FRESH_S:

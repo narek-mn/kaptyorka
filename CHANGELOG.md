@@ -4,6 +4,7 @@
 
 - **`/hub` works in OpenCode 2, with a hub indicator.** OpenCode 2's terminal UI gets kaptyorka's TUI plugin (`~/.config/opencode/plugins/kaptyorka-hub/tui.js`): `/hub`, `/hub on`, `/hub off` and `/hub team [project|off]` run `kaptyorka hub` for the open session and show the answer as a toast, and the prompt footer shows **hub**, **hub off** or **hub ✗** like Claude Code's status line (`kaptyorka hub-state opencode:<session id>`). On OpenCode 2 the old `commands/hub.md` is removed (only kaptyorka's own), since OpenCode would list it next to the plugin's `/hub`; OpenCode 1 is unchanged. A folder or file of that name that kaptyorka did not write is left alone; `leave` removes only its own. The bridge writes it at start.
 - **`kaptyorka doctor` on OpenCode 2** checks the TUI plugin for `tool: opencode /hub`, and "opencode server" fails while OpenCode 2 runs without its background service (`--standalone` or the service disabled), with `opencode service start` as the fix.
+- **The hub indicator no longer says "hub off" for a session that joined with `/hub team [project]` in a personal folder** (Claude Code's status line since 0.9.26, and the OpenCode 2 footer). The joined project counts, as for the bridge; `/hub off` still wins.
 
 ## 0.9.26
 
