@@ -6,9 +6,11 @@ from typing import Callable, List, Optional
 
 from kaptyorka.adapters.base import DeliveryError, Session, drop_hooks, is_our_hook, merge_json, write_atomic
 
-# (Cursor hook event, our command name, extra fields); beforeSubmitPrompt answers /hub
+# (Cursor hook event, our command name, extra fields); beforeSubmitPrompt answers /hub.
+# sessionStart's `additional_context` goes into a new chat's system context, from the user's
+# own ~/.cursor/hooks.json too (cursor.com/docs/agent/hooks, read 2026-11-20): the hub guide.
 HOOKS = (("stop", "stop", {"loop_limit": 5}), ("postToolUse", "tool", {}),
-         ("beforeSubmitPrompt", "prompt", {}))
+         ("beforeSubmitPrompt", "prompt", {}), ("sessionStart", "start", {}))
 SKILL_MARK = "<!-- written by kaptyorka; it rewrites this file -->"
 # Cursor runs a skill as /hub. The prompt hook answers /hub (on, off, team) before the
 # agent sees them; the text below is only for when it did not.
@@ -135,7 +137,7 @@ class CursorAdapter:
             if not isinstance(hooks, dict):
                 return False
             changed = drop_hooks(hooks, lambda e: is_our_hook(e.get("command", ""), "cursor",
-                                                              ("stop", "tool", "prompt")),
+                                                              ("stop", "tool", "prompt", "start")),
                                     nested=False)
             if changed and not hooks:
                 del data["hooks"]

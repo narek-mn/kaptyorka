@@ -147,7 +147,8 @@ def test_messages_are_not_pushed_and_hooks_are_silent(team, alice_box, home, pro
     stdin = json.dumps({"session_id": "s1", "cwd": "/w/proj-a"})
     for event in ("start", "prompt", "stop"):
         assert hook.main("claude-code", event, stdin) == 0
-    assert capsys.readouterr().out == ""
+    # only the start hook says so, from this machine alone (guide.py)
+    assert capsys.readouterr().out == "kaptyorka hub: this session is off the hub; /hub on brings it back.\n"
 
 
 def test_started_with_env_off_is_never_reported(team, alice_box, home, procs,  # noqa: F811

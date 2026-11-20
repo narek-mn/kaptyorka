@@ -283,13 +283,16 @@ def test_shim_refuses_a_personal_folder_locally(hub, home, monkeypatch):
     assert hub.store.agent("claude:9") is None
 
 
-def test_hooks_are_silent_in_a_personal_folder(home, monkeypatch):
+def test_hooks_send_nothing_in_a_personal_folder(home, monkeypatch):
     paths.save_config({"hub": "http://h", "token": "t", "machine": "pc"})
     offhub.save_team({"proj-a"}, set())
     calls = []
     monkeypatch.setattr(http, "request", lambda *a, **k: calls.append(a) or (200, "brief"))
     stdin = json.dumps({"session_id": "s1", "cwd": "/w/diary"})
-    assert hook._run("codex", "start", stdin) == ""
+    out = json.loads(hook._run("codex", "start", stdin))  # only the local guide (guide.py)
+    assert out["hookSpecificOutput"]["additionalContext"].startswith(
+        "kaptyorka hub: this folder is personal")
+    assert hook._run("codex", "prompt", stdin) == ""
     assert calls == []
     stdin = json.dumps({"session_id": "s1", "cwd": "/w/proj-a"})
     assert "brief" in hook._run("codex", "start", stdin)

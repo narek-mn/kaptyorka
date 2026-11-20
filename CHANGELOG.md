@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **A short hub guide at session start, so nobody has to remember `/hub team`.** In a personal folder the agent hears, at most 500 characters, built on this machine alone (no hub call): only when the request touches a team project, a teammate, a team machine or the hub, suggest `/hub team <project>` (with the person's own projects) or `/hub team` to coordinate, once, and `join_team` only after a yes; nothing for personal work. A team project's start brief gets one line (private work: `/hub off`), a coordinator's the "name a project for notes and work" line, and an off session only that it is off. Codex says `$hub`. Delivered by the tools' own user-level hooks: Claude Code's and Codex's `SessionStart`, OpenCode's plugin system text, and a new Cursor `sessionStart` hook in `~/.cursor/hooks.json` (written at bridge start, removed by `leave`).
 - **Auto-update is on for admins' machines too.** Before, a machine owned by an admin did not update itself when the hub got newer; now every machine does unless its setting says off.
 
 ## 0.9.27

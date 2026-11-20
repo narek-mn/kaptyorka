@@ -9,7 +9,7 @@ import time
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import facts, http, offhub, optin, paths
+from kaptyorka import facts, guide, http, offhub, optin, paths
 from kaptyorka.identity import Identity, identify, project_of
 
 TIMEOUT_S = 3
@@ -68,6 +68,14 @@ def _hub_line(ident: Identity, words: List[str], run) -> str:
     except Exception:
         return ""
     return (r.stdout or "").strip()
+
+
+def _local(fmt, event: str, text: str, shown: str) -> str:
+    """What a hook prints for a text built on this machine, with Codex's state line."""
+    out = fmt(event, text) if text else ""
+    if shown:
+        return json.dumps({**(json.loads(out) if out else {}), "systemMessage": shown})
+    return out
 
 
 def _git_query(cwd: str, run, deadline: float) -> str:
@@ -135,17 +143,35 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
         shown = ""
         if tool == "codex" and event == "start":
             shown = _hub_line(ident, [], run)  # Codex shows no status line: say it at start
-            if offhub.personal(ident.project, ident.cwd, ident.key) or offhub.off(ident.key):
-                return json.dumps({"systemMessage": shown}) if shown else ""
-        if offhub.personal(ident.project, ident.cwd, ident.key):
-            return ""  # not a team project's folder: nothing is sent, nothing is shown
+        # The hub guide (guide.py), built here alone, through each tool's own user-level path:
+        # Claude Code adds a SessionStart hook's plain stdout to the context
+        # (code.claude.com/docs/en/hooks, read 2026-11-20); Codex hands SessionStart's
+        # hookSpecificOutput.additionalContext to the model (openai/codex rust-v0.166.0,
+        # codex-rs/hooks/src/events/session_start.rs:264, engine/output_parser.rs:93); the
+        # OpenCode plugin pushes this text into the system prompt (v1.19.6
+        # experimental.chat.system.transform, packages/plugin/src/index.ts:291; v2.3.2
+        # session.hook("context") event.system, packages/plugin/src/promise/session.ts:35),
+        # rebuilt for every request, so there it comes with each prompt; Cursor's sessionStart
+        # additional_context (adapters/cursor.py).
+        guided = event == "start" or (tool == "opencode" and event == "prompt")
+        why = offhub.personal(ident.project, ident.cwd, ident.key)
+        if why:  # not a team project's folder: nothing is sent, only the guide is shown
+            text = ""
+            if guided and offhub.off(ident.key):
+                text = guide.off(ident.key)
+            elif guided and why == paths.NOT_TEAM:
+                text = guide.personal(ident.key, offhub.load_mine())
+            return _local(fmt, event, text, shown)
         if tool == "claude-code":
             sid = ident.key.split(":", 1)[1]
             found = offhub.session(sid) if event == "start" else None
             if found is not None:
                 offhub.started(sid, *found, os.environ)
-        if offhub.off(ident.key):
-            return ""  # kept off the hub: nothing is sent, nothing is shown
+        if offhub.off(ident.key):  # kept off the hub: nothing is sent, only its one line
+            return _local(fmt, event, guide.off(ident.key) if guided else "", shown)
+        joined = optin.get(ident.key) is not None
+        if tool == "cursor" and event == "start":  # its brief comes with tool calls, not here
+            return _local(fmt, event, guide.on_hub(ident.key, ident.project, joined), shown)
 
         deadline = time.monotonic() + TIMEOUT_S  # one budget for all calls of this hook
 
@@ -170,6 +196,8 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
         status, brief = get(f"/api/brief?event={event}")
         if status != 200 or not isinstance(brief, str):
             brief = ""
+        if brief and event == "start":
+            brief += "\n\n" + guide.on_hub(ident.key, ident.project, joined)
         brief = "\n\n".join(p for p in (reason, brief) if p)
         if shown:
             return json.dumps({**(json.loads(fmt(event, brief)) if brief else {}),

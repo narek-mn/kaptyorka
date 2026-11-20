@@ -267,7 +267,7 @@ The old shared token cannot start, adopt or close workers. Use your own token.
 
 ## Only team projects reach the hub
 
-A session shows on the hub only when its folder is a team project: one the admin registered (a `<folder>--N` worktree counts as its project). Every other folder is personal and stays on your machine, as if it were switched off with `/hub off`: no presence, no folder name, no status, no git activity, no notes, no messages and no files. Its kaptyorka tools refuse, saying the folder is not a team project and how to put the session on the team (`/hub team`, below), and its hooks print nothing. So nobody on the hub can message it either.
+A session shows on the hub only when its folder is a team project: one the admin registered (a `<folder>--N` worktree counts as its project). Every other folder is personal and stays on your machine, as if it were switched off with `/hub off`: no presence, no folder name, no status, no git activity, no notes, no messages and no files. Its kaptyorka tools refuse, saying the folder is not a team project and how to put the session on the team (`/hub team`, below), and its hooks send nothing; they only give the agent the short hub guide (below). So nobody on the hub can message it either.
 
 - When the admin registers a project, sessions in its folder appear within about 10 seconds. When the admin removes it, they disappear again.
 - A copy of a project in a folder with another name counts too, when the project was registered with its repo (`--repo`): a linked worktree, a branch clone such as `proj-a-fix-login`, or a submodule whose git remote (any remote) is that repo. The URLs match whatever the scheme, user, port, trailing `.git` or case of the host (`http://gitserver:8000/group/proj-a.git` and `ssh://git@gitserver:2222/group/proj-a.git` are the same repo). The bridge, the tools and the hooks decide this on the machine: the hub sends only a fingerprint (sha256) of each registered repo, and the machine reads its own git config to compare; no remote or path of any other folder leaves it. When the folder name is a team project itself, the name decides, as before. A project with no repo stored matches by its folder name only.
@@ -286,6 +286,17 @@ Sometimes a session in another folder works for the team: a coordinator on your 
 - The same works in OpenCode and Cursor (`/hub team ...`) and Codex (`$hub team ...`). Or the agent calls the `join_team(project)` tool (`""` to coordinate, `"off"` to leave), only when you asked it to. A tool call from a personal folder answers with how to do this and the projects you have a role in, for the agent to offer to you; it never switches on its own.
 - Nothing of the folder goes to the hub, even then: no folder name, no path, no git activity, no file list. Only the session itself, under the project it chose.
 - The choice is kept per session on this machine (`~/.kaptyorka/team/`), so it survives a restart of the kaptyorka tools in that session, and ends with the session. Other sessions in the same folder stay personal.
+
+### The hub guide at session start
+
+Nobody has to remember these commands. At the start of each session, kaptyorka gives the agent a short guide (at most 500 characters), built on your machine from that session's own state; nothing about the folder or the session goes to the hub for it.
+
+- **Personal folder:** only when your request touches a team project, a teammate, a team machine or the hub, the agent suggests `/hub team <project>` (naming your own projects, as the bridge last saved them) or `/hub team` to coordinate. It suggests once, never switches on its own, and calls `join_team` only after you say yes. On purely personal work it says nothing.
+- **Team project folder:** the hub's own start brief, plus one line: for private work here, `/hub off`.
+- **Coordinator:** the hub's brief, plus: name a project for notes and work.
+- **Off (`/hub off`):** only that it is off and `/hub on` brings it back.
+
+Codex says `$hub` instead of `/hub`. It arrives through each tool's own user-level hook, never a file in your project: Claude Code's `SessionStart` hook, Codex's `SessionStart` hook (`additionalContext`), OpenCode's plugin (its system text, with every request) and Cursor's `sessionStart` hook in `~/.cursor/hooks.json` (`additional_context`). Cursor has no start brief from the hub, so a team folder there gets only the `/hub off` line.
 
 ## Keep a session off the hub
 

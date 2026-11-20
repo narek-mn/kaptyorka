@@ -214,12 +214,16 @@ def test_codex_start_says_the_state(joined, monkeypatch, capsys):
     hook.main("codex", "start", stdin, run=cli)
     out = json.loads(capsys.readouterr().out)
     assert out["systemMessage"] == "this session is on the hub"
-    assert out["hookSpecificOutput"]["additionalContext"] == "the brief"
+    assert out["hookSpecificOutput"]["additionalContext"] == (
+        "the brief\n\nkaptyorka hub: for private work here, suggest $hub off: then nothing from"
+        " this session goes to the hub ($hub on brings it back).")
     offhub.switch_key("codex:t-1", True)
     monkeypatch.setattr(hook.http, "request", lambda *a, **k: pytest.fail("no hub call"))
     hook.main("codex", "start", stdin, run=cli)
     assert json.loads(capsys.readouterr().out) == {
-        "systemMessage": "this session is off the hub; type $hub on to come back"}
+        "systemMessage": "this session is off the hub; type $hub on to come back",
+        "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext":
+                               "kaptyorka hub: this session is off the hub; $hub on brings it back."}}
 
 
 def test_cursor_prompt_hook_answers_slash_hub(joined, monkeypatch, capsys):
@@ -256,13 +260,16 @@ def test_codex_dollar_hub_team_gets_the_join_time(joined, monkeypatch, capsys):
     assert seen == [(["hub", "team", "proj-a"], hook.HUB_TEAM_S, "codex:t-1")]
 
 
-def test_an_off_opencode_session_hook_is_silent(joined, monkeypatch, capsys):
+def test_an_off_opencode_session_hook_says_only_its_line(joined, monkeypatch, capsys):
     monkeypatch.setattr(hook, "identify", lambda machine, workspace=None:
                         Identity("opencode:ses_1", machine, "opencode", "proj-a", "/w/proj-a"))
     monkeypatch.setattr(hook.http, "request", lambda *a, **k: pytest.fail("no hub call"))
     offhub.switch_key("opencode:ses_1", True)
-    for event in ("start", "prompt"):
+    line = "kaptyorka hub: this session is off the hub; /hub on brings it back.\n"
+    for event in ("start", "prompt"):  # OpenCode rebuilds its system text for each request
         hook.main("opencode", event, "")
+        assert capsys.readouterr().out == line
+    hook.main("opencode", "stop", "")
     assert capsys.readouterr().out == ""
 
 
