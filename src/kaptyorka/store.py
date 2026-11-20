@@ -1713,6 +1713,13 @@ class Store:
         if match:
             return match[:1]
         people = self._people()
+        if to.startswith("web:") and not limited and viewer is not None:
+            # an admin or the manager may name any person's page, written from it or not
+            p = self.db.execute("SELECT name FROM people WHERE lower(name)=lower(?) AND team=0"
+                                " AND removed_at IS NULL", (to[4:],)).fetchone()
+            if p is not None:
+                return [{"key": f"web:{p['name']}", "name": p["name"], "machine": "", "tool": "",
+                         "project": ""}]
         person = next((p for p in people if p.lower() == to.lower()), None)
         if person is not None:  # a person on the web page: they read replies there
             return [{"key": f"web:{person}", "name": person, "machine": "", "tool": "", "project": ""}]

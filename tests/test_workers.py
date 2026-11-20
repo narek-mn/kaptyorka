@@ -720,7 +720,8 @@ def test_warnings_texts_and_order(store, ws, alice, bob, clock):
     assert [w["text"] for w in got] == [
         "worker w3 on box-2 failed to start: no tmux",
         "bridge on bob@box-3 has been offline for 125 minutes",
-        "alice@box-1 runs kaptyorka 0.2.9; the hub runs 0.3.0",
+        "alice@box-1 runs kaptyorka 0.2.9; the hub runs 0.3.0 (auto-update has not run yet)."
+        " Run `kaptyorka update` there.",
         "claude-code on alice@box-1 is set up but its kaptyorka hooks are missing",
         f"worker w1 on box-1 is unattended since {hhmm}",
         "worker w2 on box-1 was abandoned",
@@ -730,6 +731,10 @@ def test_warnings_texts_and_order(store, ws, alice, bob, clock):
     assert got[1]["host"] == "box-3" and got[1]["os_user"] == "bob"
     # only a failed launch and an offline bridge stop the person working (Home shows those)
     assert [w["blocks"] for w in got] == [True, True, False, False, False, False, False]
+    # the few words the Machines page shows on the account's row
+    assert [w["short"] for w in got] == [
+        "worker w3 failed", "bridge offline", "kaptyorka 0.2.9 \u00b7 hub 0.3.0",
+        "claude-code hooks missing", "worker w1 unattended", "worker w2 abandoned", "no tmux"]
 
 
 def test_warnings_none_when_healthy_and_skip_revoked_legacy(store, ws, alice, clock):
@@ -750,7 +755,8 @@ def test_warnings_old_version_from_device_row_without_facts(store, ws, alice, cl
     a = device(store, alice, "box-1", "alice")[0]
     store.db.execute("UPDATE devices SET version='0.2.1' WHERE id=?", (a,))
     assert [w["text"] for w in ws.warnings(clock[0], "0.3.0")] == [
-        "alice@box-1 runs kaptyorka 0.2.1; the hub runs 0.3.0"]
+        "alice@box-1 runs kaptyorka 0.2.1; the hub runs 0.3.0 (auto-update has not run yet)."
+        " Run `kaptyorka update` there."]
 
 
 def test_bridge_gone_an_hour_closes_its_workers(store, ws, alice, alice_p, boss, clock):
@@ -956,3 +962,67 @@ def test_no_offline_warning_without_bridge_facts(store, ws, alice, clock):
     store.db.execute("UPDATE devices SET last_used=? WHERE id IN (?,?)", (clock[0] - 125 * 60, m, b))
     got = [w["text"] for w in ws.warnings(clock[0], "0.3.0")]
     assert got == ["bridge on alice@box-2 has been offline for 125 minutes"]
+
+
+def test_old_version_reason_is_short_and_fixed(store, ws, alice, clock):
+    a = device(store, alice, "box-1", "alice")[0]
+    # the bridge sends a fixed reason; anything else (raw output, a path) is dropped
+    ws.facts_seen(a, {"version": "0.2.9", "update_failed": "/home/alice/.local: denied"}, {})
+    assert "update_failed" not in ws.facts(a)
+    ws.facts_seen(a, {"version": "0.2.9", "update_failed": "not installed with pipx"}, {})
+    w = ws.warnings(clock[0], "0.3.0")[0]
+    assert w["text"] == ("alice@box-1 runs kaptyorka 0.2.9; the hub runs 0.3.0 (not installed"
+                         " with pipx). Run `kaptyorka update` there.")
+    assert w["short"] == "kaptyorka 0.2.9 \u00b7 not installed with pipx"
+    assert w["reason"] == "not installed with pipx" and w["version"] == "0.2.9"
+    ws.facts_seen(a, {"version": "0.2.9"}, {})
+    ws.set_auto_update(a, False)
+    w = ws.warnings(clock[0], "0.3.0")[0]
+    assert w["reason"] == "auto-update is off for this machine"
+    assert w["short"] == "kaptyorka 0.2.9 \u00b7 auto-update off"
+    store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (clock[0] - 3600, a))
+    got = ws.warnings(clock[0], "0.3.0")
+    assert [x["reason"] for x in got if "reason" in x] == ["bridge offline"]
+
+
+def test_update_reason_maps_raw_errors():
+    from kaptyorka import paths
+    assert paths.update_reason("auto-update failed: Command 'x' timed out after 600 seconds") \
+        == "auto-update timed out"
+    assert paths.update_reason("auto-update failed: kaptyorka was not installed with pipx;"
+                               " update it the way you installed it") == "not installed with pipx"
+    assert paths.update_reason("auto-update failed: no newer release found") == "no newer release found"
+    assert paths.update_reason("auto-update failed: /home/alice/x: Permission denied") \
+        == "auto-update failed"
+
+
+def test_warnings_for_scopes_by_viewer(store, ws, alice, bob, clock):
+    """A member sees their own accounts, the team machines they may use (hidden ones not)
+    and their own workers; never another person's. The admin sees all."""
+    from helpers import person
+    team = person(store, "lab", "member")[0]
+    store.db.execute("UPDATE people SET team=1 WHERE id=?", (team,))
+    hidden = person(store, "lab2", "member")[0]
+    store.db.execute("UPDATE people SET team=1 WHERE id=?", (hidden,))
+    adm = person(store, "root", "admin")[0]
+    a = device(store, alice, "box-1", "alice")[0]
+    b = device(store, bob, "box-2", "bob")[0]
+    t = device(store, team, "box-3", "lab")[0]
+    h = device(store, hidden, "box-4", "lab2")[0]
+    for d in (a, b, t, h):
+        ws.facts_seen(d, {"version": "0.2.9"}, {})
+    store.team_machine_set_visible("lab2", "alice", False, "root")
+    _worker_row(store, "w1", a, "box-1", "abandoned", clock[0])
+    _worker_row(store, "w2", b, "box-2", "abandoned", clock[0])
+    store.db.execute("UPDATE workers SET boss_person=? WHERE name='w2'", (bob,))
+    store.db.execute("UPDATE workers SET boss_person=? WHERE name='w1'", (alice,))
+    mine = ws.warnings_for(principal(store, alice), clock[0], "0.3.0")
+    hosts = sorted((w["host"], w["person"]) for w in mine)
+    assert ("box-2", "bob") not in hosts and not any(w["person"] == "bob" for w in mine)
+    assert ("box-1", "alice") in hosts and ("box-3", "") in hosts  # the team machine, no name
+    assert not any(w["host"] == "box-4" for w in mine)  # hidden from alice: the hide list wins
+    assert any("w1" in w["text"] for w in mine)
+    assert not any("w2" in w["text"] for w in mine)
+    assert all("device_id" not in w and "boss_id" not in w for w in mine)
+    assert len(ws.warnings_for(principal(store, adm), clock[0], "0.3.0")) \
+        == len(ws.warnings(clock[0], "0.3.0"))

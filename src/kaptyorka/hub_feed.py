@@ -118,7 +118,8 @@ def feed(store: Store, principal: Principal, ws=None, cs=None) -> dict:
         "doors": doors,
     }
     if not admin and ws is not None:  # only what blocks this person; the admin has /api/warnings
-        out["warnings"] = [w for w in ws.warnings(now, __version__) if w["person"] == me]
+        out["warnings"] = [w for w in ws.warnings_for(principal, now, __version__)
+                           if w["person"] == me]
     if admin:
         members, grants, hidden = store.project_members(), store.machine_grants(), store.team_hidden()
         sides = (("_from", "from_session"), ("_to", "target"))

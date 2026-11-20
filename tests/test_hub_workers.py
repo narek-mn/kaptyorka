@@ -413,7 +413,8 @@ def test_auto_update_route_and_machine_rows(hub, alice):
     assert heartbeat(hub, b.token, "box-1")[1]["auto_update"] is True  # a member's default
     assert [r["detail"] for r in hub.store.log() if r["kind"] == "auto_update"] == [
         "box-1 (alice) default", "box-1 (alice) off"]  # newest first
-    assert http.request("GET", hub.url + "/api/warnings", client.token)[0] == 403
+    status, warnings = http.request("GET", hub.url + "/api/warnings", client.token)
+    assert status == 200 and all(w["person"] == "alice" for w in warnings)  # her own only
     status, warnings = http.request("GET", hub.url + "/api/warnings", ADMIN)
     assert status == 200 and isinstance(warnings, list)
 
@@ -479,7 +480,12 @@ def test_member_sees_only_own_machine_logins(hub, alice):
     devices = {d["id"]: d for m in machines for d in m["devices"]}
     assert granted.device_id not in devices  # bob's account on a box she may use is bob's
     assert other.device_id not in devices and "box-3" not in [m.get("host") for m in machines]
-    assert http.request("GET", hub.url + "/api/warnings", client.token)[0] == 403
+    for b in (granted, other):  # bob's accounts fall behind: his warnings, never hers to see
+        heartbeat(hub, b.token, "box-2", extra={"facts": {"host": "box-2", "os_user": "u",
+                                                          "version": "0.0.1"}})
+    assert any(w["person"] == "bob" for w in http.request("GET", hub.url + "/api/warnings", ADMIN)[1])
+    status, warnings = http.request("GET", hub.url + "/api/warnings", client.token)
+    assert status == 200 and warnings == []
 
 
 def test_machines_hide_other_peoples_folders_and_commits(hub, alice):

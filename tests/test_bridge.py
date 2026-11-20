@@ -786,6 +786,38 @@ def test_auto_update_timeout_counts_as_failure(hub, home, monkeypatch):
     assert len(seen) == 2
 
 
+def test_auto_update_failure_reaches_the_hub_as_a_short_reason(hub, home, monkeypatch):
+    from kaptyorka import http
+
+    b, runner, lines = update_bridge(hub, monkeypatch)
+    runner.rc, runner.stderr = 1, "/home/alice/.local/pipx: Permission denied"
+    sent = []
+    real = http.request
+
+    def spy(method, url, token, body=None, *a, **kw):
+        if url.endswith("/bridge/heartbeat"):
+            sent.append(body["facts"].get("update_failed"))
+        return real(method, url, token, body, *a, **kw)
+    monkeypatch.setattr(http, "request", spy)
+    b._step()
+    b.heartbeat()
+    assert sent[-1] == "auto-update failed"  # never the raw output: it names a path
+    assert any("Permission denied" in l for l in lines)  # the bridge log keeps the full text
+
+
+def test_update_that_finds_no_newer_release_is_a_failure(hub, home, monkeypatch):
+    b, runner, lines = update_bridge(hub, monkeypatch)
+    runner.calls = []
+
+    def latest(cmd, **kw):
+        runner.calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "kaptyorka 0.1 is already the latest\n", "")
+    b.runner = latest
+    b._step()
+    assert b._problems.get("update") == "auto-update failed: no newer release found"
+    assert b._updated_to == ""  # tried again later
+
+
 def test_bridge_fetches_skills_once_per_version(hub, home, monkeypatch):
     from kaptyorka import http, rules
 

@@ -38,6 +38,31 @@ def push_reason(error: str) -> str:
     return UNREACHABLE
 
 
+# Why a machine still runs an older kaptyorka than the hub: a short fixed reason, never the
+# update's own output (that can name paths and the OS user). The bridge sends one of the first
+# four in its facts; the hub decides the rest.
+UPDATE_FAILED = "auto-update failed"
+UPDATE_REASONS = (UPDATE_FAILED, "auto-update timed out", "not installed with pipx",
+                  "no newer release found")
+UPDATE_OFF = "auto-update is off for this machine"
+UPDATE_OFFLINE = "bridge offline"
+UPDATE_WAITING = "auto-update has not run yet"
+
+
+def update_reason(error: str) -> str:
+    """The short reason for a failed auto-update's raw error text (the bridge logs the full text)."""
+    text = (error or "").lower()
+    if text in UPDATE_REASONS:
+        return text
+    if "timed out" in text or "timeout" in text:
+        return UPDATE_REASONS[1]
+    if "not installed with pipx" in text:
+        return UPDATE_REASONS[2]
+    if "already the latest" in text or UPDATE_REASONS[3] in text:
+        return UPDATE_REASONS[3]
+    return UPDATE_FAILED
+
+
 def not_team_help(projects, hub: str = "/hub") -> str:
     """The refusal a tool call outside a team folder gets: how to join, for the agent to
     offer, never to do on its own. `projects`: the person's team projects, None when unknown."""

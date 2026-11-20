@@ -103,7 +103,8 @@ def test_no_function_name_is_declared_twice(hub):
 
 def test_member_page_makes_no_admin_fetch(hub):
     html = page(hub)
-    for fn in ("loadWarnings", "loadProposals", "loadGitlab"):
+    # loadWarnings is everyone's: /api/warnings answers a member with their own only
+    for fn in ("loadProposals", "loadGitlab"):
         body = html[html.index(f"function {fn}("):]
         assert "isAdmin()" in body[:body.index("\n  }")], fn
 
@@ -279,8 +280,8 @@ def test_machines_grouped_with_filter_chips(hub):
     html = page(hub)
     pane = re.search(r'id="pane-machines".*?id="a-machines-err"', html, re.S).group(0)
     chips = re.search(r'id="m-filter".*?</div>', pane, re.S).group(0)
-    assert re.findall(r'data-f="(\w+)"', chips) == ["all", "team", "mine", "online"]
-    assert re.findall(r'>(\w+)</button>', chips) == ["All", "Team", "Mine", "Online"]
+    assert re.findall(r'data-f="(\w+)"', chips) == ["all", "team", "mine", "online", "warnings"]
+    assert re.findall(r'>(\w+)</button>', chips) == ["All", "Team", "Mine", "Online", "Warnings"]  # Warnings shows only with some
     assert 'id="m-scope"' not in html and 'id="team-machine-rows"' not in html and "mScope" not in html
     assert "Give to" not in html and '"/move"' not in html and "giveMachine" not in html
     code = html[html.index("function machineHosts()"):html.index("function renderAccount()")]

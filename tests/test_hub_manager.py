@@ -1430,3 +1430,88 @@ def test_a_queue_report_going_stale_mid_request_does_not_crash(hub, monkeypatch)
     assert ask(hub, bob).startswith("busy: box-1 is in use by the GPU queue (10/10 in use)")
     text = inbox(mgr, me)[0]
     assert "GPU queue: alice 10/10 (names for admins only; to anyone else say: 10/10 in use)" in text
+
+
+# an old kaptyorka on a machine: the manager tells its person, once per hub version
+
+def old_beat(hub, d, version="0.0.1", **facts):
+    body = {"machine": HOST, "sessions": [], "tools": [],
+            "facts": {"host": HOST, "os_user": d.os_user, "version": version, **facts}}
+    assert http.request("POST", hub.url + "/bridge/heartbeat", d.token, body)[0] == 200
+
+
+def old_texts(mgr, me):
+    return [t for t in inbox(mgr, me) if t.startswith("old kaptyorka:")]
+
+
+def test_old_version_tells_the_manager_once_after_half_an_hour(hub, clock):
+    mgr, me = manager_online(hub)
+    bob_id, _ = member(hub, "bob", role=None)
+    d = device(hub, bob_id, "bob")
+    old_beat(hub, d, update_failed="auto-update failed")
+    hub.tick()
+    assert old_texts(mgr, me) == []  # the hub just started: bridges get time to update
+    clock[0] += 1801
+    old_beat(hub, d, update_failed="auto-update failed")
+    run(call(mgr, me, "inbox"))  # the manager's session stays online
+    hub.tick()
+    v = kaptyorka.__version__
+    assert old_texts(mgr, me) == [
+        f"old kaptyorka: bob@{HOST} runs 0.0.1, the hub runs {v} (auto-update failed). Send bob"
+        f" one short message (their online session, else their page web:bob) naming bob@{HOST},"
+        " the reason, and `kaptyorka update` to run there. Once; never repeat it."]
+    clock[0] += 60
+    old_beat(hub, d)
+    hub.tick()
+    assert old_texts(mgr, me) == []  # never twice for this hub version
+
+
+def test_old_version_with_the_manager_off_sends_nothing_and_waits(hub, clock):
+    bob_id, _ = member(hub, "bob", role=None)
+    d = device(hub, bob_id, "bob")
+    clock[0] += 1801
+    old_beat(hub, d)
+    hub.tick()
+    with hub.store.lock:
+        assert hub.store.db.execute("SELECT COUNT(*) FROM manager_pushes WHERE key LIKE"
+                                    " 'old-version:%'").fetchone()[0] == 0
+    mgr, me = manager_online(hub)  # switched on later: the machine is still behind
+    old_beat(hub, d)
+    hub.tick()
+    assert len(old_texts(mgr, me)) == 1
+
+
+def test_old_version_wakes_a_sleeping_manager(hub, clock):
+    b = asleep_manager(hub, clock)
+    bob_id, _ = member(hub, "bob", role=None)
+    d = device(hub, bob_id, "bob")
+    old_beat(hub, d)
+    hub.tick()  # the notice is queued for its last session: that is work
+    texts = woken(hub, b)
+    assert any("old kaptyorka: bob@box-1 runs 0.0.1" in t and "(auto-update has not run yet)" in t
+               for t in texts)
+
+
+def test_manager_reaches_a_person_page_by_name(hub, clock):
+    """The notice says: their page when no session is online. The manager's send reaches it."""
+    mgr, me = manager_online(hub)
+    member(hub, "bob", role=None)
+    with hub.store.lock:
+        hub.store.db.execute("DELETE FROM agents WHERE person_id=(SELECT id FROM people"
+                             " WHERE name='bob')")
+    assert run(call(mgr, me, "send", to="web:bob", text="please run kaptyorka update")) \
+        == "sent to 1 session"
+    assert "please run kaptyorka update" in page_texts(hub, "bob")
+    _, _, cat = plain(hub, "cat")  # a member cannot name a page this way
+    C = ident("k:cat", project="proj-b", machine="pc-3")
+    run(call(cat, C, "inbox"))
+    assert "web:bob" in call_error(cat, C, "send", to="web:bob", text="hi")
+
+
+def test_manager_claude_md_is_rewritten_when_its_wording_changes(hub):
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    md = hub.folder / "CLAUDE.md"
+    md.write_text(md.read_text().replace(manager.OLD_VERSION_SECTION, ""))
+    hub.tick()  # an updated hub: the new section lands without a rules change
+    assert manager.OLD_VERSION_SECTION in md.read_text()

@@ -34,12 +34,13 @@ from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
 from kaptyorka.memory import MemoryStore, check_state
 from kaptyorka.secrets_check import check_secrets
-from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, attach_line, clean
+from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, attach_line, clean, machine_name
 from kaptyorka.workers import LIVE, MAX_FACT, STARTUP_S, WorkerStore, _git as clean_git, clean_facts, safe_name
 
 MAX_WAIT_S = 25
 TICK_S = 15
 ARRIVAL_GAP_S = 600  # no own session on a host this long: the next one is an arrival
+OLD_VERSION_S = 1800  # a machine behind the hub this long after the hub started: the manager tells
 OWN_TOKEN = ("use your own device token: run kaptyorka join with an invite, or ask the admin to"
              " assign this machine")
 REMOVED = "{project} was removed; ask the admin to register it again"
@@ -72,6 +73,20 @@ MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
     ("DELETE", r"/api/gitlab"),
 )]
 SIGN_IN_FIRST = "the page needs a GitLab sign-in: open the hub in a browser and sign in with GitLab"
+
+
+def old_version_text(w: dict, admins: List[str]) -> str:
+    """The manager's notice for one machine behind the hub (a WorkerStore.warnings row): the
+    machine, its person and the short fixed reason, never the update's own output."""
+    who = machine_name("", w["os_user"], w["host"], w["host"])
+    head = (f"old kaptyorka: {who} runs {w['version']}, the hub runs {__version__}"
+            f" ({w['reason']}).")
+    if w.get("team"):
+        return (head + f" It is a team machine: tell each admin ({', '.join(admins)}) in one"
+                " line to run `kaptyorka update` there. Once; never repeat it.")
+    return (head + f" Send {w['person']} one short message (their online session, else their"
+            f" page web:{w['person']}) naming {who}, the reason, and `kaptyorka update` to run"
+            " there. Once; never repeat it.")
 
 
 def machine_route(method: str, path: str) -> bool:
@@ -320,8 +335,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     store.device_revoke(d["id"], "hub")
             token = mm.ensure_account(host, "hub")
         rules_now = rs.current()
+        md = folder / "CLAUDE.md"  # a hub update with new manager wording rewrites it too
         if token or mm.rules_written_version() != rules_now["version"] \
-                or not (folder / "CLAUDE.md").exists():
+                or not md.exists() or md.read_text() != manager.claude_md(rules_now["text"]):
             folder.mkdir(mode=0o700, parents=True, exist_ok=True)
             mm.write_files(folder, manager_url, token, rules_now["text"])
             mm.mark_rules_written(rules_now["version"])
@@ -398,6 +414,24 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         keep_manager(now)
         manager_pushes(now)
         arrivals(now)
+        old_versions(now)
+
+    def old_versions(now: float) -> None:
+        """A machine still on an older kaptyorka half an hour after the hub started this
+        version: the manager tells its person, once per machine and hub version. It is work,
+        so it wakes a sleeping manager; switched off, nothing is sent and nothing is marked
+        (the Machines page shows the warning anyway)."""
+        if now < ws.started + OLD_VERSION_S:
+            return
+        old = [w for w in ws.warnings(now, __version__)
+               if w.get("reason") and w["person"] and w["person"] != manager.PERSON]
+        key = manager_to_wake() if old else None
+        if key is None:
+            return
+        for w in old:
+            if not mm.push_once(f"old-version:{w['device_id']}:{__version__}", now):
+                continue
+            tell(key, old_version_text(w, admin_ops.admins(store)))
 
     def arrivals(now: float) -> None:
         """A person's first own session on a host (none there for ARRIVAL_GAP_S) while someone
@@ -1806,10 +1840,14 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     @server.custom_route("/api/warnings", methods=["GET"])
     async def api_warnings(request: Request) -> Response:
-        denied = admin_only(request)
-        if denied:
-            return denied
-        return JSONResponse(ws.warnings(store.clock(), __version__))
+        """The Machines page's warnings: an admin's all, anyone else's only their own accounts,
+        their workers and the team machines they may use (WorkerStore.warnings_for)."""
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None:
+            return PlainTextResponse("unauthorized", status_code=401)
+        if admin_only(request) is None:  # the admin (the shared admin token too) sees all
+            return JSONResponse(ws.warnings(store.clock(), __version__))
+        return JSONResponse(ws.warnings_for(principal, store.clock(), __version__))
 
     @server.custom_route("/api/machines", methods=["GET"])
     async def api_machines(request: Request) -> Response:

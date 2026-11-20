@@ -140,9 +140,21 @@ def write_launch_files(dir: Path, kaptyorka: str) -> bool:
     return changed
 
 
+# Old kaptyorka on a machine (its own section, kept apart from MANAGER_SECTION).
+OLD_VERSION_SECTION = """## Old kaptyorka on a machine
+
+- The hub tells you once when a machine still runs an older kaptyorka than the hub half an \
+hour after the hub updated; the notice names the machine, its person and a short reason. Send \
+that person one short message with `send`: to their online session, else to their page \
+`web:<name>`. Name the machine and the reason, and ask them to run `kaptyorka update` there. \
+For a team machine, tell each admin instead. Never repeat it; the hub sends each machine once \
+per hub version.
+"""
+
+
 def claude_md(rules_text: str) -> str:
     return (rules.rules_text(rules_text) or "No team rules yet.") + "\n\n# Manager\n\n" \
-        + MANAGER_SECTION
+        + MANAGER_SECTION + "\n" + OLD_VERSION_SECTION
 
 
 def ensure_schema(db) -> None:
