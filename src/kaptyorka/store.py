@@ -1299,11 +1299,20 @@ class Store:
                               " AND host!='' ORDER BY id DESC LIMIT 1", (person_id,)).fetchone()
         return "" if row is None else row["host"]
 
-    def _reports_manager(self, principal, held_person) -> bool:
-        """True when `principal` is the admin's own bridge on the manager's host and the held
-        session is the manager's: only that bridge may report it. No lock."""
-        if principal.role != "admin" or principal.legacy or principal.shared \
-                or self._role_of(held_person) != "manager":
+    def _reports_manager(self, principal, held_person, key: str) -> bool:
+        """True when the held session is the manager's and `principal` is the bridge that runs
+        it: the device the live manager worker with this key was launched on (the hub picks
+        that device: the hub's own OS user's bridge, an admin's or the hub key's), or, for a
+        manager no worker row names, the admin's own bridge on the manager's host. No lock."""
+        if principal.legacy or self._role_of(held_person) != "manager":
+            return False
+        try:
+            if self.db.execute("SELECT 1 FROM workers WHERE manager=1 AND key=? AND device_id=?"
+                               " AND closed_at IS NULL", (key, principal.device_id)).fetchone():
+                return True
+        except sqlite3.OperationalError:  # a store without the workers table
+            pass
+        if principal.role != "admin" or principal.shared:
             return False
         host = self._manager_host(held_person)
         return bool(host) and self._host_of_device(principal.device_id) == host
@@ -1394,7 +1403,8 @@ class Store:
                 others = principal is not None and held is not None and not (
                     principal.shared and held["device_id"] == principal.device_id) \
                     and held["person_id"] not in (None, principal.person_id)
-                manager_held = others and self._reports_manager(principal, held["person_id"])
+                manager_held = others and self._reports_manager(principal, held["person_id"],
+                                                                s["key"])
                 if others and not manager_held:
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],

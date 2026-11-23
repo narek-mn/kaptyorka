@@ -1020,3 +1020,17 @@ def test_manager_waiting_on_the_trust_dialog_fails_as_untrusted(team):
     calls.clear()
     team.launcher.run = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", "")
     assert team.bridge._no_show("manager", order).startswith("the session did not show up")
+
+
+def test_a_launch_order_before_the_first_heartbeat_answer_waits(team):
+    """Right after a start or a hub restart the bridge does not know whose account it is yet:
+    the order waits (no ack, not run, not remembered) instead of "belongs to None"."""
+    team.work()
+    item = team.order()
+    team.bridge.hub = {}  # the heartbeat has not answered yet
+    team.bridge._order(item)
+    assert team.acks == [] and team.popen.calls == [] and item["id"] not in team.bridge.seen_ids
+    assert any("waits for the hub's heartbeat answer" in line for line in team.lines)
+    team.bridge.heartbeat()  # the answer names the account
+    team.bridge._order(item)
+    assert team.acks == [(item["id"], True, True, "")] and len(team.popen.calls) == 1

@@ -83,8 +83,14 @@ def test_real_manager_session(monkeypatch):
     try:
         RulesStore(store).set_rules(RULES, "test")
         aid, _ = person(store, "root", "admin")
-        token, secret = store.invite_redeem(store.invite_create(aid), "box-1", host="box-1",
+        # like the real hub: the manager runs through the bridge of the hub key's person, a
+        # team machine, not an admin (0.9.28 dropped that bridge's reports of the manager)
+        sid, _ = person(store, "svc", "member")
+        token, secret = store.invite_redeem(store.invite_create(sid), "box-1", host="box-1",
                                             os_user="u")
+        with store.lock:
+            store.db.execute("UPDATE people SET team=1 WHERE id=?", (sid,))
+        (khome / "admin-token").write_text(token + "\n")  # the hub key
         cfg = {"hub": url, "token": token, "secret": secret, "machine": "box-1"}
         lines = []
         adapter = ClaudeAdapter(home=real_home, log=lines.append)
@@ -137,6 +143,17 @@ def test_real_manager_session(monkeypatch):
                           "work_decide", request_id=rid, machine="wait", reason="slow test"))
         assert "wait" in answer, answer
         assert mm.request(rid)["decision"] == "wait"
+
+        # past the hub's gone window (about 90 s), with heartbeats every 2 s: still up, still
+        # reported, never judged crashed
+        start = time.monotonic()
+        while time.monotonic() - start < 120:
+            time.sleep(5)
+            w = WorkerStore(store).by_name("manager")
+            a = store.agent(agent.key)
+            assert w["state"] == "up" and w["key"] == agent.key, (w, lines)
+            assert store.clock() - a.last_seen < 30, (a, lines)
+        assert mm.crashes() == []
     finally:
         if bridge is not None:
             bridge.stop.set()

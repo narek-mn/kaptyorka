@@ -347,6 +347,12 @@ class Bridge:
             if problem:
                 raise LaunchError(problem)
             kind = order.get("kind")
+            if kind == "launch" and "you" not in self.hub:
+                # no heartbeat answer yet (just started, or the hub just restarted): whose
+                # account this is stays unknown, so leave the order unacked; the hub offers
+                # it again within a minute
+                self.log(f"order {oid} for worker {name} waits for the hub's heartbeat answer")
+                return
             if kind == "launch":
                 you = self.hub.get("you")
                 if order.get("person") != you and not self.hub.get("shared"):

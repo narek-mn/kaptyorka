@@ -9,3 +9,4 @@
 - No team names (people, projects, machines) in code, tests, fixtures or screenshots; use alice, bob, proj-a, box-1.
 - `Store.lock` is not reentrant: never call a locking store method from inside a `with self.lock` block.
 - Never run `kaptyorka` commands against the real machine (`~/.kaptyorka`, your Claude config, services). Try them only in tests or with `KAPTYORKA_HOME=<temp folder>` on a free port; never `start`, `join`, `leave`, `stop`, `update`, `remove` for real.
+- Before a release that touches the manager (launch, bridge reports, keep-alive), run `python3 tests/soak_manager.py` (about 18 minutes; sandboxed, real `claude`) and keep its `result.txt`.

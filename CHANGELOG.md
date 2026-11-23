@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **The manager stays up when a team machine runs it.** The hub took the manager's session reports only from an admin's own bridge, while the bridge that runs the manager can be the hub key's person's, a team machine. That bridge's reports were dropped, so the hub saw the manager only at its first tool call, judged it ended a minute and a half later, and started it again and again; messages to it were not pushed. Now the bridge that runs the live manager worker always reports its session. (Older versions had the same gap; a manager that went to sleep hid it.)
+- A launch order that comes before the bridge's first heartbeat answer (just after a start or a hub restart) waits for that answer instead of being refused with "this account belongs to None"; the hub offers it again within a minute.
+- `tests/soak_manager.py` runs a 16-minute soak of the real manager, built and installed with pipx in a sandbox, before a release that touches the manager.
+
 ## 0.9.28
 
 - **A short hub guide at session start, so nobody has to remember `/hub team`.** In a personal folder the agent hears, at most 500 characters, built on this machine alone (no hub call): only when the request touches a team project, a teammate, a team machine or the hub, suggest `/hub team <project>` (with the person's own projects) or `/hub team` to coordinate, once, and `join_team` only after a yes; nothing for personal work. A team project's start brief gets one line (private work: `/hub off`), a coordinator's the "name a project for notes and work" line, and an off session only that it is off. Codex says `$hub`. Delivered by the tools' own user-level hooks: Claude Code's and Codex's `SessionStart`, OpenCode's plugin system text, and a new Cursor `sessionStart` hook in `~/.cursor/hooks.json` (written at bridge start, removed by `leave`).

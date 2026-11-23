@@ -1647,3 +1647,56 @@ def test_a_long_run_that_ends_is_started_again_on_the_next_tick(hub, clock):
     assert hub.ws.by_name("manager")["state"] == "starting" and hub.mm.crashes() == []
     [o] = orders(hub, b)
     assert o["kind"] == "launch" and o["manager"] is True
+
+
+@pytest.mark.parametrize("team", [True, False])
+def test_the_bridge_that_runs_the_manager_keeps_reporting_it(hub, clock, monkeypatch, team):
+    """The hub key's person (a team machine) or an admin runs the manager: its bridge keeps the
+    manager's session online past the gone window, and messages to it are pushed."""
+    monkeypatch.setattr(manager.getpass, "getuser", lambda: "svc")
+    b = bridge_as(hub, "svc", "admin" if not team else "member", "svc", team=team)
+    write_hub_key(hub, b)
+    if team:
+        person(hub.store, "root", "admin")  # the human admin the manager reports to
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    ack(hub, b, o)
+    mtoken = json.loads(hub.config.read_text())["token"]
+    # its first tool call comes before the bridge links it: the row is the manager's own
+    hub.store.seen("claude:m1", f"manager@{HOST}", "claude-code", "manager",
+                   principal=hub.store.authenticate(mtoken))
+    assert http.request("POST", hub.url + "/bridge/worker", b.token,
+                        {"worker": "manager", "key": "claude:m1"})[0] == 204
+    seen = {"key": "claude:m1", "tool": "claude-code", "project": "manager",
+            "cwd": str(hub.folder), "label": "manager"}
+    for _ in range(12):  # 12 heartbeats of 15 s: three minutes, twice the gone window
+        clock[0] += 15
+        assert http.request("POST", hub.url + "/bridge/heartbeat", b.token,
+                            {"machine": HOST, "sessions": [seen], "tools": ["claude-code"],
+                             "facts": {"host": HOST, "os_user": "svc",
+                                       "version": kaptyorka.__version__}})[0] == 200
+        hub.tick()
+        assert state(hub) == "up", hub.ws.by_name("manager")
+    assert hub.mm.crashes() == [] and hub.mm.session_key(clock[0]) == "claude:m1"
+    assert hub.store.agent("claude:m1").person_id == hub.mm.person_id()  # still the manager's
+    _, ptoken = person(hub.store, "carol", "member")
+    assert http.request("POST", hub.url + "/api/send", ptoken,
+                        {"to": MGR_NAME, "text": "hello manager"})[0] == 200
+    status, items = http.request("GET", f"{hub.url}/bridge/poll?machine={HOST}", b.token)
+    assert status == 200
+    assert any(i.get("kind") == "message" and i["key"] == "claude:m1"
+               and "hello manager" in i["text"] for i in items)
+
+
+def test_a_manager_that_keeps_calling_the_hub_is_never_judged_gone(hub, clock):
+    """Its own tool calls are proof of life too: no bridge report needed."""
+    b = running_manager(hub)
+    mp = hub.store.authenticate(json.loads(hub.config.read_text())["token"])
+    for _ in range(10):  # ten minutes, a call a minute, the bridge listing no sessions
+        clock[0] += 60
+        beat(hub, b)
+        hub.store.seen("claude:m1", f"manager@{HOST}", "claude-code", "manager", principal=mp)
+        hub.tick()
+        assert state(hub) == "up"
+    assert hub.mm.crashes() == [] and [o for o in orders(hub, b) if o["kind"] == "launch"] == []
