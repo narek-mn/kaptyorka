@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.29
 
 - **The manager stays up when a team machine runs it.** The hub took the manager's session reports only from an admin's own bridge, while the bridge that runs the manager can be the hub key's person's, a team machine. That bridge's reports were dropped, so the hub saw the manager only at its first tool call, judged it ended a minute and a half later, and started it again and again; messages to it were not pushed. Now the bridge that runs the live manager worker always reports its session. (Older versions had the same gap; a manager that went to sleep hid it.)
 - A launch order that comes before the bridge's first heartbeat answer (just after a start or a hub restart) waits for that answer instead of being refused with "this account belongs to None"; the hub offers it again within a minute.
