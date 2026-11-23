@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.31
 
 - **A busy machine no longer shows live sessions offline for a moment.** The bridge rebuilt its machine facts (each tool's login check, machine use, git state) once a minute inside the loop that reports sessions; on a loaded machine that took long enough to push a session report past the hub's 30-second online window. The minute rebuild now runs beside the report; the first build and one the hub asks for still run at once. This was the intermittent slow-test failure.
 - **Overnight mode no longer turns on from a subagent's report.** Claude Code hands a session its subagents' reports, background task notices and other sessions' messages as prompts, before the transcript says who sent them; a report that named overnight mode turned it on. These texts never count as the person now.
