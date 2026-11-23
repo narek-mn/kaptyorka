@@ -469,6 +469,19 @@ def test_adopt_retargets_held_messages(store, ws, alice, alice_p, boss, clock):
         ws.adopt(alice_p, "proj-a-w1", "claude:new")
 
 
+def test_adopt_drops_the_old_boss_ended_timer(store, ws, alice, alice_p, boss, clock):
+    # the old boss ended (its bridge said so); a new boss adopts: its clock starts fresh
+    dev, token = linked(store, ws, alice, alice_p, boss)
+    clock[0] += ONLINE_S + UNATTENDED_S + 10
+    worker_up(store, ws, dev, token)
+    ws.tick(clock[0])
+    store.db.execute("UPDATE workers SET boss_gone_since=? WHERE name='proj-a-w1'", (clock[0],))
+    store.seen("claude:new", "box-1", "claude-code", "proj-b", principal=alice_p)
+    ws.adopt(alice_p, "proj-a-w1", "claude:new")
+    row = store.db.execute("SELECT boss_gone_since FROM workers WHERE name='proj-a-w1'").fetchone()
+    assert row["boss_gone_since"] is None
+
+
 def test_close_queues_signed_close_and_notes_worktree(store, ws, alice, alice_p, boss, clock):
     dev, token = device(store, alice, "box-1")
     launch(ws, alice_p, dev, boss, occupied=True)

@@ -1154,8 +1154,9 @@ class WorkerStore:
             web = new_boss_key == f"web:{self._person_name(principal.person_id)}"
             if not web and (boss is None or boss["person_id"] != principal.person_id):
                 raise KaptyorkaError("the new boss must be a session of yours")
-            self.db.execute("UPDATE workers SET boss_key=?, state='up', unattended_since=NULL"
-                            " WHERE name=?", (new_boss_key, name))
+            # a new boss: the old one's "ended" timer goes with it
+            self.db.execute("UPDATE workers SET boss_key=?, state='up', unattended_since=NULL,"
+                            " boss_gone_since=NULL WHERE name=?", (new_boss_key, name))
             moved = 0
             if w["key"] is not None:
                 moved = self.db.execute(
