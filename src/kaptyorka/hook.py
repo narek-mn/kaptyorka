@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -141,7 +142,7 @@ def _night_prompt(data: dict, cfg: dict) -> "tuple[str, str]":
                            "" if m else prompt, str(data.get("permission_mode") or ""))
     overnight.apply_words(sid, st, prompt)
     st = overnight.state(sid) or st
-    return (overnight.instructions(st),
+    return (overnight.instructions(st, shlex.quote(_exe())),
             "kaptyorka: overnight mode is on for this task. To stop it: /hub overnight off")
 
 

@@ -756,7 +756,8 @@ def turn_on(sid: str, project: str, cwd: str, team: bool, key: str, machine: str
             task: str, mode: str, now: Optional[float] = None) -> dict:
     now = time.time() if now is None else now
     st = {"on": True, "started": now, "project": project, "cwd": cwd, "team": team, "key": key,
-          "machine": machine, "task": safe(task, 120), "mode": mode, "allowed": [],
+          "machine": machine,
+          "task": safe(re.sub(r"^\s*overnight task\s*[:,.-]?\s*", "", task, flags=re.I), 120), "mode": mode, "allowed": [],
           "setup": True, "nudges": 0, "resumes": 0, "waiting": None, "pushed": 0,
           "last": now, "resumed_at": 0}
     save(sid, st)
@@ -926,18 +927,18 @@ def rules_text(st: dict) -> str:
     return "\n".join(out)
 
 
-def instructions(st: dict) -> str:
-    """What Claude hears at turn-on (additionalContext)."""
+def instructions(st: dict, exe: str = "kaptyorka") -> str:
+    """What Claude hears at turn-on (additionalContext). exe: this kaptyorka, as a command."""
     return (
         "kaptyorka overnight mode is on for this session. Show the user this list word for word"
         " before you start, then start the task without waiting:\n\n" + rules_text(st) + "\n\n"
         "From now on nobody is around until morning. Never ask the user a question: when you must"
         " choose, take the option you would recommend and record it with"
-        " `kaptyorka overnight note decision \"<the question and your choice>\"`. A blocked or"
-        " denied step: skip it, record it with `kaptyorka overnight note skipped \"<what>\"`, and"
-        " go on with the rest. Record finished parts with `kaptyorka overnight note done"
+        f" `{exe} overnight note decision \"<the question and your choice>\"`. A blocked or"
+        f" denied step: skip it, record it with `{exe} overnight note skipped \"<what>\"`, and"
+        f" go on with the rest. Record finished parts with `{exe} overnight note done"
         " \"<what>\"`. The team and project rules still bind you: when one forbids a step the"
-        " night rules allow, skip it and run `kaptyorka overnight clash --scope team|project"
+        f" night rules allow, skip it and run `{exe} overnight clash --scope team|project"
         " --rule \"<rule title>\" --class admin|git|delete|hardware|other`. Never put secrets in"
         f" notes. When the whole task is finished, end your last message with {DONE_MARK}.")
 

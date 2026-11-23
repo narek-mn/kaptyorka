@@ -473,7 +473,7 @@ class ClaudeAdapter:
             if not isinstance(hooks, dict):
                 return False
             changed = drop_hooks(hooks, lambda h: is_our_hook(
-                h.get("command", ""), "claude-code", ("start", "prompt", "stop")))
+                h.get("command", ""), "claude-code", tuple(name for _, name in HOOKS)))
             if changed and not hooks:
                 del data["hooks"]
             return changed
