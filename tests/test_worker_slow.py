@@ -59,9 +59,17 @@ def _jobs(folder: Path) -> list:
         return []
 
 
+def _scopes(name: str) -> list:
+    """The worker's scope units: one per launch, kaptyorka-worker-<name>-<8 hex>.scope."""
+    r = _quiet(["systemctl", "--user", "list-units", "--all", "--plain", "--no-legend",
+                f"kaptyorka-worker-{name}-*.scope"], 10)
+    return [] if r is None else [line.split()[0] for line in r.stdout.splitlines() if line.strip()]
+
+
 def _scope_active(name: str) -> bool:
-    r = _quiet(["systemctl", "--user", "is-active", f"kaptyorka-worker-{name}.scope"], 10)
-    return r is not None and r.stdout.strip() == "active"
+    units = _scopes(name)
+    r = _quiet(["systemctl", "--user", "is-active", *units], 10) if units else None
+    return r is not None and "active" in r.stdout.split()
 
 
 @pytest.mark.slow
@@ -124,7 +132,8 @@ def test_claude_worker_round_trip(hub, tmp_path, monkeypatch):
         for job in _jobs(folder):  # `claude stop` takes the short id, never the name
             for step in ("stop", "rm"):
                 _quiet(["claude", step, job])
-        _quiet(["systemctl", "--user", "stop", f"kaptyorka-worker-{name}.scope"], 30)
+        # never stop the scope: it can hold Claude Code's shared supervisor, and with it every
+        # other background session of this account; `claude stop` above ended the worker
         shutil.rmtree(folder, ignore_errors=True)
         # the transcript folder Claude Code made for it: ~/.claude/projects/<path with - for / .>
         tag = folder.name.lstrip(".")
@@ -160,7 +169,8 @@ def test_worker_outlives_bridge_restart(tmp_path):
         assert _scope_active(name)
     finally:
         _quiet(["systemctl", "--user", "stop", f"{launcher_unit}.scope"], 30)
-        _quiet(["systemctl", "--user", "stop", f"kaptyorka-worker-{name}.scope"], 30)
+        for unit in _scopes(name):  # it holds only this test's sleep
+            _quiet(["systemctl", "--user", "stop", unit], 30)
         with contextlib.suppress(subprocess.TimeoutExpired):
             proc.kill()
             proc.wait(timeout=10)
@@ -185,5 +195,4 @@ def test_tmux_worker_starts_and_closes(tmp_path, monkeypatch):
         assert _quiet(["tmux", "has-session", "-t", name], 10).returncode != 0
         launcher.close(order)  # closing a gone session is done, not an error
     finally:
-        _quiet(["tmux", "kill-session", "-t", name], 10)
-        _quiet(["systemctl", "--user", "stop", f"kaptyorka-worker-{name}.scope"], 30)
+        _quiet(["tmux", "kill-session", "-t", name], 10)  # never the scope: the tmux server

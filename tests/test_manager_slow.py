@@ -61,9 +61,11 @@ def _brief(url, headers):
 @pytest.mark.skipif(shutil.which("claude") is None, reason="claude is not on PATH")
 def test_real_manager_session(monkeypatch):
     real_home = Path.home()
-    # Claude Code waits on its trust dialog in an untrusted folder; one under the (trusted) repo is
-    # fine, and .superpowers is git-ignored.
-    khome = Path(tempfile.mkdtemp(prefix="manager-slow-", dir=REPO / ".superpowers"))
+    # An interactive session (the manager runs in tmux) inside a git repo asks for the repo
+    # root's trust, which a parent folder's trust does not give; a throwaway folder beside
+    # the repo, outside any repo, inherits the trust of its parent, as the hub machine's
+    # ~/.kaptyorka/manager does.
+    khome = Path(tempfile.mkdtemp(prefix=".kaptyorka-manager-slow-", dir=REPO.parent))
     monkeypatch.setenv("KAPTYORKA_HOME", str(khome))
     monkeypatch.setenv("ANTHROPIC_MODEL", "haiku")
     monkeypatch.setattr(bridge_mod, "WAIT_S", 2)
@@ -102,6 +104,8 @@ def test_real_manager_session(monkeypatch):
                 break
             if agent is not None and w and w["state"] == "up":
                 break
+            if bridge.launcher.trust_prompt({"worker": "manager", "manager": True}):
+                pytest.xfail(f"Claude Code asks to trust {folder}: trust {REPO.parent} first")
             time.sleep(1)
         log = khome / "workers" / "manager.log"
         err = (w or {}).get("error") or ""
