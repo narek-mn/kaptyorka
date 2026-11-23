@@ -60,7 +60,7 @@ def test_codex_lines_name_its_dollar_command(home):
     assert "$hub on brings it back" in offhub.command(["off"], env, cwd="/w/proj-a")[1]
     assert offhub.command([], env, cwd="/w/proj-a")[1].endswith("type $hub on to come back")
     assert offhub.command(["maybe"], env) == (
-        1, "use $hub, $hub on, $hub off, $hub team, $hub team <project> or $hub team off")
+        1, "use $hub, $hub on, $hub off, $hub team, $hub team <project>, $hub team off, $hub overnight or $hub overnight off")
 
 
 def test_cursor_switches_its_folder(home):
@@ -71,7 +71,7 @@ def test_cursor_switches_its_folder(home):
 
 def test_bad_words_and_no_session(home):
     assert offhub.command(["sideways"], OC) == (
-        1, "use /hub, /hub on, /hub off, /hub team, /hub team <project> or /hub team off")
+        1, "use /hub, /hub on, /hub off, /hub team, /hub team <project>, /hub team off, /hub overnight or /hub overnight off")
     assert offhub.command(["off"], {})[0] == 1
 
 

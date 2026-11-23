@@ -375,9 +375,11 @@ def command(words: List[str], environ: Mapping = os.environ, cwd: str = "") -> T
     team = bool(words) and words[0].strip().lower() == "team"
     key = session_key(environ)
     hub = _where(key)
+    if words and words[0].strip().lower() == "overnight":
+        return _overnight(key, [w.lower() for w in words[1:]], cwd or os.getcwd())
     if want not in ("", "on", "off") and not (team and len(words) <= 2):
-        return 1, (f"use {hub}, {hub} on, {hub} off, {hub} team, {hub} team <project>"
-                   f" or {hub} team off")
+        return 1, (f"use {hub}, {hub} on, {hub} off, {hub} team, {hub} team <project>,"
+                   f" {hub} team off, {hub} overnight or {hub} overnight off")
     if not key:
         return 1, "kaptyorka: /hub works only inside a session of an agent tool"
     project = words[1].strip() if team and len(words) > 1 else ""
@@ -475,3 +477,38 @@ def _other(key: str, want: str, cwd: str, hub: str, project: str = "") -> Tuple[
         return 0, (f"{what} is now off the hub: nobody on the hub sees it or can message it."
                    f" {hub} on brings it back")
     return 0, _team_note(key, cwd, f"{what} is back on the hub; it shows there within 10 seconds")
+
+
+def _overnight(key: str, words: List[str], cwd: str) -> Tuple[int, str]:
+    """`/hub overnight [on|off]`: Claude Code only. Usually the prompt hook has turned it on
+    already (it adds the night rules for Claude); this line confirms it, or turns it on when the
+    hook did not run."""
+    from kaptyorka import overnight
+
+    if words not in ([], ["on"], ["off"]):
+        return 1, "use /hub overnight or /hub overnight off"
+    if not key:
+        return 1, "kaptyorka: /hub works only inside a session of an agent tool"
+    if not key.startswith("claude:"):
+        return 1, (f"kaptyorka: overnight mode is not there yet for {key.split(':', 1)[0]};"
+                   " it works in Claude Code only")
+    sid = key.split(":", 1)[1]
+    if words == ["off"]:
+        if overnight.state(sid) is None:
+            return 0, "kaptyorka: overnight mode is off"
+        text = overnight.finish(sid, "turned off with /hub overnight off")
+        return 0, ("kaptyorka: overnight mode is off. Morning report: "
+                   + str(overnight.save_report(sid, text)))
+    if paths.in_manager_folder(cwd):
+        return 1, "kaptyorka: the manager session has no overnight mode"
+    if overnight.state(sid) is None:
+        from kaptyorka.identity import Identity, project_of
+        from kaptyorka import optin
+
+        cfg = paths.load_config()
+        ident = optin.apply(Identity(key, cfg.get("machine", ""), "claude-code",
+                                     project_of(cwd), cwd))
+        team = bool(cfg.get("hub") and cfg.get("token")) and not personal(
+            ident.project, cwd, key) and not off(key)
+        overnight.turn_on(sid, ident.project, cwd, team, key, cfg.get("machine", ""), "", "")
+    return 0, "kaptyorka: overnight mode is on for this task. To stop it: /hub overnight off"

@@ -25,7 +25,9 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 
 from kaptyorka import __version__, admin_ops, brief, identity, knowledge, manager, paths, signin, usage
 from kaptyorka.gitlab import GitLabError, GitLabSource
+from kaptyorka import overnight as overnight_mod
 from kaptyorka import rules as rules_mod
+from kaptyorka.secrets_check import PATTERNS as SECRET_PATTERNS
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
@@ -61,7 +63,7 @@ CLEAR_COOKIE = "kaptyorka_signin=; Path=/auth/gitlab; HttpOnly; SameSite=Lax; Ma
 MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
     ("GET", r"/api/(brief|done-check|me|feed|settings|people|invites|rules|machines|team/machines|gitlab)"),
     ("GET", r"/api/files/\d+"),
-    ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab|team-machines)"),
+    ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab|team-machines|overnight)"),
     ("POST", r"/api/people/[^/]+/(gitlab|role|team)"),
     ("POST", r"/api/people/[^/]+/team-machines/[^/]+"),
     ("POST", r"/api/machines/[^/]+/(grant|owner|revoke|gpu-queue)"),
@@ -380,6 +382,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 push(f"remind:request:{r['id']}", 86400,
                      f"access request from {r['person']} has waited a day: {what[:80]};"
                      f" remind {them}")
+        for row in store.log(200):  # overnight rule clashes: the manager tells the person once
+            if row["kind"] == overnight_mod.CLASH_KIND and row["time"] > now - 2 * 86400:
+                text = overnight_mod.clash_notice(row["person"], row["detail"])
+                if text:
+                    push(f"clash:{row['id']}", None, text)
         push("weekly", manager.WEEKLY_S,
              "weekly review: read log(500) for repeated conflicts and corrections; file"
              " propose_rule for what repeats; never edit rules")
@@ -1139,6 +1146,34 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 rules_text=rules_mod.rules_text(rs.current()["text"])),
             unread=lambda: brief.unread_count(store, agent.key), now=store.clock(),
             cache=brief_cache))
+
+    @server.custom_route("/api/overnight", methods=["POST"])
+    @_bad_request
+    async def api_overnight(request: Request) -> Response:
+        """A team session's overnight mode: the morning report goes to that person's page only;
+        a rule clash is a short fixed-text log event the manager passes on to them once."""
+        try:
+            principal = principal_of(request.headers)
+            agent = identify(request.headers, principal)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        if principal.legacy or principal.person_id is None:
+            return PlainTextResponse(OWN_TOKEN, status_code=400)
+        body = await request.json()
+        project = session_project(agent, principal)
+        person = principal.person_name
+        if body.get("kind") == "report":
+            lines = [ln for ln in str(body.get("text", ""))[:overnight_mod.REPORT_CAP].splitlines()
+                     if not any(p.search(ln) for _, p in SECRET_PATTERNS)]
+            tell(f"web:{person}", "\n".join(lines))
+            store.log_add(person, "overnight", f"overnight report in {project}")
+            return JSONResponse({"ok": True})
+        if body.get("kind") == "clash":
+            detail = overnight_mod.clash_detail(str(body.get("scope", "")), str(body.get("rule", "")),
+                                                str(body.get("class", "")), project)
+            store.log_add(person, overnight_mod.CLASH_KIND, detail)
+            return JSONResponse({"ok": True})
+        return PlainTextResponse("kind must be report or clash", status_code=400)
 
     @server.custom_route("/api/done-check", methods=["GET"])
     async def api_done_check(request: Request) -> Response:
