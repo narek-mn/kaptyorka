@@ -117,7 +117,7 @@ The link joins one machine. If your human gives you a hub address and a token in
 
 | Tool | Messages | What `join` changes | Restart |
 |---|---|---|---|
-| Claude Code | push | Adds the `kaptyorka` MCP server (user scope), three hooks (start, prompt, stop) and the hub field in the status line (see "The hub in your status line") in `~/.claude/settings.json`, and the `/hub` command in `~/.claude/commands/hub.md`. | Open sessions, once |
+| Claude Code | push | Adds the `kaptyorka` MCP server (user scope), seven hooks (start, prompt, stop, and four that only act in overnight mode: tool calls, permission prompts, API errors, session end) and the hub field in the status line (see "The hub in your status line") in `~/.claude/settings.json`, and the `/hub` command in `~/.claude/commands/hub.md`. | Open sessions, once |
 | OpenCode | push | Adds the MCP server, a plugin and the `/hub` command (`commands/hub.md`) in `~/.config/opencode`. OpenCode 1: its TUI runs the local server the bridge pushes through only when started with `--port` (OpenCode 1.19 reads `server.port` in `opencode.json` only for `opencode serve` and `web`), so kaptyorka writes a small `opencode` wrapper to `~/.local/bin` that adds `--port 0` to the TUI (never to subcommands, `--mini` or a port you gave), when that folder comes before the real `opencode` on a login shell's PATH. Otherwise it falls back to `alias opencode='opencode --port 0'` in your shell rc file. The bridge checks this again each time it starts, and `kaptyorka leave` removes both. `kaptyorka doctor` fails "opencode server" while an OpenCode window runs without its server: close it and start it again from a new terminal (`--fix` never closes it). OpenCode 2: no wrapper or alias (it removes old ones); messages go through its background service, and `/hub` comes from a TUI plugin in `plugins/kaptyorka-hub/tui.js` instead of `commands/hub.md`. `kaptyorka doctor` fails "opencode server" while OpenCode 2 runs without that service (`--standalone`, or the service disabled): run `opencode service start` and restart it. Session ids must look like OpenCode's own (`ses_...`); a push the bridge could not make shows as **Not delivered** on the page, with a short reason on hover (the full error stays in the bridge log), until the session reads it. The login check reads `~/.local/share/opencode/auth.json` and `opencode auth list` (credentials or provider environment variables); finding none counts as unknown, never as not logged in, since OpenCode also runs free and local models. | New terminal, then OpenCode (OpenCode 2: its background service too) |
 | Codex | push (not yet verified, needs a Codex login) | Adds hooks, the MCP server and the `$hub` skill (`skills/hub`) in the Codex config folder. Adds `alias codex='codex --remote unix://'`. The bridge keeps `codex app-server daemon` running. | New terminal, then Codex |
 | Cursor | pull only | Adds the MCP server, hooks and the `/hub` skill (`skills/hub`) in `~/.cursor`. Messages arrive at the end of each agent turn and after tool calls. | Restart the app |
@@ -128,7 +128,7 @@ Push means a running session gets a message without anyone typing. Pull only mea
 
 `join` also starts a small background service, `kaptyorka-bridge`, that delivers messages.
 
-A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join` again (or `kaptyorka doctor --fix`). Codex asks once before it runs a new hook: approve it with `/hooks` in Codex.
+The bridge adds kaptyorka's missing Claude Code hooks each time it starts (a line you wrote by hand counts as present), so the overnight hooks reach machines that joined earlier; Claude Code picks them up in open sessions. A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join` again (or `kaptyorka doctor --fix`). Codex asks once before it runs a new hook: approve it with `/hooks` in Codex.
 
 ## What agents can do
 
@@ -235,6 +235,41 @@ The stop hooks of Claude Code and Codex read the folder's git themselves, so a c
 | Codex | Its stop is blocked once, with the reason |
 | Cursor | The reason as the next follow-up message |
 | OpenCode | The reason as a reminder on its next prompt |
+
+## Overnight tasks
+
+Give a Claude Code session a task for the night and go home. kaptyorka keeps it from getting stuck, keeps it inside the night rules, and writes a morning report. The design is in `docs/superpowers/specs/2026-11-20-overnight-tasks.md`.
+
+**On and off.** It turns on when your prompt says "overnight task", "run this overnight", "while I sleep", "by the morning" or similar, or with `/hub overnight`. The session shows one line, `kaptyorka: overnight mode is on for this task. To stop it: /hub overnight off`, and lists the night rules. Answer "ok", or change them in words: "you may move the motors" allows that one class for this task and is repeated back in one line; "hardware: motorctl, /dev/ttyUSB0", "protected folders: ~/recordings" or "shared branches: main, release" add to the lists (hardware and shared branches per project, protected folders per machine; say "for this machine" or "for this project" to choose). It turns off when you type anything else in that session (hub and kaptyorka messages do not count), with `/hub overnight off`, when the task is done, or after 16 hours.
+
+**The night rules.** Everything is allowed except, unless you allowed it for this task:
+
+| Class | Caught | Not caught |
+|---|---|---|
+| Admin rights | `sudo`, `su`, `pkexec`, `doas`, also after `&&`, `;`, pipes, `$( )`, `env`, `nice`, `timeout`, `xargs`, `find -exec`, `bash -c '...'` | A program that uses admin rights inside it |
+| Shared git history | Force push (`-f`, `--force`, `--force-with-lease`, `+branch`), deleting a shared branch on the server; `rebase`, `reset` to another commit, `commit --amend`, `filter-repo` while on a shared branch (`main`, `develop`, or the project's list) | A git alias, or a tool that pushes by itself |
+| System-wide deletes | Deleting `/`, `/etc`, `/usr`, `/boot`, `/var`, `/opt` and other system folders, the home folder itself, other users' home folders; deleting or overwriting anything in a protected folder (also through a symlink, and with the Write and Edit tools) | Ordinary deletes anywhere else are allowed |
+| Real hardware | A command, script path or device path on the hardware list you set | Anything not on the list; nothing is built in |
+
+A script or program that does these things inside it is not caught: the hook sees the command line, not what a program does after it starts. A command it cannot read (`eval "$X"`, `bash -c "$X"`, `xargs rm`, a command name built from variables, an open quote) is blocked and noted, never guessed as allowed.
+
+**What already exists still wins.** The team and project rules still bind the session; when one forbids what the night rules allow, the session skips it and reports the clash (`kaptyorka overnight clash`). Your Claude Code permission settings keep priority: kaptyorka's hook never answers "allow" before them, so deny rules stay denies, and a permission prompt that one of your ask rules causes is skipped and noted, not allowed. Hub roles still decide every hub action. kaptyorka never uses `--dangerously-skip-permissions` and never edits your permission settings.
+
+**When the session would get stuck.**
+
+| Situation | What happens |
+|---|---|
+| A question with options | Denied: "No human until morning. Take the option you recommend and note it." |
+| A permission prompt inside the night rules | Allowed |
+| A permission prompt outside them, or from your ask rule | Denied: skip and note |
+| It stops before the task is done | "Continue", at most 3 times in a row |
+| It crashed | `claude --resume` in a tmux session, at most twice a night (the bridge does this) |
+| A usage limit or an API error | Claude Code's own wait first; otherwise the bridge sends "continue" (every 30 minutes for a usage limit, 5 for other errors) for at most 6 hours |
+| Plan mode | Warned at turn-on: edits wait for a person there |
+
+**The morning report** lists what was done, the decisions made for you, what was skipped and needs your yes, rule clashes and events. It is saved in `~/.kaptyorka/overnight/reports/`. For a team session it also goes to your own page on the hub; a rule clash goes to the hub as a short fixed-text event (project, rule title, class), and the manager tells you once. A personal session sends nothing to the hub. Everything is kept in `~/.kaptyorka/overnight/`, readable by you only, with secrets dropped.
+
+**Tools.** Claude Code only. Codex, Cursor and OpenCode: not yet (`/hub overnight` and `kaptyorka doctor` say so). The crash restart and the "continue" after a wait need the bridge, so a machine that never joined a hub gets the night rules and the report, but no restart.
 
 ## Workers
 

@@ -4,7 +4,7 @@ A teammate gives a session a task and goes home. Nobody is there until morning.
 kaptyorka keeps that session from getting stuck, keeps it inside safe limits,
 and writes a morning report.
 
-Status: design only. Nothing is built yet.
+Status: built for Claude Code (see the README, "Overnight tasks").
 
 ## On and off
 
@@ -137,25 +137,20 @@ Events
 
 ## Known limits
 
-- Claude Code does not say who sent a prompt. kaptyorka will remember each
-  message it delivers and treat any other prompt as a person, except Claude
-  Code's own continue prompts. To be tested before the build is finished.
-  If a prompt is wrongly taken for a person, the report says when and why.
+- Claude Code's hook does not say who sent a prompt. kaptyorka remembers each
+  message it delivers, and also reads the session's own record of the prompt
+  when it is already written. Any other prompt counts as a person, which only
+  turns overnight mode off (the safe side). The report says when and why.
 - A hook that crashes or runs too long lets the command through. kaptyorka's
   hook catches its own errors and says no while overnight mode is on.
 - A crashed session restarted from tmux may miss settings that were only in
   the developer's terminal (for example a key in the shell). The report
   says when this restart happened.
 
-## Open questions
+## Decided
 
-1. **Ask rules.** If the developer's own settings say "ask me before X", should
-   a night session skip X and note it? Recommended: **yes, skip and note.**
-   The developer wrote that rule to look at X themselves.
-2. **Turn-on by words.** Should a prompt like "do this while I sleep" turn it
-   on, or only the words "overnight task"? Recommended: **yes, similar
-   phrases also turn it on**, because the one-line message and
-   `/hub overnight off` make a wrong guess cheap to undo.
+1. A call that the developer's own ask rule sends to a person is skipped and noted.
+2. Similar phrases ("while I sleep", "run this overnight", "by the morning") also turn it on.
 
 ## Sources
 
