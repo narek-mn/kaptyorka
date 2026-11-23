@@ -979,7 +979,7 @@ class WorkerStore:
                 own = w["own_seen"] if w["own_seen"] is not None else w["up_at"]
                 bridge_online = w["bridge_seen"] is not None and \
                     w["bridge_seen"] > now - ONLINE_S
-                # Claude retires an idle manager: it sleeps until a message (manager.asleep)
+                # a manager run that ended: the hub starts it again on its next tick
                 gone = 60 if w["manager"] else GONE_S
                 if judging and bridge_online and own + ONLINE_S < now - gone:
                     self.db.execute("UPDATE workers SET state='closed', error='session gone',"

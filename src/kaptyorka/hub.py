@@ -684,10 +684,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                                      or "no machine you may use is joined")
 
     def manager_to_wake() -> Optional[str]:
-        """The manager's session for a notice; asleep: its last one (the notice wakes it)."""
+        """The manager's session for a notice; between runs its last one (the new session
+        gets it)."""
         if not mm.enabled():
             return None
-        return mm.session_key(store.clock()) or (mm.last_key() if mm.retired() else None)
+        row = ws.by_name(manager.WORKER)
+        between = mm.retired() or (row is not None and row["state"] == "starting")
+        return mm.session_key(store.clock()) or (mm.last_key() if between else None)
 
     def in_use(host: str, me: str) -> "tuple[List[str], List[str], List[str], bool]":
         """(the other people using host heavily, one line of use each for the manager, the
@@ -1194,8 +1197,6 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             state = "starting" if row["state"] == "starting" else "up"
         elif not mm.enabled():
             state = "off"
-        elif mm.asleep(now):
-            state, reason = "asleep", ""
         else:  # nothing in the way: the next tick starts it
             state = "blocked" if reason else "starting"
         return state, reason, row
@@ -1772,8 +1773,6 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if principal is None:
             return PlainTextResponse("unauthorized", status_code=401)
         rows = own_workers(principal, page_foreign(request, principal))
-        if mm.enabled() and mm.retired():  # not closed: a message starts it again
-            rows = [{**w, "state": "asleep", "error": ""} if w["manager"] else w for w in rows]
         return JSONResponse(rows)
 
     async def worker_action(request: Request, close: bool) -> Response:

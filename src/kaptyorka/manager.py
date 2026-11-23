@@ -21,7 +21,6 @@ DEVICE = "manager"
 WORKER = "manager"
 DIR = paths.MANAGER_DIR  # under paths.home()
 CONFIG = paths.MANAGER_CONFIG  # under paths.home(), outside the session's working folder
-ASLEEP = "the manager is asleep; a message or request wakes it"
 RELAUNCH_S = 120
 MAX_REFUSALS_PER_HOUR = 3  # launches the hub machine's bridge refused: no session ran
 CRASH_S = 300  # a run that ended this soon after it started crashed (the hub sees it ~90 s late)
@@ -404,24 +403,12 @@ class ManagerStore:
         return None if row is None else row["key"]
 
     def retired(self) -> bool:
-        """Claude Code stopped the manager's session (idle about an hour): the hub closed its
-        worker as gone."""
+        """The manager's last run ended (the hub closed its worker as gone); the next tick
+        starts it again."""
         with self.lock:
             row = self.db.execute("SELECT state, error FROM workers WHERE name=?",
                                   (WORKER,)).fetchone()
         return row is not None and row["state"] == "closed" and row["error"] == "session gone"
-
-    def has_work(self) -> bool:
-        """An unread message to one of the manager's sessions that a push can still deliver."""
-        with self.lock:
-            return self.db.execute(
-                "SELECT 1 FROM messages m JOIN agents a ON a.key=m.to_key JOIN people p"
-                " ON p.id=a.person_id WHERE p.name=? AND p.role='manager' AND m.read_at IS NULL"
-                " AND m.push_state!='failed' LIMIT 1", (PERSON,)).fetchone() is not None
-
-    def asleep(self, now: float) -> bool:
-        """Retired with nothing to do: the hub leaves it stopped until a message comes."""
-        return self.retired() and not self.has_work()
 
     def _launches(self) -> List[float]:
         try:
@@ -532,9 +519,7 @@ class ManagerStore:
                                    " ('starting','up')", (WORKER,)).fetchone()
         if live is not None:
             return False, "the manager is already running"
-        self.judge_run()
-        if self.asleep(now):
-            return False, ASLEEP
+        self.judge_run()  # a run that ended: the next tick starts it again, no message needed
         # only crashes slow it down, so normal wake-ups never wait
         wait = self.backoff(now)
         if wait:

@@ -377,7 +377,7 @@ def _status_of(cfg: dict) -> int:
     if state is not None:
         shown = {"up": "running", "blocked": f"blocked: {why}" if why else "blocked"}.get(state, state)
         print(f"manager: {shown}")
-        ok = ok and state in ("up", "asleep", "starting", "off")
+        ok = ok and state in ("up", "asleep", "starting", "off")  # asleep: an older hub
     return 0 if ok else 1
 
 

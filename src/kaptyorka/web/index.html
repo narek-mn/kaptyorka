@@ -1774,7 +1774,7 @@ a.p-main { color: inherit; text-decoration: none; }
     if (!mineOut && (!said || parties(said)[0] !== ME)) return null;
     var e = entryOf[conv] || {};
     var a = feed.agents.filter(function (x) { return conv === "mgr" ? x.role === "manager" : x.role !== "manager" && (hidden(x) ? x.id : x.name) === conv; })[0];
-    if (conv === "mgr" && !a && ["asleep", "starting", "up"].indexOf(feed.manager) >= 0) return { what: "waking the manager\u2026", cls: "waking" };
+    if (conv === "mgr" && !a && ["starting", "up"].indexOf(feed.manager) >= 0) return { what: "waking the manager\u2026", cls: "waking" };
     if (!a || !a.activity || a.activity === "idle") return null;
     if (WAITING[a.activity]) return { who: e.name || "manager", what: WAITING[a.activity], cls: "waiting" };
     return { who: e.name || "manager", what: a.activity === "busy" ? "is working" : a.activity, more: a.status || "", cls: "busy" };

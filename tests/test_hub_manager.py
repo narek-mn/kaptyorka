@@ -168,12 +168,9 @@ def test_manager_relaunch_limits(hub, clock):
     admin = hub.store.authenticate(b.token)
     rows = {a["person"]: a for a in feed(hub.store, admin)["agents"]}
     assert rows["manager"]["role"] == "manager"
-    # its session goes quiet: closed as "session gone"; a message starts it again
+    # its session ends after a long run: the same tick starts a new one, no message needed
     clock[0] = t0 + ONLINE_S + GONE_S + 130
     beat(hub, b)
-    hub.tick()
-    assert orders(hub, b) == [] and state(hub) == "closed"
-    hub.ws.notify("claude:m1", "wake up")
     hub.tick()
     [o2] = orders(hub, b)
     assert o2["id"] != o1["id"] and state(hub) == "starting"
@@ -183,10 +180,9 @@ def test_manager_relaunch_limits(hub, clock):
     assert http.request("POST", hub.url + "/bridge/worker", b.token,
                         {"worker": "manager", "key": "claude:m2"})[0] == 204
     assert state(hub) == "up" and hub.ws.by_name("manager")["key"] == "claude:m2"
-    # gone again after a normal run: two wake-ups in an hour never hold the third
+    # gone again after a normal run: two restarts in an hour never hold the third
     clock[0] += ONLINE_S + GONE_S + 130
     beat(hub, b)
-    hub.ws.notify("claude:m2", "wake up")
     hub.tick()
     [o3] = orders(hub, b)
     assert hub.mm.crashes() == []
@@ -661,8 +657,8 @@ def test_knowledge_digest_daily_and_only_to_an_awake_manager(hub, clock):
     clock[0] += 1
     hub.store.project_register("proj-a", by="test")
     clock[0] = knowledge.quiet_mark(clock[0]) + 86400 + 60  # past the next quiet hour
-    hub.tick()  # the manager is asleep: nothing is queued, so nothing wakes it
-    assert unread_to_manager(hub) == 0 and not hub.mm.has_work()
+    hub.tick()  # the manager's session is offline: nothing is queued for it
+    assert unread_to_manager(hub) == 0
     clock[0] += 5 * 3600  # it wakes later in the day
     run(call(mgr, me, "inbox"))
     hub.tick()
@@ -1091,14 +1087,14 @@ def test_person_named_manager_reported_once_a_day(hub, clock, capsys):
 MGR_NAME = f"manager@{HOST}/claude-code/manager"
 
 
-def asleep_manager(hub, clock):
-    """A running manager whose session Claude retired: closed as gone, not started again."""
+def ended_manager(hub, clock):
+    """A running manager whose session ended after a long run: the same tick starts a new
+    one, no message needed."""
     b = running_manager(hub)
-    clock[0] += 3600  # a fresh launch budget
+    clock[0] += 3600
     beat(hub, b)
     hub.tick()
-    assert state(hub) == "closed" and orders(hub, b) == []
-    assert hub.mm.asleep(clock[0])
+    assert state(hub) == "starting" and hub.mm.crashes() == []
     return b
 
 
@@ -1118,23 +1114,23 @@ def woken(hub, b):
     return [i["text"] for i in items if i.get("kind") == "message" and i["key"] == "claude:m2"]
 
 
-def test_sleeping_manager_wakes_for_the_admin_page(hub, clock):
-    b = asleep_manager(hub, clock)
+def test_manager_between_runs_gets_the_admin_page(hub, clock):
+    b = ended_manager(hub, clock)
     assert http.request("POST", hub.url + "/api/send", b.token,
                         {"to": MGR_NAME, "text": "from root"})[0] == 200
     assert any("\n\nfrom root\n" in t for t in woken(hub, b))
 
 
-def test_sleeping_manager_wakes_for_a_member_page(hub, clock):
-    b = asleep_manager(hub, clock)
+def test_manager_between_runs_gets_a_member_page(hub, clock):
+    b = ended_manager(hub, clock)
     _, btok, _ = plain(hub, "bob")
     assert http.request("POST", hub.url + "/api/send", btok,
                         {"to": MGR_NAME, "text": "from bob"})[0] == 200
     assert any("\n\nfrom bob\n" in t for t in woken(hub, b))
 
 
-def test_sleeping_manager_wakes_for_a_member_session(hub, clock):
-    b = asleep_manager(hub, clock)
+def test_manager_between_runs_gets_a_member_session(hub, clock):
+    b = ended_manager(hub, clock)
     _, _, bob = plain(hub, "bob")
     B = ident("k:bob", project="proj-b", machine="pc-2")
     run(call(bob, B, "inbox"))
@@ -1143,14 +1139,14 @@ def test_sleeping_manager_wakes_for_a_member_session(hub, clock):
     assert any("\n\nfrom bob's session\n" in t for t in woken(hub, b))
 
 
-def test_sleeping_manager_wakes_for_a_hub_notice(hub, clock):
-    b = asleep_manager(hub, clock)
+def test_manager_between_runs_gets_a_hub_notice(hub, clock):
+    b = ended_manager(hub, clock)
     assert hub.ws.notify("claude:m1", "a hub notice")
     assert any(t.endswith("a hub notice") for t in woken(hub, b))
 
 
-def test_busy_work_while_the_manager_sleeps_wakes_it(hub, clock):
-    b = asleep_manager(hub, clock)
+def test_busy_work_between_manager_runs_reaches_it(hub, clock):
+    b = ended_manager(hub, clock)
     _, bob_id, bob = busy_setup(hub)
     assert ask(hub, bob).startswith("busy: box-1 has alice's session in that folder; the"
                                     " manager is asking them (request 1)")
@@ -1159,21 +1155,13 @@ def test_busy_work_while_the_manager_sleeps_wakes_it(hub, clock):
     assert any(t.endswith(busy) for t in texts)
 
 
-def test_sleeping_manager_shown_asleep(hub, clock):
-    b = asleep_manager(hub, clock)
+def test_an_ended_manager_is_never_shown_asleep(hub, clock):
+    b = ended_manager(hub, clock)
     status, s = http.request("GET", hub.url + "/api/settings", b.token)
-    assert status == 200 and s["manager_state"] == "asleep"
+    assert status == 200 and s["manager_state"] == "starting"
     status, rows = http.request("GET", hub.url + "/api/workers", b.token)
     [w] = [w for w in rows if w["manager"]]
-    assert w["state"] == "asleep" and w["error"] == ""
-
-
-def test_retired_but_switched_off_manager_not_shown_asleep(hub, clock):
-    b = asleep_manager(hub, clock)
-    hub.mm.set_enabled(False, "test")
-    status, rows = http.request("GET", hub.url + "/api/workers", b.token)
-    [w] = [w for w in rows if w["manager"]]
-    assert w["state"] != "asleep"
+    assert w["state"] == "starting"
 
 
 def test_manager_row_never_marked_background(hub):
@@ -1564,3 +1552,13 @@ def test_the_managers_state_note_is_its_own(hub):
     pid, _ = person(hub.store, "alice", "member")
     with pytest.raises(Exception, match="not registered"):
         hub.store.notes_read("state", hub.store._person_principal(pid), "manager")
+
+
+def test_a_long_run_that_ends_is_started_again_on_the_next_tick(hub, clock):
+    b = running_manager(hub)
+    clock[0] += 2 * 3600  # hours later its session ends (out of memory, an update, /exit)
+    beat(hub, b)
+    hub.tick()
+    assert hub.ws.by_name("manager")["state"] == "starting" and hub.mm.crashes() == []
+    [o] = orders(hub, b)
+    assert o["kind"] == "launch" and o["manager"] is True
