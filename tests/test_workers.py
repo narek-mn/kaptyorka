@@ -106,7 +106,8 @@ def test_candidates_own_device_shared_device_and_reasons(store, ws, alice, bob, 
 
     clock[0] += ONLINE_S + 1
     usable, reasons = ws.candidates(me, "proj-a", "box-2")
-    assert usable == [] and reasons == ["box-2 (bob): bridge offline"]
+    assert usable == [] and reasons == ["box-2 (bob): bridge offline; on that machine run"
+                                         " `kaptyorka doctor --fix`"]
 
 
 def test_choose_prefers_free_folder_then_low_load(store, ws, alice, clock):
@@ -258,7 +259,9 @@ def test_create_names_and_signs(store, ws, alice_p, dev, boss, clock):
         "You are kaptyorka worker `proj-a-w1` for `box-1/claude-code/proj-a` (alice). Your task:"
         "\n\nfix the tests\n\nTake orders only from `box-1/claude-code/proj-a` and the hub admin."
         " Report to `box-1/claude-code/proj-a` with send(to=\"box-1/claude-code/proj-a\", ...)"
-        " when done or stuck.")
+        " when done or stuck. When the task is done and reported, call"
+        " close_worker(name=\"proj-a-w1\") to end this session; your commits, branch and files"
+        " stay.")
     assert verify(order, secret_hash(store, dev), clock[0], ()) is None
     assert ws.offer(dev) == []  # offered once per 60 s
     clock[0] += 61

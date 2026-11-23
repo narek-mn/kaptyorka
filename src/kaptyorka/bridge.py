@@ -236,7 +236,9 @@ class Bridge:
                           **({"update_failed": paths.update_reason(self._problems["update"])}
                              if self._problems.get("update") else {})},
                 "folders": {p: f for p, f in folders.items()
-                            if team is not None and paths.team_name(p) in team}}
+                            if team is not None and paths.team_name(p) in team},
+                # the reported sessions in overnight mode: the hub never closes them by itself
+                "overnight": [s["key"] for s in sessions if self._overnight(s["key"])]}
         if gone:
             body["gone"] = gone
         status, answer = http.request("POST", self.cfg["hub"] + "/bridge/heartbeat",
@@ -331,7 +333,7 @@ class Bridge:
         order = {k: v for k, v in m.items() if k != "launch"}
         oid = order.get("id")
         name = order.get("worker")
-        ran = False
+        ran, left = False, None
         try:
             secret = self.cfg.get("secret")
             if not secret:
@@ -367,9 +369,13 @@ class Bridge:
                 self.pending[name] = (order, result, time.monotonic())
                 self.log(f"started worker {name} in {result['folder']}")
             else:
+                if order.get("auto") and self._overnight(str(order.get("key") or "")):
+                    raise LaunchError("overnight mode is on in that session")
                 self.pending.pop(name, None)
                 self.launcher.close(order)
-                self.log(f"closed worker {name}")
+                self.log(f"closed worker {name}" + (f": {order['auto']}" if order.get("auto") else ""))
+                if order.get("auto"):  # the boss hears what it left
+                    left = self._left(str(order.get("folder") or ""))
             ok, error = True, ""
         except LaunchError as e:
             ok, error = False, str(e)
@@ -380,7 +386,10 @@ class Bridge:
         if not ok:
             self.log(f"order {oid} for worker {name} refused: {error}")
         if isinstance(oid, int) and not isinstance(oid, bool):
-            self._ack(oid, ok, True, error)
+            if left is not None:
+                self._ack(oid, ok, True, error, left=left)
+            else:
+                self._ack(oid, ok, True, error)
 
     def _worker(self, body: dict) -> Optional[int]:
         try:
@@ -443,10 +452,38 @@ class Bridge:
                 self.pending.pop(name, None)
                 self.log(f"worker {name}: {e}")
 
-    def _ack(self, msg_id: int, ok: bool, launch: bool = False, error: str = "") -> None:
+    @staticmethod
+    def _overnight(key: str) -> bool:
+        """True while overnight mode is on in this Claude Code session (none other has it)."""
+        return key.startswith("claude:") and overnight.state(key.split(":", 1)[1]) is not None
+
+    def _left(self, folder: str) -> dict:
+        """What a closed worker left in its folder: the folder, its branch and how many files
+        are uncommitted (none when it is no git repository)."""
+        out = {"folder": folder}
+        if not folder:
+            return out
+        def git(*args):
+            try:
+                r = self.runner(["git", "-C", folder, *args], capture_output=True, text=True,
+                                timeout=10)
+            except (OSError, subprocess.TimeoutExpired):
+                return None
+            return r.stdout if r.returncode == 0 else None
+        branch, status = git("rev-parse", "--abbrev-ref", "HEAD"), git("status", "--porcelain")
+        if branch is not None:
+            out["branch"] = branch.strip()
+            if status is not None:
+                out["uncommitted"] = len([x for x in status.splitlines() if x.strip()])
+        return out
+
+    def _ack(self, msg_id: int, ok: bool, launch: bool = False, error: str = "",
+             left: Optional[dict] = None) -> None:
         url, body = self.cfg["hub"] + "/bridge/ack", {"id": msg_id, "ok": ok}
         if launch:
             body.update(launch=True, error=error)
+            if left is not None:
+                body["left"] = left
         elif error:
             body["error"] = error  # shown with the message: why it was not pushed
         try:

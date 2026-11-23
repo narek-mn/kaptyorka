@@ -18,6 +18,9 @@ MAX_ERROR = 500  # a no-show error names the folder and the log
 UNATTENDED_S = 120  # boss offline this long: the worker is unattended
 ABANDONED_S = 86400  # unattended this long: abandoned
 GONE_S = 600  # the worker's own session offline this long: closed
+BOSS_ENDED_S = 600  # the boss session really ended this long ago: the worker closes
+DONE = "task done"
+BOSS_ENDED = "its boss session ended"
 BRIDGE_GONE_S = 3600  # bridge silent this long: its workers are closed
 STARTUP_S = 120  # after the hub starts, bridges get this long to report before any is gone
 OFFLINE_S = 600  # bridge silent this long: warn
@@ -36,7 +39,7 @@ CREATE TABLE IF NOT EXISTS workers (
     state TEXT NOT NULL CHECK(state IN ('starting','up','unattended','abandoned','closed','failed')),
     error TEXT NOT NULL DEFAULT '', created REAL NOT NULL, up_at REAL, unattended_since REAL,
     closed_at REAL, waiting_told REAL, told REAL, needs_brief INTEGER NOT NULL DEFAULT 0,
-    manager INTEGER NOT NULL DEFAULT 0);
+    manager INTEGER NOT NULL DEFAULT 0, boss_gone_since REAL, overnight INTEGER);
 CREATE TABLE IF NOT EXISTS launches (
     id INTEGER PRIMARY KEY AUTOINCREMENT, device_id INTEGER NOT NULL, worker TEXT NOT NULL,
     kind TEXT NOT NULL CHECK(kind IN ('launch','close')), body TEXT NOT NULL,
@@ -59,6 +62,10 @@ def ensure_schema(db) -> None:
         db.execute("ALTER TABLE workers ADD COLUMN needs_brief INTEGER NOT NULL DEFAULT 0")
     if "manager" not in cols:
         db.execute("ALTER TABLE workers ADD COLUMN manager INTEGER NOT NULL DEFAULT 0")
+    if "boss_gone_since" not in cols:  # when the boss's bridge first reported it gone
+        db.execute("ALTER TABLE workers ADD COLUMN boss_gone_since REAL")
+    if "overnight" not in cols:  # its bridge's last word: 1 on, 0 off, NULL not said (older)
+        db.execute("ALTER TABLE workers ADD COLUMN overnight INTEGER")
 
 
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -247,6 +254,7 @@ class WorkerStore:
         self.lock = store.lock
         self.clock = store.clock
         self.started = store.clock() if started is None else started  # the hub's start
+        self.ordered = False  # the last tick queued close orders
 
     # device facts
 
@@ -477,23 +485,40 @@ class WorkerStore:
     def candidates_for(self, person_id: int, project: str,
                        machine: Optional[str]) -> Tuple[List[dict], List[str]]:
         """Devices this person may start a worker on, and one sentence per device skipped.
-        Devices they may not use at all are not mentioned."""
+        Devices they may not use at all are not mentioned, except a named machine that is
+        someone's own (it could be made a team machine). A team machine takes workers from
+        anyone with the write role in the project (an admin: any project), unless it is hidden
+        from them."""
         usable, reasons = [], []
         with self.lock:
             now = self.clock()
+            writer = self.store._registered(project) and \
+                self.store._role(project, person_id) in ("write", "manage")
             for d in self.db.execute(
-                    "SELECT d.*, p.name AS person FROM devices d JOIN people p ON p.id=d.person_id"
-                    " WHERE d.revoked_at IS NULL AND d.host != '' ORDER BY d.host, d.id").fetchall():
+                    "SELECT d.*, p.name AS person, p.team FROM devices d JOIN people p"
+                    " ON p.id=d.person_id WHERE d.revoked_at IS NULL AND d.host != ''"
+                    " ORDER BY d.host, d.id").fetchall():
                 if machine is not None and d["host"] != machine:
-                    continue
-                if not (d["person_id"] == person_id
-                        or (d["shared"] and self.store._may_use(d["host"], person_id))):
                     continue
                 if self.store._hidden(d["person_id"], person_id):  # a team machine hidden from them
                     continue
+                if not (d["person_id"] == person_id or (d["team"] and writer)
+                        or (d["shared"] and self.store._may_use(d["host"], person_id))):
+                    if machine is not None and d["shared"] and not d["team"]:
+                        reasons.append(f"{d['host']} ({d['os_user']}): a shared account you have"
+                                       " no access to; an admin can give it:"
+                                       f" `kaptyorka grant <you> machine:{d['host']}`")
+                    elif machine is not None and not d["team"] and not d["legacy"]:
+                        named = d["person"] if self.store._role_of(person_id) == "admin" \
+                            else "<its person>"  # the owner's name is for admins
+                        reasons.append(f"{d['host']} is someone's own machine, not a team"
+                                       " machine; if the whole team uses it, an admin runs"
+                                       f" `kaptyorka machine team --from {named}`")
+                    continue
                 who = f"{d['host']} ({d['person']})"
                 if d["last_used"] is None or d["last_used"] <= now - ONLINE_S:
-                    reasons.append(f"{who}: bridge offline")
+                    reasons.append(f"{who}: bridge offline; on that machine run"
+                                   " `kaptyorka doctor --fix`")
                     continue
                 if not d["secret_hash"]:
                     reasons.append(f"{who}: still on the shared token; invite it or assign it so"
@@ -503,7 +528,12 @@ class WorkerStore:
                 usable.append({"device_id": d["id"], "host": d["host"], "os_user": d["os_user"],
                                "person_id": d["person_id"], "tmux": bool(facts.get("tmux")),
                                "load": facts.get("load"), "cpus": facts.get("cpus"),
-                               "tools": facts.get("tools", {}), "folder": folders.get(project)})
+                               "tools": facts.get("tools", {}), "folder": folders.get(project),
+                               # a team machine's bridge looks for ~/<project> only once the
+                               # team machine itself has a role there
+                               "team": d["person"] if d["team"] else None,
+                               "team_role": bool(d["team"]) and self.store._role(
+                                   project, d["person_id"]) is not None})
         return usable, reasons
 
     def choose(self, usable: List[dict], project: str, tool: str, now: float,
@@ -620,7 +650,9 @@ class WorkerStore:
             first = (f"You are kaptyorka worker `{name}` for `{boss_name}` ({person}). Your task:"
                      f"\n\n{task}\n\nTake orders only from `{boss_name}` and the hub admin."
                      f" Report to `{boss_name}` with send(to=\"{boss_name}\", ...) when done or"
-                     " stuck.")
+                     " stuck. When the task is done and reported, call"
+                     f" close_worker(name=\"{name}\") to end this session; your commits,"
+                     " branch and files stay.")
             self._queue(device["device_id"], name, "launch", {
                 "issued": now, "worker": name, "person": person, "tool": tool,
                 "project": project, "folder": folder, "worktree": occupied, "task": task,
@@ -673,7 +705,11 @@ class WorkerStore:
                 self.db.execute("UPDATE launches SET offered_at=? WHERE id=?", (now, r["id"]))
             return [{**json.loads(r["body"]), "launch": True} for r in rows]
 
-    def ack(self, launch_id: int, ok: bool, error: str, device_id: int) -> bool:
+    def ack(self, launch_id: int, ok: bool, error: str, device_id: int, left=None,
+            notices: Optional[list] = None) -> bool:
+        """`left`: what an auto-closed worker left ({branch, uncommitted}, from its bridge);
+        the line for its boss (and, when the boss session ended, the person's page) goes
+        into `notices` as (to_key, text)."""
         error = (error or "")[:MAX_FACT]
         with self.lock:
             now = self.clock()
@@ -689,9 +725,35 @@ class WorkerStore:
                                 " WHERE name=? AND state='starting'",
                                 (error or "launch failed", now, row["worker"]))
             elif row["kind"] == "close" and ok:
-                self.db.execute("UPDATE workers SET state='closed', closed_at=? WHERE name=?",
-                                (now, row["worker"]))
+                auto = json.loads(row["body"]).get("auto")
+                self.db.execute("UPDATE workers SET state='closed', closed_at=?,"
+                                " error=COALESCE(?, error) WHERE name=?",
+                                (now, auto, row["worker"]))
+                if auto and notices is not None:
+                    notices.extend(self._closed_lines(self._row(row["worker"]), auto, left))
+            elif row["kind"] == "close" and "overnight" in error:
+                # the bridge saw overnight mode on before the hub did
+                self.db.execute("UPDATE workers SET overnight=1 WHERE name=?", (row["worker"],))
             return True
+
+    def _closed_lines(self, w, why: str, left) -> List[Tuple[str, str]]:
+        """Under the lock. One line for the boss of an auto-closed worker; when its boss
+        session ended, the same line on the person's page too (not a team machine's)."""
+        left = left if isinstance(left, dict) else {}
+        folder = _cut(left.get("folder")) or w["folder"]
+        if isinstance(left.get("branch"), str):
+            n = left.get("uncommitted")
+            n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 0 else None
+            what = f"branch {_cut(left['branch'])}" + (
+                "" if n is None else f" with {n} uncommitted file{'' if n == 1 else 's'}")
+        else:
+            what = "no git state it could read"
+        text = (f"worker `{w['name']}` closed: {why}; it left {what} in {folder}; nothing was"
+                " deleted")
+        out = [(w["boss_key"], text)]
+        if why == BOSS_ENDED and not self.store._is_team(w["boss_person"]):
+            out.append((f"web:{self._person_name(w['boss_person'])}", text))
+        return out
 
     def link(self, worker: str, key: str, device_id: int, needs_brief: bool = False) -> bool:
         """`needs_brief`: the tool could not take the first message on its command line, so
@@ -803,6 +865,34 @@ class WorkerStore:
             return [r["key"] for r in self.db.execute(
                 "SELECT key FROM workers WHERE key IS NOT NULL AND device_id=? AND state IN"
                 f" ({','.join('?' * len(LIVE))})", (device_id, *LIVE))]
+
+    def bridge_seen(self, device_id: int, keys, tools, overnight) -> None:
+        """A heartbeat of this device's bridge: `keys` the sessions it reports, `tools` those
+        whose list is complete, `overnight` the keys with overnight mode on (None from an older
+        bridge, which never says). A boss session of a complete tool missing from the list has
+        really ended: its workers start counting BOSS_ENDED_S. A bridge that is offline says
+        nothing, so a closed lid or a dropped network never counts."""
+        keys, tools = set(keys), set(tools or ())
+        with self.lock:
+            now = self.clock()
+            live = ",".join("?" * len(LIVE))
+            if isinstance(overnight, list):
+                on = {str(k) for k in overnight}
+                for w in self.db.execute(f"SELECT name, key FROM workers WHERE device_id=? AND"
+                                         f" key IS NOT NULL AND state IN ({live})",
+                                         (device_id, *LIVE)).fetchall():
+                    self.db.execute("UPDATE workers SET overnight=? WHERE name=?",
+                                    (int(w["key"] in on), w["name"]))
+            for w in self.db.execute(
+                    "SELECT w.name, w.boss_key, b.tool FROM workers w JOIN agents b ON"
+                    f" b.key=w.boss_key WHERE b.device_id=? AND w.state IN ({live})",
+                    (device_id, *LIVE)).fetchall():
+                if w["boss_key"] in keys:
+                    self.db.execute("UPDATE workers SET boss_gone_since=NULL WHERE name=?",
+                                    (w["name"],))
+                elif w["tool"] in tools:
+                    self.db.execute("UPDATE workers SET boss_gone_since=COALESCE("
+                                    "boss_gone_since, ?) WHERE name=?", (now, w["name"]))
 
     def first_message(self, name: str) -> str:
         """The worker's first message, when its start brief must carry it; "" otherwise."""
@@ -950,8 +1040,10 @@ class WorkerStore:
                 " ORDER BY created, name", (person_id,)).fetchall()]
 
     def tick(self, now: float) -> List[Tuple[str, str]]:
-        """State changes; notices (to_key, text) for online bosses."""
+        """State changes; notices (to_key, text) for online bosses. `ordered` says whether it
+        queued close orders (the bridges should be woken)."""
         notices = []
+        self.ordered = False
         with self.lock:
             # gone only when its bridge reports and still misses it; never just after a restart
             judging = now >= self.started + STARTUP_S
@@ -973,7 +1065,7 @@ class WorkerStore:
                 "SELECT w.*, a.last_seen AS own_seen, a.activity, b.last_seen AS boss_seen,"
                 " d.last_used AS bridge_seen FROM workers w LEFT JOIN agents a ON a.key=w.key"
                 " LEFT JOIN agents b ON b.key=w.boss_key LEFT JOIN devices d ON d.id=w.device_id"
-                " WHERE w.state IN ('up','unattended')").fetchall()
+                " WHERE w.state IN ('up','unattended','abandoned')").fetchall()
             for w in rows:
                 # the page is always there; the manager is never unattended or abandoned
                 boss_online = bool(w["manager"]) or w["boss_key"].startswith("web:") or (
@@ -981,6 +1073,12 @@ class WorkerStore:
                 own = w["own_seen"] if w["own_seen"] is not None else w["up_at"]
                 bridge_online = w["bridge_seen"] is not None and \
                     w["bridge_seen"] > now - ONLINE_S
+                if self._boss_ended(w, now, judging and bridge_online):
+                    self._close(w, w["name"], BOSS_ENDED)
+                    self.ordered = True
+                    continue
+                if w["state"] == "abandoned":
+                    continue  # only the rule above still applies to it
                 # a manager run that ended: the hub starts it again on its next tick
                 gone = 60 if w["manager"] else GONE_S
                 if judging and bridge_online and own + ONLINE_S < now - gone:
@@ -1034,6 +1132,16 @@ class WorkerStore:
                                 f"worker `{w['name']}` failed to start: {w['error']}"))
         return notices
 
+    def _boss_ended(self, w, now: float, judging: bool) -> bool:
+        """Under the lock. True when the hub closes the worker by itself: its boss session
+        really ended BOSS_ENDED_S ago (see bridge_seen), its own bridge is online and said
+        overnight mode is off in it, the boss is no page, and no close order is out for it."""
+        return judging and not w["manager"] and not w["boss_key"].startswith("web:") \
+            and w["boss_gone_since"] is not None and w["boss_gone_since"] <= now - BOSS_ENDED_S \
+            and w["overnight"] == 0 and self.db.execute(
+                "SELECT 1 FROM launches WHERE worker=? AND kind='close' AND (done_at IS NULL"
+                " OR created > ?) LIMIT 1", (w["name"], now - BOSS_ENDED_S)).fetchone() is None
+
     def adopt(self, principal: Principal, name: str, new_boss_key: str) -> dict:
         with self.lock:
             w = self._row(name)
@@ -1076,8 +1184,26 @@ class WorkerStore:
                 return None
             return self._close(w, WORKER)
 
-    def _close(self, w, name: str) -> dict:
-        """Close a live worker row; under the lock."""
+    def close_done(self, name: str, key: str) -> dict:
+        """The worker's own session says its task is done: it is closed (Claude only stops;
+        commits, branch and files stay) and its boss hears one line once the bridge did it.
+        Never for a worker whose boss is the page, nor while overnight mode is on in it."""
+        with self.lock:
+            w = self._row(name)
+            if w is None or w["key"] != key or w["state"] not in LIVE:
+                raise KaptyorkaError(f"no worker {name} of yours")
+            if w["boss_key"].startswith("web:") or w["manager"]:
+                raise KaptyorkaError("your boss is a person on the page; stay open, they close"
+                                     " you there")
+            if w["overnight"]:
+                raise KaptyorkaError("overnight mode is on in this session; it stays open until"
+                                     " overnight mode ends")
+            return self._close(w, name, DONE)
+
+    def _close(self, w, name: str, auto: Optional[str] = None) -> dict:
+        """Close a live worker row; under the lock. `auto`: why the hub closes it by itself;
+        the bridge then says what the worker left, and never stops it while overnight mode is
+        on in it."""
         now = self.clock()
         dev = self.db.execute("SELECT last_used, revoked_at FROM devices WHERE id=?",
                               (w["device_id"],)).fetchone()
@@ -1085,14 +1211,17 @@ class WorkerStore:
             dev["last_used"] is None or dev["last_used"] <= now - ONLINE_S
         notes = []
         if w["state"] == "starting":  # nothing to kill yet: the launch is never sent
-            self._end(name, "", "closed before start", now)
+            self._end(name, auto or "", "closed before start", now)
         elif offline:  # nobody would take a close order: closed here and now
-            self._end(name, "", "bridge offline", now)
+            self._end(name, auto or "", "bridge offline", now)
             notes.append(f"the bridge is offline; the session may still run on {w['host']}")
         else:
             body = {"issued": now, "worker": name, "tool": w["tool"], "key": w["key"]}
             if w["manager"]:
                 body["manager"] = True  # its own tmux session, not a `claude --bg` job
+            if auto:
+                cwd = self.db.execute("SELECT cwd FROM agents WHERE key=?", (w["key"],)).fetchone()
+                body.update(auto=auto, folder=(cwd["cwd"] if cwd and cwd["cwd"] else w["folder"]))
             self._queue(w["device_id"], name, "close", body)
         out = self._dict(self._row(name))
         if w["worktree"]:

@@ -641,14 +641,23 @@ def _machine_owner(args) -> int:
 
 
 def _machine_team(args) -> int:
-    if bool(args.name) == bool(args.person):
-        print("give a new team machine's name, or --from <person>", file=sys.stderr)
+    if sum(map(bool, (args.name, args.person, args.undo))) != 1:
+        print("give a new team machine's name, --from <person> or --undo <team machine>",
+              file=sys.stderr)
         return 1
+    if args.undo:
+        done = _admin_json("DELETE", f"/api/people/{quote(args.undo, safe='')}/team")
+        if done is None:
+            return 1
+        print(f"{done['name']} is a person again (member); it hosts no one else's workers."
+              " A former admin role or host ownership: kaptyorka people role / machine owner")
+        return 0
     if args.person:
         done = _admin_json("POST", f"/api/people/{quote(args.person, safe='')}/team")
         if done is None:
             return 1
-        print(f"{done['name']} is now a team machine; its machines keep working")
+        print(f"{done['name']} is now a team machine; its machines keep working, and anyone"
+              " with the write role in a project can start workers there")
         return 0
     got = _admin_call("POST", "/api/team-machines", {"name": args.name})
     if got is None:
@@ -1333,6 +1342,8 @@ def entry() -> None:
     mt.add_argument("--from", dest="person", metavar="PERSON",
                     help="turn this existing person into a team machine instead, such as the"
                          " one the hub made for its own OS account; their machines stay")
+    mt.add_argument("--undo", metavar="MACHINE",
+                    help="turn a team machine back into a person (member role)")
     mt.set_defaults(run=_machine_team)
     mv = mc.add_parser("move", help="give a joined machine to another person, without joining again")
     mv.add_argument("device", help="the machine's name or id (kaptyorka people lists them)")
