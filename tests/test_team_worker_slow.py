@@ -77,10 +77,8 @@ def test_real_worker_on_a_team_machine_reports_and_closes_itself(hub, monkeypatc
     shutil.copy(real_claude / ".credentials.json", home / ".claude" / ".credentials.json")
     os.chmod(home / ".claude" / ".credentials.json", 0o600)
     (home / ".claude" / "settings.json").write_text(json.dumps({"permissions": {
-        "defaultMode": "acceptEdits", "allow": ["mcp__kaptyorka", "Write", "Edit", "Read"],
-        "deny": ["EnterWorktree"]},  # a worktree would move it out of the proj-a folder
-        # Claude Code 2.1.330 keeps --bg sessions out of the main folder unless this is off
-        "worktree": {"bgIsolation": "none"}}))
+        "defaultMode": "acceptEdits", "allow": ["mcp__kaptyorka", "Write", "Edit", "Read"]}}))
+    # no worktree settings here: the launcher's own --settings must keep the worker in proj-a
     (home / ".claude.json").write_text(json.dumps({
         "hasCompletedOnboarding": True,
         "projects": {str(folder): {"hasTrustDialogAccepted": True}},

@@ -1,4 +1,5 @@
 """Start and stop worker sessions for signed orders: folder, worktree, command line, detach."""
+import json
 import os
 import re
 import secrets
@@ -15,6 +16,11 @@ NAME = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 GONE = ("can't find session", "no server running", "can't find pane", "No job matching")
 NO_SERVER = ("error connecting to", "No such file or directory")  # newer tmux, no server
 CLAUDE_WAIT_S = 60  # `claude --bg` returns once the session runs
+# a Claude Code worker stays in the folder the hub chose (kaptyorka makes its own worktree when
+# that folder is busy): Claude Code 2.1.330 otherwise keeps --bg sessions out of the start
+# folder or moves them into .claude/worktrees/, whose name is no team project, off the hub
+WORKER_SETTINGS = json.dumps({"worktree": {"bgIsolation": "none"},
+                              "permissions": {"deny": ["EnterWorktree"]}}, separators=(",", ":"))
 TMUX_WAIT_S = 10  # `tmux new-session -d` returns at once
 # `claude --bg` ignores --session-id and prints the short id that `claude stop` takes (never
 # the name): the first 8 hex digits of the session id the session file shows
@@ -125,8 +131,8 @@ class Launcher:
         if resume is not None:
             resume = _plain(resume, "resume id")
         if tool == "claude-code":
-            return ["claude", "--bg", "-n", name, *(["--resume", resume] if resume else []),
-                    first]
+            return ["claude", "--bg", "-n", name, "--settings", WORKER_SETTINGS,
+                    *(["--resume", resume] if resume else []), first]
         tmux = ["tmux", "new-session", "-d", "-s", name, "-c", folder]
         if tool == "codex":
             return [*tmux, "codex", *(["resume", resume] if resume else []), first]

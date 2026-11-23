@@ -79,13 +79,16 @@ def test_task_text_is_one_argument(launcher):
     argv = launcher.command(order(task=task), "/home/alice/proj-a")
     assert argv[-1] == FIRST + task and 'say "hi"' in argv[-1]
     assert argv[0] == "claude" and "--bg" in argv and "--dangerously-skip-permissions" not in argv
-    assert argv[1:4] == ["--bg", "-n", "proj-a-w1"] and len(argv) == 5
+    assert argv[1:4] == ["--bg", "-n", "proj-a-w1"] and len(argv) == 7
+    assert argv[4] == "--settings" and json.loads(argv[5]) == {
+        "worktree": {"bgIsolation": "none"}, "permissions": {"deny": ["EnterWorktree"]}}
 
 
 def test_claude_resume(launcher):
     argv = launcher.command(order(resume="abc-123"), "/w")
-    assert argv[:6] == ["claude", "--bg", "-n", "proj-a-w1", "--resume", "abc-123"]
-    assert len(argv) == 7 and argv[-1].startswith("You are")
+    assert argv[:4] == ["claude", "--bg", "-n", "proj-a-w1"]
+    assert argv[6:8] == ["--resume", "abc-123"]
+    assert len(argv) == 9 and argv[-1].startswith("You are")
 
 
 def test_tmux_tools_command_lines(launcher):
