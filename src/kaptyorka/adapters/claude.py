@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from kaptyorka import offhub, paths
-from kaptyorka.adapters.base import (DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, login_output,
+from kaptyorka.adapters.base import (NIGHT_GUARD, DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, login_output,
                                      mentions_hook, merge_json, write_atomic)
 
 CLAUDE_CODE_TESTED = "2.1.319"
@@ -106,8 +106,13 @@ def command_text(kaptyorka: str) -> str:
             "Tell the user the line above, word for word, and nothing else.\n")
 
 
+GUARDED = ("pretool", "permission")  # run on every tool call: skipped in the shell while off
+
+
 def hook_entry(kaptyorka: str, name: str) -> dict:
     command = f"{shlex.quote(kaptyorka)} hook claude-code {name}"
+    if name in GUARDED:
+        command = NIGHT_GUARD + command
     return {"hooks": [{"type": "command", "command": command, "timeout": 5}]}
 
 

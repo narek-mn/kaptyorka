@@ -128,7 +128,7 @@ Push means a running session gets a message without anyone typing. Pull only mea
 
 `join` also starts a small background service, `kaptyorka-bridge`, that delivers messages.
 
-The bridge adds kaptyorka's missing Claude Code hooks each time it starts (a line you wrote by hand counts as present), so the overnight hooks reach machines that joined earlier; Claude Code picks them up in open sessions. A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join` again (or `kaptyorka doctor --fix`). Codex asks once before it runs a new hook: approve it with `/hooks` in Codex.
+The bridge re-adds kaptyorka's own Claude Code hooks each time it starts (a line you wrote by hand counts as present), so the overnight hooks reach machines that joined earlier; Claude Code picks them up in open sessions. `kaptyorka leave` removes them. The two that run on every tool call (PreToolUse, PermissionRequest) start with a shell check that ends at once, without starting kaptyorka, while no session is in overnight mode. A machine joined before 0.4 gets the new stop hook when you run `kaptyorka join` again (or `kaptyorka doctor --fix`). Codex asks once before it runs a new hook: approve it with `/hooks` in Codex.
 
 ## What agents can do
 

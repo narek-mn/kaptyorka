@@ -176,9 +176,19 @@ def remove_alias(home: Path, alias: str, label: str) -> List[str]:
     return lines
 
 
+# Claude Code's overnight hooks (PreToolUse, PermissionRequest) start with this shell check: no
+# Python on every tool call while no session is in overnight mode (overnight.py keeps a marker
+# file per session in overnight/on while it is on).
+NIGHT_GUARD = ('[ -n "$(ls -A "${KAPTYORKA_HOME:-$HOME/.kaptyorka}/overnight/on" 2>/dev/null)" ]'
+               ' || exit 0; ')
+
+
 def is_exact_hook(command: object, tool: str, events: tuple) -> bool:
-    """True only for `<path>/kaptyorka hook <tool> <event>`, quoted or not (older installs)."""
+    """True only for `<path>/kaptyorka hook <tool> <event>`, quoted or not (older installs),
+    also behind NIGHT_GUARD."""
     command = str(command)
+    if command.startswith(NIGHT_GUARD):
+        command = command[len(NIGHT_GUARD):]
     for event in events:
         suffix = f" hook {tool} {event}"
         if command.endswith(suffix):

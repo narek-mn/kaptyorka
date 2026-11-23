@@ -151,6 +151,9 @@ Events
 
 1. A call that the developer's own ask rule sends to a person is skipped and noted.
 2. Similar phrases ("while I sleep", "run this overnight", "by the morning") also turn it on.
+3. Rule 3 blocks only system-wide deletes and the protected folders. Work, edits and
+   ordinary deletes outside the project folder are allowed. Narek decided this, because
+   logs, assets and configs outside the project are normal work.
 
 ## Sources
 

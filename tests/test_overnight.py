@@ -69,6 +69,8 @@ BLOCKED = [
     ('rm -rf "$DIR"', "unclear"),
     ("echo 'open quote", "unclear"),
     ("kaptyorka overnight off", "rules"),
+    ("kaptyorka overnight note done x && motorctl --home", "hardware"),
+    ("kaptyorka overnight note done \"$(sudo id)\"", "admin"),
     ("kaptyorka hub overnight off", "rules"),
 ]
 
@@ -91,6 +93,7 @@ ALLOWED = [
     "cp a ~/backups/b",
     "vim ~/.bashrc",
     "kaptyorka overnight note done 'tests pass'",
+    "/opt/k/kaptyorka overnight note skipped 'motorctl --home: blocked; sudo needed too'",
     "ls # sudo in a comment",
     "echo sudo",
 ]
@@ -461,3 +464,59 @@ def test_hub_report_goes_to_that_persons_page_only(hub):
     assert row["detail"] == 'project rule "No pushes on Friday" forbade git in proj-a'
     assert http.request("POST", hub.url + "/api/overnight", hub.token, {"kind": "report"},
                         headers=h)[0] == 400  # the shared token names no person
+
+
+# ---------- the hook command form ----------
+
+def test_tool_call_hooks_skip_python_while_off(tmp_path):
+    import subprocess
+
+    from kaptyorka.adapters.base import NIGHT_GUARD
+    from kaptyorka.adapters.claude import hook_entry
+
+    cmd = hook_entry("/opt/k y/bin/kaptyorka", "pretool")["hooks"][0]["command"]
+    assert cmd == NIGHT_GUARD + "'/opt/k y/bin/kaptyorka' hook claude-code pretool"
+    assert hook_entry("/opt/kaptyorka", "stop")["hooks"][0]["command"] == \
+        "/opt/kaptyorka hook claude-code stop"
+    fake = tmp_path / "kaptyorka"
+    fake.write_text("#!/bin/sh\necho RAN\n")
+    fake.chmod(0o755)
+    k = tmp_path / "k"
+    sh = NIGHT_GUARD + f"{fake} hook claude-code pretool"
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path), "KAPTYORKA_HOME": str(k)}
+    assert subprocess.run(["sh", "-c", sh], env=env, capture_output=True, text=True).stdout == ""
+    (k / "overnight" / "on").mkdir(parents=True)
+    assert subprocess.run(["sh", "-c", sh], env=env, capture_output=True, text=True).stdout == ""
+    (k / "overnight" / "on" / "s1").touch()
+    assert subprocess.run(["sh", "-c", sh], env=env, capture_output=True, text=True).stdout == "RAN\n"
+
+
+def test_marker_follows_on_and_off(home):
+    on()
+    assert (paths.home() / "overnight" / "on" / "s1").exists()
+    overnight.turn_off("s1", "test")
+    assert not (paths.home() / "overnight" / "on" / "s1").exists()
+
+
+def test_guarded_form_is_ours_for_install_leave_and_doctor(home):
+    from kaptyorka import doctor
+    from kaptyorka.adapters.base import is_our_hook
+    from kaptyorka.adapters.claude import HOOKS, ClaudeAdapter
+
+    exe = "/opt/k y/bin/kaptyorka"
+    old = {event: [{"hooks": [{"type": "command", "command": f"'{exe}' hook claude-code {name}"}]}]
+           for event, name in HOOKS}  # an install from before the guard
+    (home / ".claude").mkdir()
+    (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": old}))
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {"kaptyorka": {}}}))
+    a = ClaudeAdapter(home=home, log=lambda line: None,
+                      run=lambda *x, **k: type("R", (), {"returncode": 0, "stdout": ""})())
+    assert a.add_hooks(exe)  # the bridge's start: the old line is replaced, not doubled
+    hooks = json.loads((home / ".claude" / "settings.json").read_text())["hooks"]
+    pre = [h["command"] for e in hooks["PreToolUse"] for h in e["hooks"]]
+    assert len(pre) == 1 and pre[0].startswith("[ -n ") and is_our_hook(pre[0], "claude-code",
+                                                                        ("pretool",))
+    assert a.add_hooks(exe) == []
+    assert doctor.tool_configured(a, home)
+    a.unconfigure()
+    assert "hooks" not in json.loads((home / ".claude" / "settings.json").read_text())

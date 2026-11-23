@@ -112,6 +112,12 @@ def state(sid: str) -> Optional[dict]:
 
 def save(sid: str, st: dict) -> None:
     _private(_dir() / f"{_sid(sid)}.json", json.dumps(st))
+    marker = _dir() / "on" / _sid(sid)  # the hooks' shell check (adapters.base.NIGHT_GUARD)
+    if st.get("on"):
+        marker.parent.mkdir(mode=0o700, exist_ok=True)
+        marker.touch(mode=0o600)
+    else:
+        marker.unlink(missing_ok=True)
 
 
 def active() -> List[Tuple[str, dict]]:
@@ -492,6 +498,8 @@ def check(cmd: str, ctx: dict, depth: int = 0) -> Tuple[str, str]:
     if depth > 4:
         return "unclear", "commands nested too deep"
     cmd = strip_heredocs(cmd) if depth == 0 else cmd
+    if depth == 0 and _own_note(cmd):
+        return "", ""  # its text may name a blocked thing; it only writes the report
     raw = cmd
     if any(own in raw for own in ctx.get("own", [])):
         return "rules", "the overnight files are changed by the developer only"
@@ -510,6 +518,20 @@ def check(cmd: str, ctx: dict, depth: int = 0) -> Tuple[str, str]:
         if got[0]:
             return got
     return "", ""
+
+
+def _own_note(cmd: str) -> bool:
+    """`kaptyorka overnight note|clash ...` alone: one plain command, nothing substituted."""
+    try:
+        flat, inner = _substitutions(cmd)
+        segs = _split(flat)
+    except Unclear:
+        return False
+    if inner or len(segs) != 1 or any(t in REDIRS for t in segs[0]):
+        return False
+    words = segs[0]
+    return (len(words) >= 3 and os.path.basename(words[0]) == "kaptyorka"
+            and words[1] == "overnight" and words[2] in ("note", "clash", "status"))
 
 
 def _unclear(allowed: set, why: str) -> Tuple[str, str]:
