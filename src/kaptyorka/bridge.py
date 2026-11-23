@@ -91,6 +91,7 @@ class Bridge:
         self._repos = offhub.load_repos()  # {fingerprint: project} of the registered repos
         self._facts: dict = {}
         self._facts_at: Optional[float] = None  # monotonic time of the last build; None forces one
+        self._facts_thread: Optional[threading.Thread] = None  # the once-a-minute rebuild
         self._usage = usage.Sampler()
         self._gpu_queue_ask: Optional[dict] = None  # the hub's last gpu_queue ask
         self._skills_version: Optional[str] = None  # the hub's last skills_version; None until one comes
@@ -104,33 +105,46 @@ class Bridge:
         self._problems[area] = problem
 
     def _machine_facts(self, sessions: list) -> dict:
-        """Machine facts and git state per session folder, rebuilt at most once a minute."""
-        if self._facts_at is None or time.monotonic() - self._facts_at >= FACTS_S or not self._facts:
-            repos = {}
-            for cwd in {s.cwd for s in sessions if s.cwd}:
-                info = facts.git(cwd, self.runner)
-                if info:
-                    repos[cwd] = info
-            current = None if self._skills_version is None else \
-                skills_sync.applied_version(paths.home()) == self._skills_version
-            self._facts = {**identity.facts(), **facts.machine(self.adapters, self.runner, skills_current=current), "git": repos}
-            try:  # use per OS user: numbers only; never stops the heartbeat
-                self._facts["use"] = self._usage.read()
-            except Exception as e:
-                self._report("use", f"reading machine use failed: {e}")
-            self._checks()
-            self._facts_at = time.monotonic()
+        """Machine facts and git state per session folder, rebuilt at most once a minute. The
+        once-a-minute rebuild runs beside the heartbeat: its tool probes can take many seconds on
+        a busy machine, and the session report must not wait for them (a late report shows a
+        live session offline). The first build, and one asked for (skills, GPU queue), run here."""
+        if self._facts_at is None or not self._facts:
+            self._build_facts(sessions)
+        elif time.monotonic() - self._facts_at >= FACTS_S and not (
+                self._facts_thread is not None and self._facts_thread.is_alive()):
+            self._facts_at = time.monotonic()  # one rebuild at a time
+            self._facts_thread = threading.Thread(target=self._build_facts, args=(list(sessions),),
+                                                  name="kaptyorka-facts", daemon=True)
+            self._facts_thread.start()
         return self._facts
 
-    def _checks(self) -> None:
+    def _build_facts(self, sessions: list) -> None:
+        repos = {}
+        for cwd in {s.cwd for s in sessions if s.cwd}:
+            info = facts.git(cwd, self.runner)
+            if info:
+                repos[cwd] = info
+        current = None if self._skills_version is None else \
+            skills_sync.applied_version(paths.home()) == self._skills_version
+        new = {**identity.facts(), **facts.machine(self.adapters, self.runner, skills_current=current), "git": repos}
+        try:  # use per OS user: numbers only; never stops the heartbeat
+            new["use"] = self._usage.read()
+        except Exception as e:
+            self._report("use", f"reading machine use failed: {e}")
+        self._checks(new)
+        self._facts = new
+        self._facts_at = time.monotonic()
+
+    def _checks(self, into: Optional[dict] = None) -> None:
         """The GPU queue, when the hub asked this bridge for it; it never stops the heartbeat
         and an unreadable file is "unknown", never a log line."""
         q = self._gpu_queue_ask
         try:
             if isinstance(q, dict) and isinstance(q.get("lock"), str):
                 shares = q.get("shares") if isinstance(q.get("shares"), int) else usage.GPU_SHARES
-                self._facts["gpu_queue"] = {**usage.read_queue(q["lock"], shares),
-                                            "read_at": time.time()}
+                (self._facts if into is None else into)["gpu_queue"] = {
+                    **usage.read_queue(q["lock"], shares), "read_at": time.time()}
         except Exception as e:
             self._report("gpu_queue", f"reading the GPU queue failed: {e}")
 

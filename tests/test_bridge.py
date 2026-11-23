@@ -1116,3 +1116,29 @@ def test_auto_close_is_refused_while_overnight_mode_is_on(team):
     with team.hub.store.lock:
         row = team.hub.store.db.execute("SELECT state, overnight FROM workers").fetchone()
     assert (row["state"], row["overnight"]) == ("up", 1)
+
+
+def test_the_minute_facts_rebuild_never_delays_the_session_report(monkeypatch, tmp_path):
+    # a busy machine: the tool probes take long; the heartbeat must not wait for them
+    import threading as _t
+    from kaptyorka import bridge as bridge_mod, facts as facts_mod
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path))
+    b = bridge_mod.Bridge({"hub": "http://h", "token": "t", "machine": "box-1"}, [], lambda s: None)
+    gate = _t.Event()
+    calls = []
+
+    def slow_machine(*a, **k):
+        calls.append(1)
+        if len(calls) > 1:
+            gate.wait(5)  # the rebuild hangs until released
+        return {"probe": len(calls)}
+    monkeypatch.setattr(facts_mod, "machine", slow_machine)
+    assert b._machine_facts([])["probe"] == 1  # the first build runs at once
+    b._facts_at -= bridge_mod.FACTS_S + 1  # a minute later
+    started = time.monotonic()
+    assert b._machine_facts([])["probe"] == 1  # the old facts, without waiting
+    assert time.monotonic() - started < 1
+    assert b._machine_facts([])["probe"] == 1  # one rebuild at a time
+    gate.set()
+    b._facts_thread.join(5)
+    assert b._machine_facts([])["probe"] == 2 and len(calls) == 2
