@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Open sessions keep working after kaptyorka updates under them.** A session started before an update answered "Internal server error" to every kaptyorka tool call until `/mcp` reconnect: its `kaptyorka mcp` loaded part of its code only at the first tool call, so after the update that part came from the new version, next to the old version already in memory, and failed (`module 'kaptyorka.paths' has no attribute 'MANAGER_TMUX'`). Auto-update did this on every teammate's machine. Now the tool server loads all it needs at start, so an update on disk cannot break it; if a call still fails while a newer version is on disk, the session hears "kaptyorka was updated on this machine; run /mcp and reconnect kaptyorka" instead.
+- **A new hub version starts the manager at once, even after crashes on the old one.** The crash streak survived updates, so after 0.9.29 the manager waited up to an hour for 5 crashes caused by the old version's bug. The first start of a different version now forgets the streak (the "does not trust the folder" stop and the refused-launch limit stay).
+- **A manager that has run for 5 minutes clears its crash streak while it still runs**, not only when its run ends, so Settings stops showing old crashes and a later crash starts counting from one.
+
 ## 0.9.29
 
 - **The manager stays up when a team machine runs it.** The hub took the manager's session reports only from an admin's own bridge, while the bridge that runs the manager can be the hub key's person's, a team machine. That bridge's reports were dropped, so the hub saw the manager only at its first tool call, judged it ended a minute and a half later, and started it again and again; messages to it were not pushed. Now the bridge that runs the live manager worker always reports its session. (Older versions had the same gap; a manager that went to sleep hid it.)

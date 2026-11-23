@@ -442,3 +442,54 @@ def test_manager_seen_again_is_revived(store, ms, clock):
     WorkerStore(store).tick(clock[0])
     assert WorkerStore(store).by_name("manager")["state"] == "up"
     assert ms.may_launch(clock[0]) == (False, "the manager is already running")
+
+
+def stale_streak(ms, t, n=5):
+    ms._set("manager_crashes", json.dumps([t - 60 * i for i in range(n)]))
+    ms._set("manager_crash_error", "manager did not show up")
+
+
+def test_a_new_version_drops_the_crash_streak_and_nothing_else(ms, clock):
+    stale_streak(ms, clock[0])
+    ms._set("manager_judged", "1.0")
+    ms.set_blocked("trust")
+    assert ms.note_version("0.9.30") is True  # none recorded yet counts as changed
+    assert ms.crashes() == [] and ms._get("manager_crash_error") == ""
+    assert ms._get("manager_judged") == "1.0" and ms.blocked() == "trust"
+    stale_streak(ms, clock[0])
+    assert ms.note_version("0.9.30") is False and len(ms.crashes()) == 5  # same version: kept
+    assert ms.note_version("0.9.31") is True and ms.crashes() == []
+
+
+def live_manager(store, up_at, state="up"):
+    with store.lock:
+        store.db.execute(
+            "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+            " tool, state, created, up_at) VALUES ('manager','p','t','k',1,1,'box-1','claude',"
+            "?,?,?)", (state, up_at - 30, up_at))
+
+
+@pytest.mark.parametrize("state", ["up", "unattended"])
+def test_a_live_run_past_the_crash_window_clears_the_streak(store, ms, clock, state):
+    stale_streak(ms, clock[0], 3)
+    live_manager(store, clock[0], state)
+    ms.run_lasted(clock[0] + manager.CRASH_S - 1)
+    assert len(ms.crashes()) == 3  # not yet: it may still crash
+    ms.run_lasted(clock[0] + manager.CRASH_S)
+    assert ms.crashes() == []
+
+
+def test_a_live_run_with_no_streak_writes_nothing(store, ms, clock, monkeypatch):
+    live_manager(store, clock[0])
+    writes = []
+    monkeypatch.setattr(ms, "_set", lambda k, v: writes.append(k))
+    ms.run_lasted(clock[0] + manager.CRASH_S + 600)
+    ms.may_launch(clock[0] + manager.CRASH_S + 600)  # each tick goes through here
+    assert writes == []
+
+
+def test_an_ended_run_is_left_to_judge_run(store, ms, clock):
+    stale_streak(ms, clock[0], 2)
+    live_manager(store, clock[0], "closed")
+    ms.run_lasted(clock[0] + 3600)
+    assert len(ms.crashes()) == 2

@@ -1700,3 +1700,40 @@ def test_a_manager_that_keeps_calling_the_hub_is_never_judged_gone(hub, clock):
         hub.tick()
         assert state(hub) == "up"
     assert hub.mm.crashes() == [] and [o for o in orders(hub, b) if o["kind"] == "launch"] == []
+
+
+def test_a_hub_on_a_new_version_launches_despite_the_old_versions_crashes(hub, clock):
+    """Five crashes from the previous version's bug would hold the manager for an hour; the
+    first start of a new version forgets them."""
+    from conftest import start_hub
+
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.mm._set("manager_crashes", json.dumps([clock[0] - 60 * i for i in range(5)]))
+    hub.mm._set("manager_crash_error", "manager did not show up")
+    hub.mm._set("manager_version", "0.0.1")
+    assert hub.mm.may_launch(clock[0])[1].startswith("the manager crashed 5 times in a row")
+    stop = start_hub(hub.store, manager_url=URL)  # the hub starts again, now on this version
+    try:
+        new = SimpleNamespace(**{**vars(hub), "url": f"http://127.0.0.1:{stop.port}",
+                                 "tick": stop.app.state.tick})
+        assert hub.mm._get("manager_version") == kaptyorka.__version__
+        assert hub.mm.crashes() == []
+        beat(new, b)
+        new.tick()
+        assert len(orders(new, b)) == 1 and state(hub) == "starting"
+    finally:
+        stop()
+
+
+def test_a_manager_up_past_the_crash_window_clears_its_streak_while_running(hub, clock):
+    b = running_manager(hub)
+    hub.mm._set("manager_crashes", json.dumps([clock[0] - 600]))
+    clock[0] += manager.CRASH_S - 10
+    beat(hub, b, [{"key": "claude:m1", "tool": "claude-code", "project": "manager"}])
+    hub.tick()
+    assert len(hub.mm.crashes()) == 1
+    clock[0] += 20
+    beat(hub, b, [{"key": "claude:m1", "tool": "claude-code", "project": "manager"}])
+    hub.tick()
+    assert state(hub) == "up" and hub.mm.crashes() == []

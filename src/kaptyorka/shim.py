@@ -2,6 +2,10 @@
 import dataclasses
 import json
 import os
+import re
+import sys
+import traceback
+from pathlib import Path
 from typing import Dict, Optional
 
 import anyio
@@ -14,13 +18,18 @@ from mcp.server.stdio import stdio_server
 
 from urllib.parse import quote
 
-from kaptyorka import http, identity, offhub, optin, paths
+import kaptyorka
+# Everything a tool call needs is loaded now: an upgrade replaces these files under a running
+# shim, and a module first imported after it would be the new one next to old ones in memory.
+from kaptyorka import facts, http, identity, launch, offhub, optin, paths, repos  # noqa: F401
 from kaptyorka.adapters.opencode import valid_id as opencode_id
 from kaptyorka.store import MAX_FILE
 
 TIMEOUT_S = 4.5  # whole call, connection included: the agent hears back within 5 s
 HEARTBEAT_S = 10
 OPENCODE_META = "ai.opencode/sessionID"  # OpenCode V2 tags each tool call with its session
+UPDATED = ("kaptyorka was updated on this machine; run /mcp and reconnect kaptyorka (or restart"
+           " this session) to use the new version")
 NO_MANAGER_CONFIG = "kaptyorka: the manager's config is missing on this machine; no hub"
 TRANSPORT_ERRORS = (types.CONNECTION_CLOSED, types.REQUEST_TIMEOUT)  # the client's, not the hub's
 FALLBACK_TOOLS = ["who", "send", "inbox", "status", "notes_list", "notes_read", "notes_write",
@@ -128,6 +137,26 @@ def _headers(cfg: dict, ident: Optional[identity.Identity]) -> dict:
 
 def _error(message: str) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(text=message)], is_error=True)
+
+
+def _installed_version() -> str:
+    """The kaptyorka version on disk now ("" when unreadable), not the one loaded."""
+    try:
+        text = (Path(kaptyorka.__file__).parent / "__init__.py").read_text()
+    except OSError:
+        return ""
+    m = re.search(r"""__version__\s*=\s*["']([^"']+)["']""", text)
+    return m.group(1) if m else ""
+
+
+def _failed(e: Exception) -> types.CallToolResult:
+    """A tool call that raised: after an upgrade on disk, a plain line on how to reconnect
+    instead of the client's bare "Internal server error"; otherwise raised as it was."""
+    installed = _installed_version()
+    if installed and installed != kaptyorka.__version__:
+        traceback.print_exception(e, file=sys.stderr)
+        return _error(UPDATED)
+    raise e
 
 
 def _private_place(path: str) -> Optional[str]:
@@ -277,6 +306,12 @@ async def _serve(cfg: dict, workspace: Optional[str]) -> None:
                 else _error(line)
 
         async def call_tool(ctx, params) -> types.CallToolResult:
+            try:
+                return await tool_call(params)
+            except Exception as e:
+                return _failed(e)
+
+        async def tool_call(params) -> types.CallToolResult:
             sid = (params.meta or {}).get(OPENCODE_META)
             if sid and isinstance(sid, str) and opencode_id(sid):
                 who = meta_ident(sid)

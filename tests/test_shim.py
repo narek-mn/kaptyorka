@@ -249,3 +249,57 @@ def test_shim_in_the_manager_folder_uses_the_manager_token(hub, home):
     assert a.person_id == mid and a.machine == "manager@box-1"
     anyio.run(go, {**IDENT, "key": "claude:o", "cwd": str(home / "proj-a")})
     assert hub.store.agent("claude:o").person_id != mid
+
+
+def test_a_failed_call_after_an_upgrade_on_disk_says_how_to_reconnect(monkeypatch):
+    import pytest
+
+    boom = AttributeError("module 'kaptyorka.paths' has no attribute 'X'")
+    monkeypatch.setattr(shim_mod, "_installed_version", lambda: "99.0")
+    r = shim_mod._failed(boom)
+    assert r.is_error and text(r) == shim_mod.UPDATED
+    assert "/mcp" in text(r) and "reconnect kaptyorka" in text(r)
+    monkeypatch.setattr(shim_mod, "_installed_version", lambda: shim_mod.kaptyorka.__version__)
+    with pytest.raises(AttributeError):  # the same version: a real bug stays visible
+        shim_mod._failed(boom)
+
+
+def test_the_installed_version_is_read_from_disk():
+    assert shim_mod._installed_version() == shim_mod.kaptyorka.__version__
+
+
+SHIM_PATH = ["shim", "identity", "offhub", "optin", "paths", "http", "repos", "launch", "facts",
+             "adapters.base", "adapters.claude", "adapters.codex", "adapters.cursor",
+             "adapters.opencode"]
+
+
+def test_the_shim_loads_at_start_every_module_its_tool_calls_import():
+    """An upgrade replaces the files under a running shim: a module first imported inside a
+    function after it would be the new one next to the old ones (a real shim answered every
+    call with "Internal server error" so)."""
+    import ast
+    import subprocess
+    from pathlib import Path
+
+    import kaptyorka
+
+    root = Path(kaptyorka.__file__).parent
+    wanted = set()
+    for name in SHIM_PATH:
+        tree = ast.parse((root / (name.replace(".", "/") + ".py")).read_text())
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("kaptyorka"):
+                    if node.module == "kaptyorka":
+                        wanted |= {f"kaptyorka.{a.name}" for a in node.names
+                                   if (root / f"{a.name}.py").exists()}
+                    else:
+                        wanted.add(node.module)
+    assert "kaptyorka.launch" in wanted  # offhub.exempt: the import that broke
+    loaded = subprocess.run(
+        [sys.executable, "-c", "import sys, kaptyorka.cli, kaptyorka.shim;"
+         " print(' '.join(m for m in sys.modules if m.startswith('kaptyorka')))"],
+        capture_output=True, text=True, check=True).stdout.split()
+    assert wanted - set(loaded) == set()

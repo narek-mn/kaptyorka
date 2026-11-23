@@ -12,7 +12,7 @@ from kaptyorka import paths, rules, usage
 from kaptyorka.adapters import claude as claude_adapter
 from kaptyorka.adapters.base import write_atomic
 from kaptyorka.store import ONLINE_S, Store
-from kaptyorka.workers import WorkerStore
+from kaptyorka.workers import LIVE, WorkerStore
 
 _FALLBACK_LOGGED: set = set()  # (host, OS user) already logged as falling back
 
@@ -466,6 +466,31 @@ class ManagerStore:
             self._set("manager_crashes", json.dumps(self.crashes() + [ended]))
             self._set("manager_crash_error", reason[:300])
 
+    def _clear_streak(self) -> None:
+        self._set("manager_crashes", "[]")
+        self._set("manager_crash_error", "")
+
+    def note_version(self, version: str) -> bool:
+        """At hub start: a hub running another kaptyorka version than it last recorded (or
+        none recorded) drops the crash streak, since those crashes may be the old version's
+        bug; the trust stop and the refusals stay. True when the version changed."""
+        if self._get("manager_version") == version:
+            return False
+        self._clear_streak()
+        self._set("manager_version", version)
+        return True
+
+    def run_lasted(self, now: float) -> None:
+        """A run still live CRASH_S after it came up is no crash: clear the streak now, not
+        only when the run ends. Writes only when there is a streak to clear."""
+        with self.lock:
+            row = self.db.execute(f"SELECT up_at FROM workers WHERE name=? AND state IN"
+                                  f" ({','.join('?' * len(LIVE))})", (WORKER, *LIVE)).fetchone()
+        if row is None or row["up_at"] is None or now - row["up_at"] < CRASH_S:
+            return
+        if self.crashes():
+            self._clear_streak()
+
     def crashes(self) -> List[float]:
         """When each crash in the current streak happened."""
         try:
@@ -526,6 +551,7 @@ class ManagerStore:
         if self.blocked() == "trust":
             return False, ("Claude Code does not trust the manager's folder; run claude there"
                            " once, accept, then kaptyorka start --manager")
+        self.run_lasted(now)
         with self.lock:
             live = self.db.execute("SELECT 1 FROM workers WHERE name=? AND state IN"
                                    " ('starting','up')", (WORKER,)).fetchone()

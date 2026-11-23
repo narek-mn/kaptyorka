@@ -223,6 +223,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     ms = MemoryStore(store)
     rs = rules_mod.RulesStore(store)
     mm = ManagerStore(store)
+    mm.note_version(__version__)  # a new version starts with no crash streak
     cs = ConnectStore(store, lambda key, text: ws.notify(key, text), mm.person_id)
     brief_cache: dict = {}  # per session key; see brief.cached
     gl = GitLabSource(store)  # the GitLab group's project list: names only, never access
