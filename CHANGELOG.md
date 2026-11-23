@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.28
 
 - **A short hub guide at session start, so nobody has to remember `/hub team`.** In a personal folder the agent hears, at most 500 characters, built on this machine alone (no hub call): only when the request touches a team project, a teammate, a team machine or the hub, suggest `/hub team <project>` (with the person's own projects) or `/hub team` to coordinate, once, and `join_team` only after a yes; nothing for personal work. A team project's start brief gets one line (private work: `/hub off`), a coordinator's the "name a project for notes and work" line, and an off session only that it is off. Codex says `$hub`. Delivered by the tools' own user-level hooks: Claude Code's and Codex's `SessionStart`, OpenCode's plugin system text, and a new Cursor `sessionStart` hook in `~/.cursor/hooks.json` (written at bridge start, removed by `leave`).
 - **Machine warnings on the Machines page, for everyone.** Each warning (old kaptyorka, bridge offline, hooks missing, no tool logged in, no tmux, a failed or unattended worker) is an amber chip on its account's row, full text on hover, a click shows the fix with Copy. No tool logged in has no chip of its own: the "not logged in" tool tag opens it (and "No agent tool" says what to install). A **Warnings N** chip filters to them, and the count shows beside Machines in Settings. Members see only their own accounts, workers and the team machines they can use (the hub filters `/api/warnings`, which members may now call); admins see all. Home is unchanged.
@@ -11,6 +11,7 @@
 - **Only crashes slow the manager's restarts.** Normal wake-ups never wait (the old limit of two launches an hour is gone). A start that never showed up, or ended within about 3 minutes, waits 2, 4, 8, 16 minutes before the next try, then once an hour after 5 crashes in a row, and Settings says why with the last error.
 - **The manager can use subagents** (the Agent tool) for its own longer jobs, one per job, so it stays free for messages. A subagent gets only the manager's tools (checked on Claude Code 2.1.329). Its instructions say: answer quick things at once, say "working on it" otherwise, send code work to the person's own machine, and keep open tasks per person in its own state note (`state("manager")`), which only it can read.
 - Worker scopes are started with `--collect` again, so a failed scope does not stay in `systemctl --user --failed`; a systemd that does not know the option gets one retry without it. A worker's scope is never stopped: it can hold Claude Code's shared background service or the tmux server, and with them other sessions.
+- Not yet tried for real: the session hub guide in Codex, OpenCode and Cursor (fakes only; Claude Code was probed for real); a real manager acting on the old-version notice; a real pipx failure; the manager on the real hub machine, its slow test, and a run of an hour or more.
 
 ## 0.9.27
 
