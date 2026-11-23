@@ -106,7 +106,8 @@ def test_candidates_own_device_shared_device_and_reasons(store, ws, alice, bob, 
 
     clock[0] += ONLINE_S + 1
     usable, reasons = ws.candidates(me, "proj-a", "box-2")
-    assert usable == [] and reasons == ["box-2 (bob): bridge offline"]
+    assert usable == [] and reasons == ["box-2 (bob): bridge offline; on that machine run"
+                                         " `kaptyorka doctor --fix`"]
 
 
 def test_choose_prefers_free_folder_then_low_load(store, ws, alice, clock):

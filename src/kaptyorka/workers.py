@@ -477,23 +477,40 @@ class WorkerStore:
     def candidates_for(self, person_id: int, project: str,
                        machine: Optional[str]) -> Tuple[List[dict], List[str]]:
         """Devices this person may start a worker on, and one sentence per device skipped.
-        Devices they may not use at all are not mentioned."""
+        Devices they may not use at all are not mentioned, except a named machine that is
+        someone's own (it could be made a team machine). A team machine takes workers from
+        anyone with the write role in the project (an admin: any project), unless it is hidden
+        from them."""
         usable, reasons = [], []
         with self.lock:
             now = self.clock()
+            writer = self.store._registered(project) and \
+                self.store._role(project, person_id) in ("write", "manage")
             for d in self.db.execute(
-                    "SELECT d.*, p.name AS person FROM devices d JOIN people p ON p.id=d.person_id"
-                    " WHERE d.revoked_at IS NULL AND d.host != '' ORDER BY d.host, d.id").fetchall():
+                    "SELECT d.*, p.name AS person, p.team FROM devices d JOIN people p"
+                    " ON p.id=d.person_id WHERE d.revoked_at IS NULL AND d.host != ''"
+                    " ORDER BY d.host, d.id").fetchall():
                 if machine is not None and d["host"] != machine:
-                    continue
-                if not (d["person_id"] == person_id
-                        or (d["shared"] and self.store._may_use(d["host"], person_id))):
                     continue
                 if self.store._hidden(d["person_id"], person_id):  # a team machine hidden from them
                     continue
+                if not (d["person_id"] == person_id or (d["team"] and writer)
+                        or (d["shared"] and self.store._may_use(d["host"], person_id))):
+                    if machine is not None and d["shared"] and not d["team"]:
+                        reasons.append(f"{d['host']} ({d['os_user']}): a shared account you have"
+                                       " no access to; an admin can give it:"
+                                       f" `kaptyorka grant <you> machine:{d['host']}`")
+                    elif machine is not None and not d["team"] and not d["legacy"]:
+                        named = d["person"] if self.store._role_of(person_id) == "admin" \
+                            else "<its person>"  # the owner's name is for admins
+                        reasons.append(f"{d['host']} is someone's own machine, not a team"
+                                       " machine; if the whole team uses it, an admin runs"
+                                       f" `kaptyorka machine team --from {named}`")
+                    continue
                 who = f"{d['host']} ({d['person']})"
                 if d["last_used"] is None or d["last_used"] <= now - ONLINE_S:
-                    reasons.append(f"{who}: bridge offline")
+                    reasons.append(f"{who}: bridge offline; on that machine run"
+                                   " `kaptyorka doctor --fix`")
                     continue
                 if not d["secret_hash"]:
                     reasons.append(f"{who}: still on the shared token; invite it or assign it so"
@@ -503,7 +520,12 @@ class WorkerStore:
                 usable.append({"device_id": d["id"], "host": d["host"], "os_user": d["os_user"],
                                "person_id": d["person_id"], "tmux": bool(facts.get("tmux")),
                                "load": facts.get("load"), "cpus": facts.get("cpus"),
-                               "tools": facts.get("tools", {}), "folder": folders.get(project)})
+                               "tools": facts.get("tools", {}), "folder": folders.get(project),
+                               # a team machine's bridge looks for ~/<project> only once the
+                               # team machine itself has a role there
+                               "team": d["person"] if d["team"] else None,
+                               "team_role": bool(d["team"]) and self.store._role(
+                                   project, d["person_id"]) is not None})
         return usable, reasons
 
     def choose(self, usable: List[dict], project: str, tool: str, now: float,

@@ -232,6 +232,32 @@ def make_team_machine(store, name: str, by: Principal) -> dict:
     return {"name": name, "was": row["role"], "machines_unowned": owned}
 
 
+def undo_team_machine(store, name: str, by: Principal) -> dict:
+    """make_team_machine backwards: the team machine is a person again, with the member role.
+    Its devices stop counting as shared, so they host no one else's workers; who it was hidden
+    from is forgotten. A former admin role and host ownership are not remembered: give them back
+    with `kaptyorka people role` and `kaptyorka machine owner`. Refused while another person's
+    worker runs on it (close those first: its bridge would stop reporting them)."""
+    _admin(by)
+    with store.lock:
+        db = store.db
+        row = _live_person(db, name)
+        pid, name = row["id"], row["name"]
+        if not row["team"]:
+            raise KaptyorkaError(f"{name} is not a team machine")
+        busy = [r["name"] for r in db.execute(
+            "SELECT w.name FROM workers w JOIN devices d ON d.id=w.device_id WHERE d.person_id=?"
+            " AND w.boss_person<>? AND w.state IN ('starting','up','unattended','abandoned')"
+            " ORDER BY w.name", (pid, pid))]
+        if busy:
+            raise KaptyorkaError(f"other people's workers run on {name} ({', '.join(busy)});"
+                                 " close them first")
+        db.execute("UPDATE people SET team=0, role='member' WHERE id=?", (pid,))
+        db.execute("DELETE FROM team_machine_hidden WHERE team_person_id=?", (pid,))
+    store.log_add(by.person_name, "team_machine_undo", name)
+    return {"name": name}
+
+
 # invites
 
 def invite_expires(store, code: str) -> Optional[float]:
@@ -805,6 +831,7 @@ SENTENCES = {
     "admin_taken": _match(r"(.+)", "{0} removed {1}'s admin role"),
     "team_machine": _match(r"(.+)", "{0} added the team machine {1}"),
     "team_machine_from": _match(r"(.+)", "{0} made {1} a team machine"),
+    "team_machine_undo": _match(r"(.+)", "{0} made {1} a person again"),
     "machine_move": _match(r"(.+): (.+) -> (.+)", "{0} moved the machine {1} from {2} to {3}"),
     "team_machine_hidden": _match(r"(.+) -> (.+)", "{0} hid {1} from {2}"),
     "team_machine_shown": _match(r"(.+) -> (.+)", "{0} showed {1} to {2}"),
@@ -850,7 +877,7 @@ KNOWN_KINDS = tuple(SENTENCES)
 
 # the plain groups of the log page, in order, and the raw kinds each covers
 LOG_GROUPS = [
-    ("people", ["person", "person_removed", "role", "admin_given", "admin_taken", "team_machine", "team_machine_from", "invite", "invite_new", "invite_self",
+    ("people", ["person", "person_removed", "role", "admin_given", "admin_taken", "team_machine", "team_machine_from", "team_machine_undo", "invite", "invite_new", "invite_self",
                 "machine_label", "browsers_out",
                 "invite_cancel", "device",
                 "device_shared", "join", "gitlab_user", "gitlab_link"]),

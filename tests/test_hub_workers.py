@@ -223,7 +223,9 @@ def test_admin_cannot_use_members_private_device(hub, alice):
     admin = as_token(hub, admin_token)
     answer = run(call(admin, ident("k:x", machine="hubbox"), "work", project="proj-a",
                       task="x", machine="box-1"))
-    assert answer == "no machine can take proj-a: no machine named box-1 that you may use"
+    assert answer == ("no machine can take proj-a: box-1 is someone's own machine, not a team"
+                      " machine; if the whole team uses it, an admin runs `kaptyorka machine"
+                      " team --from alice`")
     answer = run(call(admin, ident("k:x", machine="hubbox"), "work", project="proj-a", task="x"))
     assert answer.startswith("no machine can take proj-a: ")
     assert hub.ws.list(hub.store.authenticate(admin_token)) == []
@@ -237,7 +239,8 @@ def test_reasons_for_folder_and_tmux(hub, alice):
     r = run(_client(client, BOSS, lambda c: c.call_tool(
         "work", {"project": "proj-a", "task": "x", "tool": "codex"})))
     answer = r.structured_content["result"]
-    assert answer == ("no machine can take proj-a: box-1 (u): no folder for proj-a;"
+    assert answer == ("no machine can take proj-a: box-1 (u): no folder for proj-a; clone it"
+                      " to ~/proj-a there, or open a session in its folder there once;"
                       " box-2 (u): no tmux (only Claude Code workers can run there)")
 
 

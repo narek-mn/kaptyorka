@@ -1018,3 +1018,9 @@ def test_the_hub_key_works_once_its_person_is_a_team_machine(hub, capsys):
     assert call(hub, "GET", "/api/team/machines", key)[0] == 200
     assert run("people", "role", "alice", "admin") == 0
     assert hub.store.person_by_name("alice")["role"] == "admin"
+    assert run("machine", "team", "--undo", "svc") == 0  # and back
+    assert "svc is a person again (member)" in capsys.readouterr().out
+    assert not hub.store.is_team(svc)
+    assert run("machine", "team", "--undo", "svc") == 1
+    assert "svc is not a team machine" in capsys.readouterr().err
+    assert run("machine", "team", "x", "--undo", "svc") == 1

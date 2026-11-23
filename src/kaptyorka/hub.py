@@ -49,6 +49,8 @@ REMOVED = "{project} was removed; ask the admin to register it again"
 ASK_MANAGER = ("to reach another person's session, message the manager: say whom and why;"
                " only the admin opens a door")
 ON_SHARED = "a worker on a shared account cannot start, adopt or close workers; ask your boss"
+MANAGER_NO_WORK = ("the manager never starts workers itself: ask the person's own session to call"
+                   " work, so that session is the worker's boss")
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
        "style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'; font-src 'self'")
 FONTS = ("archivo-latin.woff2",)  # the page's font files (web/fonts/, SIL OFL 1.1)
@@ -65,6 +67,7 @@ MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
     ("GET", r"/api/files/\d+"),
     ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab|team-machines|overnight)"),
     ("POST", r"/api/people/[^/]+/(gitlab|role|team)"),
+    ("DELETE", r"/api/people/[^/]+/team"),
     ("POST", r"/api/people/[^/]+/team-machines/[^/]+"),
     ("POST", r"/api/machines/[^/]+/(grant|owner|revoke|gpu-queue)"),
     ("POST", r"/api/projects/[^/]+(/grant|/revoke)?"),
@@ -702,6 +705,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return person_id
         return None
 
+    def chained(agent, principal: Principal) -> bool:
+        """True for a worker's session on a shared account (a team machine's too): it may not
+        start, adopt or close workers; its boss does. Another person's session there, or a
+        worker whose boss is the team machine itself."""
+        return foreign(principal, agent.person_id) is not None or (
+            principal.shared and agent.key in ws.live_keys())
+
     def page_foreign(request: Request, principal: Principal) -> Optional[int]:
         key = unquote(request.headers.get("x-kaptyorka-key") or "")
         return foreign(principal, ws.session_person(key)) if key else None
@@ -715,11 +725,18 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     def no_machine(project: str, machine: Optional[str], tool: str, usable: List[dict],
                    reasons: List[str]) -> str:
         if machine is not None and not usable and not reasons:
-            reasons = [f"no machine named {machine} that you may use"]
+            reasons = [f"no machine named {machine} that you may use; check the name on the"
+                       " page's Machines list, or ask an admin"]
         for c in usable:
             who = f"{c['host']} ({c['os_user']})"
-            if not c.get("folder"):
-                reasons.append(f"{who}: no folder for {project}")
+            if not c.get("folder") and c.get("team") and not c.get("team_role"):
+                reasons.append(f"{who}: no folder for {project}; its bridge looks for"
+                               f" ~/{project} once the team machine has a role there:"
+                               f" `kaptyorka grant {c['team']} {project}:write`, or open a"
+                               f" session in the {project} folder there once")
+            elif not c.get("folder"):
+                reasons.append(f"{who}: no folder for {project}; clone it to ~/{project}"
+                               " there, or open a session in its folder there once")
             elif tool != "claude-code" and not c.get("tmux"):
                 reasons.append(f"{who}: no tmux (only Claude Code workers can run there)")
         return f"no machine can take {project}: " + ("; ".join(reasons)
@@ -776,14 +793,21 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         agent, principal = caller(ctx)
         if principal.legacy:
             raise KaptyorkaError(OWN_TOKEN)
-        if foreign(principal, agent.person_id) is not None:
+        if chained(agent, principal):
             raise KaptyorkaError(ON_SHARED)
+        if principal.role == "manager":
+            raise KaptyorkaError(MANAGER_NO_WORK)
         if not project.strip() or project == paths.COORDINATOR:
             raise KaptyorkaError(NAME_A_PROJECT)
         if ws.archived(project):
             raise KaptyorkaError(REMOVED.format(project=project))
         if not (store.may_write_project(project, principal)
                 or (agent.project == project and not ws.registered(project))):
+            if store.is_team(principal.person_id):  # a session on a team machine asks
+                raise KaptyorkaError(
+                    f"{principal.person_name} is a team machine without the write role in"
+                    f" {project}; an admin runs `kaptyorka grant {principal.person_name}"
+                    f" {project}:write`")
             raise KaptyorkaError(f"you may not start workers in {project}: that takes the write"
                                  " role (or your own unregistered folder)")
         tool = clean(tool, MAX_IDENT) or "claude-code"
@@ -915,7 +939,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         agent, principal = caller(ctx)
         if principal.legacy:
             raise KaptyorkaError(OWN_TOKEN)
-        if foreign(principal, agent.person_id) is not None:
+        if chained(agent, principal):
             raise KaptyorkaError(ON_SHARED)
         w = ws.adopt(principal, name, agent.key)
         wake_bridges()
@@ -928,7 +952,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         agent, principal = caller(ctx)
         if principal.legacy:
             raise KaptyorkaError(OWN_TOKEN)
-        if foreign(principal, agent.person_id) is not None:
+        if chained(agent, principal):
             raise KaptyorkaError(ON_SHARED)
         w = ws.close(principal, name)
         off = ""
@@ -1751,15 +1775,20 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return admin_error(e)
         return JSONResponse(done)
 
-    @server.custom_route("/api/people/{name}/team", methods=["POST"])
+    @server.custom_route("/api/people/{name}/team", methods=["POST", "DELETE"])
     async def api_person_team(request: Request) -> Response:
-        """Turn a person into a team machine (admin_ops.make_team_machine)."""
+        """Turn a person into a team machine (admin_ops.make_team_machine); DELETE turns it
+        back (admin_ops.undo_team_machine)."""
         denied = admin_only(request)
         if denied:
             return denied
         try:
-            done = admin_ops.make_team_machine(store, request.path_params["name"],
-                                               request.scope["state"]["principal"])
+            if request.method == "DELETE":
+                done = admin_ops.undo_team_machine(store, request.path_params["name"],
+                                                   request.scope["state"]["principal"])
+            else:
+                done = admin_ops.make_team_machine(store, request.path_params["name"],
+                                                   request.scope["state"]["principal"])
         except KaptyorkaError as e:
             return admin_error(e)
         wake_bridges()
@@ -1851,7 +1880,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return PlainTextResponse("unauthorized", status_code=401)
         if principal.legacy:
             return PlainTextResponse(OWN_TOKEN, status_code=403)
-        if page_foreign(request, principal) is not None:
+        key = unquote(request.headers.get("x-kaptyorka-key") or "")
+        if page_foreign(request, principal) is not None \
+                or (principal.shared and key and key in ws.live_keys()):
             return PlainTextResponse(ON_SHARED, status_code=403)
         name = request.path_params["name"]
         try:

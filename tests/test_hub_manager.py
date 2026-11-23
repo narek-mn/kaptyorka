@@ -12,7 +12,7 @@ from conftest import start_hub
 from helpers import call, call_error, old_knock, person, run
 from test_hub_workers import BOSS, as_token, bridge, heartbeat, ident, member, poll
 from kaptyorka import admin_ops, http, identity, manager, paths
-from kaptyorka.hub import MANAGER_FAILED, MANAGER_FIRST
+from kaptyorka.hub import MANAGER_FAILED, MANAGER_FIRST, MANAGER_NO_WORK
 from kaptyorka.hub_feed import feed
 from kaptyorka.manager import ManagerStore
 from kaptyorka.rules import RulesStore
@@ -462,7 +462,7 @@ def test_decide_refuses_machine_without_use(hub):
     b2 = bridge(hub, a_id, host="box-2")  # alice's own, not shared, not granted to bob
     ask(hub, bob)
     err = call_error(mgr, me, "work_decide", request_id=1, machine="box-2", reason="try")
-    assert "no machine named box-2 that you may use" in err
+    assert "box-2 is someone's own machine, not a team machine" in err
     assert hub.ws.by_name("proj-a-w1") is None and poll(hub, b2) == []
     assert hub.mm.request(1)["decided_at"] is None
 
@@ -1737,3 +1737,27 @@ def test_a_manager_up_past_the_crash_window_clears_its_streak_while_running(hub,
     beat(hub, b, [{"key": "claude:m1", "tool": "claude-code", "project": "manager"}])
     hub.tick()
     assert state(hub) == "up" and hub.mm.crashes() == []
+
+
+def test_asked_through_the_manager_on_a_team_machine_the_asker_stays_the_boss(hub):
+    """alice asks for jetson-1 while a session of the team machine holds the folder: the
+    manager decides, and the worker's boss is alice's session, never the manager's."""
+    mgr, me = manager_online(hub)
+    hub.store.project_register("proj-a", by="test")
+    root_id, root_token = person(hub.store, "root", "admin")
+    jet_id = hub.store.person_create("jetson-1")
+    b = bridge(hub, jet_id, host="jetson-1", sessions=[{"key": "claude:j1", "tool": "claude-code",
+                                                         "project": "proj-a", "cwd": "/w/proj-a"}])
+    admin_ops.make_team_machine(hub.store, "jetson-1", hub.store.authenticate(root_token))
+    a_id, alice = member(hub, "alice")
+    run(call(alice, BOSS, "inbox"))
+    assert run(call(alice, BOSS, "work", project="proj-a", task="fix it", machine="jetson-1")) == (
+        "busy: jetson-1 has jetson-1's session in that folder; the manager is asking them"
+        " (request 1); you will hear back here")
+    assert MANAGER_NO_WORK in call_error(mgr, me, "work", project="proj-a", task="x")
+    out = run(call(mgr, me, "work_decide", request_id=1, machine="jetson-1", reason="ok"))
+    assert out == "started `proj-a-w1` on jetson-1 for request 1"
+    with hub.store.lock:
+        row = hub.store.db.execute("SELECT boss_key, boss_person FROM workers").fetchone()
+    assert (row["boss_key"], row["boss_person"]) == ("k:boss", a_id)
+    assert orders(hub, b)[0]["person"] == "alice"

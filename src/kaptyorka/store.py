@@ -448,8 +448,10 @@ class Store:
             if who is None:
                 return None
             self.db.execute("UPDATE devices SET last_used=? WHERE id=?", (self.clock(), dev["id"]))
+            # a team machine's account is shared by its nature: it hosts everyone's workers
+            shared = bool(dev["shared"]) or self._is_team(person_id)
             principal = Principal(person_id, who["name"], who["role"], dev["id"], device_name,
-                                  bool(dev["shared"]), bool(dev["legacy"]),
+                                  shared, bool(dev["legacy"]),
                                   hub_key and not dev["legacy"])
         if used:
             self.log_add("system", "legacy_used", machine)
