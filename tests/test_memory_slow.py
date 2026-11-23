@@ -32,7 +32,7 @@ from test_worker_slow import _jobs, _quiet, _scratch_folder, _wait
 KAPTYORKA = str(Path(sys.executable).parent / "kaptyorka")
 TASK = ("In this folder, create notes.txt containing the line hello. Then run exactly"
         " `{git} add notes.txt && {git} commit -m 'add notes'`, then `{git} log --oneline -1`."
-        " Do not send any message. Then stop.")
+        " Do not message other sessions; updating the project's own state note is fine. Then stop.")
 
 
 def _git(folder: Path, *args: str) -> None:
@@ -99,7 +99,10 @@ def test_done_check_blocks_a_real_session_once(hub, tmp_path, monkeypatch):
              "--settings", str(tmp_path / "settings.json"),
              "--mcp-config", str(tmp_path / "mcp.json"), "--strict-mcp-config",
              "--permission-mode", "acceptEdits",
-             "--allowedTools=Bash(git *),Write,mcp__kaptyorka",
+             # a background session can't ask for permission: a look around first (pwd, ls)
+             # would wait forever, so read-only commands are allowed too
+             "--allowedTools=Bash(git *),Bash(pwd),Bash(ls *),Bash(cat *),Bash(head *),Write,"
+             "mcp__kaptyorka",
              TASK.format(git=f"git --git-dir={git_dir} --work-tree=.")],
             cwd=repo, capture_output=True, text=True, timeout=60)
         if "not trusted" in (r.stdout + r.stderr):
