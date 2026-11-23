@@ -140,8 +140,8 @@ def test_member_sees_only_home(member_page):
     assert set(fetched) <= {"/api/me", "/api/feed", "/api/warnings", "/fonts/archivo-latin.woff2", "/favicon.ico"}, fetched
 
 
-def test_manager_asleep_on_home(tmp_path, monkeypatch):
-    """A manager Claude retired reads `asleep` on its Home line."""
+def test_manager_between_runs_on_home(tmp_path, monkeypatch):
+    """A manager whose run ended, with no admin bridge to start it, reads `blocked` on Home."""
     monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "kh"))
     store = Store(tmp_path / "hub.db")
     alice, token = person(store, "alice", "admin")
@@ -158,7 +158,7 @@ def test_manager_asleep_on_home(tmp_path, monkeypatch):
     try:
         with chrome() as page:
             page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
-            assert page.wait('document.querySelector("#agents .mgr .n")?.textContent') == "asleep"
+            assert page.wait('document.querySelector("#agents .mgr .n")?.textContent') == "blocked"
     finally:
         stop()
         store.close()
@@ -224,8 +224,8 @@ def test_member_writes_to_the_manager(member_page):
     assert [m.text for m in store.inbox("k:mgr")] == ["may I have proj-b?"]
 
 
-def test_member_manager_chat_while_it_sleeps(member_page):
-    """The manager asleep: its name is masked for a member and its row is gone from the
+def test_member_manager_chat_between_runs(member_page):
+    """The manager between runs: its name is masked for a member and its row is gone from the
     feed, yet its messages stay in the manager chat and a new reply counts as unread."""
     store, page, url = member_page
     mtoken = ManagerStore(store).ensure_account("box-1", "alice")
@@ -242,7 +242,7 @@ def test_member_manager_chat_while_it_sleeps(member_page):
     reply("first answer")
     store.seen("b1", "box-1", "codex", "proj-a", principal=store.authenticate(url.split("#t=")[1]))
     with store.lock:
-        store.db.execute("UPDATE agents SET last_seen=last_seen-100 WHERE key='k:mgr'")  # asleep
+        store.db.execute("UPDATE agents SET last_seen=last_seen-100 WHERE key='k:mgr'")  # offline
     page.go(url)
     page.wait('document.querySelector("#agents .row.mgr") !== null')
     assert page.js('document.querySelector("#agents .row.mgr .dot.on")') is None
@@ -558,7 +558,7 @@ def test_message_states_and_working_row(tmp_path):
 
 @pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
 def test_manager_waking_row(tmp_path, monkeypatch, w, h):
-    """A message to the manager while it sleeps: "waking the manager…" under it."""
+    """A message to the manager while it starts: "waking the manager…" under it."""
     import os
     shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
     monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "kh"))
@@ -568,7 +568,7 @@ def test_manager_waking_row(tmp_path, monkeypatch, w, h):
     store.heartbeat("box-1", [{"key": "k:mgr", "tool": "claude-code", "project": "manager",
                                "label": "manager"}], principal=store.authenticate(mtoken),
                     facts={"host": "box-1", "os_user": "u"})
-    with store.lock:  # its session stopped after an idle hour: asleep
+    with store.lock:  # its run ended; the hub starts it again
         store.db.execute("UPDATE agents SET last_seen=last_seen-100 WHERE key='k:mgr'")
         store.db.execute(
             "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
@@ -585,7 +585,7 @@ def test_manager_waking_row(tmp_path, monkeypatch, w, h):
     try:
         with chrome(w, h) as page:
             page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
-            assert page.wait('document.querySelector("#agents .mgr .n")?.textContent') == "asleep"
+            assert page.wait('document.querySelector("#agents .mgr .n")?.textContent') == "starting"
             if w < 720:
                 page.js('document.querySelector("#agents .row.mgr").click()')
             page.js('document.getElementById("text").value = "are you there?"')

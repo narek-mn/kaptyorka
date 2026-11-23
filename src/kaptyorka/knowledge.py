@@ -37,8 +37,8 @@ def quiet_mark(now: float) -> float:
 
 
 def digest_due(last: float, now: float) -> bool:
-    """Once a day: a quiet hour passed since the last digest. A manager asleep then gets it when
-    it next wakes, covering everything since."""
+    """Once a day: a quiet hour passed since the last digest. A manager not running then gets it
+    when it next starts, covering everything since."""
     return last < quiet_mark(now)
 
 

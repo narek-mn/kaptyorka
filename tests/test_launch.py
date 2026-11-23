@@ -1,5 +1,6 @@
 """The launcher: folders, worktrees, command lines and detaching, with fake run/popen."""
 import json
+import re
 import subprocess
 
 import pytest
@@ -159,8 +160,9 @@ def test_detach_uses_systemd_scope_on_linux_and_setsid_on_mac(home, with_systemd
     popen = FakePopen()
     make(home, popen=popen).detach(["tmux", "new-session"], "/w", "proj-a-w1")
     argv, kw = popen.calls[0]
-    assert argv == ["systemd-run", "--user", "--scope", "--quiet", "--unit",
-                    "kaptyorka-worker-proj-a-w1", "tmux", "new-session"]
+    assert argv[:6] == ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit"]
+    assert re.fullmatch(r"kaptyorka-worker-proj-a-w1-[0-9a-f]{8}", argv[6])
+    assert argv[7:] == ["tmux", "new-session"]
     assert kw["cwd"] == "/w" and kw["stdin"] == subprocess.DEVNULL
     assert kw["stderr"] == subprocess.STDOUT and not kw.get("start_new_session")
     assert kw["stdout"].name == str(home / ".kaptyorka" / "workers" / "proj-a-w1.log")
@@ -172,26 +174,34 @@ def test_detach_uses_systemd_scope_on_linux_and_setsid_on_mac(home, with_systemd
     assert mac.proc.waited == 60
 
 
-def test_detach_clears_a_leftover_scope(home, with_systemd):
-    run, popen = FakeRun(), FakePopen()
-    make(home, run=run, popen=popen).detach(["tmux", "new-session"], "/w", "w1")
-    assert run.calls == [["systemctl", "--user", "stop", "kaptyorka-worker-w1.scope"],
-                         ["systemctl", "--user", "reset-failed", "kaptyorka-worker-w1.scope"]]
-    assert popen.calls[0][0][:6] == ["systemd-run", "--user", "--scope", "--quiet", "--unit",
-                                     "kaptyorka-worker-w1"]
+class FakeSystemd(FakePopen):
+    """systemd-run as systemd 255 does it: a scope name still loaded (an earlier run's scope
+    still stopping) is refused; a started scope stays loaded."""
+
+    def __init__(self):
+        super().__init__()
+        self.loaded = set()
+
+    def __call__(self, argv, **kw):
+        unit = argv[argv.index("--unit") + 1]
+        if unit in self.loaded:
+            self.rc, self.output = 1, (f"Failed to start transient scope unit: Unit {unit}.scope"
+                                       " was already loaded or has a fragment file.\n")
+        else:
+            self.rc, self.output = 0, BG
+            self.loaded.add(unit)
+        return super().__call__(argv, **kw)
 
 
-@pytest.mark.parametrize("err", [OSError("no systemctl"),
-                                 subprocess.TimeoutExpired("systemctl", 5)])
-def test_detach_ignores_a_failed_scope_stop(home, with_systemd, err):
-    seen = []
-
-    def run(cmd, **kw):
-        seen.append(kw.get("timeout"))
-        raise err
-    popen = FakePopen()
-    make(home, run=run, popen=popen).detach(["tmux", "new-session"], "/w", "w1")
-    assert seen == [5, 5] and popen.calls[0][0][0] == "systemd-run"
+def test_a_relaunch_while_the_last_scope_is_still_loaded_starts(home, with_systemd):
+    run, systemd = FakeRun(), FakeSystemd()
+    launcher = make(home, run=run, popen=systemd)
+    launcher.detach(["claude", "--bg"], "/w", "manager")
+    assert len(systemd.loaded) == 1  # the first run's scope has not gone yet
+    assert "backgrounded" in launcher.detach(["claude", "--bg"], "/w", "manager")
+    units = [argv[argv.index("--unit") + 1] for argv, _ in systemd.calls]
+    assert len(units) == 2 and units[0] != units[1]
+    assert run.calls == []  # the old scope is left to end by itself, never stopped here
 
 
 def test_detach_without_systemd_run_starts_a_new_session(home, no_systemd):
@@ -290,14 +300,97 @@ def test_folder_override(home):
             launcher.folder_for(order(manager=True, project="manager", folder=bad))
 
 
-def test_manager_command_runs_on_its_own_settings_and_mcp_config(launcher):
+def test_manager_command_runs_on_its_own_settings_and_mcp_config(launcher, monkeypatch):
     m = "/h/.kaptyorka/manager"
+    monkeypatch.setattr(launch_mod.shutil, "which", lambda n: f"/usr/bin/{n}")
     argv = launcher.command(order(manager=True, worker="manager", folder=m), m)
-    assert argv == ["claude", "--bg", "-n", "manager", "--settings", f"{m}/settings.json",
+    # an interactive session in its own tmux session: Claude Code's supervisor never stops it
+    assert argv == ["tmux", "new-session", "-d", "-s", "kaptyorka-manager", "-c", m,
+                    "/usr/bin/claude", "-n", "manager", "--settings", f"{m}/settings.json",
                     "--strict-mcp-config", "--mcp-config", f"{m}/mcp.json",
-                    "--setting-sources", "project,local", "--tools=ToolSearch",
+                    "--setting-sources", "project,local", "--tools=ToolSearch,Agent",
                     FIRST + "fix the tests"]
-    assert argv[-1] == FIRST + "fix the tests" and argv[-2] == "--tools=ToolSearch"
-    assert "--dangerously-skip-permissions" not in argv and "--resume" not in argv
+    assert "--bg" not in argv and "--dangerously-skip-permissions" not in argv
+    assert "--resume" not in argv
     with pytest.raises(LaunchError, match="no manager support"):
         launcher.command(order(manager=True, worker="manager", tool="codex", folder=m), m)
+
+
+# the manager: one interactive session in its own tmux session, never two
+
+MGR_KEY = "claude:0011aabb-0000-0000-0000-000000000000"
+
+
+def manager_order(home, **kw):
+    m = home / ".kaptyorka" / "manager"
+    m.mkdir(parents=True, exist_ok=True)
+    return order(manager=True, worker="manager", project="manager", folder=str(m), **kw)
+
+
+def test_manager_launch_ends_an_older_manager_first(home, with_systemd):
+    run, popen = FakeRun(1, "can't find session: kaptyorka-manager"), FakePopen(0, "")
+    o = manager_order(home)
+    old_bg = Session("claude:99887766-aaaa", "claude-code", "manager", cwd=o["folder"],
+                     background=True)
+    elsewhere = Session("claude:55443322-bbbb", "claude-code", "proj-a", cwd=str(home / "proj-a"),
+                        background=True)
+    result = make(home, run=run, popen=popen).launch(o, [old_bg, elsewhere])
+    assert run.calls == [["tmux", "kill-session", "-t", "=kaptyorka-manager"],
+                         ["claude", "stop", "99887766"]]  # never the other folder's session
+    argv = popen.calls[0][0]
+    assert argv[:6] == ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit"]
+    assert argv[7:13] == ["tmux", "new-session", "-d", "-s", "kaptyorka-manager", "-c"]
+    assert result["job"] is None and result["key"] is None  # found by its folder instead
+
+
+def test_manager_found_by_its_folder_never_a_background_job(home):
+    o = manager_order(home)
+    launcher = make(home)
+    bg = Session("claude:99887766-aaaa", "claude-code", "manager", cwd=o["folder"],
+                 background=True)
+    other = Session("claude:1", "claude-code", "proj-a", cwd=str(home / "proj-a"))
+    assert launcher.find_key(o, [bg, other]) is None
+    live = Session(MGR_KEY, "claude-code", "manager", cwd=o["folder"] + "/")
+    assert launcher.find_key(o, [bg, other, live]) == MGR_KEY
+
+
+def test_manager_close_ends_its_tmux_session_and_an_older_job(home):
+    run = FakeRun()
+    make(home, run=run).close({"worker": "manager", "tool": "claude-code", "key": MGR_KEY,
+                               "manager": True})
+    assert run.calls == [["tmux", "kill-session", "-t", "=kaptyorka-manager"],
+                         ["claude", "stop", "0011aabb"]]
+    for said in ("can't find session: kaptyorka-manager", "no server running on /tmp/x"):
+        make(home, run=FakeRun(1, said)).close({"worker": "manager", "tool": "claude-code",
+                                                "key": None, "manager": True})
+    with pytest.raises(LaunchError, match="Permission denied"):
+        make(home, run=FakeRun(1, "error connecting to /tmp/x (Permission denied)")).close(
+            {"worker": "manager", "tool": "claude-code", "manager": True})
+
+
+def test_trust_prompt_read_from_the_managers_pane(home):
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, " ❯ No, exit\n   Yes, I trust this folder\n", "")
+    assert make(home, run=run).trust_prompt({"worker": "manager", "manager": True})
+    assert seen == [["tmux", "capture-pane", "-p", "-t", "=kaptyorka-manager:"]]
+    assert not make(home, run=FakeRun(0, "")).trust_prompt({"worker": "manager", "manager": True})
+    assert not make(home, run=FakeRun(1, "can't find session")).trust_prompt(
+        {"worker": "manager", "manager": True})
+
+
+def test_collect_dropped_once_for_an_old_systemd(home, with_systemd):
+    class OldSystemd(FakePopen):
+        def __call__(self, argv, **kw):
+            self.rc, self.output = ((1, "systemd-run: unrecognized option '--collect'\n")
+                                    if "--collect" in argv else (0, ""))
+            return super().__call__(argv, **kw)
+    popen = OldSystemd()
+    make(home, popen=popen).detach(["tmux", "new-session"], "/w", "w1")
+    assert ["--collect" in argv for argv, _ in popen.calls] == [True, False]
+    broken = FakePopen(1, "Failed to start transient scope unit: Access denied\n")
+    with pytest.raises(LaunchError, match="Access denied"):
+        make(home, popen=broken).detach(["tmux", "new-session"], "/w", "w1")
+    assert len(broken.calls) == 1  # any other refusal: no second try

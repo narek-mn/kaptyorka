@@ -1723,7 +1723,7 @@ class Store:
         person = next((p for p in people if p.lower() == to.lower()), None)
         if person is not None:  # a person on the web page: they read replies there
             return [{"key": f"web:{person}", "name": person, "machine": "", "tool": "", "project": ""}]
-        # the manager asleep: its last session by label, so a message wakes it (manager.PERSON);
+        # the manager between runs: its last session by label; the next one gets it (manager.PERSON);
         # not while it is switched off (settings row manager_enabled = '0')
         match = self.db.execute(
             "SELECT a.* FROM agents a JOIN people p ON p.id=a.person_id WHERE p.name='manager'"
@@ -2387,6 +2387,8 @@ class Store:
             return
         if principal.role == "manager" and self._registered(project):
             return  # the knowledge keeper reads and writes every team project's notes
+        if principal.role == "manager" and project == MANAGER_ACCOUNT:
+            return  # its own state note (open tasks per person): nobody else's to read
         if self._archived(project) and not self._may(project, principal, write):
             raise KaptyorkaError(f"project {project} was removed; its notes are kept for the admin")
         if not self._registered(project) and not self._archived(project):

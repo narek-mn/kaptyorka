@@ -565,8 +565,10 @@ class WorkerStore:
         os_user = dev["os_user"] if dev else ""
         # bridge-reported values: quoted; `=` makes tmux match the whole name, not a prefix
         dest, name = shlex.quote(f"{os_user}@{row['host']}"), shlex.quote(row["name"])
-        attach = f"ssh -t -- {dest} " + (f"claude attach {name}" if row["tool"] == "claude-code"
-                                         else f"tmux attach -t ={name}")
+        attach = f"ssh -t -- {dest} " + (
+            f"tmux attach -t ={paths.MANAGER_TMUX}" if row["manager"]
+            else f"claude attach {name}" if row["tool"] == "claude-code"
+            else f"tmux attach -t ={name}")
         return {"name": row["name"], "project": row["project"], "task": row["task"],
                 "host": row["host"], "os_user": os_user, "tool": row["tool"],
                 "folder": row["folder"], "worktree": bool(row["worktree"]), "manager": bool(row["manager"]),
@@ -979,7 +981,7 @@ class WorkerStore:
                 own = w["own_seen"] if w["own_seen"] is not None else w["up_at"]
                 bridge_online = w["bridge_seen"] is not None and \
                     w["bridge_seen"] > now - ONLINE_S
-                # Claude retires an idle manager: it sleeps until a message (manager.asleep)
+                # a manager run that ended: the hub starts it again on its next tick
                 gone = 60 if w["manager"] else GONE_S
                 if judging and bridge_online and own + ONLINE_S < now - gone:
                     self.db.execute("UPDATE workers SET state='closed', error='session gone',"
@@ -1088,8 +1090,10 @@ class WorkerStore:
             self._end(name, "", "bridge offline", now)
             notes.append(f"the bridge is offline; the session may still run on {w['host']}")
         else:
-            self._queue(w["device_id"], name, "close", {
-                "issued": now, "worker": name, "tool": w["tool"], "key": w["key"]})
+            body = {"issued": now, "worker": name, "tool": w["tool"], "key": w["key"]}
+            if w["manager"]:
+                body["manager"] = True  # its own tmux session, not a `claude --bg` job
+            self._queue(w["device_id"], name, "close", body)
         out = self._dict(self._row(name))
         if w["worktree"]:
             notes.append(f"its worktree {w['folder']} stays in place")

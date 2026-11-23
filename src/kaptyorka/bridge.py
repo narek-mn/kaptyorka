@@ -394,6 +394,10 @@ class Bridge:
         """Why a started worker never showed up, as far as this machine knows."""
         tool = order.get("tool") or ""
         label = TOOL_NAMES.get(tool, tool)
+        if order.get("manager") is True and self.launcher.trust_prompt(order):
+            # the hub's trust rule reads "does not trust": one notice, no relaunch loop
+            return (f"Claude Code does not trust {order.get('folder')}; open claude there once"
+                    " and accept")
         if (self._facts.get("logins") or {}).get(tool) is False and tool in LOGIN_COMMANDS:
             return (f"{label} is not logged in on this machine; the session could not start."
                     f" Run `{LOGIN_COMMANDS[tool]}` there.")

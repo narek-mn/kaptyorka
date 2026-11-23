@@ -1,6 +1,7 @@
 """Start and stop worker sessions for signed orders: folder, worktree, command line, detach."""
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,18 @@ TMUX_WAIT_S = 10  # `tmux new-session -d` returns at once
 # `claude --bg` ignores --session-id and prints the short id that `claude stop` takes (never
 # the name): the first 8 hex digits of the session id the session file shows
 BACKGROUNDED = re.compile(r"backgrounded · ([0-9a-f]{8})\b")
+# The manager runs as an ordinary interactive session in its own tmux session, not `claude
+# --bg`: Claude Code's background supervisor stops an idle unattached background session after
+# about an hour, and sooner when memory runs low; a session started in a terminal is not one.
+MANAGER_TMUX = paths.MANAGER_TMUX
+# what Claude Code's trust dialog shows ("Yes, I trust this folder"); an interactive session in
+# an untrusted folder waits on it instead of exiting with "Workspace not trusted"
+TRUST_PROMPT = "trust this folder"
+
+
+def tmux_name(order: dict, name: str) -> str:
+    """The tmux session a worker runs in: the manager's own name, never one a person picks."""
+    return MANAGER_TMUX if order.get("manager") is True else name
 
 
 class LaunchError(Exception):
@@ -99,10 +112,15 @@ class Launcher:
             if tool != "claude-code":
                 raise LaunchError(f"no manager support for {tool}")
             base = Path(folder)
-            # `--tools=` as one element: the variadic `--tools x` would take the first message
-            return ["claude", "--bg", "-n", name, "--settings", str(base / paths.MANAGER_SETTINGS),
+            # the full path: the tmux server's PATH is its own and may not have claude
+            exe = shutil.which("claude") or "claude"
+            # `--tools=` as one element: the variadic `--tools x` would take the first message.
+            # Agent: the manager's own subagents get no more tools than it has (checked on
+            # Claude Code 2.1.329: ToolSearch and the kaptyorka tools only)
+            return ["tmux", "new-session", "-d", "-s", MANAGER_TMUX, "-c", folder,
+                    exe, "-n", name, "--settings", str(base / paths.MANAGER_SETTINGS),
                     "--strict-mcp-config", "--mcp-config", str(base / paths.MANAGER_MCP),
-                    "--setting-sources", "project,local", "--tools=ToolSearch", first]
+                    "--setting-sources", "project,local", "--tools=ToolSearch,Agent", first]
         resume = order.get("resume")
         if resume is not None:
             resume = _plain(resume, "resume id")
@@ -131,19 +149,34 @@ class Launcher:
         wait = CLAUDE_WAIT_S if argv[0] == "claude" else TMUX_WAIT_S
         kw = {}
         if self.platform.startswith("linux") and shutil.which("systemd-run"):
-            # worker names are the primary key, so the only scope that can carry this name
-            # belongs to an ended row; stopping it is safe, and systemd-run refuses a name in use
-            for verb in ("stop", "reset-failed"):  # reset-failed: a failed unit also keeps the name
-                try:
-                    self.run(["systemctl", "--user", verb, f"kaptyorka-worker-{name}.scope"],
-                             capture_output=True, timeout=5)
-                except Exception:
-                    pass
-            argv = ["systemd-run", "--user", "--scope", "--quiet", "--unit",
-                    f"kaptyorka-worker-{name}", *argv]
+            # one scope name per launch: a stopping scope keeps its name for up to its stop
+            # timeout (90 s) and systemd-run refuses a name still loaded, so a fixed name failed
+            # a relaunch soon after the last run. The old scope goes when its last process ends.
+            # Never stop a scope: the first `claude --bg` or `tmux` started there leaves Claude
+            # Code's shared supervisor or the tmux server in it, so it holds other sessions too;
+            # a close order ends a worker by its own handle.
+            # --collect: a scope that failed (a stop that timed out) unloads too, instead of
+            # staying in `systemctl --user --failed` for good
+            argv = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit",
+                    f"kaptyorka-worker-{name}-{secrets.token_hex(4)}", *argv]
         else:
             kw["start_new_session"] = True
         log_path = logs / f"{name}.log"
+        code, output = self._start(argv, folder, log_path, wait, kw)
+        if code != 0 and argv[0] == "systemd-run" and "--collect" in output:
+            # a systemd before 236 does not know --collect: once more without it
+            argv = [a for a in argv if a != "--collect"]
+            code, output = self._start(argv, folder, log_path, wait, kw)
+        if "Workspace not trusted" in output:
+            raise LaunchError(f"Claude Code does not trust {folder}; open claude there once"
+                              " and accept")
+        if code != 0:
+            raise LaunchError(output.strip() or f"{argv[0]} exited with {code}")
+        return output
+
+    def _start(self, argv: List[str], folder: str, log_path: Path, wait: float,
+               kw: dict) -> Tuple[int, str]:
+        """Run argv to its return, output appended to its log: (exit code, what it printed)."""
         with open(log_path, "ab") as out:
             start = out.tell()
             try:
@@ -159,21 +192,44 @@ class Launcher:
                                   f" see {log_path}")
         with open(log_path, "rb") as f:
             f.seek(start)
-            output = f.read().decode(errors="replace")
-        if "Workspace not trusted" in output:
-            raise LaunchError(f"Claude Code does not trust {folder}; open claude there once"
-                              " and accept")
-        if code != 0:
-            raise LaunchError(output.strip() or f"{argv[0]} exited with {code}")
-        return output
+            return code, f.read().decode(errors="replace")
+
+    def _quiet(self, argv: List[str]) -> Tuple[int, str]:
+        """Run a short command; (-1, error) when it could not run."""
+        try:
+            r = self.run(argv, capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return -1, str(e)
+        return r.returncode, ((r.stderr or "") + (r.stdout or "")).strip()
+
+    def stop_old_manager(self, sessions: Iterable) -> None:
+        """Never two managers: end the manager's tmux session and any Claude Code background
+        session in its folder (one an older bridge started) before a new one starts. Each by
+        its own handle; never the scope, which can host Claude Code's shared supervisor or
+        the tmux server and with them every other session of this account."""
+        self._quiet(["tmux", "kill-session", "-t", f"={MANAGER_TMUX}"])
+        for s in sessions:
+            if getattr(s, "background", False) and s.key.startswith("claude:") \
+                    and paths.in_manager_folder(getattr(s, "cwd", "")):
+                code, out = self._quiet(["claude", "stop", s.key[7:15]])
+                if code == 0:
+                    self.log(f"stopped an older manager session {s.key}")
+
+    def trust_prompt(self, order: dict) -> bool:
+        """The worker's tmux session shows Claude Code's trust dialog."""
+        code, out = self._quiet(["tmux", "capture-pane", "-p", "-t",
+                                 f"={tmux_name(order, self._name(order))}:"])
+        return code == 0 and TRUST_PROMPT in out
 
     def launch(self, order: dict, sessions: Iterable = ()) -> dict:
         name = self._name(order)
         folder, worktree = self.folder_for(order, sessions)
         argv = self.command(order, folder)
+        if order.get("manager") is True:
+            self.stop_old_manager(sessions)
         output = self.detach(argv, folder, name)
         job = None
-        if order.get("tool") == "claude-code":
+        if order.get("tool") == "claude-code" and argv[0] == "claude":
             m = BACKGROUNDED.search(output)
             if m is None:
                 raise LaunchError("claude --bg printed no session id; see"
@@ -195,6 +251,9 @@ class Launcher:
 
     def close(self, order: dict) -> None:
         name = self._name(order)
+        if order.get("manager") is True:
+            self._close_manager(order)
+            return
         argv = (["claude", "stop", self._job(order)] if order.get("tool") == "claude-code"
                 else ["tmux", "kill-session", "-t", f"={name}"])  # `=`: this name, not a prefix
         try:
@@ -209,7 +268,27 @@ class Launcher:
         if r.returncode != 0:
             raise LaunchError(out or f"{' '.join(argv)} exited with {r.returncode}")
 
+    def _close_manager(self, order: dict) -> None:
+        """Its tmux session; and a background session an older bridge started, when the key
+        says which. Done when each is stopped or already gone."""
+        code, out = self._quiet(["tmux", "kill-session", "-t", f"={MANAGER_TMUX}"])
+        if code != 0 and not (any(g in out for g in GONE) or all(g in out for g in NO_SERVER)):
+            raise LaunchError(out or f"tmux kill-session exited with {code}")
+        try:
+            job = self._job(order)
+        except LaunchError:
+            return  # no Claude Code session id: nothing else to stop
+        code, out = self._quiet(["claude", "stop", job])
+        if code != 0 and not any(g in out for g in GONE):
+            self.log(f"worker manager: claude stop {job}: {out}")
+
     def find_key(self, order: dict, sessions: Iterable) -> Optional[str]:
+        if order.get("manager") is True:  # an interactive session in the manager's folder
+            for s in sessions:
+                if s.tool == "claude-code" and not getattr(s, "background", False) \
+                        and paths.in_manager_folder(getattr(s, "cwd", "")):
+                    return s.key
+            return None
         if order.get("tool") == "claude-code":
             key, job = order.get("key"), order.get("job")
             for s in sessions:

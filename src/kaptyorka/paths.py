@@ -11,6 +11,7 @@ MANAGER_DIR = "manager"  # the manager session's folder under home()
 MANAGER_CONFIG = "manager-config.json"  # its config, under home(): outside its working folder
 MANAGER_SETTINGS = "settings.json"  # in its folder, passed with --settings
 MANAGER_MCP = "mcp.json"  # in its folder, passed with --mcp-config
+MANAGER_TMUX = "kaptyorka-manager"  # the tmux session the manager runs in
 WORKTREE = re.compile(r"--\d+$")  # a `<folder>--N` worktree belongs to its base folder's project
 NOT_TEAM = "This folder isn't a team project, so nothing from it goes to the hub."
 COORDINATOR = "(team)"  # the project of a session that joined with /hub team: no project

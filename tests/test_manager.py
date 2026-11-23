@@ -113,8 +113,7 @@ def test_may_launch_rules(store, ms, clock):
     with store.lock:
         store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'",
                          (clock[0] + 400,))
-    ok, why = ms.may_launch(clock[0] + 400)
-    assert not ok and "twice" in why
+    assert ms.may_launch(clock[0] + 400) == (True, "")  # normal wake-ups never wait
     assert ms.launches_last_hour(clock[0] + 400) == 2
     assert ms.launches_last_hour(clock[0] + 4000) == 0
     with store.lock:
@@ -142,8 +141,9 @@ def test_no_relaunch_within_two_minutes_of_a_failure(store, ms, clock):
     manager_row(store, "failed", t - 150, closed_at=t - 30, error="did not show up")
     assert ms.last_failure() == {"created": t - 150, "error": "did not show up",
                                  "failed_at": t - 30}
-    assert ms.may_launch(t) == (False, "the manager failed less than 2 minutes ago;"
-                                       " it tries again by itself")
+    assert ms.may_launch(t) == (False, "the manager crashed 1 time in a row; it tries again"
+                                       " in 2 minutes by itself")
+    assert ms.crashes() == [t - 30]
     clock[0] = t + 91  # 121 s after the failure; the bridge still online
     with store.lock:
         store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'", (clock[0],))
@@ -170,8 +170,7 @@ def test_launch_reason_texts(store, ms, clock):
     with store.lock:
         store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'",
                          (clock[0] + 400,))
-    assert ms.launch_reason(clock[0] + 400) == ("the manager was launched twice in the last"
-                                                " hour; it tries again by itself within the hour")
+    assert ms.launch_reason(clock[0] + 400) == ""
     ms.set_blocked("trust")
     assert ms.launch_reason(clock[0] + 400).startswith(
         "Claude Code does not trust the manager's folder;")
@@ -306,7 +305,7 @@ HOOKS_WANTED = {
 SETTINGS_WANTED = {
     "permissions": {"allow": ["mcp__kaptyorka__*"],
                     "deny": ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
-                             "Read", "Glob", "Grep", "Agent", "Task"],
+                             "Read", "Glob", "Grep"],
                     "defaultMode": "default"},
     "hooks": HOOKS_WANTED}
 MCP_WANTED = {"mcpServers": {"kaptyorka": {"command": EXE, "args": ["mcp"]}}}
@@ -360,8 +359,8 @@ def test_manager_section_says_messages_are_not_orders():
 
 
 def sleeping(store, ms, clock):
-    """A manager whose session Claude retired: its agent (label `manager`) offline, its worker
-    closed as `session gone`. Returns (admin principal, manager principal)."""
+    """A manager whose session ended after a long run: its agent (label `manager`) offline,
+    its worker closed as `session gone`. Returns (admin principal, manager principal)."""
     _, atoken = person(store, "root", "admin")
     with store.lock:
         store.db.execute("UPDATE devices SET host=?, os_user='u', secret_hash='x', last_used=?",
@@ -371,7 +370,7 @@ def sleeping(store, ms, clock):
     store.seen("claude:m1", f"manager@{HOST}", "claude-code", "manager", principal=mgr)
     with store.lock:
         store.db.execute("UPDATE agents SET label='manager' WHERE key='claude:m1'")
-    manager_row(store, "closed", clock[0], closed_at=clock[0] + 60, error="session gone")
+    manager_row(store, "closed", clock[0], closed_at=clock[0] + 3000, error="session gone")
     with store.lock:
         store.db.execute("UPDATE workers SET key='claude:m1', device_id=?, manager=1",
                          (admin.device_id,))
@@ -394,32 +393,21 @@ def test_message_to_sleeping_manager_wakes_and_reaches_it(store, ms, clock):
     admin, mgr = sleeping(store, ms, clock)
     assert store.send_from_web("alice", "manager", "hi") == 1
     assert ms.may_launch(clock[0]) == (True, "")
-    assert not ms.asleep(clock[0])
     wake(store, mgr, admin, clock)
     items = store.offer(HOST, "0.8.0", principal=admin)
     assert [(i["key"], "\n\nhi\n" in i["text"]) for i in items] == [("claude:m2", True)]
 
 
-def test_sleeping_manager_not_relaunched_without_work(store, ms, clock):
+def test_a_run_that_ended_after_long_starts_again_without_a_message(store, ms, clock):
     sleeping(store, ms, clock)
-    assert ms.asleep(clock[0])
-    assert ms.may_launch(clock[0]) == (False, "the manager is asleep; a message or request"
-                                              " wakes it")
+    assert ms.may_launch(clock[0]) == (True, "") and ms.crashes() == []
 
 
-def test_failed_message_does_not_wake_the_manager(store, ms, clock):
-    sleeping(store, ms, clock)
-    store.send_from_web("alice", "manager", "hi")
-    with store.lock:
-        store.db.execute("UPDATE messages SET push_state='failed'")
-    assert ms.asleep(clock[0]) and not ms.may_launch(clock[0])[0]
-
-
-def test_other_closed_manager_is_not_asleep(store, ms, clock):
+def test_a_closed_manager_starts_again(store, ms, clock):
     sleeping(store, ms, clock)
     with store.lock:
         store.db.execute("UPDATE workers SET error='closed by root'")
-    assert not ms.asleep(clock[0]) and ms.may_launch(clock[0]) == (True, "")
+    assert ms.may_launch(clock[0]) == (True, "")
 
 
 def test_manager_gone_after_a_minute(store, ms, clock):
@@ -447,11 +435,10 @@ def test_manager_gone_after_a_minute(store, ms, clock):
     assert ws.by_name("w1")["state"] == "up"
 
 
-def test_manager_seen_again_is_revived_and_not_asleep(store, ms, clock):
+def test_manager_seen_again_is_revived(store, ms, clock):
     from kaptyorka.workers import WorkerStore
     _, mgr = sleeping(store, ms, clock)
-    assert ms.asleep(clock[0])
     store.seen("claude:m1", f"manager@{HOST}", "claude-code", "manager", principal=mgr)
     WorkerStore(store).tick(clock[0])
     assert WorkerStore(store).by_name("manager")["state"] == "up"
-    assert not ms.asleep(clock[0])
+    assert ms.may_launch(clock[0]) == (False, "the manager is already running")

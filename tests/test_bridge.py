@@ -999,3 +999,24 @@ def test_an_older_hub_renames_only_a_config_with_a_secret(home, monkeypatch):
         b = Bridge(dict(conf), [], bridge_mod.log)
         b._refresh_name()  # what run() does at start, before the first heartbeat
         assert b.cfg["machine"] == want
+
+
+def test_manager_waiting_on_the_trust_dialog_fails_as_untrusted(team):
+    """An interactive manager in an untrusted folder waits on Claude Code's dialog; the no-show
+    says so in the words the hub's trust rule reads, and its tmux session is ended."""
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        out = "   Yes, I trust this folder\n" if cmd[:2] == ["tmux", "capture-pane"] else ""
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+    team.launcher.run = run
+    order = {"worker": "manager", "tool": "claude-code", "manager": True, "folder": "/m",
+             "key": None, "job": None}
+    assert team.bridge._no_show("manager", order) == (
+        "Claude Code does not trust /m; open claude there once and accept")
+    team.bridge._stop("manager", order, "did not show up within 2 minutes")
+    assert calls[-1] == ["tmux", "kill-session", "-t", "=kaptyorka-manager"]
+    calls.clear()
+    team.launcher.run = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", "")
+    assert team.bridge._no_show("manager", order).startswith("the session did not show up")
