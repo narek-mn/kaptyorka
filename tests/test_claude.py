@@ -410,3 +410,56 @@ def test_title_read_is_bounded_to_the_tail(home, monkeypatch):
     reads.clear()
     assert claude.read_title(path, path.stat().st_size) == "head title"
     assert all(0 < n <= claude.TITLE_TAIL for n in reads)
+
+
+AI = json.dumps({"type": "ai-title", "aiTitle": "Fix the login page"})
+
+
+@pytest.mark.parametrize("name, source, lines, cwd, label", [
+    # /rename and `claude -n`: Claude Code says "user"; the name stays (a /rename is the title too)
+    ("my-thing", "user", [AI, json.dumps({"type": "custom-title", "customTitle": "my-thing"})],
+     "/w/proj-a", "my-thing"),
+    ("named-one", "user", [AI], "/w/proj-a", "named-one"),
+    # the automatic <folder>-<2 chars> name gives way to Claude Code's title...
+    ("proj-a-7k", "derived", [AI], "/w/proj-a", ""),
+    # ...but stays when there is no title yet, so the row still has a name
+    ("proj-a-7k", "derived", [], "/w/proj-a", "proj-a-7k"),
+    # a worker launched with -n is "user", though its name looks automatic
+    ("proj-a-w3", "user", [AI], "/w/proj-a", "proj-a-w3"),
+    # the manager keeps its name whatever the file says
+    ("manager-x1", "derived", [AI], None, "manager-x1"),
+    # an older Claude Code without nameSource: as before, the name shows
+    ("proj-a-7k", None, [AI], "/w/proj-a", "proj-a-7k"),
+])
+def test_automatic_name_gives_way_to_the_title(home, tmp_path, name, source, lines, cwd, label):
+    from kaptyorka import paths
+    cwd = cwd or str(paths.home() / paths.MANAGER_DIR)
+    extra = {"name": name, "nameSource": source} if source else {"name": name}
+    write_session_file(home, pid=os.getpid(), cwd=cwd, sock=live_sock(tmp_path), session_id="sid-n",
+                       extra=extra)
+    if lines:
+        _transcript(home, "sid-n", lines, cwd=cwd)
+    [s] = ClaudeAdapter(home).sessions()
+    assert s.label == label
+    assert s.title == ("my-thing" if name == "my-thing" else "Fix the login page" if lines else "")
+
+
+def test_session_reports_its_idle_time_from_the_transcript(home, tmp_path, monkeypatch):
+    """Last activity is the transcript's mtime, from the stat the title check does anyway:
+    no transcript, no idle time (never idle)."""
+    write_session_file(home, pid=os.getpid(), sock=live_sock(tmp_path), session_id="sid-i")
+    ad = ClaudeAdapter(home)
+    assert [s.idle_s for s in ad.sessions()] == [None]
+    path = _transcript(home, "sid-i", [AI])
+    now = path.stat().st_mtime
+    os.utime(path, (now - 3 * 86400, now - 3 * 86400))
+    [s] = ad.sessions()
+    assert 3 * 86400 - 5 < s.idle_s < 3 * 86400 + 60
+    reads = []
+    real_read = __import__("kaptyorka.adapters.claude", fromlist=["read_title"]).read_title
+    monkeypatch.setattr("kaptyorka.adapters.claude.read_title",
+                        lambda *a: (reads.append(a), real_read(*a))[1])
+    [s] = ad.sessions()
+    assert reads == [] and s.title == "Fix the login page"  # unchanged file: no new read
+    os.utime(path, None)  # it worked just now
+    assert ad.sessions()[0].idle_s < 60

@@ -31,6 +31,7 @@ class Session:
     cwd: str = ""  # the folder the session runs in; "" when unknown
     background: bool = False  # a background job (claude --bg), not a terminal session
     title: str = ""  # Claude Code's own title for the session (/rename, else its automatic one)
+    idle_s: Optional[float] = None  # seconds since the session last did anything; None: unknown
 
 
 class DeliveryError(Exception):

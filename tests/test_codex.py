@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -53,10 +54,20 @@ def no_daemon_start(monkeypatch):
 
 def test_sessions_from_loaded_threads(fake_codex):
     project = os.path.basename(CWD)
-    assert CodexAdapter().sessions() == [Session("codex:th-a", "codex", project, "", cwd=CWD),
+    got = CodexAdapter().sessions()
+    assert all(s.idle_s > 1e9 for s in got)  # updatedAt 300 s after 1970: idle for decades
+    assert [replace(s, idle_s=None) for s in got] == [Session("codex:th-a", "codex", project, "", cwd=CWD),
                                          Session("codex:th-b", "codex", "beta", "", cwd="/p/beta"),
                                          Session("codex:th-old", "codex", project, "", cwd=CWD)]
     assert [c[0] for c in fake_codex.calls[:2]] == ["initialize", "initialized"]
+
+
+def test_idle_from_updated_at():
+    now = time.time()
+    assert codex._idle(now - 7200) == pytest.approx(7200, abs=5)
+    assert codex._idle((now - 7200) * 1000) == pytest.approx(7200, abs=5)  # milliseconds too
+    assert [codex._idle(v) for v in (None, "1", True, 0, -5)] == [None] * 5
+    assert codex._idle(now + 100) == 0.0  # a clock ahead: just now
 
 
 def test_deliver_starts_turn(fake_codex):

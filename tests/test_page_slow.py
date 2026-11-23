@@ -2026,3 +2026,70 @@ def test_home_shows_claude_codes_title_else_the_folder(tmp_path, w, h):
     finally:
         stop()
         store.close()
+
+
+def test_idle_sessions_fold_and_names_match_claude(tmp_path):
+    """Sessions idle over a day fold into one Idle group at the end, closed at first, each row
+    saying how long; a worker idle as long stays in the list. A renamed session shows its name,
+    an unnamed one Claude Code's title (the bridge drops the automatic name), else its folder.
+    Screenshots to KAPTYORKA_SHOTS."""
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    alice, token = person(store, "alice", "admin")
+    facts = {"host": "box-1", "os_user": "alice"}
+    day = 86400
+    store.heartbeat("box-1", [
+        {"key": "claude:ren", "tool": "claude-code", "project": "proj-a", "label": "api-fix",
+         "title": "api-fix", "idle_s": 60},
+        {"key": "claude:tit", "tool": "claude-code", "project": "proj-a", "label": "",
+         "title": "Fix the login page", "idle_s": 600},
+        {"key": "claude:new", "tool": "claude-code", "project": "proj-b", "label": "", "title": ""},
+        {"key": "codex:w1", "tool": "codex", "project": "proj-a", "label": "", "idle_s": 5 * day},
+        {"key": "claude:old", "tool": "claude-code", "project": "proj-c", "label": "",
+         "title": "Notes on the old importer", "idle_s": 31 * day},
+        {"key": "claude:day", "tool": "claude-code", "project": "proj-b", "label": "release-check",
+         "idle_s": 30 * 3600}],
+        principal=store.authenticate(token), facts=facts)
+    with store.lock:
+        store.db.execute(
+            "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
+            " tool, key, state, created) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("proj-a-w1", "proj-a", "t", "claude:ren", alice, 1, "box-1", "codex", "codex:w1",
+             "up", store.clock()))
+    row = '[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name").textContent === %s)'
+    head = 'document.querySelector("#agents [data-key=\\"idle-head\\"]")'
+    try:
+        for w, h, tag in ((1440, 900, "desktop"), (390, 844, "phone")):
+            with chrome(w, h) as page:
+                page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+                page.wait(f'!!({row % json.dumps("api-fix")}) && !!{head}')
+                assert page.js(f'{head}.textContent') == "Idle2"
+                assert page.js(f'{head}.getAttribute("aria-expanded")') == "false"
+                assert page.js(f'{head} === [...document.querySelectorAll("#agents > *")].slice(-2)[0]')  # at the end
+                assert page.js(f'!({row % json.dumps("release-check")})')
+                titled = row % json.dumps("Fix the login page")
+                assert page.js(f'{titled}.querySelector(".subline").textContent').startswith("proj-a")
+                assert page.js(f'!!({row % json.dumps("proj-b")})')  # no name, no title: its folder
+                worker = row % json.dumps("proj-a")
+                assert page.js(f'!{worker}.closest(".bg-rows")')
+                assert page.js(f'{worker}.querySelector(".subline").textContent') == "alice@box-1"  # no idle word
+                page.screenshot(shots / f"idle-folded-{tag}.png")
+                page.js(f'{head}.click()')
+                page.wait(f'!!({row % json.dumps("release-check")})')
+                day_row, old = row % json.dumps("release-check"), row % json.dumps("Notes on the old importer")
+                assert page.js(f'{day_row}.querySelector(".subline").textContent') == "idle 30 hours \u00b7 alice@box-1"
+                assert page.js(f'{old}.querySelector(".subline").textContent') == \
+                    "idle 31 days \u00b7 proj-c \u00b7 alice@box-1"
+                assert page.js(f'{old}.closest(".bg-rows").id') == "idle-rows"
+                time.sleep(0.3)
+                page.screenshot(shots / f"idle-open-{tag}.png")
+                page.js("window.before = 1; location.reload()")  # this viewer's choice holds
+                page.wait(f'!window.before && !!({old})')
+                page.js(f'{old}.click()')  # still a chat like any other
+                assert page.wait('document.getElementById("text").placeholder') == "Message Notes on the old importer"
+    finally:
+        stop()
+        store.close()

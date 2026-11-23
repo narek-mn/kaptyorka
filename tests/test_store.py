@@ -355,3 +355,32 @@ def test_title_is_kept_cleaned_and_capped(store):
     assert title("") == ""  # cleared by the bridge
     store.heartbeat("pc", [{"key": "a", "tool": "claude-code", "project": "p"}])  # an older bridge sends none
     assert store.agent("a").title == ""
+
+
+def test_idle_time_is_kept_as_hub_time_and_only_the_latest(store, clock):
+    def beat(**s):
+        store.heartbeat("pc", [{"key": "a", "tool": "claude-code", "project": "p", **s}])
+        return store.agent("a").active
+    assert beat(idle_s=3600) == clock.t - 3600  # the bridge's clock never matters
+    clock.t += 10
+    assert beat(idle_s=5) == clock.t - 5  # the latest only
+    assert beat() is None  # an older bridge sends none: never idle
+    assert beat(idle_s=None) is None  # no transcript yet
+    assert [beat(idle_s=v) for v in ("3600", True, -1, float("nan"))] == [None] * 4
+    assert beat(idle_s=1e30) == clock.t - 10 * 365 * 86400  # capped
+
+
+def test_active_column_is_added_to_an_old_database(tmp_path):
+    import sqlite3
+    db = tmp_path / "old.db"
+    with sqlite3.connect(db) as c:
+        c.execute("CREATE TABLE agents (key TEXT PRIMARY KEY, name TEXT NOT NULL, machine TEXT NOT NULL,"
+                  " tool TEXT NOT NULL, project TEXT NOT NULL, status TEXT NOT NULL DEFAULT '',"
+                  " activity TEXT NOT NULL DEFAULT '', last_seen REAL NOT NULL)")
+        c.execute("INSERT INTO agents (key, name, machine, tool, project, last_seen)"
+                  " VALUES ('a', 'pc/claude-code/p', 'pc', 'claude-code', 'p', 1)")
+    s = Store(db)
+    try:
+        assert s.agent("a").active is None
+    finally:
+        s.close()

@@ -189,6 +189,13 @@ def _loaded_threads(rpc: Rpc) -> List[dict]:
     return sorted(threads, key=lambda t: t.get("updatedAt") or 0, reverse=True)
 
 
+def _idle(updated) -> Optional[float]:
+    """Seconds since a thread's updatedAt (Unix seconds; milliseconds taken too); None if absent."""
+    if isinstance(updated, bool) or not isinstance(updated, (int, float)) or updated <= 0:
+        return None
+    return max(0.0, time.time() - (updated / 1000 if updated > 1e11 else updated))
+
+
 def session_key(pid: int, cwd: str) -> Optional[str]:
     """identity.RESOLVERS["codex"]: newest loaded thread in the shim's cwd (the MCP server's
     parent is the daemon, not the TUI, so the pid says nothing). None without a daemon."""
@@ -255,7 +262,8 @@ class CodexAdapter:
             self._start_daemon()  # the bridge keeps the daemon running
             return []
         self._state("up")
-        return [Session(f"codex:{t['id']}", self.tool, os.path.basename(t["cwd"].rstrip("/")), "", cwd=t["cwd"])
+        return [Session(f"codex:{t['id']}", self.tool, os.path.basename(t["cwd"].rstrip("/")), "", cwd=t["cwd"],
+                        idle_s=_idle(t.get("updatedAt")))
                 for t in threads]
 
     def deliver(self, key: str, text: str) -> None:

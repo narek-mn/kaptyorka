@@ -135,6 +135,8 @@ ADDED_COLUMNS = [
     # 1: a team machine, not a person: a shared OS account everyone logs into (team_machine_add)
     ("people", "team", "INTEGER NOT NULL DEFAULT 0"),
     ("messages", "push_error", "TEXT NOT NULL DEFAULT ''"),  # why the bridge's push failed
+    # hub time of the session's last activity, from the bridge's idle_s; NULL: never told
+    ("agents", "active", "REAL"),
 ]
 
 
@@ -161,6 +163,16 @@ def _one_line(text: str) -> str:
 MAX_IDENT = 100  # machine, tool and project: they go into session names and push texts
 MAX_ACTIVITY = 200
 MAX_CWD = 200
+
+
+MAX_IDLE_S = 10 * 365 * 86400.0
+
+
+def _idle_s(value) -> Optional[float]:
+    """A bridge's idle_s: seconds since the session last did anything, or None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not value >= 0:
+        return None  # also NaN
+    return min(float(value), MAX_IDLE_S)
 
 
 def _same_folder(a: Optional[str], b: str) -> bool:
@@ -255,6 +267,7 @@ class Agent:
     device_id: Optional[int] = None
     background: bool = False
     title: str = ""
+    active: Optional[float] = None  # hub time of its last activity; None: unknown
 
 
 @dataclass
@@ -1233,7 +1246,7 @@ class Store:
                      row["status"], row["activity"], row["last_seen"],
                      now - row["last_seen"] < ONLINE_S, row["label"], row["person_id"],
                      row["os_user"], row["host"], row["started"], row["cwd"], row["device_id"],
-                     bool(row["background"]), row["title"])
+                     bool(row["background"]), row["title"], row["active"])
 
     def _online_rows(self, now):
         return self.db.execute("SELECT * FROM agents WHERE last_seen > ? ORDER BY rowid",
@@ -1382,7 +1395,9 @@ class Store:
                      "title": (None if not isinstance(s.get("title"), str)
                                else clean_title(s["title"], MAX_TITLE)),
                      "activity": (None if s.get("activity") is None
-                                  else clean(s["activity"], MAX_ACTIVITY))}
+                                  else clean(s["activity"], MAX_ACTIVITY)),
+                     # absent (an older bridge) or unknown: never idle
+                     "idle_s": _idle_s(s.get("idle_s"))}
                     for s in sessions]
         host, os_user, version = (clean(facts.get(k), 80) for k in ("host", "os_user", "version"))
         logs: List[tuple] = []
@@ -1409,6 +1424,8 @@ class Store:
                     continue  # another person's session: a bridge speaks only for its own
                 self._touch(s["key"], machine, s["tool"], s["project"], now, s["activity"],
                             s["label"], s["cwd"], s["background"], s["title"])
+                self.db.execute("UPDATE agents SET active=? WHERE key=?", (  # the latest only
+                    None if s["idle_s"] is None else now - s["idle_s"], s["key"]))
                 if not manager_held:  # the manager's own shim names its machine
                     self._machine_now(s["key"], machine, now)
                 if host:

@@ -93,6 +93,14 @@ def test_heartbeat_reports_all_sessions(hub, home):
     assert online["opencode:x"].machine == "box-2"
 
 
+def test_heartbeat_reports_idle_time(hub, home):
+    a = FakeAdapter(sessions=[Session("codex:1", "codex", "a", idle_s=7200.0), Session("codex:2", "codex", "b")])
+    Bridge(cfg(hub), [a], bridge_mod.log).heartbeat()
+    online = {x.key: x for x in hub.store.online()}
+    assert hub.store.clock() - online["codex:1"].active == pytest.approx(7200, abs=60)
+    assert online["codex:2"].active is None  # unknown: never idle
+
+
 class BrokenAdapter(FakeAdapter):
     def sessions(self):
         raise OSError("state db locked")

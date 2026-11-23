@@ -10,7 +10,8 @@ from kaptyorka.store import PRIVATE, Agent, Principal, Store, machine_name, priv
 def agent_row(a: Agent, now: float) -> dict:
     return {"name": a.name, "machine": a.machine, "tool": a.tool, "project": a.project,
             "status": a.status, "activity": a.activity, "label": a.label,
-            "background": a.background, "title": a.title, "last_seen_s": round(now - a.last_seen)}
+            "background": a.background, "title": a.title, "last_seen_s": round(now - a.last_seen),
+            "idle_s": None if a.active is None else max(0, round(now - a.active))}
 
 
 def visible(store: Store, principal: Principal, person_id, project: str) -> bool:
@@ -107,8 +108,9 @@ def feed(store: Store, principal: Principal, ws=None, cs=None) -> dict:
     mid = ManagerStore(store).person_id()
     doors = [masked(store, principal, d, (("_a", "a_session"), ("_b", "b_session")))
              for d in store.doors(sides=True) if admin or me in (d["a_person"], d["b_person"])]
+    live = ws.live_keys() if ws is not None else None  # workers never fold into Idle
     out = {
-        "agents": [session_row(store, a, principal, names, now, ws=ws, manager_id=mid)
+        "agents": [session_row(store, a, principal, names, now, live, ws=ws, manager_id=mid)
                    for a in store.online()
                    if store.listed(principal.person_id, a.key, a.person_id)],
         "messages": [masked(store, principal, manager_sides(m, mid), (("_from", "sender"), ("_to", "to")))

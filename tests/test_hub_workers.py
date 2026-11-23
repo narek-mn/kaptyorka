@@ -175,6 +175,17 @@ def test_poll_carries_signed_launch_and_ack_links_worker(hub, alice):
                         {"worker": "proj-a-w9", "key": "claude:w9"})[0] == 404
 
 
+def test_page_feed_marks_a_worker_so_it_never_folds_as_idle(hub, alice):
+    b = start_worker(hub, alice)
+    heartbeat(hub, b.token, "box-1", [{"key": "claude:w1", "tool": "claude-code", "project": "proj-a",
+                                       "label": "proj-a-w1", "idle_s": 5 * 86400}])
+    pid, client = alice
+    status, body = http.request("GET", hub.url + "/api/feed", client.token)
+    assert status == 200
+    [row] = [a for a in body["agents"] if a["label"] == "proj-a-w1"]
+    assert row["worker"] == "proj-a-w1" and row["idle_s"] >= 5 * 86400
+
+
 def test_work_refuses_without_write_role(hub, registered):
     pid, client = member(hub, "alice", role="read")
     bridge(hub, pid)

@@ -6,6 +6,7 @@ import re
 import shutil
 import socket
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -217,32 +218,39 @@ class ClaudeAdapter:
                          "push may break, pull still works")
             name = data.get("name")
             label = name if isinstance(name, str) else ""
+            title, active = self._title(session_id, cwd)
+            # "nameSource" (undocumented, checked on 2.1.329/2.1.330): "derived" is the automatic
+            # <folder>-<2 chars> name, new on every resume; -n and /rename give "user". The
+            # automatic one gives way to Claude Code's title; the manager keeps its name
+            if data.get("nameSource") == "derived" and title and not paths.in_manager_folder(cwd):
+                label = ""
             # "kind" is undocumented: "bg" marks a background job; anything else is a normal one
             if offhub.decide(session_id, pid, data):
                 off.add(f"claude:{session_id}")
             out.append(Session(f"claude:{session_id}", self.tool, os.path.basename(cwd.rstrip("/")),
                                data.get("status", ""), label, cwd, data.get("kind") == "bg",
-                               self._title(session_id, cwd)))
+                               title, None if active is None else max(0.0, time.time() - active)))
         self.off_keys = off
         return out
 
-    def _title(self, session_id: str, cwd: str) -> str:
-        """Claude Code's title for the session, read from the end of its transcript only when
-        the file changed. Never raises and never reads the whole file."""
+    def _title(self, session_id: str, cwd: str):
+        """(Claude Code's title for the session, its transcript's mtime = its last activity),
+        the title read from the end of the transcript only when the file changed. Never raises
+        and never reads the whole file; ("", None) with no transcript."""
         cache = self.__dict__.setdefault("_titles", {})
         try:
             path = _transcript(self.home, session_id, cwd, cache)
             if path is None:
-                return ""
+                return "", None
             st = path.stat()
             old = cache.get(session_id)
             if old is not None and old[0] == (st.st_size, st.st_mtime):
-                return old[1]
+                return old[1], st.st_mtime
             title = read_title(path, st.st_size) or (old[1] if old else "")
             cache[session_id] = ((st.st_size, st.st_mtime), title, path)
-            return title
+            return title, st.st_mtime
         except (OSError, ValueError):
-            return ""
+            return "", None
 
     def _find(self, key: str):
         """(pid, socket path) of the session file whose sessionId is in the key."""

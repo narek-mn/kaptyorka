@@ -274,6 +274,14 @@ def test_background_from_heartbeat_to_feed(hub):
     assert {a["project"]: a["background"] for a in feed(hub)["agents"]}["proj-b"] is False
 
 
+def test_idle_time_from_heartbeat_to_feed(hub):
+    assert heartbeat(hub, "box-2", [
+        {"key": "claude:2", "tool": "claude-code", "project": "proj-b", "idle_s": 3 * 86400},
+        {"key": "codex:4", "tool": "codex", "project": "proj-d"}]) == 200  # nothing sent: unknown
+    idle = {a["project"]: a["idle_s"] for a in feed(hub)["agents"]}
+    assert idle["proj-d"] is None and 3 * 86400 <= idle["proj-b"] < 3 * 86400 + 60
+
+
 def test_web_send_lands_in_inbox_with_person_name(hub):
     box2_online(hub)
     s, body = http.request("POST", hub.url + "/api/send", "T",

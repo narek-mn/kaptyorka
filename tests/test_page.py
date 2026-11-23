@@ -164,12 +164,26 @@ def test_background_sessions_fold_into_one_group(hub):
     viewer, open when the open chat is one; its header carries the unread count."""
     html = page(hub)
     code = html[html.index("function renderSessions()"):html.index("function lead(e)")]
-    assert '"class": "bg-head", "aria-expanded"' in code and '"Background"' in code
-    assert 's.setItem("kaptyorka.bg-open", bgOpen ? "1" : "0")' in code
-    assert "var open = bgOpen || inBg;" in code and "unseen ?" in code
+    assert '"class": "bg-head", "aria-expanded"' in code and 'foldGroup(box, "bg", ' in code
+    assert 'name: "Background", tip: "Background jobs (claude --bg)"' in html
+    assert 's.setItem(f.save, f.open ? "1" : "0")' in code
+    assert "var open = f.open || inIt;" in code and "unseen ?" in code
     assert 'store(function (s) { return s.getItem("kaptyorka.bg-open"); }) === "1"' in html
     assert '.list .bg-head[aria-expanded="true"] > svg { transform: rotate(90deg); }' in html
     assert '"class": "bg", text: "background"' not in html  # the clock says it in the row
+
+
+def test_idle_sessions_fold_at_the_end(hub):
+    """A session idle over a day goes to one Idle group after Background, folded at first, kept
+    per viewer; never the manager (its own entry), a worker or a background job."""
+    html = page(hub)
+    code = html[html.index("function renderSessions()"):html.index("function lead(e)")]
+    assert code.index('foldGroup(box, "bg", ') < code.index('foldGroup(box, "idle", ')
+    assert 'shown.filter(function (e) { return !e.bg && !e.idle; })' in code
+    assert 'shown.filter(function (e) { return e.sess && !e.bg && e.idle; })' in code
+    assert 'var idle = a.worker ? "" : idleText(a.idle_s);' in html
+    assert 'store(function (s) { return s.getItem("kaptyorka.idle-open"); }) === "1"' in html
+    assert 'sub: (idle ? idle + " \\u00b7 " : "") + (a.title' in html  # first on the grey line
 
 
 def team_code(html):
