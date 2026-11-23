@@ -21,7 +21,7 @@ from urllib.parse import quote
 import kaptyorka
 # Everything a tool call needs is loaded now: an upgrade replaces these files under a running
 # shim, and a module first imported after it would be the new one next to old ones in memory.
-from kaptyorka import facts, http, identity, launch, offhub, optin, paths, repos  # noqa: F401
+from kaptyorka import facts, http, identity, launch, offhub, optin, overnight, paths, repos  # noqa: F401
 from kaptyorka.adapters.opencode import valid_id as opencode_id
 from kaptyorka.store import MAX_FILE
 
