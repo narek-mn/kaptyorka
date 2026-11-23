@@ -437,9 +437,10 @@ class Workers:
                              launcher=self.launcher)
         real_ack = self.bridge._ack
 
-        def spy(msg_id, ok, launch=False, error=""):
+        def spy(msg_id, ok, launch=False, error="", left=None):
             self.acks.append((msg_id, ok, launch, error))
-            real_ack(msg_id, ok, launch, error)
+            self.left = left
+            real_ack(msg_id, ok, launch, error, left)
 
         self.bridge._ack = spy
         self.bridge.heartbeat()  # the bridge learns who it is and its projects
@@ -671,6 +672,7 @@ def test_close_order_stops_the_session_and_acks(team):
     assert team.run.calls == [["claude", "stop", "ab12cd34"]]
     assert team.acks[-1] == (team.order()["id"], True, True, "")
     assert team.worker()["state"] == "closed"
+    assert team.left is None  # a person's close: nothing to say back
 
 
 def test_failed_close_is_acked_with_the_error(team):
@@ -1034,3 +1036,75 @@ def test_a_launch_order_before_the_first_heartbeat_answer_waits(team):
     team.bridge.heartbeat()  # the answer names the account
     team.bridge._order(item)
     assert team.acks == [(item["id"], True, True, "")] and len(team.popen.calls) == 1
+
+
+def _auto_close(team, why="task done"):
+    """The worker is up; the hub queues a close order that closes it by itself."""
+    from kaptyorka.workers import WorkerStore
+
+    team.work()
+    team.bridge.poll_once(0)
+    team.claude._sessions.append(Session(KEY, "claude-code", "proj-a", cwd=team.folder))
+    team.bridge.heartbeat()
+    ws = WorkerStore(team.hub.store)
+    with ws.lock:
+        ws._close(ws._row("proj-a-w1"), "proj-a-w1", why)
+
+
+def test_heartbeat_names_the_sessions_in_overnight_mode(team):
+    from kaptyorka import overnight
+
+    team.claude._sessions.append(Session(KEY, "claude-code", "proj-a", cwd=team.folder))
+    sent = []
+    real = bridge_mod.http.request
+
+    def spy(method, url, token, body=None, *a, **kw):
+        if url.endswith("/bridge/heartbeat"):
+            sent.append(body)
+        return real(method, url, token, body, *a, **kw)
+
+    bridge_mod.http.request = spy
+    try:
+        team.bridge.heartbeat()
+        overnight.save(KEY.split(":", 1)[1], {"on": True})
+        team.bridge.heartbeat()
+    finally:
+        bridge_mod.http.request = real
+    assert [b["overnight"] for b in sent] == [[], [KEY]]
+
+
+def test_auto_close_says_what_the_worker_left(team, monkeypatch):
+    _auto_close(team)
+    order = team.order()
+    assert order["kind"] == "close" and order["auto"] == "task done"
+    assert order["folder"] == team.folder
+
+    def git(cmd, **kw):
+        out = {"rev-parse": "work/proj-a-w1\n", "status": " M a.py\n?? b.txt\n"}[cmd[3]]
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+
+    monkeypatch.setattr(team.bridge, "runner", git)
+    team.bridge.poll_once(0)
+    assert team.run.calls == [["claude", "stop", "ab12cd34"]]
+    assert team.acks[-1] == (order["id"], True, True, "")
+    assert team.left == {"folder": team.folder, "branch": "work/proj-a-w1", "uncommitted": 2}
+    assert team.worker()["state"] == "closed" and team.worker()["error"] == "task done"
+
+
+def test_auto_close_outside_git_names_only_the_folder(team):
+    _auto_close(team)
+    team.bridge.poll_once(0)  # the bridge's runner fails every git call: no repository
+    assert team.left == {"folder": team.folder}
+
+
+def test_auto_close_is_refused_while_overnight_mode_is_on(team):
+    from kaptyorka import overnight
+
+    _auto_close(team, "its boss session ended")
+    overnight.save(KEY.split(":", 1)[1], {"on": True})
+    team.bridge.poll_once(0)
+    assert team.run.calls == []  # never stopped
+    assert team.acks[-1] == (team.order()["id"], False, True, "overnight mode is on in that session")
+    with team.hub.store.lock:
+        row = team.hub.store.db.execute("SELECT state, overnight FROM workers").fetchone()
+    assert (row["state"], row["overnight"]) == ("up", 1)

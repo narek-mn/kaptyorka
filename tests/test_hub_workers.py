@@ -448,7 +448,7 @@ def test_worker_on_shared_box_cannot_start_adopt_or_close(hub, alice, clock):
     box = as_token(hub, b.token)  # the worker calls with the box owner's token
     worker = ident("claude:w1", machine="box-2", tool="claude-code")
     assert ON_SHARED in call_error(box, worker, "work", project="proj-a", task="y")
-    assert ON_SHARED in call_error(box, worker, "close_worker", name="proj-a-w1")
+    assert ON_SHARED in call_error(box, worker, "close_worker", name="proj-a-w2")  # not itself
     assert ON_SHARED in call_error(box, worker, "adopt", name="proj-a-w1")
     h = {"X-Kaptyorka-Key": "claude:w1"}
     for action in ("close", "adopt"):

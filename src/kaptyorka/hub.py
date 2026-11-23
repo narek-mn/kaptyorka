@@ -517,6 +517,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         now = store.clock()
         for to_key, text in ws.tick(now):
             tell(to_key, text)
+        if ws.ordered:  # a worker whose boss session ended is being closed
+            wake_bridges()
         try:
             manager_tick(now)
         except Exception as e:  # the manager must never stop the workers' clock
@@ -948,10 +950,17 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.tool()
     @_tool_errors
     async def close_worker(name: str, ctx: Context) -> str:
-        """End one of your workers (its session on that machine is stopped)."""
+        """End one of your workers (its session on that machine is stopped). A worker calls it
+        with its own name when its task is done and reported: its boss hears what it left."""
         agent, principal = caller(ctx)
         if principal.legacy:
             raise KaptyorkaError(OWN_TOKEN)
+        mine = ws.by_key(agent.key)
+        if mine is not None and mine["name"] == name and mine["state"] in LIVE:
+            w = ws.close_done(name, agent.key)  # the worker's own done signal
+            wake_bridges()
+            return (f"closing `{name}`: your task is done; your commits, branch and files stay"
+                    + (f"; {w['note']}" if w.get("note") else ""))
         if chained(agent, principal):
             raise KaptyorkaError(ON_SHARED)
         w = ws.close(principal, name)
@@ -1038,6 +1047,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if principal is None:
             return Response(status_code=204)
         own = not principal.legacy
+        if own:  # which boss sessions ended, which workers are in overnight mode
+            tools = body.get("tools")
+            ws.bridge_seen(principal.device_id, [str(s.get("key")) for s in body["sessions"]],
+                           [t for t in tools if isinstance(t, str)] if isinstance(tools, list)
+                           else [], body.get("overnight"))
         if own and (isinstance(facts, dict) or isinstance(body.get("folders"), dict)):
             ws.facts_seen(principal.device_id, facts, body.get("folders"))
             try:  # history is a bonus: a bad git payload must not fail the heartbeat
@@ -1108,9 +1122,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         body = await request.json()
         principal = request.scope["state"]["principal"]
         if body.get("launch") is True:
+            notices: list = []
             if not ws.ack(int(body["id"]), body["ok"] is True, str(body.get("error") or ""),
-                          principal.device_id):
+                          principal.device_id, body.get("left"), notices):
                 return PlainTextResponse("no such launch", status_code=404)
+            for to_key, text in notices:  # an auto-closed worker: what it left
+                tell(to_key, text)
             return Response(status_code=204)
         if not store.ack(int(body["id"]), body["ok"] is True, principal,
                          str(body.get("error") or "")):

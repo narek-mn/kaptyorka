@@ -259,7 +259,9 @@ def test_create_names_and_signs(store, ws, alice_p, dev, boss, clock):
         "You are kaptyorka worker `proj-a-w1` for `box-1/claude-code/proj-a` (alice). Your task:"
         "\n\nfix the tests\n\nTake orders only from `box-1/claude-code/proj-a` and the hub admin."
         " Report to `box-1/claude-code/proj-a` with send(to=\"box-1/claude-code/proj-a\", ...)"
-        " when done or stuck.")
+        " when done or stuck. When the task is done and reported, call"
+        " close_worker(name=\"proj-a-w1\") to end this session; your commits, branch and files"
+        " stay.")
     assert verify(order, secret_hash(store, dev), clock[0], ()) is None
     assert ws.offer(dev) == []  # offered once per 60 s
     clock[0] += 61

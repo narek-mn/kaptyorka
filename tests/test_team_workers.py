@@ -12,7 +12,7 @@ from helpers import call, call_error, person, run
 from kaptyorka import http
 from kaptyorka.hub import ON_SHARED
 from kaptyorka.store import Store
-from kaptyorka.workers import WorkerStore
+from kaptyorka.workers import BOSS_ENDED_S, WorkerStore
 
 ADMIN = "T"  # the fixture's legacy token belongs to the admin
 
@@ -40,11 +40,11 @@ def ident(key, project="proj-a", machine="laptop", tool="claude-code"):
     return {"key": key, "machine": machine, "tool": tool, "project": project}
 
 
-def heartbeat(hub, token, host, sessions=(), folders=None):
-    body = {"machine": host, "sessions": list(sessions), "tools": [],
+def heartbeat(hub, token, host, sessions=(), folders=None, tools=(), **extra):
+    body = {"machine": host, "sessions": list(sessions), "tools": list(tools),
             "facts": {"host": host, "os_user": "u", "version": kaptyorka.__version__,
                       "tmux": True, "load": 0.1, "cpus": 4},
-            "folders": {"proj-a": "/w/proj-a"} if folders is None else folders}
+            "folders": {"proj-a": "/w/proj-a"} if folders is None else folders, **extra}
     return http.request("POST", hub.url + "/bridge/heartbeat", token, body)
 
 
@@ -201,7 +201,7 @@ def test_a_session_on_the_team_machine_asks_and_is_the_boss(hub, admin, lab):
     worker = ident("claude:w1", machine="u@jetson-1")
     for tool, args in (("work", {"project": "proj-a", "task": "y"}),
                        ("adopt", {"name": "proj-a-w1"}),
-                       ("close_worker", {"name": "proj-a-w1"})):
+                       ("close_worker", {"name": "proj-a-w9"})):  # its own name: done
         assert ON_SHARED in call_error(jet, worker, tool, **args)
     assert http.request("POST", hub.url + "/api/workers/proj-a-w1/close", lab.jet.token,
                         headers={"X-Kaptyorka-Key": "claude:w1"}) == (403, ON_SHARED)
@@ -238,3 +238,200 @@ def test_first_use_lines(hub, admin, lab, clock):
                     machine="jetson-9")).endswith("no machine named jetson-9 that you may use;"
                                                   " check the name on the page's Machines list,"
                                                   " or ask an admin")
+
+
+# --- closing by itself ----------------------------------------------------------------------
+
+def session(key, tool="claude-code"):
+    return {"key": key, "tool": tool, "project": "proj-a", "cwd": "/w/proj-a"}
+
+
+WORKER = ident("claude:w1", machine="u@jetson-1")
+
+
+@pytest.fixture
+def up(hub, admin, lab):
+    """alice's session on her laptop asked; worker proj-a-w1 runs on team machine jetson-1;
+    both bridges report (the laptop's knows its Claude Code list is complete)."""
+    team(hub, admin)
+    run(call(lab.alice, ASKER, "work", project="proj-a", task="x", machine="jetson-1"))
+    take(hub, lab.jet, "claude:w1")
+    lab.beat = lambda boss=True, overnight=(): (
+        heartbeat(hub, lab.jet.token, "jetson-1", [session("claude:w1")], tools=["claude-code"],
+                  **({} if overnight is None else {"overnight": list(overnight)})),
+        heartbeat(hub, lab.laptop.token, "laptop", [session("k:alice")] if boss else [],
+                  tools=["claude-code"]))
+    lab.beat()
+    return lab
+
+
+def later(hub, clock, seconds, **beat):
+    clock[0] += seconds
+    hub.up.beat(**beat)
+    hub.app.state.tick()
+
+
+def closing(hub, b):
+    return [i for i in poll(hub, b) if i["kind"] == "close"]
+
+
+def finish_close(hub, b, item, left):
+    assert http.request("POST", hub.url + "/bridge/ack", b.token,
+                        {"id": item["id"], "ok": True, "launch": True, "error": "",
+                         "left": left})[0] == 204
+
+
+def texts_to(hub, key):
+    with hub.store.lock:
+        return [r["text"] for r in hub.store.db.execute(
+            "SELECT text FROM messages WHERE to_key=? ORDER BY id", (key,))]
+
+
+def test_the_worker_closes_itself_when_its_task_is_done(hub, up):
+    jet = as_token(hub, up.jet.token)
+    assert run(call(jet, WORKER, "close_worker", name="proj-a-w1")) == \
+        "closing `proj-a-w1`: your task is done; your commits, branch and files stay"
+    [item] = closing(hub, up.jet)
+    assert (item["auto"], item["folder"], item["key"]) == ("task done", "/w/proj-a", "claude:w1")
+    finish_close(hub, up.jet, item, {"folder": "/w/proj-a", "branch": "work/proj-a-w1",
+                                     "uncommitted": 1})
+    w = hub.ws.by_name("proj-a-w1")
+    assert (w["state"], w["error"]) == ("closed", "task done")
+    line = ("worker `proj-a-w1` closed: task done; it left branch work/proj-a-w1 with 1"
+            " uncommitted file in /w/proj-a; nothing was deleted")
+    assert texts_to(hub, "k:alice")[-1] == line
+    assert line not in texts_to(hub, "web:alice")  # her session is there: one line, there
+
+
+def test_done_is_refused_in_overnight_mode_and_for_a_page_boss(hub, up, clock):
+    jet = as_token(hub, up.jet.token)
+    up.beat(overnight=["claude:w1"])
+    assert call_error(jet, WORKER, "close_worker", name="proj-a-w1").endswith(
+        "overnight mode is on in this session; it stays open until overnight mode ends")
+    up.beat()
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE workers SET boss_key='web:alice'")
+    assert call_error(jet, WORKER, "close_worker", name="proj-a-w1").endswith(
+        "your boss is a person on the page; stay open, they close you there")
+    assert closing(hub, up.jet) == [] and hub.ws.by_name("proj-a-w1")["state"] == "up"
+
+
+def test_closed_ten_minutes_after_its_boss_session_ended(hub, up, clock):
+    hub.up = up
+    later(hub, clock, 60, boss=False)  # the laptop's bridge reports, without alice's session
+    later(hub, clock, BOSS_ENDED_S - 1, boss=False)
+    assert closing(hub, up.jet) == []
+    later(hub, clock, 2, boss=False)
+    [item] = closing(hub, up.jet)
+    assert item["auto"] == "its boss session ended"
+    later(hub, clock, 30, boss=False)
+    assert closing(hub, up.jet) == []  # one order, not one a tick
+    finish_close(hub, up.jet, item, {"folder": "/w/proj-a", "branch": "main", "uncommitted": 0})
+    line = ("worker `proj-a-w1` closed: its boss session ended; it left branch main with 0"
+            " uncommitted files in /w/proj-a; nothing was deleted")
+    assert texts_to(hub, "k:alice")[-1] == line and texts_to(hub, "web:alice")[-1] == line
+
+
+def test_a_boss_seen_again_starts_the_count_over(hub, up, clock):
+    hub.up = up
+    later(hub, clock, 60, boss=False)
+    later(hub, clock, BOSS_ENDED_S - 120, boss=True)  # back (a bridge restart, say)
+    later(hub, clock, 300, boss=False)
+    later(hub, clock, 120, boss=False)
+    assert closing(hub, up.jet) == []
+
+
+def test_never_closed_while_the_boss_is_only_offline(hub, up, clock):
+    """A closed lid: the laptop's bridge says nothing, so its session has not ended."""
+    hub.up = up
+    for _ in range(8):
+        clock[0] += 600
+        heartbeat(hub, up.jet.token, "jetson-1", [session("claude:w1")], tools=["claude-code"],
+                  overnight=[])
+        hub.app.state.tick()
+    assert closing(hub, up.jet) == []
+    assert hub.ws.by_name("proj-a-w1")["state"] == "unattended"  # today's rule
+
+
+@pytest.mark.parametrize("case", ["overnight", "older bridge", "page boss", "codex boss"])
+def test_never_closed_by_itself_when(hub, up, clock, case):
+    hub.up = up
+    beat = {"overnight": ["claude:w1"]} if case == "overnight" else \
+        {"overnight": None} if case == "older bridge" else {}
+    if case == "older bridge":  # it never said whether overnight mode is on
+        with hub.store.lock:
+            hub.store.db.execute("UPDATE workers SET overnight=NULL")
+    if case == "page boss":
+        with hub.store.lock:
+            hub.store.db.execute("UPDATE workers SET boss_key='web:alice', boss_gone_since=?",
+                                 (clock[0],))
+    if case == "codex boss":  # its list may miss live sessions: never "ended"
+        with hub.store.lock:
+            hub.store.db.execute("UPDATE agents SET tool='codex' WHERE key='k:alice'")
+    later(hub, clock, 60, boss=False, **beat)
+    later(hub, clock, BOSS_ENDED_S + 60, boss=False, **beat)
+    assert closing(hub, up.jet) == []
+    assert hub.ws.by_name("proj-a-w1")["state"] in ("up", "unattended")
+
+
+def test_end_to_end_ask_start_report_close(hub, admin, lab, home, monkeypatch, clock):
+    """Session A (alice's, on her laptop) asks; the real bridge of team machine jetson-1 starts
+    worker B (a fake Claude Code); B does its task, reports to A and closes itself; A hears what
+    B left. Only the agent tool is fake; git and the hub are real."""
+    import subprocess
+    import time
+
+    from kaptyorka import facts
+    from kaptyorka import launch as launch_mod
+    from kaptyorka.adapters.base import Session
+    from kaptyorka.bridge import Bridge
+    from kaptyorka.launch import Launcher
+    from test_bridge import FakeAdapter
+    from test_launch import KEY, FakePopen, FakeRun
+
+    from kaptyorka import identity
+
+    monkeypatch.setattr(identity, "facts",
+                        lambda: {"host": "jetson-1", "os_user": "u", "version": kaptyorka.__version__})
+    monkeypatch.setattr(facts.shutil, "which", lambda n: None)  # no tool --version is run
+    monkeypatch.setattr(launch_mod.shutil, "which", lambda n: None)  # no systemd-run
+    folder = home / "proj-a"
+    folder.mkdir()
+    for argv in (["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empty", "-m", "start"]):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-C", str(folder),
+                        *argv], check=True)
+    clock[0] = time.time()  # the bridge checks the order's age on its own clock
+    team(hub, admin)
+    hub.store.grant_project("proj-a", lab.jet_id, "read", "test")  # its bridge finds ~/proj-a
+    cfg = {"hub": hub.url, "token": lab.jet.token, "secret": lab.jet.secret,
+           "machine": "u@jetson-1"}
+    claude, lines, stop = FakeAdapter("claude-code", "claude"), [], FakeRun()
+    launcher = Launcher(cfg, home, run=stop, popen=FakePopen(), log=lines.append)
+    jet = Bridge(cfg, [claude], lines.append, launcher=launcher)
+    jet.heartbeat()  # learns its projects
+    jet.heartbeat()  # the hub learns the folder
+
+    a = ident("claude:a", machine="laptop")
+    heartbeat(hub, lab.laptop.token, "laptop", [session("claude:a")], tools=["claude-code"])
+    assert run(call(lab.alice, a, "work", project="proj-a", task="write notes.txt",
+                    machine="jetson-1")).startswith("starting `proj-a-w1` on jetson-1")
+    jet.poll_once(0)  # the launch
+    claude._sessions.append(Session(KEY, "claude-code", "proj-a", cwd=str(folder)))
+    jet.heartbeat()
+    assert hub.ws.by_name("proj-a-w1")["state"] == "up", (hub.ws.by_name("proj-a-w1"), lines)
+
+    # B works: one new file, a report to its boss, then the done signal
+    (folder / "notes.txt").write_text("done\n")
+    b = ident(KEY, machine="u@jetson-1")
+    boss = hub.store.agent("claude:a").name
+    jetc = as_token(hub, lab.jet.token)
+    run(call(jetc, b, "send", to=boss, text="notes.txt written"))
+    assert run(call(jetc, b, "close_worker", name="proj-a-w1")).startswith("closing `proj-a-w1`")
+    jet.poll_once(0)  # the close: `claude stop`, then git says what it left
+    assert stop.calls == [["claude", "stop", "ab12cd34"]]
+    assert hub.ws.by_name("proj-a-w1")["state"] == "closed"
+    got = [m["text"] for m in run(call(lab.alice, a, "inbox"))]
+    assert "notes.txt written" in got
+    assert got[-1] == (f"worker `proj-a-w1` closed: task done; it left branch main with 1"
+                       f" uncommitted file in {folder}; nothing was deleted")
+    assert (folder / "notes.txt").exists()

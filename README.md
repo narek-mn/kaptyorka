@@ -279,7 +279,7 @@ A worker is an agent session that runs on another machine for you. Say "do this 
 2. The hub picks a machine and tells its bridge. Your own account comes first; a team machine or someone's shared account only on a machine where you have none. The bridge finds the project folder and starts the tool there, with your task as the first message.
 3. The worker works alone. When it has news, it messages its boss (you). You get the worker's name and an attach line, so you can look inside.
 4. Attach from any computer with the line you got: `ssh -t -- <user>@<machine> claude attach <name>` for Claude Code, `ssh -t -- <user>@<machine> tmux attach -t =<name>` for Codex and OpenCode.
-5. `close_worker(name)` ends it. `workers` lists yours, with the state of each.
+5. `close_worker(name)` ends it; the worker itself calls it when its task is done (see below). `workers` lists yours, with the state of each.
 
 How each tool runs:
 
@@ -290,7 +290,9 @@ The project folder is the path the hub learned from sessions that ran this proje
 
 Permissions: nothing is bypassed. A worker runs with the account's own saved permission settings. Only Claude Code reports that a worker is waiting for a permission; the boss is told once per half hour, with the attach line. Codex and OpenCode do not report it, so attach and look.
 
-If the boss goes offline, the worker keeps going. After 2 minutes it is `unattended`, and after 24 hours `abandoned`. Nothing kills it. Its messages are held by the hub. Call `adopt(name)` from one of your own sessions to take it over; the held messages come to you.
+**Closing by itself.** A worker closes in two cases, and only Claude stops: its commits, branch, worktree and files stay. (1) Its task is done: its first message tells it to report to its boss with `send`, then call `close_worker` with its own name; that is the done signal (a worker may close only itself, never another). (2) Its boss session really ended 10 minutes ago: the boss's machine's bridge is online and no longer lists that Claude Code session. Only Claude Code's session list is complete, so a boss in another tool never counts as ended. Either way the boss gets one line, such as "worker `proj-a-w1` closed: task done; it left branch work/proj-a-w1 with 2 uncommitted files in /w/proj-a--1; nothing was deleted"; when the boss session ended, the same line also goes to the person's page. Never closed by itself: a worker whose boss is the page, one with overnight mode on (its bridge reports that on each heartbeat, and refuses such a close itself), or one on a bridge older than this version, which does not report overnight mode.
+
+If the boss goes offline, the worker keeps going. After 2 minutes it is `unattended`, and after 24 hours `abandoned`. Nothing kills it. A closed laptop lid or a dropped network is offline, not ended: that bridge says nothing, so the rule above never fires. Its messages are held by the hub. Call `adopt(name)` from one of your own sessions to take it over; the held messages come to you.
 
 A worker is closed as gone only when its machine's bridge reports and has not seen the worker's session for over 10 minutes. If the session shows up again, the worker is `up` again and the boss is told.
 
