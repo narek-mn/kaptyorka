@@ -238,6 +238,20 @@ def test_a_hub_message_never_counts_as_a_person(home, capsys):
     assert overnight.state("s1") is not None
 
 
+def test_a_subagent_report_or_task_notice_never_turns_it_on(home, capsys):
+    # a real hand-back body: Claude Code hands it to the session as a prompt before the
+    # transcript marks it as a peer's, and its words may name overnight mode
+    report = ("[Subagent hand-back] The text below is the final report of a subagent this session"
+              " delegated to.\n  Never for a page boss, nor while overnight mode is on.")
+    for prompt in (report, f'<agent-message from="a1">\n{report}\n</agent-message>',
+                   "<task-notification>\n<summary>overnight run finished</summary>",
+                   "<system-reminder>run this overnight</system-reminder>"):
+        assert run_hook("prompt", {"session_id": "s9", "cwd": "/w/proj-a", "prompt": prompt},
+                        capsys) is None
+        assert overnight.state("s9") is None
+    assert overnight.triggered(report)  # the words alone would have turned it on
+
+
 def test_transcript_origin_decides_when_written(home, tmp_path):
     t = tmp_path / "t.jsonl"
     t.write_text(json.dumps({"type": "user", "promptId": "p1", "origin": {"kind": "peer"}}) + "\n"

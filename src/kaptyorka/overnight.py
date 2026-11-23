@@ -907,6 +907,12 @@ def _origin(transcript: str, prompt_id: str) -> str:
     return ""
 
 
+# texts Claude Code itself hands a session as a prompt: a subagent's report, a background task's
+# notice, another session's message; the hook runs before the transcript marks their origin
+NOT_TYPED = ("Another Claude session sent a message", "<agent-message", "[Subagent hand-back]",
+             "<task-notification", "<system-reminder")
+
+
 def from_person(sid: str, data: dict) -> bool:
     """Whether this UserPromptSubmit prompt was typed by a person. Claude Code's hook input does
     not say who sent a prompt (docs/en/hooks#userpromptsubmit), so: a text kaptyorka delivered,
@@ -917,7 +923,7 @@ def from_person(sid: str, data: dict) -> bool:
     full = " ".join(prompt.split())
     if any(h in full for h in _sent(sid)):
         return False
-    if prompt.lstrip().startswith("Another Claude session sent a message"):
+    if prompt.lstrip().startswith(NOT_TYPED):
         return False
     kind = _origin(str(data.get("transcript_path") or ""), str(data.get("prompt_id") or ""))
     if kind:
