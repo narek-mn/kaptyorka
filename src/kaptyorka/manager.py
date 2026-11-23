@@ -172,9 +172,20 @@ per hub version.
 """
 
 
+# Overnight rule clashes (its own section, kept apart from MANAGER_SECTION).
+OVERNIGHT_SECTION = """## Overnight rule clashes
+
+- The hub may send you "overnight rule clash: ...": a person's overnight session skipped a step \
+because a team or project rule forbids what that person's overnight rules allowed. Tell that \
+person once, in the one line the notice gives, with `send`: to their online session, else to \
+their page `web:<name>`. Add nothing, and do not ask them to change the rule.
+- The team and project rules win over overnight rules. Never suggest a way around them.
+"""
+
+
 def claude_md(rules_text: str) -> str:
     return (rules.rules_text(rules_text) or "No team rules yet.") + "\n\n# Manager\n\n" \
-        + MANAGER_SECTION + "\n" + OLD_VERSION_SECTION
+        + MANAGER_SECTION + "\n" + OLD_VERSION_SECTION + "\n" + OVERNIGHT_SECTION
 
 
 def ensure_schema(db) -> None:

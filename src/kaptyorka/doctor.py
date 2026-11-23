@@ -19,6 +19,7 @@ class Check:
     ok: bool
     detail: str = ""
     fix: Optional[str] = None
+    info: str = ""  # shown as a note, never a failure
 
 
 def _json(path: Path) -> dict:
@@ -58,9 +59,10 @@ def tool_configured(adapter, home: Path) -> bool:
     tool = adapter.tool
     if tool == "claude-code":
         hooks = _json(home / ".claude" / "settings.json").get("hooks")
+        from kaptyorka.adapters.claude import HOOKS
+
         return (_mcp_entry(_json(home / ".claude.json").get("mcpServers"))
-                and _has_hooks(hooks, tool, (("SessionStart", "start"), ("UserPromptSubmit", "prompt"),
-                                         ("Stop", "stop")), True))
+                and _has_hooks(hooks, tool, HOOKS, True))
     if tool == "opencode":
         conf = home / ".config" / "opencode"
         return (_mcp_entry(_json(conf / "opencode.json").get("mcp"))
@@ -180,6 +182,9 @@ def checks(cfg: dict, adapters: list, home: Path, run: Callable = subprocess.run
                                  None if hub else "kaptyorka doctor --fix"))
             if a.tool == "opencode":
                 out.append(_opencode_server())
+            if a.tool != "claude-code":
+                out.append(Check(f"tool: {a.tool} overnight", True,
+                                 info="not yet: overnight mode works in Claude Code only"))
     return out
 
 
@@ -209,7 +214,9 @@ def _opencode_server() -> Check:
 
 def _show(results: List[Check]) -> None:
     for c in results:
-        if c.ok:
+        if c.ok and c.info:
+            print(f"note {c.name}: {c.info}")
+        elif c.ok:
             print(f"ok   {c.name}")
         elif c.name == "config":
             print(f"{c.detail}: {c.fix}")

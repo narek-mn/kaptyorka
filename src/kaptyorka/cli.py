@@ -1031,6 +1031,31 @@ def _hub(args) -> int:
     return code
 
 
+def _overnight(args) -> int:
+    from kaptyorka import overnight
+
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not sid:
+        print("kaptyorka: overnight works only inside a Claude Code session")
+        return 1
+    if args.what == "status":
+        print(overnight.status_line(sid))
+        return 0
+    if overnight.state(sid) is None:
+        print("kaptyorka: overnight mode is off for this session")
+        return 1
+    if args.what == "note":
+        overnight.note(sid, args.kind, args.text)
+        print("kaptyorka: noted for the morning report")
+    elif args.what == "clash":
+        print(overnight.clash(sid, args.scope, args.rule, args.cls))
+    else:
+        text = overnight.finish(sid, "turned off with kaptyorka overnight off")
+        print("kaptyorka: overnight mode is off. Morning report: "
+              + str(overnight.save_report(sid, text)))
+    return 0
+
+
 def _token_works(cfg: dict) -> bool:
     """The saved token is still accepted by its hub. A hub that does not answer counts as yes:
     the refusal stays, so a down hub never costs the machine its token."""
@@ -1378,6 +1403,20 @@ def entry() -> None:
     hb = sub.add_parser("hub")  # Claude Code's /hub command
     hb.add_argument("words", nargs="*")
     hb.set_defaults(run=_hub)
+    # for Claude inside an overnight session (the morning report, rule clashes): not listed
+    on = sub.add_parser("overnight")
+    ons = on.add_subparsers(dest="what", required=True)
+    onn = ons.add_parser("note", help="note done, decision or skipped for the morning report")
+    onn.add_argument("kind", choices=["done", "decision", "skipped"])
+    onn.add_argument("text")
+    onc = ons.add_parser("clash", help="a team or project rule forbade what the night rules allow")
+    onc.add_argument("--scope", choices=["team", "project"], default="team")
+    onc.add_argument("--rule", required=True, help="the rule's title")
+    onc.add_argument("--class", dest="cls", default="other",
+                     choices=["admin", "git", "delete", "hardware", "other"])
+    ons.add_parser("status", help="whether overnight mode is on for this session")
+    ons.add_parser("off", help="turn overnight mode off and write the morning report")
+    on.set_defaults(run=_overnight)
     h = sub.add_parser("hook")
     h.add_argument("tool")
     h.add_argument("event")

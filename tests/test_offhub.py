@@ -225,7 +225,7 @@ def test_worker_and_manager_refuse_off(home, procs):
 
 def test_command_outside_a_session_and_bad_words(home):
     assert offhub.command(["off"], {})[0] == 1
-    assert offhub.command(["maybe"], {}) == (1, "use /hub, /hub on, /hub off, /hub team, /hub team <project> or /hub team off")
+    assert offhub.command(["maybe"], {}) == (1, "use /hub, /hub on, /hub off, /hub team, /hub team <project>, /hub team off, /hub overnight or /hub overnight off")
 
 
 def test_no_hub_tool_switches_a_session_off(hub):
@@ -293,7 +293,7 @@ def test_cli_hub_prints_one_line(home, monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["kaptyorka", "hub", "sideways"])
     with pytest.raises(SystemExit) as e:
         cli.entry()
-    assert e.value.code == 1 and capsys.readouterr().out == "use /hub, /hub on, /hub off, /hub team, /hub team <project> or /hub team off\n"
+    assert e.value.code == 1 and capsys.readouterr().out == "use /hub, /hub on, /hub off, /hub team, /hub team <project>, /hub team off, /hub overnight or /hub overnight off\n"
 
 
 def test_bridge_drops_it_when_the_commands_own_call_was_lost(team, alice_box, home, procs,  # noqa: F811

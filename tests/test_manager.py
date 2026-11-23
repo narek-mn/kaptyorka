@@ -294,6 +294,8 @@ def test_load_config_by_folder(tmp_path, monkeypatch):
     assert paths.load_config(str(folder)) == {}
 
 
+from kaptyorka.adapters.base import NIGHT_GUARD  # noqa: E402
+
 EXE = "/opt/k y/bin/kaptyorka"
 HOOKS_WANTED = {
     "SessionStart": [{"hooks": [{"type": "command", "timeout": 5,
@@ -301,7 +303,12 @@ HOOKS_WANTED = {
     "UserPromptSubmit": [{"hooks": [{"type": "command", "timeout": 5,
                                      "command": "'/opt/k y/bin/kaptyorka' hook claude-code prompt"}]}],
     "Stop": [{"hooks": [{"type": "command", "timeout": 5,
-                         "command": "'/opt/k y/bin/kaptyorka' hook claude-code stop"}]}]}
+                         "command": "'/opt/k y/bin/kaptyorka' hook claude-code stop"}]}],
+    **{event: [{"hooks": [{"type": "command", "timeout": 5,
+                           "command": (NIGHT_GUARD if name in ("pretool", "permission") else "")
+                           + f"'/opt/k y/bin/kaptyorka' hook claude-code {name}"}]}]
+       for event, name in (("PreToolUse", "pretool"), ("PermissionRequest", "permission"),
+                           ("StopFailure", "failure"), ("SessionEnd", "end"))}}
 SETTINGS_WANTED = {
     "permissions": {"allow": ["mcp__kaptyorka__*"],
                     "deny": ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",

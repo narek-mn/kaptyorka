@@ -1,6 +1,7 @@
 """Per-machine bridge: reports running sessions and pushes messages through each tool's door."""
 import json
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import __version__, facts, http, identity, offhub, optin, orders, paths, repos, skills_sync, usage
+from kaptyorka import __version__, facts, http, identity, offhub, optin, orders, overnight, paths, repos, skills_sync, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES, Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
@@ -501,6 +502,8 @@ class Bridge:
                     raise LookupError("no adapter for this tool")
                 if offhub.kept_off(key):
                     raise LookupError("that session is off the hub")
+                if key.startswith("claude:") and overnight.state(key.split(":", 1)[1]):
+                    overnight.delivered(key.split(":", 1)[1], m["text"])  # never a person
                 adapter.deliver(key, m["text"])
                 ok = True
             except Exception as e:  # any failure leaves the message for pull
@@ -562,7 +565,33 @@ class Bridge:
                 pass  # the poll loop reports the outage
             except Exception as e:
                 self._report("heartbeat", f"heartbeat failed: {e}")
+            self.night_watch()
             self.stop.wait(HEARTBEAT_S)
+
+    def night_watch(self) -> None:
+        """Overnight sessions: the 16-hour cap, a crash (claude --resume in tmux, at most twice),
+        a usage limit or API error ("continue", for at most 6 hours). Never stops the beat."""
+        claude = next((a for a in self.adapters if a.prefix == "claude"), None)
+        if claude is None:
+            return
+
+        def resume(sid: str, st: dict):
+            if shutil.which("tmux") is None:
+                return False, "tmux is not installed, so it was not restarted"
+            try:
+                r = subprocess.run(overnight.resume_argv(sid, st), capture_output=True,
+                                   text=True, timeout=10)
+            except (OSError, subprocess.SubprocessError) as e:
+                return False, f"restart failed ({type(e).__name__})"
+            if r.returncode:
+                return False, "restart failed (tmux said no)"
+            return True, "restarted with claude --resume in tmux"
+        try:
+            overnight.watch(lambda sid: offhub.session(sid, claude.home) is not None,
+                            lambda sid, text: claude.deliver(f"claude:{sid}", text),
+                            resume, overnight.finish)
+        except Exception as e:
+            self.log(f"overnight watch failed: {e}")
 
     def run(self) -> None:
         self._refresh_name()  # before the first heartbeat names any session

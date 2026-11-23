@@ -13,9 +13,10 @@ def write_claude(home, hooks=True, mcp=True):
     (home / ".claude").mkdir(parents=True, exist_ok=True)
     h = {}
     if hooks:
-        h = {"SessionStart": [{"hooks": [{"type": "command", "command": f"{EXE} hook claude-code start"}]}],
-             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"{EXE} hook claude-code prompt"}]}],
-             "Stop": [{"hooks": [{"type": "command", "command": f"{EXE} hook claude-code stop"}]}]}
+        from kaptyorka.adapters.claude import HOOKS
+
+        h = {event: [{"hooks": [{"type": "command", "command": f"{EXE} hook claude-code {name}"}]}]
+             for event, name in HOOKS}
     (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": h}))
     (home / ".claude.json").write_text(json.dumps({"mcpServers": {"kaptyorka": {}} if mcp else {}}))
 

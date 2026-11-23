@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from kaptyorka import offhub, paths
-from kaptyorka.adapters.base import (DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, login_output,
+from kaptyorka.adapters.base import (NIGHT_GUARD, DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, login_output,
                                      mentions_hook, merge_json, write_atomic)
 
 CLAUDE_CODE_TESTED = "2.1.319"
@@ -85,7 +85,10 @@ def _newer(version: str) -> bool:
         return False
 
 
-HOOKS = (("SessionStart", "start"), ("UserPromptSubmit", "prompt"), ("Stop", "stop"))
+HOOKS = (("SessionStart", "start"), ("UserPromptSubmit", "prompt"), ("Stop", "stop"),
+         # overnight mode (overnight.py); each answers at once while it is off
+         ("PreToolUse", "pretool"), ("PermissionRequest", "permission"),
+         ("StopFailure", "failure"), ("SessionEnd", "end"))
 
 
 COMMAND_MARK = "<!-- written by kaptyorka; it rewrites this file -->"
@@ -97,14 +100,19 @@ def command_text(kaptyorka: str) -> str:
     exe = shlex.quote(kaptyorka)
     return (f"---\ndescription: Show or switch whether this session is on the kaptyorka hub,"
             f" or put it on the team (team: coordinate; team <project>: work for one)\n"
-            f"argument-hint: \"[on|off|team [project|off]]\"\nallowed-tools: Bash({exe} hub:*)\n"
+            f"argument-hint: \"[on|off|team [project|off]|overnight [off]]\"\nallowed-tools: Bash({exe} hub:*)\n"
             f"disable-model-invocation: true\n---\n{COMMAND_MARK}\n"
             f"!`{exe} hub $ARGUMENTS`\n\n"
             "Tell the user the line above, word for word, and nothing else.\n")
 
 
+GUARDED = ("pretool", "permission")  # run on every tool call: skipped in the shell while off
+
+
 def hook_entry(kaptyorka: str, name: str) -> dict:
     command = f"{shlex.quote(kaptyorka)} hook claude-code {name}"
+    if name in GUARDED:
+        command = NIGHT_GUARD + command
     return {"hooks": [{"type": "command", "command": command, "timeout": 5}]}
 
 
@@ -316,6 +324,13 @@ class ClaudeAdapter:
                 self.log(f"claude mcp add failed: {(r.stderr or r.stdout).strip()}")
             else:
                 lines.append("Claude Code: kaptyorka MCP server registered (user scope)")
+        return lines + self.add_hooks(kaptyorka) + self.install_hub(kaptyorka)
+
+    def add_hooks(self, kaptyorka: str) -> List[str]:
+        """kaptyorka's hooks in ~/.claude/settings.json, each once; also at bridge start, so
+        hooks a newer kaptyorka adds (overnight mode) reach machines that joined earlier.
+        Claude Code's file watcher picks them up in running sessions (docs/en/hooks)."""
+        lines = []
 
         def add_hooks(data: dict) -> bool:
             hooks = data.setdefault("hooks", {})
@@ -348,11 +363,13 @@ class ClaudeAdapter:
             self.log(f"left alone, not valid JSON: {settings}")
         elif result == "changed":
             lines.append(f"Claude Code: kaptyorka hooks added to {settings}")
-        return lines + self.install_hub(kaptyorka)
+        return lines
 
     def install_hub(self, kaptyorka: str) -> List[str]:
-        """The /hub command and the hub field in the status line; also run at bridge start."""
-        return self.wire_status(kaptyorka) + self.install_command(kaptyorka)
+        """The /hub command, the hub field in the status line and the hooks; also run at bridge
+        start."""
+        return self.wire_status(kaptyorka) + self.install_command(kaptyorka) \
+            + self.add_hooks(kaptyorka)
 
     def wire_status(self, kaptyorka: str) -> List[str]:
         """Put the hub field in the status line. With none, the line shows only the field; with
@@ -461,7 +478,7 @@ class ClaudeAdapter:
             if not isinstance(hooks, dict):
                 return False
             changed = drop_hooks(hooks, lambda h: is_our_hook(
-                h.get("command", ""), "claude-code", ("start", "prompt", "stop")))
+                h.get("command", ""), "claude-code", tuple(name for _, name in HOOKS)))
             if changed and not hooks:
                 del data["hooks"]
             return changed

@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -9,7 +10,7 @@ import time
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import facts, guide, http, offhub, optin, paths
+from kaptyorka import facts, guide, http, offhub, optin, overnight, paths
 from kaptyorka.identity import Identity, identify, project_of
 
 TIMEOUT_S = 3
@@ -94,6 +95,77 @@ def _git_query(cwd: str, run, deadline: float) -> str:
     return "?" + urlencode(q)
 
 
+NIGHT_EVENTS = ("pretool", "permission", "failure", "end")
+
+
+def _night_team(sid: str, cwd: str, cfg: dict) -> "tuple[bool, str, str]":
+    """(team session, key, project) for overnight mode: team only when on the hub."""
+    key = f"claude:{sid}"
+    ident = optin.apply(Identity(key, cfg.get("machine", ""), "claude-code", project_of(cwd), cwd))
+    team = bool(cfg.get("hub") and cfg.get("token")) and not offhub.personal(
+        ident.project, cwd, key) and not offhub.off(key)
+    return team, key, ident.project
+
+
+def _night_prompt(data: dict, cfg: dict) -> "tuple[str, str]":
+    """(context for Claude, line for the person) from overnight mode for this prompt."""
+    sid = str(data.get("session_id") or "")
+    prompt = data.get("prompt") if isinstance(data.get("prompt"), str) else ""
+    cwd = str(data.get("cwd") or os.getcwd())
+    st = overnight.state(sid)
+    m = overnight.HUB_OVERNIGHT.fullmatch(prompt)
+    if st is not None:
+        if m and (m.group(1) or "").lower() == "off":
+            return "", ""  # the /hub command turns it off and shows the line
+        if m or not overnight.from_person(sid, data):
+            return "", ""
+        if st.get("setup") and overnight.is_reply(prompt):
+            lines = overnight.apply_words(sid, st, prompt)
+            if overnight.YES.fullmatch(prompt.strip()):
+                st = overnight.state(sid) or st
+                overnight.save(sid, {**st, "setup": False})
+                lines.append("Overnight rules confirmed. Good night.")
+            text = "\n".join(lines)
+            return (f"Repeat this to the user in one line each, then go on: {text}"
+                    if lines else ""), text
+        report = overnight.finish(sid, "you are back")
+        return ("kaptyorka: the person is back, so overnight mode is off. Here is the morning"
+                " report; show it to them if they ask:\n" + report,
+                "kaptyorka: overnight mode is off: you are back. Morning report: "
+                + str(overnight.save_report(sid, report)))
+    if paths.in_manager_folder(cwd) or not overnight.from_person(sid, data):
+        return "", ""
+    if not (m and (m.group(1) or "on").lower() == "on") and not overnight.triggered(prompt):
+        return "", ""
+    team, key, project = _night_team(sid, cwd, cfg)
+    st = overnight.turn_on(sid, project, cwd, team, key, cfg.get("machine", ""),
+                           "" if m else prompt, str(data.get("permission_mode") or ""))
+    overnight.apply_words(sid, st, prompt)
+    st = overnight.state(sid) or st
+    return (overnight.instructions(st, shlex.quote(_exe())),
+            "kaptyorka: overnight mode is on for this task. To stop it: /hub overnight off")
+
+
+def _night(event: str, data: dict, cfg: dict) -> Optional[str]:
+    """Claude Code's overnight events; None when overnight mode has nothing to say."""
+    sid = str(data.get("session_id") or "")
+    if not sid:
+        return None
+    if event == "pretool":
+        return overnight.on_pretool(sid, data, overnight.finish)
+    if event == "permission":
+        return overnight.on_permission(sid, data, overnight.finish)
+    if event == "failure":
+        overnight.on_failure(sid, data)
+        return ""
+    if event == "end":
+        overnight.on_end(sid, data, overnight.finish)
+        return ""
+    if event == "stop":
+        return overnight.on_stop(sid, data, overnight.finish)
+    return None
+
+
 def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
     try:
         try:
@@ -102,6 +174,58 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
             data = {}
         if not isinstance(data, dict):
             data = {}
+    except Exception:
+        return ""
+    if tool == "claude-code" and event in NIGHT_EVENTS + ("stop", "prompt"):
+        return _with_night(event, data, run)
+    return _hub_run(tool, event, data, run)
+
+
+def _config(data: dict) -> dict:
+    here = data.get("cwd") if isinstance(data.get("cwd"), str) else None
+    # the manager's folder (the input's or the hook's own): its own config, never the admin's
+    return paths.load_config(next((c for c in (here, os.getcwd())
+                                   if paths.in_manager_folder(c)), None))
+
+
+def _with_night(event: str, data: dict, run) -> str:
+    """Overnight mode first (Claude Code only), then the hub's own hook. A failing overnight
+    check while the mode is on denies the call, never lets it through."""
+    sid = str(data.get("session_id") or "")
+    try:
+        cfg = _config(data)
+        if event == "prompt":
+            context, line = _night_prompt(data, cfg)
+        else:
+            night = _night(event, data, cfg)
+    except Exception:
+        on = False
+        try:
+            on = bool(sid) and overnight.state(sid) is not None
+        except Exception:
+            pass
+        if on and event == "pretool":
+            return overnight._deny_pre("kaptyorka's overnight check failed on this call; skip it"
+                                       " and note it.")
+        if on and event == "permission":
+            return overnight._decide("deny", "kaptyorka's overnight check failed; skip and note.")
+        context, line, night = "", "", None
+    if event in NIGHT_EVENTS:
+        return night or ""
+    if event == "stop" and night is not None:
+        return night
+    out = _hub_run("claude-code", event, data, run)
+    if event != "prompt" or not (context or line):
+        return out
+    body = {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext":
+                                   "\n\n".join(p for p in (context, out) if p)}}
+    if line:
+        body["systemMessage"] = line
+    return json.dumps(body)
+
+
+def _hub_run(tool: str, event: str, data: dict, run=subprocess.run) -> str:
+    try:
         here = data.get("cwd") if isinstance(data.get("cwd"), str) else None
         # the manager's folder (the input's or the hook's own): its own config, never the admin's
         cfg = paths.load_config(next((c for c in (here, os.getcwd())
