@@ -16,7 +16,7 @@ import pytest
 
 import kaptyorka
 from conftest import start_hub
-from helpers import call, person, remove_transcripts, run, scratch_dir
+from helpers import call, person, remove_transcripts, run, scratch_dir, transcript_dir
 from kaptyorka import bridge as bridge_mod
 from kaptyorka import identity, manager, rules
 from kaptyorka.adapters.claude import ClaudeAdapter
@@ -56,6 +56,11 @@ def _brief(url, headers):
         return r.status, r.read().decode()
 
 
+def transcript_dirs(folder, home):
+    d = transcript_dir(folder, home)
+    return [p for p in d.parent.glob(d.name + "*") if p.is_dir()]
+
+
 @pytest.mark.slow
 @pytest.mark.skipif(shutil.which("claude") is None, reason="claude is not on PATH")
 def test_real_manager_session(monkeypatch):
@@ -81,6 +86,7 @@ def test_real_manager_session(monkeypatch):
     bridge, thread = None, None
     try:
         RulesStore(store).set_rules(RULES, "test")
+        mm.set_model("sonnet", "low", "test")  # pinned by the hub; cheaper than the default
         aid, _ = person(store, "root", "admin")
         # like the real hub: the manager runs through the bridge of the hub key's person, a
         # team machine, not an admin (0.9.28 dropped that bridge's reports of the manager)
@@ -153,6 +159,10 @@ def test_real_manager_session(monkeypatch):
             assert w["state"] == "up" and w["key"] == agent.key, (w, lines)
             assert store.clock() - a.last_seen < 30, (a, lines)
         assert mm.crashes() == []
+        # the pinned model and effort really apply: the session's own transcript says so
+        said = "".join(p.read_text() for d in transcript_dirs(folder, real_home)
+                       for p in d.glob("*.jsonl"))
+        assert '"effort":"low"' in said and '"model":"claude-sonnet' in said, said[-2000:]
     finally:
         if bridge is not None:
             bridge.stop.set()

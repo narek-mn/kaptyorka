@@ -370,7 +370,10 @@ def _status_of(cfg: dict) -> int:
     state, why = _manager_word(hub, cfg["token"], got)
     if state is not None:
         shown = {"up": "running", "blocked": f"blocked: {why}" if why else "blocked"}.get(state, state)
-        print(f"manager: {shown}")
+        pin = ""
+        if isinstance(got[1], dict) and got[1].get("manager_model"):
+            pin = f" (model {got[1]['manager_model']}, effort {got[1].get('manager_effort')})"
+        print(f"manager: {shown}{pin}")
         if isinstance(got[1], dict) and got[1].get("manager_load"):
             print(f"manager load: {got[1]['manager_load']}")
         ok = ok and state in ("up", "asleep", "starting", "off")  # asleep: an older hub
@@ -787,6 +790,31 @@ def _people_revoke(args) -> int:
         return 1
     return _admin_do("POST", f"/api/devices/{dev['id']}/revoke", {},
                      f"{args.device} of {args.name} is signed out")
+
+
+def _manager_model(args) -> int:
+    body = {k: v for k, v in (("manager_model", args.model), ("manager_effort", args.effort)) if v}
+    if not body:
+        got = _admin_call("GET", "/api/settings", None)
+        if got is None or got[0] != 200:
+            print(_problem(got) if got else "the hub did not answer", file=sys.stderr)
+            return 1
+        print(f"model {got[1].get('manager_model')}, effort {got[1].get('manager_effort')}")
+        return 0
+    return _admin_do("POST", "/api/settings", body,
+                     "saved; the manager uses it from its next start")
+
+
+def _lesson(args) -> int:
+    if not args.text:
+        got = _admin_call("GET", "/api/lessons", None)
+        if got is None or got[0] != 200:
+            print(_problem(got) if got else "the hub did not answer", file=sys.stderr)
+            return 1
+        print(got[1] or "no lessons yet")
+        return 0
+    return _admin_do("POST", "/api/lessons", {"text": " ".join(args.text)},
+                     "lesson saved; the manager's next run starts with it")
 
 
 def _auto_doors(args) -> int:
@@ -1353,6 +1381,15 @@ def entry() -> None:
                              " project count")]
     gl_rest[0].set_defaults(run=_gitlab_off)
     gl_rest[1].set_defaults(run=_gitlab_status)
+    mo = sub.add_parser("manager-model", help="the manager's model and effort (from its next start);"
+                        " with nothing given, show them")
+    mo.add_argument("model", nargs="?", help="claude-opus-5-5 (the default), opus, sonnet, haiku or fable")
+    mo.add_argument("--effort", help="low, medium (the default), high, xhigh or max")
+    mo.set_defaults(run=_manager_model)
+    ls = sub.add_parser("lesson", help="give the manager a lesson it keeps (a correction, one line);"
+                        " with no text, list its lessons")
+    ls.add_argument("text", nargs="*")
+    ls.set_defaults(run=_lesson)
     ad = sub.add_parser("auto-doors", help="let doors between two sessions of one shared project open by"
                         " themselves (on, the default) or go to the admin like other door requests (off)")
     ad.add_argument("state", choices=("on", "off"))

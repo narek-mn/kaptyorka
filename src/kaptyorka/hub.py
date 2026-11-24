@@ -382,11 +382,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     store.device_revoke(d["id"], "hub")
             token = mm.ensure_account(host, "hub")
         rules_now = rs.current()
+        # its real tools, as this hub lists them: the capability table is written from them
+        tools = [(t.name, t.description or "") for t in server._tool_manager.list_tools()]
         md = folder / "CLAUDE.md"  # a hub update with new manager wording rewrites it too
         if token or mm.rules_written_version() != rules_now["version"] \
-                or not md.exists() or md.read_text() != manager.claude_md(rules_now["text"]):
+                or not md.exists() or md.read_text() != manager.claude_md(rules_now["text"], tools):
             folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-            mm.write_files(folder, manager_url, token, rules_now["text"])
+            mm.write_files(folder, manager_url, token, rules_now["text"], tools=tools)
             mm.mark_rules_written(rules_now["version"])
         # put back at once when changed or removed; the shim is this hub's own executable
         folder.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -570,7 +572,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return
         folder = paths.home() / manager.DIR
         ws.create_manager(boss, mm.person_id(), admin, str(folder),
-                          manager.first_message(MANAGER_FIRST, mm.tasks()[0]))
+                          manager.first_message(MANAGER_FIRST, mm.tasks()[0], mm.lessons()),
+                          mm.model(), mm.effort())
         mm.record_launch(now)
         wake_bridges()
 
@@ -949,6 +952,34 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 text = f"could not resume {r['name']} at its reset: {e}"
             for to in {r["resume_boss"], mkey} - {None}:
                 tell(to, text)
+
+    @server.tool()
+    @_tool_errors
+    def lesson(text: str, ctx: Context) -> str:
+        """Manager only: record a correction a person gave you and you accept, as one short
+        rule for yourself. Your next runs get the lessons in their first message."""
+        _, principal = caller(ctx)
+        if principal.role != "manager":
+            raise KaptyorkaError("only the manager records lessons; the admin adds one with"
+                                 " kaptyorka lesson")
+        n = mm.add_lesson(text, principal.person_name)
+        return f"lesson saved ({n} in all); your next run starts with them"
+
+    @server.custom_route("/api/lessons", methods=["GET", "POST"])
+    @_bad_request
+    async def api_lessons(request: Request) -> Response:
+        """The admin reads or adds a manager lesson ({"text"})."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        if request.method == "GET":
+            return PlainTextResponse(mm.lessons())
+        body = await request.json()
+        try:
+            n = mm.add_lesson(str(body["text"]), request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return JSONResponse({"lessons": n})
 
     @server.tool()
     @_tool_errors
@@ -1999,6 +2030,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         return JSONResponse({
             "retention_days": store.retention_days(), "auto_doors": store.auto_doors(),
             "manager_doors": store.manager_doors(),
+            "manager_model": mm.model(), "manager_effort": mm.effort(),
             "manager_enabled": mm.enabled(),
             "manager_state": state, "manager_reason": reason,
             "manager_error": (row["error"] or "") if row and row["state"] == "failed" else "",
@@ -2019,15 +2051,18 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     store.set_auto_doors(body[key], by, key)
             if "close_left" in body:
                 store.set_close_left(body["close_left"], by)
-            if "retention_days" in body \
-                    or not ({"auto_doors", "manager_doors", "close_left"} & set(body)):
+            if "manager_model" in body or "manager_effort" in body:
+                mm.set_model(body.get("manager_model"), body.get("manager_effort"), by)
+            if "retention_days" in body or not ({"auto_doors", "manager_doors", "close_left",
+                                                 "manager_model", "manager_effort"} & set(body)):
                 store.set_retention_days(body.get("retention_days"), by)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"retention_days": store.retention_days(),
                              "auto_doors": store.auto_doors(),
                              "manager_doors": store.manager_doors(),
-                             "close_left": store.close_left()})
+                             "close_left": store.close_left(),
+                             "manager_model": mm.model(), "manager_effort": mm.effort()})
 
     @server.custom_route("/api/legacy", methods=["GET"])
     async def api_legacy(request: Request) -> Response:
