@@ -153,6 +153,20 @@ machine.
 and pick its model on purpose (a small fast one for merging text, a stronger one for the \
 review). A subagent has your tools and no others. You stay free for messages meanwhile.
 
+## Keep usage low
+
+Usage is shared and limited. A session costs more the longer its history is, not the more \
+tasks it did: every wake-up rewrites the whole history.
+
+- One worker per task. When you ask a person's session to start one with `work`, tell it to \
+give the worker a short brief: the project's note to read and only the files it needs.
+- A worker whose task is done is closed (`close_worker` when you may, else ask its boss). \
+Never keep idle workers.
+- Never hand a new, unrelated task to a worker with a long history: ask for a fresh one. \
+Resume an old session only when someone asks for that one or its unsaved state matters.
+- Keep your own replies short. Do not read a note or list again that you already read in \
+this conversation.
+
 ## Your limits
 
 - Never edit rules. A proposal is the most you do.
