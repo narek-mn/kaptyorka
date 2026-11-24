@@ -31,7 +31,7 @@ from kaptyorka.secrets_check import PATTERNS as SECRET_PATTERNS
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
-from kaptyorka import hub_groups
+from kaptyorka import hub_groups, rollout
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
@@ -64,9 +64,9 @@ CLEAR_COOKIE = "kaptyorka_signin=; Path=/auth/gitlab; HttpOnly; SameSite=Lax; Ma
 # is the page's: with sign-in with GitLab on, only a GitLab sign-in or the admin token reaches
 # it. Routes outside /api/ (/mcp, /bridge/...) are all machines'.
 MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
-    ("GET", r"/api/(brief|done-check|me|feed|settings|people|invites|rules|machines|team/machines|gitlab)"),
+    ("GET", r"/api/(brief|done-check|me|feed|settings|people|invites|rules|machines|team/machines|gitlab|rollout)"),
     ("GET", r"/api/files/\d+"),
-    ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab|team-machines|overnight)"),
+    ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab|team-machines|overnight|rollout)"),
     ("POST", r"/api/people/[^/]+/(gitlab|role|team)"),
     ("DELETE", r"/api/people/[^/]+/team"),
     ("POST", r"/api/people/[^/]+/team-machines/[^/]+"),
@@ -674,6 +674,16 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         except Exception as e:  # the manager must never stop the workers' clock
             print(f"kaptyorka: manager tick failed: {e}", flush=True)
         store.legacy_auto_off(now)
+        try:  # a staged update that failed on the first machines: the admins and the manager
+            for text in rollout.tick(store, __version__, now):
+                store.log_add("hub", "rollout", text[:500])
+                for name in admin_ops.admins(store):
+                    tell(f"web:{name}", text)
+                key = manager_to_wake()
+                if key is not None:
+                    tell(key, text)
+        except Exception as e:  # nor may the rollout
+            print(f"kaptyorka: rollout check failed: {e}", flush=True)
 
     @server.tool()
     @_tool_errors
@@ -1260,7 +1270,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             except Exception as e:
                 print(f"kaptyorka: machine events failed: {e}", file=sys.stderr, flush=True)
         return JSONResponse({"version": __version__,
-                             "auto_update": own and ws.auto_update(principal.device_id),
+                             "auto_update": own and ws.auto_update(principal.device_id)
+                             and rollout.allows(store, principal.device_id, __version__),  # staged
                              "projects": [] if principal.legacy else
                              [p["name"] for p in store.projects_for(principal)],
                              "team": store.team_projects(),  # the bridge reports only these
@@ -2070,6 +2081,25 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
+
+    @server.custom_route("/api/rollout", methods=["GET", "POST"])
+    @_bad_request
+    async def api_rollout(request: Request) -> Response:
+        """The staged update of the hub's version: its state; POST {"go": true|false} releases
+        the rest now or holds them (the admin)."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        if request.method == "POST":
+            body = await request.json()
+            if not isinstance(body.get("go"), bool):
+                raise ValueError("go must be true or false")
+            who = request.scope["state"]["principal"].person_name
+            s = rollout.decide(store, __version__, body["go"], who)
+            store.log_add(who, "rollout", ("released " if body["go"] else "held ") + __version__)
+        else:
+            s = rollout.status(store, __version__)
+        return JSONResponse({**s, "line": rollout.line(s)})
 
     @server.custom_route("/api/devices/{device_id:int}/auto_update", methods=["POST"])
     @_bad_request

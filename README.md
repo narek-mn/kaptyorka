@@ -667,6 +667,8 @@ kaptyorka fleet list
 
 Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by default for every machine, the admin's too. The page no longer has a switch for it. When an update fails, the bridge tells the hub a short fixed reason (`auto-update failed`, `auto-update timed out`, `not installed with pipx` or `no newer release found`; the full output stays in the bridge's log). A machine still behind half an hour after the hub started its new version is told to the manager once per machine and hub version, with the reason (one of those, or `auto-update is off for this machine`, `bridge offline`, `auto-update has not run yet`). This wakes a sleeping manager. The manager sends that person one short message (their session, else their page) naming the machine, the reason and `kaptyorka update` to run there; for a team machine it tells the admins. With the manager off nothing is sent; the warning still shows on Machines.
 
+Updates are staged. When the hub runs a new version, a first group updates: the accounts on the hub's own computer and one team machine the hub picks (the least busy one online; one with an overnight session or a session waiting on a background task only if no other is online). The rest, personal laptops too, wait 20 minutes and then update only if the first group is healthy: each of its online bridges reports the new version, none reports a failed update, and one that listed sessions still lists some. If not, the rest stay on their version and the admins and the manager get one message with the reason. `kaptyorka fleet rollout` shows the state (also a `rollout:` line in `kaptyorka status` on the hub), `kaptyorka fleet rollout go` updates the rest now and `kaptyorka fleet rollout hold` keeps them back. `kaptyorka update` on a machine always updates it by hand. A machine that was off during the 20 minutes updates when it comes back, once the rollout passed. While the rest wait, they run one version behind the hub, which the hub accepts: it reads every newer report field with a default (a test sends an older bridge's report).
+
 ## Backup
 
 `kaptyorka backup <user@host:path>` copies the hub's data (`hub.db` and `files/`) to another machine over ssh. When `gpg` is installed the copy is encrypted. The passphrase is in `~/.kaptyorka/backup-pass`: keep a copy of it somewhere else, or the backup cannot be opened. Without `gpg` the copy is a plain tar, and the command says so.
@@ -732,6 +734,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
 | `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |
 | `kaptyorka fleet list` | Admin: list machines |
+| `kaptyorka fleet rollout [status\|go\|hold]` | Admin: the staged update after the hub's own; go updates the rest now, hold keeps them back |
 | `kaptyorka login-copy <user@host>` | Copy your Claude Code, Codex and OpenCode logins to another machine of yours over ssh (`--tool` picks one, `--force` replaces one already there) |
 | `kaptyorka backup <user@host:path>` | Copy the hub's data to another machine; `--nightly` every day at 03:00 |
 | `kaptyorka restore <file>` | Put a backup back (stop the hub first) |
