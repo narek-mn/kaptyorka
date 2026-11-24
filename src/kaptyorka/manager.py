@@ -945,12 +945,13 @@ class ManagerStore:
 
     def _asks(self, since: float) -> list:
         """Lock held. Messages people and sessions (not the hub) sent the manager since
-        `since`, each with the time of the manager's next message back to that sender, if any."""
+        `since`, each with the time of the next message back to that sender from the manager
+        or from the hub on its behalf (a door opened, a worker started), if any."""
         return self.db.execute(
-            "SELECT m.created, m.sender_key, (SELECT MIN(r.created) FROM messages r"
-            " WHERE r.sender_key IN (SELECT a.key FROM agents a JOIN people p ON p.id=a.person_id"
-            "  WHERE p.name=? AND p.role='manager') AND r.to_key=m.sender_key"
-            "  AND r.created>=m.created) AS answered"
+            "SELECT m.created, m.sender_key, length(m.text) AS size, (SELECT MIN(r.created)"
+            " FROM messages r WHERE (r.sender_key LIKE 'hub:%' OR r.sender_key IN (SELECT a.key"
+            "  FROM agents a JOIN people p ON p.id=a.person_id WHERE p.name=? AND"
+            "  p.role='manager')) AND r.to_key=m.sender_key AND r.created>=m.created) AS answered"
             " FROM messages m WHERE m.created>? AND m.sender_key NOT LIKE 'hub:%'"
             " AND m.to_key IN (SELECT a.key FROM agents a JOIN people p ON p.id=a.person_id"
             "  WHERE p.name=? AND p.role='manager')", (PERSON, since, PERSON)).fetchall()
@@ -991,8 +992,17 @@ class ManagerStore:
             mid = len(waits) // 2
             median = waits[mid] if len(waits) % 2 else (waits[mid - 1] + waits[mid]) / 2
         return {"hour": len(hour), "median_s": median,
-                "waiting": sum(1 for r in day if r["answered"] is None),
+                "waiting": len({r["sender_key"] for r in day if _waits(r)}),
                 "saved": self.tasks()[1]}
+
+
+WAIT_MIN_CHARS = 20  # shorter ("thanks", "ok", "great") is no question that waits
+
+
+def _waits(r) -> bool:
+    """A message to the manager that still waits: no answer to its sender since, and long
+    enough to ask something."""
+    return r["answered"] is None and (r["size"] or 0) >= WAIT_MIN_CHARS
 
 
 def load_line(load: dict, now: float) -> str:
