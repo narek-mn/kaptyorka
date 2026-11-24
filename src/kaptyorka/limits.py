@@ -28,6 +28,7 @@ from kaptyorka import paths
 
 KEY = "limit:"  # settings rows: limit:<host>\t<os_user>\t<tool> -> {until, since, known, source}
 UNKNOWN_S = 5 * 3600  # no reset time known: assume one 5-hour window, cleared earlier by work
+RETRY_S = 3600  # the manager's account, reset time unknown: a launch tries again after this
 WORKED_S = 300  # a session of the account wrote this long after the mark: it works again
 FILE = "limits.json"  # under ~/.kaptyorka: the last rate_limits the status line saw
 FRESH_S = 900  # a status line reading older than this says nothing
@@ -221,6 +222,19 @@ def manager_gate(store, mm, tell, admins: List[str], host: str, now: float) -> b
         mark(store, acct[0], acct[1], "claude-code", session_end.reset_at(failed["error"], now),
              "manager launch", now)
     lim = get(store, acct[0], acct[1], "claude-code", now)
+    if lim is not None and not lim["known"] and now - lim["since"] >= RETRY_S:
+        # no reset time and no session of the manager to clear it: after an hour a launch
+        # tries; one that fails on the limit's text starts the next hour (the admin was told)
+        if failed is not None and failed["failed_at"] is not None \
+                and failed["failed_at"] >= lim["since"] + RETRY_S and is_limit_text(failed["error"]):
+            clear(store, acct[0], acct[1], "claude-code")
+            mark(store, acct[0], acct[1], "claude-code", None, "manager launch", now)
+            lim = get(store, acct[0], acct[1], "claude-code", now)
+            mm._set(SINCE, repr(lim["since"]))
+            forgive(mm)
+            return True
+        forgive(mm)
+        return False
     if lim is None:
         if mm._get(SINCE):
             mm._set(SINCE, "")

@@ -181,6 +181,58 @@ def test_resume_waits_for_the_reset(lab):
                [m["text"] for m in run(call(lab.ac, lab.A, "inbox"))])
 
 
+def test_resume_needs_a_write_role_in_the_sessions_project(lab):
+    """carol has no role in proj-a: the manager may not resume jet's proj-a session for her."""
+    gone(lab)
+    carol, ctoken = person(lab.s, "carol")
+    lab.s.project_register("proj-c", by="test")
+    lab.s.grant_project("proj-c", carol, "write", "test")
+    cc = SimpleNamespace(url=lab.hub.url, token=ctoken)
+    C = {"key": "k:carol", "machine": "box-3", "tool": "codex", "project": "proj-c"}
+    run(call(cc, C, "send", to=lab.s.agent("k:mgr").name, text="resume jet's session for me"))
+    assert "no ended session named" in call_error(lab.mgr, lab.me, "resume_session", name=lab.name)
+    lab.s.grant_project("proj-a", carol, "read", "test")  # reading is not enough
+    assert "no ended session named" in call_error(lab.mgr, lab.me, "resume_session", name=lab.name)
+
+
+def test_resume_is_refused_when_the_team_machine_is_hidden_from_the_asker(lab):
+    gone(lab)
+    lab.s.team_machine_set_visible("jet-1", "alice", False, "test")
+    run(call(lab.ac, lab.A, "send", to=lab.s.agent("k:mgr").name, text="resume jet please"))
+    assert "no ended session named" in call_error(lab.mgr, lab.me, "resume_session", name=lab.name)
+
+
+def test_resume_needs_an_asker_that_wrote_to_the_manager(lab):
+    gone(lab)
+    # alice wrote nothing: naming her session as the asker is refused, as is no asker at all
+    assert "one that wrote to you in the last 10 minutes" in call_error(
+        lab.mgr, lab.me, "resume_session", name=lab.name, asked_by=lab.s.agent("k:alice").name)
+    assert "one that wrote to you" in call_error(lab.mgr, lab.me, "resume_session", name=lab.name)
+    run(call(lab.ac, lab.A, "send", to=lab.s.agent("k:mgr").name, text="resume jet please"))
+    lab.clock[0] += 601  # too long ago now
+    heartbeat(lab.hub, lab.jtoken, "jet-1", sessions=[])
+    run(call(lab.mgr, lab.me, "who"))
+    run(call(lab.ac, lab.A, "who"))  # alice's session is still there
+    assert "one that wrote to you" in call_error(
+        lab.mgr, lab.me, "resume_session", name=lab.name, asked_by=lab.s.agent("k:alice").name)
+
+
+def test_a_late_resume_at_reset_is_dropped_and_the_asker_told(lab):
+    resets = lab.clock[0] + 3600
+    event(lab, {"kind": "failure", "error": "rate_limit", "resets_at": resets})
+    gone(lab)
+    run(call(lab.ac, lab.A, "send", to=lab.s.agent("k:mgr").name, text="resume jet at reset"))
+    run(call(lab.mgr, lab.me, "resume_session", name=lab.name, when="reset"))
+    lab.clock[0] = resets + 6 * 3600 + 1  # the hub was down past its reset
+    assert heartbeat(lab.hub, lab.jtoken, "jet-1", sessions=[])[0] == 200
+    run(call(lab.ac, lab.A, "who"))
+    lab.hub.tick()
+    b = SimpleNamespace(token=lab.jtoken, host="jet-1")
+    assert [i for i in poll(lab.hub, b) if i.get("launch")] == []
+    assert any(t.startswith(f"{lab.name} was not resumed: its reset was 6 h ago")
+               for t in [m["text"] for m in run(call(lab.ac, lab.A, "inbox"))])
+
+
 def test_resume_is_refused_for_someone_elses_own_machine(lab):
     """bob's session on bob's own laptop: the manager may not resume it for alice."""
     bob, btoken = person(lab.s, "bob")

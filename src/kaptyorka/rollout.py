@@ -41,7 +41,10 @@ def _put(store: Store, state: dict) -> None:
                          (KEY, json.dumps(state)))
 
 
-def _devices(store: Store) -> List[dict]:
+def _devices(store: Store, night_keys=frozenset()) -> List[dict]:
+    """Each device, with `busy`: a session of it works now, waits on a background task
+    (status shell), is in overnight mode (`night_keys`, from its bridge), or a hub worker
+    runs there."""
     with store.lock:
         rows = store.db.execute(
             "SELECT d.id, d.host, d.os_user, d.name, d.token_hash, d.last_used, d.version,"
@@ -58,6 +61,10 @@ def _devices(store: Store) -> List[dict]:
         waiting = {r["device_id"] for r in store.db.execute(
             "SELECT device_id FROM agents WHERE last_seen > ? AND activity='shell'",
             (store.clock() - 30,))}
+        nights = {r["device_id"] for k in night_keys for r in store.db.execute(
+            "SELECT device_id FROM agents WHERE key=? AND device_id IS NOT NULL", (k,))}
+        workers = {r["device_id"] for r in store.db.execute(
+            "SELECT device_id FROM workers WHERE state IN ('starting','up','unattended','abandoned')")}
     out, hub_key = [], paths.hub_key_digest()
     for r in rows:
         facts = json.loads(r["facts"]) if r["facts"] else {}
@@ -66,7 +73,9 @@ def _devices(store: Store) -> List[dict]:
                     "hub_key": hub_key is not None and r["token_hash"] == hub_key, "last_used": r["last_used"],
                     "version": facts.get("version") or r["version"] or "",
                     "update_failed": facts.get("update_failed") or "", "sessions": n,
-                    "working": working or 0, "night": r["id"] in night or r["id"] in waiting})
+                    "working": working or 0, "night": r["id"] in night or r["id"] in waiting,
+                    "busy": bool(working) or r["id"] in night or r["id"] in waiting
+                    or r["id"] in nights or r["id"] in workers})
     return out
 
 
@@ -74,16 +83,16 @@ def _name(d: dict) -> str:
     return machine_name("", d["os_user"], d["host"], d["host"] or str(d["id"]))
 
 
-def pick_first(store: Store, now: float) -> List[int]:
-    """The first group: every account on the hub's computer, and one online team machine (the
-    least busy; one with an overnight session or a waiting background task only if no other
-    is online). No hub account and no team machine online: the least busy online account."""
-    devs = _devices(store)
+def pick_first(store: Store, now: float, night_keys=frozenset()) -> List[int]:
+    """The first group: every account on the hub's computer, and one online team machine that
+    is not busy (_devices), one with no session at all first. Every team machine busy: the
+    hub's computer alone. No hub account and no team machine: the least busy online account."""
+    devs = _devices(store, night_keys)
     online = [d for d in devs if d["last_used"] is not None and d["last_used"] > now - ONLINE_S]
-    hub_hosts = {d["host"] for d in devs if d["hub_key"] and d["host"]}
+    hub_hosts = {d["host"] for d in devs if d["host"] and d["hub_key"]}
     first = [d["id"] for d in devs if d["host"] and d["host"] in hub_hosts]
-    calm = sorted((d for d in online if d["team"] and d["host"] not in hub_hosts),
-                  key=lambda d: (d["night"], d["working"], d["sessions"], d["id"]))
+    calm = sorted((d for d in online if d["team"] and d["host"] not in hub_hosts
+                   and not d["busy"]), key=lambda d: (d["sessions"], d["id"]))
     if calm:
         first.append(calm[0]["id"])
     if not first:
@@ -92,12 +101,18 @@ def pick_first(store: Store, now: float) -> List[int]:
     return sorted(set(first))
 
 
-def state(store: Store, hub_version: str, now: Optional[float] = None) -> dict:
-    """The rollout of `hub_version`, started now when the hub first runs it."""
+def state(store: Store, hub_version: str, now: Optional[float] = None, ready: bool = True,
+          night_keys=frozenset()) -> dict:
+    """The rollout of `hub_version`, started when the hub first runs it with fresh data
+    (`ready`: the hub has heard its machines since its start); until then "pending", unsaved,
+    and no machine updates."""
     now = store.clock() if now is None else now
     st = _get(store)
+    if (st is None or st.get("version") != hub_version) and not ready:
+        return {"version": hub_version, "started": now, "first": [], "baseline": {},
+                "state": "pending", "reason": "", "decided_at": None, "by": "", "told": False}
     if st is None or st.get("version") != hub_version:
-        first = pick_first(store, now)
+        first = pick_first(store, now, night_keys)
         st = {"version": hub_version, "started": now, "first": first,
               "baseline": {str(d["id"]): d["sessions"] for d in _devices(store) if d["id"] in first},
               "state": "soak" if first else "passed", "reason": "" if first else "no machine online to go first",
@@ -106,9 +121,10 @@ def state(store: Store, hub_version: str, now: Optional[float] = None) -> dict:
     return st
 
 
-def allows(store: Store, device_id: int, hub_version: str) -> bool:
+def allows(store: Store, device_id: int, hub_version: str, ready: bool = True,
+           night_keys=frozenset()) -> bool:
     """May this device's bridge update to the hub's version now?"""
-    st = state(store, hub_version)
+    st = state(store, hub_version, ready=ready, night_keys=night_keys)
     return st["state"] == "passed" or device_id in st["first"]
 
 
@@ -131,9 +147,10 @@ def health(store: Store, st: dict, now: float) -> Optional[str]:
     return None if judged else "waiting"
 
 
-def tick(store: Store, hub_version: str, now: float) -> List[str]:
+def tick(store: Store, hub_version: str, now: float, ready: bool = True,
+         night_keys=frozenset()) -> List[str]:
     """Move the rollout on; the messages to send to the admins and the manager (at most one)."""
-    st = state(store, hub_version, now)
+    st = state(store, hub_version, now, ready, night_keys)
     if st["state"] != "soak" or now - st["started"] < SOAK_S:
         return []
     why = health(store, st, now)
@@ -163,9 +180,10 @@ def decide(store: Store, hub_version: str, go: bool, by: str) -> dict:
     return status(store, hub_version)
 
 
-def status(store: Store, hub_version: str, now: Optional[float] = None) -> dict:
+def status(store: Store, hub_version: str, now: Optional[float] = None, ready: bool = True,
+           night_keys=frozenset()) -> dict:
     now = store.clock() if now is None else now
-    st = state(store, hub_version, now)
+    st = state(store, hub_version, now, ready, night_keys)
     devs = _devices(store)
     names = {d["id"]: _name(d) for d in devs}
     behind = [_name(d) for d in devs if d["version"] and _numbers(d["version"]) < _numbers(hub_version)]
@@ -177,6 +195,8 @@ def status(store: Store, hub_version: str, now: Optional[float] = None) -> dict:
 def line(s: dict) -> str:
     """One line for `kaptyorka status` and the Machines page."""
     first = ", ".join(s["first"]) or "none"
+    if s["state"] == "pending":
+        return f"update {s['version']}: choosing the first machines once they report"
     if s["state"] == "soak":
         wait = f"in {max(1, round(s['rest_in_s'] / 60))} min" if s["rest_in_s"] else "once they report"
         return f"update {s['version']}: first {first}; the rest follow {wait} if they are healthy"

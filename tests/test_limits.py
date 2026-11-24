@@ -233,3 +233,48 @@ def test_the_managers_own_hook_reports_its_limit(monkeypatch):
                                        "last_assistant_message": "limit reached, resets 7pm"}, cfg)
     [(args, kw)] = sent
     assert args[3]["error"] == "rate_limit" and kw["headers"]["X-Kaptyorka-Key"] == "claude%3Am1"
+
+
+def test_an_unknown_reset_lets_the_manager_try_after_an_hour(hub, clock):
+    """No reset time and no manager session to clear the mark: it waits an hour, not five,
+    then a launch tries; one that fails on the limit's text waits the next hour."""
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    limits.mark(hub.store, HOST, "u", "claude-code", None, "session", clock[0])
+    hub.tick()
+    assert state(hub) is None
+    clock[0] += H - 60
+    beat(hub, b)
+    hub.tick()
+    assert state(hub) is None  # still within the hour
+    clock[0] += 61
+    beat(hub, b)
+    hub.tick()
+    assert state(hub) == "starting"  # the try
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE workers SET state='failed', closed_at=?, error=? WHERE"
+                             " name='manager'", (clock[0], "claude: usage limit reached"))
+    clock[0] += 10
+    beat(hub, b)
+    hub.tick()
+    lim = limits.get(hub.store, HOST, "u", "claude-code", clock[0])
+    assert lim is not None and lim["since"] == clock[0] and state(hub) == "failed"
+    assert len([t for t in page_texts(hub) if t.startswith("The manager's account")]) == 1  # once
+    clock[0] += H - 60
+    beat(hub, b)
+    hub.tick()
+    assert state(hub) == "failed"  # the next hour
+    clock[0] += 61
+    beat(hub, b)
+    hub.tick()
+    assert state(hub) == "starting" and hub.mm.crashes() == []
+
+
+def test_a_known_reset_still_waits_for_it(hub, clock):
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    limits.mark(hub.store, HOST, "u", "claude-code", clock[0] + 3 * H, "session", clock[0])
+    clock[0] += 2 * H
+    beat(hub, b)
+    hub.tick()
+    assert state(hub) is None

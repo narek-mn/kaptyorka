@@ -86,10 +86,44 @@ def test_first_group_is_the_hub_computer_and_the_calm_team_machine(fleet):
     assert rollout.line(s) == "update 0.9.35: first alice@box-0, u@box-1; the rest follow in 20 min if they are healthy"
 
 
-def test_a_busy_team_machine_goes_first_only_without_a_choice(fleet):
+def test_a_busy_team_machine_never_goes_first(fleet):
     with fleet.store.lock:  # box-1 is gone: only box-2 (waiting on a task) is online
         fleet.store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (fleet.clock[0] - 3600, fleet.ids["box-1"]))
-    assert rollout.pick_first(fleet.store, fleet.clock[0]) == sorted([fleet.ids["hub"], fleet.ids["box-2"]])
+    assert rollout.pick_first(fleet.store, fleet.clock[0]) == [fleet.ids["hub"]]  # the hub alone
+
+
+@pytest.mark.parametrize("busy", ["working", "night", "worker"])
+def test_a_team_machine_with_a_busy_session_or_worker_is_not_picked(fleet, busy):
+    s, box1 = fleet.store, fleet.ids["box-1"]
+    key = "s-box-1"
+    night = frozenset()
+    with s.lock:
+        if busy == "working":
+            s.db.execute("UPDATE agents SET activity='running tests' WHERE key=?", (key,))
+        elif busy == "worker":
+            s.db.execute("INSERT INTO workers (name, project, task, boss_key, boss_person,"
+                         " device_id, host, tool, state, created) VALUES ('w1','proj-a','t',"
+                         "'k',1,?,'box-1','claude-code','up',?)", (box1, fleet.clock[0]))
+    if busy == "night":
+        night = frozenset({key})
+    assert rollout.pick_first(s, fleet.clock[0], night) == [fleet.ids["hub"]]
+
+
+def test_a_team_machine_with_no_session_goes_first(fleet):
+    s = fleet.store
+    _, code = s.team_machine_add("box-3", "alice")
+    t, _ = s.invite_redeem(code, "box-3", host="box-3", os_user="u")
+    fleet.ids["box-3"] = device(s, t, "box-3", "u")  # no session at all
+    assert rollout.pick_first(s, fleet.clock[0]) == sorted([fleet.ids["hub"], fleet.ids["box-3"]])
+
+
+def test_the_first_group_waits_for_fresh_reports(fleet):
+    st = rollout.state(fleet.store, NEW, fleet.clock[0], ready=False)
+    assert st["state"] == "pending" and not rollout.allows(fleet.store, fleet.ids["hub"], NEW, ready=False)
+    assert rollout.line(rollout.status(fleet.store, NEW, ready=False)) \
+        == "update 0.9.35: choosing the first machines once they report"
+    assert rollout._get(fleet.store) is None  # nothing decided yet
+    assert rollout.state(fleet.store, NEW, fleet.clock[0], ready=True)["state"] == "soak"
 
 
 def test_healthy_first_group_releases_everyone(fleet):
@@ -171,6 +205,12 @@ def test_heartbeat_routes_and_cli(fleet, monkeypatch, capsys):
     stop = start_hub(fleet.store)
     url = f"http://127.0.0.1:{stop.port}"
     try:
+        beat0 = lambda: http.request("POST", url + "/bridge/heartbeat", fleet.atok, {  # noqa: E731
+            "machine": "box-0", "sessions": [], "tools": [], "folders": {},
+            "facts": {"host": "box-0", "os_user": "u", "version": OLD}})[1]["auto_update"]
+        assert beat0() is False  # just started: the team machines have not reported yet
+        fleet.clock[0] += 121  # the hub waits for fresh reports two minutes at most
+
         def beat(token, host):
             return http.request("POST", url + "/bridge/heartbeat", token, {
                 "machine": host, "sessions": [], "tools": [], "folders": {},
