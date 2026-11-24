@@ -114,6 +114,125 @@ def last_write(path: Path, size: int, mtime: float) -> float:
     return mtime
 
 
+REAL_TAIL = 1024 * 1024  # an idle compaction's summary can be long: look this far back at most
+
+
+def _real(rec: dict) -> bool:
+    """A line the person or the model wrote: an assistant line, or a user line that is no
+    meta line, compaction summary, subagent line, or text the tool handed the session (a
+    delivered hub message, another session's, a task notice). Claude Code also writes while
+    nobody works: an away summary, an idle compaction, metadata blocks (checked on 2.1.331)."""
+    if rec.get("isSidechain") is True:
+        return False
+    if rec.get("type") == "assistant":
+        return True
+    if rec.get("type") != "user" or rec.get("isMeta") is True or rec.get("isCompactSummary") is True:
+        return False
+    origin = rec.get("origin")
+    if isinstance(origin, dict) and origin.get("kind") not in (None, "human"):
+        return False
+    msg = rec.get("message")
+    content = msg.get("content") if isinstance(msg, dict) else None
+    if isinstance(content, str):
+        from kaptyorka.overnight import typed
+
+        return typed(content)
+    return True  # a tool result: part of the model's own turn
+
+
+def last_real(path: Path, size: int) -> Optional[float]:
+    """When the person or the model last did something in the session (see _real): the newest
+    such line's timestamp; None when none is in the last REAL_TAIL bytes."""
+    window = WRITE_TAIL
+    while True:
+        start = max(0, size - window)
+        with open(path, "rb") as f:
+            f.seek(start)
+            lines = f.read(size - start).decode("utf-8", "replace").splitlines()
+        for line in reversed(lines[1:] if start else lines):
+            if '"assistant"' not in line and '"user"' not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and _real(rec):
+                t = _stamp(rec.get("timestamp"))
+                if t is not None:
+                    return t
+        if start == 0 or window >= REAL_TAIL:
+            return None
+        window = REAL_TAIL
+
+
+LINEAGE_LINES = 40  # derived-from and the entrypoint come within a transcript's first lines
+
+
+def lineage(path: Path, session_id: str) -> "tuple[str, bool, str]":
+    """(the parent session id, a one-shot run, how it was started) from the transcript's
+    head: Claude Code's `derived-from` line (undocumented; checked on 2.1.329 and 2.1.331:
+    via "launch" for `claude --bg` from a session, "subprocess" for any other child process
+    of one, "resume"/"compact" name the session itself) and `entrypoint` ("sdk-cli" for
+    `claude -p`). ("", False, "") when the transcript says nothing."""
+    parent, oneshot, via = "", False, ""
+    try:
+        with open(path, "rb") as f:
+            for _ in range(LINEAGE_LINES):
+                raw = f.readline()
+                if not raw:
+                    break
+                try:
+                    rec = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                if rec.get("entrypoint") == "sdk-cli":
+                    oneshot = True
+                if rec.get("type") == "derived-from" and not parent:
+                    for s in rec.get("sessions") or []:
+                        if isinstance(s, dict) and s.get("via") in ("launch", "subprocess") \
+                                and isinstance(s.get("id"), str) and s["id"] != session_id:
+                            parent, via = s["id"], s["via"]
+                            break
+    except OSError:
+        pass
+    return parent, oneshot, via
+
+
+def notes_parent(session_id: str, tmp: Optional[Path] = None) -> str:
+    """The session that started this one, from the starter's child notes: Claude Code gives
+    each session CLAUDE_CODE_CHILD_NOTES_DIR (<tmp>/claude-<uid>/<project>/<its id>/started)
+    and adds an empty `<child id>.<random>` file there for each session it starts
+    (undocumented; checked on 2.1.329/2.1.331). "" when none names it."""
+    if not session_id.replace("-", "").isalnum():
+        return ""
+    base = (tmp or Path("/tmp")) / f"claude-{os.getuid()}"
+    for p in base.glob(f"*/*/started/{session_id}.*"):
+        return p.parent.parent.name
+    return ""
+
+
+TOOLS = ("opencode", "codex", "cursor")  # an ancestor process like these started the session
+
+
+def tool_ancestor(pid: int, depth: int = 8) -> str:
+    """The agent tool among the process's ancestors (Linux /proc), "" when none or unknown."""
+    for _ in range(depth):
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text()
+            pid = int(stat[stat.rindex(")") + 2:].split()[1])
+            if pid <= 1:
+                return ""
+            comm = Path(f"/proc/{pid}/comm").read_text().strip().lower()
+        except (OSError, ValueError, IndexError):
+            return ""
+        for t in TOOLS:
+            if comm.startswith(t):
+                return t
+    return ""
+
+
 def children() -> Optional[dict]:
     """{parent pid: [child pids]} from /proc; None where there is no /proc (macOS)."""
     proc = Path("/proc")
@@ -246,6 +365,41 @@ def _same_start(pid: int, proc_start) -> Optional[bool]:
     return str(proc_start) == start
 
 
+def live_children(parent_id: str, notes_dir: Optional[str], home: Optional[Path] = None
+                  ) -> "list[tuple[str, str]]":
+    """[(session id, name)] of the live `claude --bg` sessions this session started: the
+    ones its child notes dir names (CLAUDE_CODE_CHILD_NOTES_DIR, in a Stop hook's environment
+    on 2.1.331), else, with no such dir, those whose transcript's derived-from names it."""
+    home = home or Path.home()
+    named: Optional[set] = None
+    if notes_dir and os.path.isdir(notes_dir):
+        named = {n.split(".", 1)[0] for n in os.listdir(notes_dir)}
+        if not named:
+            return []
+    out, titles = [], {}
+    for f in sorted((home / ".claude" / "sessions").glob("*.json")):
+        try:
+            pid = int(f.stem)
+            os.kill(pid, 0)
+            data = json.loads(f.read_text())
+            sid, cwd = data["sessionId"], data["cwd"]
+            if data.get("kind") != "bg" or sid == parent_id \
+                    or _same_start(pid, data.get("procStart")) is False:
+                continue
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if named is not None:
+            if sid not in named:
+                continue
+        else:
+            path = _transcript(home, sid, cwd, titles)
+            if path is None or lineage(path, sid)[0] != parent_id:
+                continue
+        name = data.get("name")
+        out.append((sid, name if isinstance(name, str) and name else sid[:8]))
+    return out
+
+
 class ClaudeAdapter:
     tool = "claude-code"
     prefix = "claude"
@@ -259,6 +413,7 @@ class ClaudeAdapter:
         self.log = log
         self._warned = False
         self.off_keys: set = set()  # sessions of the last sessions() kept off the hub
+        self.launched: set = set()  # of those, `claude --bg` runs another session started
 
     def installed(self) -> bool:
         return shutil.which("claude") is not None
@@ -275,7 +430,7 @@ class ClaudeAdapter:
     def sessions(self) -> List[Session]:
         """Every live session, those kept off the hub too (in off_keys): the bridge reports
         only the rest, but its own decisions (a busy folder) count them all."""
-        out, off = [], set()
+        out, off, launched = [], set(), set()
         kids: Optional[dict] = None  # read once, only when a session is busy
         for f in sorted(self.dir.glob("*.json")):
             try:
@@ -299,7 +454,8 @@ class ClaudeAdapter:
                          "push may break, pull still works")
             name = data.get("name")
             label = name if isinstance(name, str) else ""
-            title, active = self._title(session_id, cwd)
+            title, _ = self._title(session_id, cwd)
+            active = self._active(session_id, cwd)
             # "nameSource" (undocumented, checked on 2.1.329/2.1.330): "derived" is the automatic
             # <folder>-<2 chars> name, new on every resume; -n and /rename give "user". The
             # automatic one gives way to Claude Code's title; the manager keeps its name
@@ -319,12 +475,64 @@ class ClaudeAdapter:
                 tasks = live_tasks(pid, kids, now) if kids else None
                 wrote = self._wrote(session_id, cwd)
                 write_s = None if wrote is None else max(0.0, round(now - wrote, 1))
+            parent, oneshot, tool, via = self._lineage(session_id, cwd, pid)
+            if via == "launch":
+                launched.add(f"claude:{session_id}")
             out.append(Session(f"claude:{session_id}", self.tool, os.path.basename(cwd.rstrip("/")),
                                status, label, cwd, data.get("kind") == "bg",
                                title, None if active is None else max(0.0, time.time() - active),
-                               write_s, tasks))
+                               write_s, tasks, f"claude:{parent}" if parent else "",
+                               oneshot and data.get("kind") != "bg",
+                               bool(parent or tool)))
+        live = {s.key for s in out}
+        for s in out:  # its parent ended: no live session file of it on this machine
+            s.parent_gone = bool(s.parent) and s.parent not in live
         self.off_keys = off
+        self.launched = launched
         return out
+
+    def _lineage(self, session_id: str, cwd: str, pid: int) -> "tuple[str, bool, str, str]":
+        """(parent session id, one-shot, the tool that started it, how the parent started it:
+        "launch" for `claude --bg` from it) for left.py; read once per
+        session: a transcript's head and the starter's notes never change. Each source is
+        undocumented, so a missing one leaves "" (today's behaviour: a session of its own)."""
+        cache = self.__dict__.setdefault("_lineages", {})
+        if session_id in cache:
+            return cache[session_id]
+        parent, oneshot, via = "", False, ""
+        path = _transcript(self.home, session_id, cwd, self.__dict__.setdefault("_titles", {}))
+        if path is not None:
+            parent, oneshot, via = lineage(path, session_id)
+        try:
+            parent = parent or notes_parent(session_id)
+        except OSError:
+            pass
+        tool = "" if parent else tool_ancestor(pid)
+        if path is not None:  # no transcript yet: ask again next time
+            cache[session_id] = (parent, oneshot, tool, via)
+        return parent, oneshot, tool, via
+
+    def _active(self, session_id: str, cwd: str) -> Optional[float]:
+        """When the person or the model last did something (last_real), its subagents' work
+        too; the transcript's mtime when no such line is found (as before)."""
+        cache = self.__dict__.setdefault("_actives", {})
+        try:
+            path = _transcript(self.home, session_id, cwd, self.__dict__.setdefault("_titles", {}))
+            if path is None:
+                return None
+            st = path.stat()
+            old = cache.get(session_id)
+            if old is not None and old[0] == (st.st_size, st.st_mtime):
+                t = old[1]
+            else:
+                t = last_real(path, st.st_size)
+                t = st.st_mtime if t is None else t
+                cache[session_id] = ((st.st_size, st.st_mtime), t)
+            for sub in (path.parent / session_id / "subagents").glob("*.jsonl"):
+                t = max(t, sub.stat().st_mtime)
+            return t
+        except (OSError, ValueError):
+            return None
 
     def _wrote(self, session_id: str, cwd: str) -> Optional[float]:
         """When the session last wrote anything of its own: its transcript's last real line,

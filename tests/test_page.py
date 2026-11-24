@@ -187,7 +187,7 @@ def test_idle_sessions_fold_at_the_end(hub):
     assert 'var idle = a.worker || (a.activity && a.activity !== "idle") ? "" : idleText(a.idle_s);' \
         in html
     assert 'store(function (s) { return s.getItem("kaptyorka.idle-open"); }) === "1"' in html
-    assert 'sub: (idle ? idle + " \\u00b7 " : "") + (a.title' in html  # first on the grey line
+    assert 'sub: (idle ? idle + " \\u00b7 " : "") + (a.left_by' in html  # first on the grey line
 
 
 def team_code(html):

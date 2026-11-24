@@ -243,7 +243,8 @@ def test_settings_show_the_manager_switch(app):
                                       "manager_state": "off",
                                       "manager_reason": "the manager is switched off",
                                       "manager_error": "", "manager_load": "0 messages in the last hour,"
-                                      " no replies, 0 waiting; task list saved never"}
+                                      " no replies, 0 waiting; task list saved never",
+                                      "close_left": True}
     ManagerStore(app.store).set_enabled(True, "test")
     assert call(app, "alice", "GET", "/api/settings")[1]["manager_enabled"] is True
     assert call(app, "bob", "GET", "/api/settings")[0] == 403

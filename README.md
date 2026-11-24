@@ -143,6 +143,7 @@ The bridge re-adds kaptyorka's own Claude Code hooks each time it starts (a line
 | `door_close` | Close a door |
 | `door_request` | Ask the admin for a door between two sessions of different people (the manager for someone who asked it; a member for one of its own sessions); two sessions of one shared project get it at once |
 | `door_decide` | The admin only: answer a door request with "sessions", "people" (7 days) or "deny" |
+| `resume_session` | The manager only: resume a session that ended (on a team machine or the asker's own machine) as a worker of the asker, now or at its usage limit's reset |
 | `inbox` | Read your messages |
 | `fetch_file` | Save a file from a message to `~/.kaptyorka/inbox/` |
 | `status` | Say what you are working on |
@@ -165,7 +166,7 @@ The bridge re-adds kaptyorka's own Claude Code hooks each time it starts (a line
 | `log` | Admin and manager only: the team's activity log, newest first (`limit`, at most 1,000) |
 | `machines` | Admin and manager only: each machine as its bridge last reported it: online, size, use and free disk space ("disk: / 212 of 468 GB free, ...") |
 
-The hub offers 28 tools in all.
+The hub offers 29 tools in all.
 
 `work(project, task, machine="", tool="claude-code", resume="")` starts a worker. `tool` is `claude-code`, `codex` or `opencode`. `adopt(name)` and `close_worker(name)` take the worker's name.
 
@@ -293,6 +294,19 @@ On the page a session whose turn is over while a background task runs shows **Ba
 ![Stuck sessions on Home](docs/screens/stuck.png)
 
 The bridge measures and the hub judges; nothing is judged for a bridge older than 0.9.32 or a tool other than Claude Code. **Linux only**: background tasks are found through `/proc` (the session's child shells and their output files); macOS gets the busy-with-no-new-step check only.
+
+## Sessions left behind
+
+Sessions pile up: a `claude --bg` helper another session started and forgot, a terminal left open for weeks. kaptyorka says so, and closes only the clearest case (Claude Code; the research is in `docs/superpowers/specs/2026-11-24-left-sessions.md`).
+
+- **Truthful idle time.** Claude Code writes to a session's transcript while nobody works (an away summary, a compaction while idle, title and mode lines), so the file's time is not when it last did something. The bridge now takes the newest line the person or the model wrote, and any subagent's work; hub messages and task notices delivered to it do not count. This feeds the **Idle** group on the page too. OpenCode sends no idle time (its `time.updated` did not move while a window sat idle), so its sessions are never in Idle or the daily line; Codex uses its thread's `updatedAt`, not checked against an idle thread.
+- **Who started it.** The bridge reads which session started a Claude Code session (Claude Code's `derived-from` line in the transcript, else the starter's child notes) and whether it is a `claude -p` run. On the page a session another one started sits under it on a rail, as workers do under their boss. A child or a `claude -p` run younger than 2 minutes that never sent or got a hub message is not listed on the page or in `who` (most end within seconds). A Claude Code session started by OpenCode, Codex or Cursor is marked by its parent process (Linux).
+- **The parent's Stop check.** A session that stops while `claude --bg` sessions it started still run is told once: "You started helper-1 (`claude stop 1a2b3c4d`), still running: stop them or say in one line why they must keep running." Once per set of children, never twice in one stop, after the done check, never for the manager, a hub worker or a session in overnight mode.
+- **Left by.** When the starter ends and its child keeps running, the child's grey line says **left by** and the starter's name, and its owner hears once: "Session `...` on box-1 was started by `...`, which has ended; it still runs. To stop it: `claude stop 1a2b3c4d` on box-1."
+- **The daily line.** Once a day per machine, each person hears in one line which of their sessions have done nothing for over a day ("2 sessions of yours on box-1 have done nothing for 3 days: ...; close them or leave them."), on their other online sessions, else their page; a team machine's go to the admins. A session working or running a background task is never in it.
+- **Auto-close, narrow.** Only a `claude --bg` session that another session started with `claude --bg`, whose starter has ended, that did nothing for over a day and never sent or got a hub message: the hub asks its bridge, which checks all of that again itself and runs `claude stop` (the transcript stays, so `claude --resume` still finds it), writes it to `bridge.log`, and the hub logs it and names it in the owner's next daily line. Never an interactive session, a hub worker or the manager. An admin turns it off with `POST /api/settings {"close_left": false}`.
+
+None of this is documented by Claude Code. When a version drops the `derived-from` line or the notes, sessions just show as before (each on its own, nothing closed), and a slow test (`tests/test_left_slow.py`, real `claude`) fails, so the change is noticed.
 
 ## Workers
 
@@ -471,6 +485,8 @@ Keeping it alive: Claude Code does not stop it when it is idle. Before a new man
 Switching it off: `kaptyorka start --no-manager` (kept in `hub.json`, so a restart keeps it) or `close_worker("manager")` by the admin. Switched off, it gets no notices and cannot decide, `work` answers as with no manager, and a hub that starts switched off closes a manager session still running. `kaptyorka start --manager` switches it on again. Its files are in `~/.kaptyorka/manager/` (`CLAUDE.md`: the team rules and the manager's own instructions, written again when the rules change; `settings.json` and `mcp.json`: its permissions, hooks and MCP server) and `~/.kaptyorka/manager-config.json` (its token). The config lives outside the folder, and the hooks and the tool shim use it only for a session started in that folder.
 
 On the page, Home lists it with its state (`up`, `starting`, `blocked`, `off`). When it is not running, `kaptyorka status` says why (for example the admin's bridge on the hub machine is offline).
+
+When a session others depend on stops: a team session's own Claude Code hooks tell the hub why (StopFailure: a usage limit, with its reset time when the error text names one, such as "resets 7:30pm", or an API error; SessionEnd: its end). Personal sessions send nothing. A send to that session then says `held: jet-1/claude-code/proj-a hit its usage limit, resets 19:30; it gets the message when it next reports`, and for a team machine's session the manager hears it once. The manager resumes the same session by name with `resume_session(name, asked_by, when)`: the hub fills in its session id, machine and folder, and starts it again with its whole conversation as a worker of the asking session, now or at the reset (`when="reset"`). Only a session on a team machine or on the asker's own machines; the asker is the session that wrote to the manager (as for doors). Its rules give the order: resume the same session; else a fresh worker handed the project note and the last 20 messages between the two sessions; another running session only if the asker agrees, it is idle and in the same project. `who` shows the manager every session's project, status line, busy or idle, and stuck.
 
 Its task list: its conversation can end or be compacted at any time, so it keeps every open promise, who waits for what and each relay not yet passed on in its own state note, `state_write("manager", text)` (any text; only it reads it). This rule is the first thing in its instructions, and its `CLAUDE.md` has a `# Compact instructions` section that keeps the same things through a compaction. A new run gets the last saved list in its first message. After 15 messages from people and sessions, or 2 hours, since the last save, the hub adds one line, `save your task list now (state_write("manager", text))`, to the next notice it sends the manager anyway; it never sends a message just for that.
 
@@ -767,6 +783,7 @@ src/kaptyorka/
   workers.py    hub side of workers: states, linking, adopt, close
   usage.py      machine use per OS user (CPU, memory, GPU) and the "heavy" rule
   stuck.py      stuck sessions: the rule, its two stages and their texts
+  left.py       sessions left behind: the daily line, "left by", the narrow auto-close
   connects.py   connection requests made before 0.9.11: the admin decides
   memory.py     state notes, git activity and the done check
   rules.py      team rules, skills, proposals and conflicts in the hub
