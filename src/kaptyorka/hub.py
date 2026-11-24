@@ -252,7 +252,8 @@ def _tool_errors(fn):
 
 AUTO_DOORS_KEY = "auto_doors_told_id"  # the last door_open log row the admin heard of
 MANAGER_FIRST = ("You are the team's manager session; follow the team rules and manager"
-                 " instructions in your system prompt and wait for the hub's messages.")
+                 " instructions in this folder's CLAUDE.md (your project instructions; answer"
+                 " from them) and wait for the hub's messages.")
 MANAGER_FAILED = ("the manager session failed to start twice; see"
                   " ~/.kaptyorka/workers/manager.log on the hub machine")
 MANAGER_UNTRUSTED = ("the manager cannot start: Claude Code does not trust ~/.kaptyorka/manager"

@@ -321,8 +321,9 @@ HOOKS_WANTED = {
                            ("StopFailure", "failure"), ("SessionEnd", "end"))}}
 SETTINGS_WANTED = {
     "permissions": {"allow": ["mcp__kaptyorka__*"],
+                    # never "Read": it stops the manager's CLAUDE.md from loading
                     "deny": ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
-                             "Read", "Glob", "Grep"],
+                             "Glob", "Grep"],
                     "defaultMode": "default"},
     "hooks": HOOKS_WANTED}
 MCP_WANTED = {"mcpServers": {"kaptyorka": {"command": EXE, "args": ["mcp"]}}}
