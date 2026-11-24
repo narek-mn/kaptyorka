@@ -192,12 +192,12 @@ def test_newer_version_warns_once(home, tmp_path):
     a.sessions()
     a.sessions()
     assert len(lines) == 1
-    assert lines[0] in ("claude-code 2.2.0 is newer than tested 2.1.319; push may break, pull still works",
-                        "claude-code 2.10.1 is newer than tested 2.1.319; push may break, pull still works")
+    assert lines[0] in ("claude-code 2.2.0 is newer than tested 2.1.331; push may break, pull still works",
+                        "claude-code 2.10.1 is newer than tested 2.1.331; push may break, pull still works")
 
 
 def test_tested_version_does_not_warn(home, tmp_path):
-    write_session_file(home, pid=os.getpid(), version="2.1.319", sock=live_sock(tmp_path))
+    write_session_file(home, pid=os.getpid(), version="2.1.331", sock=live_sock(tmp_path))
     lines = []
     ClaudeAdapter(home, log=lines.append).sessions()
     assert lines == []

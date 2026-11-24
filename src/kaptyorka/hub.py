@@ -31,8 +31,7 @@ from kaptyorka.secrets_check import PATTERNS as SECRET_PATTERNS
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
-from kaptyorka import hub_groups
-from kaptyorka import left
+from kaptyorka import compat, hub_groups, left, rollout
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
@@ -67,9 +66,9 @@ CLEAR_COOKIE = "kaptyorka_signin=; Path=/auth/gitlab; HttpOnly; SameSite=Lax; Ma
 # is the page's: with sign-in with GitLab on, only a GitLab sign-in or the admin token reaches
 # it. Routes outside /api/ (/mcp, /bridge/...) are all machines'.
 MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
-    ("GET", r"/api/(brief|done-check|me|feed|settings|people|invites|rules|machines|team/machines|gitlab)"),
+    ("GET", r"/api/(brief|done-check|me|feed|settings|people|invites|rules|machines|team/machines|gitlab|rollout)"),
     ("GET", r"/api/files/\d+"),
-    ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab|team-machines|overnight)"),
+    ("POST", r"/api/(files|me/gitlab|people|invites|rules|projects|gitlab|team-machines|overnight|rollout)"),
     ("POST", r"/api/people/[^/]+/(gitlab|role|team)"),
     ("DELETE", r"/api/people/[^/]+/team"),
     ("POST", r"/api/people/[^/]+/team-machines/[^/]+"),
@@ -383,11 +382,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     store.device_revoke(d["id"], "hub")
             token = mm.ensure_account(host, "hub")
         rules_now = rs.current()
+        # its real tools, as this hub lists them: the capability table is written from them
+        tools = [(t.name, t.description or "") for t in server._tool_manager.list_tools()]
         md = folder / "CLAUDE.md"  # a hub update with new manager wording rewrites it too
         if token or mm.rules_written_version() != rules_now["version"] \
-                or not md.exists() or md.read_text() != manager.claude_md(rules_now["text"]):
+                or not md.exists() or md.read_text() != manager.claude_md(rules_now["text"], tools):
             folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-            mm.write_files(folder, manager_url, token, rules_now["text"])
+            mm.write_files(folder, manager_url, token, rules_now["text"], tools=tools)
             mm.mark_rules_written(rules_now["version"])
         # put back at once when changed or removed; the shim is this hub's own executable
         folder.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -571,7 +572,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return
         folder = paths.home() / manager.DIR
         ws.create_manager(boss, mm.person_id(), admin, str(folder),
-                          manager.first_message(MANAGER_FIRST, mm.tasks()[0]))
+                          manager.first_message(MANAGER_FIRST, mm.tasks()[0], mm.lessons()),
+                          mm.model(), mm.effort())
         mm.record_launch(now)
         wake_bridges()
 
@@ -691,6 +693,23 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         except Exception as e:
             print(f"kaptyorka: session resumes failed: {e}", flush=True)
         store.legacy_auto_off(now)
+        try:  # a staged update that failed on the first machines: the admins and the manager
+            for text in rollout.tick(store, __version__, now):
+                store.log_add("hub", "rollout", text[:500])
+                for name in admin_ops.admins(store):
+                    tell(f"web:{name}", text)
+                key = manager_to_wake()
+                if key is not None:
+                    tell(key, text)
+        except Exception as e:  # nor may the rollout
+            print(f"kaptyorka: rollout check failed: {e}", flush=True)
+        try:  # a Claude Code newer than the tested one: the admins, once per version
+            for text in compat.version_news(store, now):
+                store.log_add("hub", "compat", text[:500])
+                for name in admin_ops.admins(store):
+                    tell(f"web:{name}", text)
+        except Exception as e:
+            print(f"kaptyorka: compatibility news failed: {e}", flush=True)
 
     def to_admins(text: str) -> None:
         """A line for every admin: their online sessions, else their page."""
@@ -933,6 +952,34 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 text = f"could not resume {r['name']} at its reset: {e}"
             for to in {r["resume_boss"], mkey} - {None}:
                 tell(to, text)
+
+    @server.tool()
+    @_tool_errors
+    def lesson(text: str, ctx: Context) -> str:
+        """Manager only: record a correction a person gave you and you accept, as one short
+        rule for yourself. Your next runs get the lessons in their first message."""
+        _, principal = caller(ctx)
+        if principal.role != "manager":
+            raise KaptyorkaError("only the manager records lessons; the admin adds one with"
+                                 " kaptyorka lesson")
+        n = mm.add_lesson(text, principal.person_name)
+        return f"lesson saved ({n} in all); your next run starts with them"
+
+    @server.custom_route("/api/lessons", methods=["GET", "POST"])
+    @_bad_request
+    async def api_lessons(request: Request) -> Response:
+        """The admin reads or adds a manager lesson ({"text"})."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        if request.method == "GET":
+            return PlainTextResponse(mm.lessons())
+        body = await request.json()
+        try:
+            n = mm.add_lesson(str(body["text"]), request.scope["state"]["principal"].person_name)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        return JSONResponse({"lessons": n})
 
     @server.tool()
     @_tool_errors
@@ -1502,7 +1549,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                 store.clock()) if own else []
         return JSONResponse({"version": __version__,
                              **({"close_left": close} if close else {}),
-                             "auto_update": own and ws.auto_update(principal.device_id),
+                             "auto_update": own and ws.auto_update(principal.device_id)
+                             and rollout.allows(store, principal.device_id, __version__),  # staged
                              "projects": [] if principal.legacy else
                              [p["name"] for p in store.projects_for(principal)],
                              "team": store.team_projects(),  # the bridge reports only these
@@ -1982,6 +2030,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         return JSONResponse({
             "retention_days": store.retention_days(), "auto_doors": store.auto_doors(),
             "manager_doors": store.manager_doors(),
+            "manager_model": mm.model(), "manager_effort": mm.effort(),
             "manager_enabled": mm.enabled(),
             "manager_state": state, "manager_reason": reason,
             "manager_error": (row["error"] or "") if row and row["state"] == "failed" else "",
@@ -2002,15 +2051,18 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     store.set_auto_doors(body[key], by, key)
             if "close_left" in body:
                 store.set_close_left(body["close_left"], by)
-            if "retention_days" in body \
-                    or not ({"auto_doors", "manager_doors", "close_left"} & set(body)):
+            if "manager_model" in body or "manager_effort" in body:
+                mm.set_model(body.get("manager_model"), body.get("manager_effort"), by)
+            if "retention_days" in body or not ({"auto_doors", "manager_doors", "close_left",
+                                                 "manager_model", "manager_effort"} & set(body)):
                 store.set_retention_days(body.get("retention_days"), by)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"retention_days": store.retention_days(),
                              "auto_doors": store.auto_doors(),
                              "manager_doors": store.manager_doors(),
-                             "close_left": store.close_left()})
+                             "close_left": store.close_left(),
+                             "manager_model": mm.model(), "manager_effort": mm.effort()})
 
     @server.custom_route("/api/legacy", methods=["GET"])
     async def api_legacy(request: Request) -> Response:
@@ -2360,6 +2412,25 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
+
+    @server.custom_route("/api/rollout", methods=["GET", "POST"])
+    @_bad_request
+    async def api_rollout(request: Request) -> Response:
+        """The staged update of the hub's version: its state; POST {"go": true|false} releases
+        the rest now or holds them (the admin)."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        if request.method == "POST":
+            body = await request.json()
+            if not isinstance(body.get("go"), bool):
+                raise ValueError("go must be true or false")
+            who = request.scope["state"]["principal"].person_name
+            s = rollout.decide(store, __version__, body["go"], who)
+            store.log_add(who, "rollout", ("released " if body["go"] else "held ") + __version__)
+        else:
+            s = rollout.status(store, __version__)
+        return JSONResponse({**s, "line": rollout.line(s)})
 
     @server.custom_route("/api/devices/{device_id:int}/auto_update", methods=["POST"])
     @_bad_request

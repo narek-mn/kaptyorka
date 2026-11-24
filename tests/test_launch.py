@@ -319,6 +319,19 @@ def test_manager_command_runs_on_its_own_settings_and_mcp_config(launcher, monke
         launcher.command(order(manager=True, worker="manager", tool="codex", folder=m), m)
 
 
+def test_manager_command_pins_the_model_and_effort(launcher, monkeypatch):
+    m = "/h/.kaptyorka/manager"
+    monkeypatch.setattr(launch_mod.shutil, "which", lambda n: f"/usr/bin/{n}")
+    argv = launcher.command(order(manager=True, worker="manager", folder=m,
+                                  model="claude-opus-5-5", effort="medium"), m)
+    assert argv[7:14] == ["/usr/bin/claude", "-n", "manager", "--model", "claude-opus-5-5",
+                          "--effort", "medium"]
+    assert argv[-1] == FIRST + "fix the tests"
+    for bad in ("--dangerously-skip-permissions", "Opus 5", ""):
+        with pytest.raises(LaunchError, match="bad model"):
+            launcher.command(order(manager=True, worker="manager", folder=m, model=bad), m)
+
+
 # the manager: one interactive session in its own tmux session, never two
 
 MGR_KEY = "claude:0011aabb-0000-0000-0000-000000000000"

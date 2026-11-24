@@ -8,7 +8,7 @@ import shlex
 import time
 from typing import List, Optional, Tuple
 
-from kaptyorka import paths, usage
+from kaptyorka import compat, paths, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES
 from kaptyorka.orders import sign
 from kaptyorka.secrets_check import check_secrets
@@ -259,6 +259,10 @@ def clean_facts(facts: dict) -> dict:
         out["gpu_queue"] = q
     if facts.get("update_failed") in paths.UPDATE_REASONS:  # a fixed reason, never raw text
         out["update_failed"] = facts["update_failed"]
+    for key in compat.FACT.values():  # "ok" or the ids of broken tool internals, never raw text
+        value = compat.clean(facts.get(key))
+        if value is not None:
+            out[key] = value
     # machine events (machine_events.py): a team machine's or the hub machine's own facts
     for key in ("os", "l4t", "jetpack", "kernel"):
         if _cut(facts.get(key)) is not None:
@@ -699,7 +703,8 @@ class WorkerStore:
             return self._dict(self._row(name))
 
     def create_manager(self, admin_person_id: int, manager_person_id: int, device: dict,
-                       folder: str, first_message: str) -> dict:
+                       folder: str, first_message: str, model: str = "",
+                       effort: str = "") -> dict:
         """The manager worker on the admin's own bridge (`device`: a devices row, as
         ManagerStore.admin_device gives it). Its boss is the admin's page; `link` gives its
         session to the manager person. The order's person is the device's owner (the bridge
@@ -730,6 +735,7 @@ class WorkerStore:
                 "issued": now, "worker": WORKER, "person": owner, "tool": "claude-code",
                 "project": "manager", "folder": folder, "worktree": False, "task": task,
                 "boss": admin, "resume": None, "first_message": first_message,
+                **({"model": model} if model else {}), **({"effort": effort} if effort else {}),
                 "manager": True})
             return self._dict(self._row(WORKER))
 
@@ -1439,6 +1445,12 @@ class WorkerStore:
                 if ok is False:
                     add(rest, f"{tool} on {who} is set up but its kaptyorka hooks are missing",
                         f"{tool} hooks missing")
+            for tool, key in compat.FACT.items():  # a tool update changed what kaptyorka reads
+                if isinstance(facts.get(key), list) and facts[key]:
+                    v = re.search(r"\d+(?:\.\d+)+", str((facts.get("tools") or {}).get(tool) or ""))
+                    text, short = compat.warning_text(TOOL_NAMES.get(tool, tool), v.group(0) if v else "",
+                                                      who, facts[key])
+                    add(rest, text, short)
             for tool, ok in (facts.get("indicator_ok") or {}).items():
                 if ok is False:
                     add(rest, f"{tool} on {who} does not show whether its sessions are on the hub"

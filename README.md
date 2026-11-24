@@ -144,6 +144,7 @@ The bridge re-adds kaptyorka's own Claude Code hooks each time it starts (a line
 | `door_request` | Ask the admin for a door between two sessions of different people (the manager for someone who asked it; a member for one of its own sessions); two sessions of one shared project get it at once |
 | `door_decide` | The admin only: answer a door request with "sessions", "people" (7 days) or "deny" |
 | `resume_session` | The manager only: resume a session that ended (on a team machine or the asker's own machine) as a worker of the asker, now or at its usage limit's reset |
+| `lesson` | The manager only: record a correction it accepts; its next runs start with its lessons |
 | `inbox` | Read your messages |
 | `fetch_file` | Save a file from a message to `~/.kaptyorka/inbox/` |
 | `status` | Say what you are working on |
@@ -166,7 +167,7 @@ The bridge re-adds kaptyorka's own Claude Code hooks each time it starts (a line
 | `log` | Admin and manager only: the team's activity log, newest first (`limit`, at most 1,000) |
 | `machines` | Admin and manager only: each machine as its bridge last reported it: online, size, use and free disk space ("disk: / 212 of 468 GB free, ...") |
 
-The hub offers 29 tools in all.
+The hub offers 30 tools in all.
 
 `work(project, task, machine="", tool="claude-code", resume="")` starts a worker. `tool` is `claude-code`, `codex` or `opencode`. `adopt(name)` and `close_worker(name)` take the worker's name.
 
@@ -499,9 +500,13 @@ On the page, Home lists it with its state (`up`, `starting`, `blocked`, `off`). 
 
 When a session others depend on stops: a team session's own Claude Code hooks tell the hub why (StopFailure: a usage limit, with its reset time when the error text names one, such as "resets 7:30pm", or an API error; SessionEnd: its end). Personal sessions send nothing. A send to that session then says `held: jet-1/claude-code/proj-a hit its usage limit, resets 19:30; it gets the message when it next reports`, and for a team machine's session the manager hears it once. The manager resumes the same session by name with `resume_session(name, asked_by, when)`: the hub fills in its session id, machine and folder, and starts it again with its whole conversation as a worker of the asking session, now or at the reset (`when="reset"`). Only a session on a team machine or on the asker's own machines; the asker is the session that wrote to the manager (as for doors). Its rules give the order: resume the same session; else a fresh worker handed the project note and the last 20 messages between the two sessions; another running session only if the asker agrees, it is idle and in the same project. `who` shows the manager every session's project, status line, busy or idle, and stuck.
 
+Its model: kaptyorka pins it, so the account's default never decides. The hub launches it with `claude --model claude-opus-5-5 --effort medium` (Opus 5.5, medium effort) unless the admin chose others: `kaptyorka manager-model <model> [--effort <level>]` (or `manager_model` and `manager_effort` in `/api/settings`), with the model one of `claude-opus-5-5`, `opus`, `sonnet`, `haiku`, `fable` and the effort one of `low`, `medium`, `high`, `xhigh`, `max`; anything else is refused with that list. A change applies at its next start. `kaptyorka status` on the hub shows both on the manager line.
+
+What it knows about itself: at each launch and each hub update, the hub writes into its instructions a **What you can and cannot do** list made from the hub's own tool list (each tool with its first sentence; the admin's own tools under "You cannot") and the access rules no tool crosses, with the rule to check that list and its tools before saying it cannot do something. A **Playbooks** section gives the steps for a door, a message that did not arrive, a stuck session, a machine event, a stopped session, a new machine and disk space. When a person corrects it and it accepts, it records the correction with `lesson(text)`; the admin adds one with `kaptyorka lesson "<text>"` (with no text: the list). The lessons (a note only the manager reads) come in its first message at every start, newest first, at most 40 lines.
+
 Its task list: its conversation can end or be compacted at any time, so it keeps every open promise, who waits for what and each relay not yet passed on in its own state note, `state_write("manager", text)` (any text; only it reads it). This rule is the first thing in its instructions, and its `CLAUDE.md` has a `# Compact instructions` section that keeps the same things through a compaction. A new run gets the last saved list in its first message. After 15 messages from people and sessions, or 2 hours, since the last save, the hub adds one line, `save your task list now (state_write("manager", text))`, to the next notice it sends the manager anyway; it never sends a message just for that.
 
-People first: a routine notice (the knowledge digest and notice, old kaptyorka versions) waits while a person's or a session's message to the manager is unanswered and less than 2 minutes old, and at most 5 minutes. Urgent notices (a stuck session, a work request, a busy machine, a launch problem) never wait. For the admin, the manager's row on the page (on hover) and `kaptyorka status` on the hub show its load in one line: `3 messages in the last hour, median reply 40 s, 1 waiting; task list saved 5 min ago` (an answer is the manager's next message to that sender; waiting counts the last day).
+People first: a routine notice (the knowledge digest and notice, old kaptyorka versions) waits while a person's or a session's message to the manager is unanswered and less than 2 minutes old, and at most 5 minutes. Urgent notices (a stuck session, a work request, a busy machine, a launch problem) never wait. For the admin, the manager's row on the page (on hover) and `kaptyorka status` on the hub show its load in one line: `3 messages in the last hour, median reply 40 s, 1 waiting; task list saved 5 min ago` (an answer is the next message to that sender from the manager, or from the hub for it, such as "door open"; waiting counts the senders of the last day still without one, and never a message under 20 characters such as "thanks").
 
 ### The manager keeps the team's knowledge
 
@@ -699,6 +704,10 @@ kaptyorka fleet list
 
 Auto-update: the bridge updates kaptyorka when the hub is newer. It is on by default for every machine, the admin's too. The page no longer has a switch for it. When an update fails, the bridge tells the hub a short fixed reason (`auto-update failed`, `auto-update timed out`, `not installed with pipx` or `no newer release found`; the full output stays in the bridge's log). A machine still behind half an hour after the hub started its new version is told to the manager once per machine and hub version, with the reason (one of those, or `auto-update is off for this machine`, `bridge offline`, `auto-update has not run yet`). This wakes a sleeping manager. The manager sends that person one short message (their session, else their page) naming the machine, the reason and `kaptyorka update` to run there; for a team machine it tells the admins. With the manager off nothing is sent; the warning still shows on Machines.
 
+Updates are staged. When the hub runs a new version, a first group updates: the accounts on the hub's own computer and one team machine the hub picks (the least busy one online; one with an overnight session or a session waiting on a background task only if no other is online). The rest, personal laptops too, wait 20 minutes and then update only if the first group is healthy: each of its online bridges reports the new version, none reports a failed update, and one that listed sessions still lists some. If not, the rest stay on their version and the admins and the manager get one message with the reason. `kaptyorka fleet rollout` shows the state (also a `rollout:` line in `kaptyorka status` on the hub), `kaptyorka fleet rollout go` updates the rest now and `kaptyorka fleet rollout hold` keeps them back. `kaptyorka update` on a machine always updates it by hand. A machine that was off during the 20 minutes updates when it comes back, once the rollout passed. While the rest wait, they run one version behind the hub, which the hub accepts: it reads every newer report field with a default (a test sends an older bridge's report).
+
+Agent tool updates. kaptyorka reads parts of Claude Code, OpenCode and Codex that they do not document (Claude Code's session files, inbox socket, transcripts, background task files, which session started another and `--bg`/`stop` output; OpenCode's `service.json` and local API; Codex's app-server socket). `src/kaptyorka/compat.py` lists each one, what uses it and what that feature does without it. Each bridge checks the ones it can by only reading, every 10 minutes and after a tool update, and a broken one shows on the Machines page as a warning such as "Claude Code 2.1.340 on box-1: background task files not found (stuck check off for background tasks)"; the feature itself turns off rather than giving wrong answers (no push means sessions read their messages on their next turn). `kaptyorka doctor` shows the same as `tool: <tool> internals`. When a Claude Code newer than the one kaptyorka was tested with appears on the team, the admins get one message per version with the number of machines.
+
 ## Backup
 
 `kaptyorka backup <user@host:path>` copies the hub's data (`hub.db` and `files/`) to another machine over ssh. When `gpg` is installed the copy is encrypted. The passphrase is in `~/.kaptyorka/backup-pass`: keep a copy of it somewhere else, or the backup cannot be opened. Without `gpg` the copy is a plain tar, and the command says so.
@@ -745,6 +754,8 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka people role <person> member\|manager` | Admin: change a person's role |
 | `kaptyorka people remove <person>` | Admin: take a person off the team (asks first; `--yes` skips it) |
 | `kaptyorka people revoke <person> <device>` | Admin: sign out one lost device; the person stays |
+| `kaptyorka manager-model [model] [--effort level]` | Admin: the manager's model and effort from its next start (default `claude-opus-5-5`, `medium`); with nothing given, show them |
+| `kaptyorka lesson [text]` | Admin: give the manager a lesson it keeps (one line); with no text, list them |
 | `kaptyorka auto-doors on\|off` | Admin: doors between two sessions of one shared project open by themselves (on, the default) or wait for the admin |
 | `kaptyorka manager-doors on\|off` | Admin: the manager opens a door for a teammate's own request (on, the default) or sends each to the admin |
 | `kaptyorka shared-token on\|off` | Admin: switch the old shared token (machines from before invites) on or off |
@@ -766,6 +777,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
 | `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |
 | `kaptyorka fleet list` | Admin: list machines |
+| `kaptyorka fleet rollout [status\|go\|hold]` | Admin: the staged update after the hub's own; go updates the rest now, hold keeps them back |
 | `kaptyorka login-copy <user@host>` | Copy your Claude Code, Codex and OpenCode logins to another machine of yours over ssh (`--tool` picks one, `--force` replaces one already there) |
 | `kaptyorka backup <user@host:path>` | Copy the hub's data to another machine; `--nightly` every day at 03:00 |
 | `kaptyorka restore <file>` | Put a backup back (stop the hub first) |

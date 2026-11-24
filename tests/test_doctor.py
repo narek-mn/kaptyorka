@@ -88,7 +88,8 @@ def test_checks_all_ok(home, unit, answer):
     a.install_hub(EXE)
     res = doctor.checks(CFG, [a], home, Run(), "linux")
     assert [c.name for c in res] == ["config", "hub reachable", "token valid", "bridge service",
-                                     "tmux", "tool: claude-code", "tool: claude-code /hub"]
+                                     "tmux", "tool: claude-code", "tool: claude-code /hub",
+                                     "tool: claude-code internals"]
     assert all(c.ok for c in res)
 
 

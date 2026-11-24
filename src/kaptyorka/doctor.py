@@ -182,10 +182,28 @@ def checks(cfg: dict, adapters: list, home: Path, run: Callable = subprocess.run
                                  None if hub else "kaptyorka doctor --fix"))
             if a.tool == "opencode":
                 out.append(_opencode_server())
+            out.append(_internals(a.tool, home, run))
             if a.tool != "claude-code":
                 out.append(Check(f"tool: {a.tool} overnight", True,
                                  info="not yet: overnight mode works in Claude Code only"))
     return out
+
+
+def _internals(tool: str, home: Path, run: Callable) -> Check:
+    """The tool's undocumented internals kaptyorka reads (compat.py), its cheap probes only:
+    nothing is started. A probe with no evidence now (no live session) is a note."""
+    from kaptyorka import compat
+
+    res = compat.cheap([tool], compat.Ctx(home, run))
+    broken = [f"{compat.BY_ID[i].broken} ({compat.BY_ID[i].off})"
+              for i, (s, _) in res.items() if s == compat.BROKEN]
+    unknown = [i.split(".", 1)[1] for i, (s, _) in res.items() if s == compat.UNKNOWN]
+    note = ("not checked now: " + ", ".join(unknown)) if unknown else ""
+    if broken:
+        return Check(f"tool: {tool} internals", False, "; ".join(broken),
+                     "a tool update changed them: tell your admin (kaptyorka's compatibility test)",
+                     info=note)
+    return Check(f"tool: {tool} internals", True, info=note)
 
 
 def _opencode_server() -> Check:

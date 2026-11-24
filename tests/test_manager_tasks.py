@@ -236,16 +236,20 @@ def test_load_line(hub, clock):
     now = clock[0]
     assert manager.load_line(hub.mm.load(now), now) == (
         "0 messages in the last hour, no replies, 0 waiting; task list saved never")
-    ask(hub, bob, B, "one")
+    ask(hub, bob, B, "can you start proj-b on box-1?")
     clock[0] += 40
     run(call(mgr, me, "send", to="pc-2/codex/proj-b", text="done"))
     clock[0] += 10
-    ask(hub, bob, B, "two")
+    ask(hub, bob, B, "thanks!")  # no question: it never waits
+    ask(hub, bob, B, "and is box-2 free tomorrow?")
+    ask(hub, bob, B, "it is for the long training run")  # the same sender waits once
     run(call(mgr, me, "state_write", project="manager", text=TASKS))
     clock[0] += 200
     now = clock[0]
     assert manager.load_line(hub.mm.load(now), now) == (
-        "2 messages in the last hour, median reply 40 s, 1 waiting; task list saved 3 min ago")
+        "4 messages in the last hour, median reply 40 s, 1 waiting; task list saved 3 min ago")
+    hub.tell("k:bob", "the manager started `proj-b-w1` on box-2")  # the hub answered for it
+    assert hub.mm.load(clock[0])["waiting"] == 0
 
 
 def test_load_line_reaches_the_admin_only(hub):
