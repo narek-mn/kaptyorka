@@ -776,11 +776,12 @@ docs/           assets and design notes
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e . pytest
-python -m pytest tests -q
+pip install -e . pytest pytest-xdist
+python -m pytest tests -q -n auto --dist worksteal   # the fast suite, about 40 s on 8 cores
+python tests/changed.py                              # only the tests for what changed against origin/main
 ```
 
-Tests marked `slow` call real agent tools and are skipped by default. Run them with `python -m pytest tests -q -m slow`. Python 3.10 is the minimum.
+One file runs as usual (`python -m pytest tests/test_store.py -q`). The fast suite runs in a home folder of its own, so it never touches your `~/.claude` or `~/.kaptyorka`. Tests marked `slow` (real agent tools, and the page in headless Chrome) are skipped by default. Run them with `python -m pytest tests -q -m slow` (about 8 minutes), or faster in two parts: the page tests on 2 workers, `python -m pytest -m slow tests/test_page*_slow.py -q -n 2 --dist worksteal` (about 2 minutes), then the real agent tests one at a time, `python -m pytest -m slow tests -q --ignore-glob='tests/test_page*_slow.py'` (about 4 minutes). Never run the real agent tests in parallel, nor next to `tests/soak_manager.py`: their timers fail each other. Python 3.10 is the minimum.
 
 ## License
 

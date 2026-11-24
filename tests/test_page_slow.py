@@ -1970,11 +1970,11 @@ def test_login_warnings_make_one_line(tmp_path, w, h):
             page.js(f'{line}.querySelector("button[aria-label=Dismiss]").click()')
             page.wait(f"!{line}")
             page.js("location.reload()")
-            page.wait('document.querySelectorAll(".list .row").length > 0')
+            page.wait('[...document.querySelectorAll(".list .row")].some(r => r.textContent.includes("proj-a"))')
             page.js('[...document.querySelectorAll(".list .row")].find(r => r.textContent.includes("proj-a")).click()')
-            time.sleep(1.5)
+            page.wait('document.getElementById("warn-n").textContent === "6"')  # loaded, and found again there
+            time.sleep(0.5)
             assert page.js(f"!{line}")  # stays dismissed in this browser
-            assert page.js('document.getElementById("warn-n").textContent') == "6"  # and is found again there
     finally:
         stop()
         store.close()
