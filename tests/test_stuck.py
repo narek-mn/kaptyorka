@@ -65,6 +65,11 @@ def test_texts():
                     " b1 (`sleep 9`) has printed nothing for 1 h. A message reaches it, so it was"
                     " asked to check 30 min ago and nothing changed. To stop it:"
                     " `claude stop abcdef12` on box-1.")
+    bare = {"kind": "task", "age": 2100.0, "task": {"id": "b1", "command": ""}}  # a coordinator's
+    assert stuck.wake_text(bare).startswith(
+        "kaptyorka: your background task b1 has printed nothing for 35 min. Check")
+    assert "its background task b1 has printed nothing for 35 min. A message" in \
+        stuck.people_text("n", "box-1", bare, "claude:abcdef12", True)
     busy = {"kind": "busy", "age": 3600.0}
     assert "only after its current step ends" in stuck.people_text("n", "box-1", busy, "k:x", False)
     assert stuck.people_text("n", "box-1", busy, "k:x", False).endswith("press Esc.")
@@ -214,6 +219,63 @@ def test_hub_wakes_then_tells_once_per_episode(hub, clock):
     assert hub_sent(hub)[-1][0] == key and len(hub_sent(hub)) == n + 1
 
 
+def test_late_heartbeats_and_a_hub_restart_keep_one_episode(hub, clock):
+    """The bridge's measure lags the hub's clock by however late its heartbeat lands: a beat
+    10 s late, or a 40 s gap (a hub restart), is still the same silence, told once."""
+    hub.store.project_register("proj-a", by="test")
+    a_id, _ = member(hub, "alice")
+    mgr, me = manager_online(hub)
+    b = bridge(hub, a_id)
+    key = "claude:abcdef12-0000"
+    task_beat(hub, b, key, stuck.WAKE_S + 5)
+    hub.tick()
+    assert len(hub_sent(hub)) == 1
+    silent = stuck.WAKE_S + 5
+    for late in (10, 0, 10, 3, 10):  # each beat 20 s later on the hub, measured `late` s early
+        clock[0] += 20
+        silent += 20
+        task_beat(hub, b, key, silent - late)
+        hub.tick()
+    clock[0] += 40  # no heartbeat for 40 s
+    silent += 40
+    task_beat(hub, b, key, silent - 10)
+    hub.tick()
+    assert len(hub_sent(hub)) == 1  # the wake, once
+    clock[0] += stuck.TELL_S - stuck.WAKE_S
+    silent += stuck.TELL_S - stuck.WAKE_S
+    task_beat(hub, b, key, silent)
+    run(call(mgr, me, "inbox"))
+    hub.tick()
+    n = len(hub_sent(hub))
+    told = [t for t in inbox(mgr, me) if t.startswith("stuck session:")]
+    for late in (10, 0, 10):
+        clock[0] += 20
+        silent += 20
+        task_beat(hub, b, key, silent - late)
+        hub.tick()
+        told += [t for t in inbox(mgr, me) if t.startswith("stuck session:")]
+    assert n == 3 and len(hub_sent(hub)) == n  # wake, person, manager: once each, not again per late beat
+    assert len(told) == 1  # the manager too
+
+
+def test_a_task_that_prints_now_and_then_starts_a_new_silence(tmp_path):
+    t = [1000.0]
+    store = Store(tmp_path / "h.db", clock=lambda: t[0])
+    person(store, "alice")
+
+    def out(silent):
+        store.heartbeat("box-1", [{"key": "k1", "tool": "claude-code", "project": "p",
+                                   "activity": "shell",
+                                   "tasks": [{"id": "b1", "silent_s": silent, "command": "c"}]}])
+        return store.agent("k1").tasks[0]["out"]
+    assert out(0) == 1000.0
+    t[0] += 30
+    assert out(0) == 1000.0  # printed 30 s later: within the tolerance, the start stays
+    t[0] += 40
+    assert out(0) == 1070.0  # it keeps printing: the start moves on, never stays stuck
+    store.close()
+
+
 def test_hub_judges_nothing_for_idle_old_or_overnight_sessions(hub, clock):
     hub.store.project_register("proj-a", by="test")
     a_id, _ = member(hub, "alice")
@@ -282,8 +344,9 @@ def test_store_keeps_one_start_per_silence(tmp_path):
     t[0] += 10
     a = beat(write_s=21.5, tasks=[{"id": "b1", "silent_s": 111, "command": "c"}])
     assert (a.wrote, a.tasks[0]["out"]) == (990.0, 900.0)  # jitter: the same start
+    t[0] += 60
     a = beat(write_s=0, tasks=[{"id": "b1", "silent_s": 0, "command": "c"}])
-    assert (a.wrote, a.tasks[0]["out"]) == (1010.0, 1010.0)  # it wrote and printed
+    assert (a.wrote, a.tasks[0]["out"]) == (1070.0, 1070.0)  # it wrote and printed
     a = beat(write_s="x", tasks=[{"id": "bad id!", "silent_s": 1}, {"id": "b2", "silent_s": -1}])
     assert (a.wrote, a.tasks) == (None, [])
     a = beat()

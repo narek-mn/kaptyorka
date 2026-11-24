@@ -226,7 +226,9 @@ class Bridge:
                     return s if project == s.project else replace(s, project=project)
                 joined[s.key] = paths.COORDINATOR  # a team machine: every session is on the hub
             coordinator = joined[s.key] == paths.COORDINATOR
-            return replace(s, project=joined[s.key], cwd="",
+            # a task's command usually names paths: only its id and silence go
+            tasks = None if s.tasks is None else [{**t, "command": ""} for t in s.tasks]
+            return replace(s, project=joined[s.key], cwd="", tasks=tasks,
                            label=s.label or (optin.LABEL if coordinator else ""))
         sessions, tools, objs, shown, held = [], [], [], [], False
         for a in self.adapters:

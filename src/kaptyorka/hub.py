@@ -529,7 +529,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             if ep is None:
                 continue
             task = ep.get("task", {}).get("id", "")
-            episode = f"stuck:{a.key}:{ep['kind']}:{task}:{int(now - ep['age'])}"
+            episode = f"stuck:{a.key}:{ep['kind']}:{task}:{round(ep['start'])}"
             if a.key not in night["keys"] and mm.push_once(episode + ":wake", now):
                 tell(a.key, stuck.wake_text(ep))
             if ep["age"] < stuck.TELL_S:

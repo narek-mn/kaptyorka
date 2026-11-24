@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from kaptyorka import paths
+from kaptyorka import paths, stuck
 from kaptyorka.secrets_check import TEXT_TYPES, check_secrets
 
 ONLINE_S = 30
@@ -182,7 +182,6 @@ def _idle_s(value) -> Optional[float]:
 
 
 MAX_TASKS = 20
-STEADY_S = 3  # a re-reported time this close to the kept one is the same moment (clock jitter)
 
 
 def _tasks_in(value) -> Optional[list]:
@@ -214,7 +213,7 @@ def _tasks_from(text) -> Optional[list]:
 
 def _steady(old: Optional[float], new: Optional[float]) -> Optional[float]:
     """The kept time unless the new one really moved: one silence keeps one start."""
-    if old is not None and new is not None and abs(new - old) < STEADY_S:
+    if old is not None and new is not None and abs(new - old) < stuck.STEADY_S:
         return old
     return new
 

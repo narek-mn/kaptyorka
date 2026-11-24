@@ -17,6 +17,9 @@ WAKE_S = 1800
 TELL_S = 3600
 AGAIN_S = 1800
 COMMAND_CAP = 100
+# a re-measured silence start this close to the kept one is the same silence: a heartbeat that
+# lands late, a slow read or a hub restart shifts it by seconds; the thresholds are half an hour
+STEADY_S = 60
 
 
 def safe_command(text: str) -> str:
@@ -57,13 +60,17 @@ def find(activity: str, write_age: Optional[float], tasks: Optional[list]) -> Op
 
 
 def of_agent(a, now: float) -> Optional[dict]:
-    """find() for a hub agents row: `wrote` and each task's `out` are hub times."""
+    """find() for a hub agents row: `wrote` and each task's `out` are hub times. The episode
+    also carries "start", the silence's kept hub time, so its key never moves with `now`."""
     if not a.online:
         return None
     tasks = None if a.tasks is None else [
-        {"id": t["id"], "silent_s": now - t["out"], "command": t.get("command", "")}
-        for t in a.tasks]
-    return find(a.activity, None if a.wrote is None else now - a.wrote, tasks)
+        {"id": t["id"], "silent_s": now - t["out"], "command": t.get("command", ""),
+         "out": t["out"]} for t in a.tasks]
+    ep = find(a.activity, None if a.wrote is None else now - a.wrote, tasks)
+    if ep is not None:
+        ep["start"] = ep["task"]["out"] if ep["kind"] == "task" else a.wrote
+    return ep
 
 
 def span(s: float) -> str:

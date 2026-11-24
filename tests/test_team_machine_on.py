@@ -92,6 +92,23 @@ def test_the_bridge_reports_them_as_coordinators_with_nothing_of_their_folder(
     assert "diary" not in json.dumps(body)
 
 
+def test_a_coordinator_sends_its_tasks_without_their_commands(lab, quiet, monkeypatch):  # noqa: F811
+    hub = Answers(monkeypatch, {"team": ["proj-a"], "keep": [], "projects": ["proj-a"],
+                                "shared": True})
+    task = {"id": "bq1", "silent_s": 2100.0, "command": "pytest /w/diary/tests"}
+    adapters = [FakeAdapter("claude-code", "claude", [
+        Session("claude:c1", "claude-code", "diary", "shell", cwd="/w/diary", write_s=5.0,
+                tasks=[dict(task)]),
+        Session("claude:t1", "claude-code", "proj-a", "shell", cwd="/w/proj-a",
+                tasks=[{**task, "command": "make test"}])])]
+    Bridge(dict(CFG), adapters, bridge_mod.log).heartbeat()
+    got = {s["key"]: s for s in hub.bodies[-1]["sessions"]}
+    assert got["claude:c1"]["tasks"] == [{"id": "bq1", "silent_s": 2100.0, "command": ""}]
+    assert got["claude:c1"]["write_s"] == 5.0
+    assert got["claude:t1"]["tasks"][0]["command"] == "make test"  # a team folder: as before
+    assert "/w/diary" not in json.dumps(hub.bodies[-1])
+
+
 def test_hub_off_takes_one_session_off_and_on_brings_it_back(lab, monkeypatch):
     monkeypatch.setattr(http, "request", lambda *a, **k: (204, None))
     env = {offhub.OPENCODE_SESSION: "ses_a"}
