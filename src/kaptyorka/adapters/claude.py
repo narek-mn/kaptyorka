@@ -7,10 +7,11 @@ import shutil
 import socket
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from kaptyorka import offhub, paths
+from kaptyorka import offhub, paths, stuck
 from kaptyorka.adapters.base import (NIGHT_GUARD, DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, login_output,
                                      mentions_hook, merge_json, write_atomic)
 
@@ -77,6 +78,85 @@ def _transcript(home: Path, session_id: str, cwd: str, cache: dict) -> Optional[
     for p in root.glob(f"*/{session_id}.jsonl"):
         return p
     return None
+
+
+WRITE_TAIL = 64 * 1024  # how much of a transcript's end is read for its last real write
+TASK_OUTPUT = re.compile(r"/tasks/([A-Za-z0-9_-]{1,40})\.output$")
+
+
+def _stamp(value) -> Optional[float]:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def last_write(path: Path, size: int, mtime: float) -> float:
+    """When the session itself last wrote its transcript: the newest timestamped line that is
+    not a queue-operation (a message delivered to it, the hub's own wake-up included); the
+    file's mtime when the tail holds none."""
+    with open(path, "rb") as f:
+        start = max(0, size - WRITE_TAIL)
+        f.seek(start)
+        lines = f.read(WRITE_TAIL).decode("utf-8", "replace").splitlines()
+    for line in reversed(lines[1:] if start else lines):
+        if '"queue-operation"' in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        t = _stamp(rec.get("timestamp")) if isinstance(rec, dict) else None
+        if t is not None:
+            return min(t, mtime)
+    return mtime
+
+
+def children() -> Optional[dict]:
+    """{parent pid: [child pids]} from /proc; None where there is no /proc (macOS)."""
+    proc = Path("/proc")
+    if not (proc / "self" / "stat").exists():
+        return None
+    out: dict = {}
+    for d in proc.iterdir():
+        if not d.name.isdigit():
+            continue
+        try:
+            stat = (d / "stat").read_text()
+            ppid = int(stat[stat.rindex(")") + 2:].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        out.setdefault(ppid, []).append(int(d.name))
+    return out
+
+
+def live_tasks(pid: int, kids: dict, now: float) -> List[dict]:
+    """The session's running background tasks: its child shells whose output goes to
+    .../tasks/<task id>.output (checked on 2.1.331). Silent for: now minus that file's mtime;
+    Claude Code creates the file when the task starts, so a task is never silent for longer
+    than it has run."""
+    out, seen = [], set()
+    for child in kids.get(pid, []):
+        try:
+            target = os.readlink(f"/proc/{child}/fd/1")
+        except OSError:
+            continue
+        m = TASK_OUTPUT.search(target)
+        # .../<id>/tasks/: the id the process started with, which a resumed session no longer
+        # has in its sessions file; being the session's child is what ties a task to it
+        if m is None or m.group(1) in seen:
+            continue
+        try:
+            mtime = os.stat(target).st_mtime
+            argv = Path(f"/proc/{child}/cmdline").read_bytes().decode("utf-8", "replace")
+        except OSError:
+            continue
+        seen.add(m.group(1))
+        out.append({"id": m.group(1), "silent_s": max(0.0, round(now - mtime, 1)),
+                    "command": stuck.safe_command(stuck.command_of(argv.rstrip("\0").split("\0")))})
+    return out[:20]
 
 
 def _newer(version: str) -> bool:
@@ -196,6 +276,7 @@ class ClaudeAdapter:
         """Every live session, those kept off the hub too (in off_keys): the bridge reports
         only the rest, but its own decisions (a busy folder) count them all."""
         out, off = [], set()
+        kids: Optional[dict] = None  # read once, only when a session is busy
         for f in sorted(self.dir.glob("*.json")):
             try:
                 pid = int(f.stem)
@@ -227,11 +308,44 @@ class ClaudeAdapter:
             # "kind" is undocumented: "bg" marks a background job; anything else is a normal one
             if offhub.decide(session_id, pid, data):
                 off.add(f"claude:{session_id}")
+            status = str(data.get("status", ""))
+            # stuck measures (undocumented, checked on 2.1.331): "shell" is a finished turn with
+            # a background task still running; "busy" a turn or a background subagent
+            tasks, write_s = None, None
+            if status in ("busy", "shell"):
+                if kids is None:
+                    kids = children() or {}
+                now = time.time()
+                tasks = live_tasks(pid, kids, now) if kids else None
+                wrote = self._wrote(session_id, cwd)
+                write_s = None if wrote is None else max(0.0, round(now - wrote, 1))
             out.append(Session(f"claude:{session_id}", self.tool, os.path.basename(cwd.rstrip("/")),
-                               data.get("status", ""), label, cwd, data.get("kind") == "bg",
-                               title, None if active is None else max(0.0, time.time() - active)))
+                               status, label, cwd, data.get("kind") == "bg",
+                               title, None if active is None else max(0.0, time.time() - active),
+                               write_s, tasks))
         self.off_keys = off
         return out
+
+    def _wrote(self, session_id: str, cwd: str) -> Optional[float]:
+        """When the session last wrote anything of its own: its transcript's last real line,
+        or any of its subagents' transcripts; None with no transcript."""
+        cache = self.__dict__.setdefault("_writes", {})
+        try:
+            path = _transcript(self.home, session_id, cwd, self.__dict__.setdefault("_titles", {}))
+            if path is None:
+                return None
+            st = path.stat()
+            old = cache.get(session_id)
+            if old is not None and old[0] == (st.st_size, st.st_mtime):
+                t = old[1]
+            else:
+                t = last_write(path, st.st_size, st.st_mtime)
+                cache[session_id] = ((st.st_size, st.st_mtime), t)
+            for sub in (path.parent / session_id / "subagents").glob("*.jsonl"):
+                t = max(t, sub.stat().st_mtime)
+            return t
+        except (OSError, ValueError):
+            return None
 
     def _title(self, session_id: str, cwd: str):
         """(Claude Code's title for the session, its transcript's mtime = its last activity),

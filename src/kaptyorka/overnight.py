@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from kaptyorka import paths
+from kaptyorka import paths, stuck
 from kaptyorka.secrets_check import PATTERNS
 
 CAP_S = 16 * 3600  # the safety cap; nothing else is time-based
@@ -1166,9 +1166,11 @@ CONTINUE = ("kaptyorka: continue the overnight task where it stopped. Nobody is 
 
 
 def watch(alive: Callable[[str], bool], deliver: Callable[[str, str], None], resume: Callable,
-          finish: Callable, now: Optional[float] = None) -> None:
+          finish: Callable, now: Optional[float] = None,
+          silent: Callable[[str], Optional[dict]] = lambda sid: None) -> None:
     """One pass, from the bridge: the cap, a crashed session (resume, bounded), a wait after a
-    usage limit or an API error ("continue", bounded)."""
+    usage limit or an API error ("continue", bounded), a stuck session (stuck.find, through
+    `silent`): asked once per silence to check, since its Stop hook let it wait for that task."""
     now = time.time() if now is None else now
     for sid, st in active():
         try:
@@ -1187,6 +1189,23 @@ def watch(alive: Callable[[str], bool], deliver: Callable[[str, str], None], res
                 if not ok:
                     finish(sid, "the session crashed and could not be restarted")
                 continue
+            ep = silent(sid)
+            if ep is not None:
+                since = now - ep["age"]
+                task = (ep.get("task") or {}).get("id", "")
+                woke = st.get("woke") if isinstance(st.get("woke"), dict) else {}
+                if not (woke.get("kind") == ep["kind"] and woke.get("task") == task
+                        and abs(float(woke.get("since", 0)) - since) < 5):
+                    st = {**st, "woke": {"kind": ep["kind"], "task": task, "since": since}}
+                    save(sid, st)
+                    text = stuck.wake_text(ep)
+                    delivered(sid, text, now)
+                    try:
+                        deliver(sid, text)
+                        note(sid, "event", f"woke it: {stuck.span(ep['age'])} silent"
+                                           + (f" (background task {task})" if task else ""), now)
+                    except Exception as e:
+                        note(sid, "event", f"could not wake it: {type(e).__name__}", now)
             w = st.get("waiting")
             if isinstance(w, dict):
                 since = float(w.get("since", now))

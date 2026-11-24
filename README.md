@@ -266,10 +266,26 @@ A script or program that does these things inside it is not caught: the hook see
 | It crashed | `claude --resume` in a tmux session, at most twice a night (the bridge does this) |
 | A usage limit or an API error | Claude Code's own wait first; otherwise the bridge sends "continue" (every 30 minutes for a usage limit, 5 for other errors) for at most 6 hours |
 | Plan mode | Warned at turn-on: edits wait for a person there |
+| Its only pending work is a background task that printed nothing for 30 minutes | The bridge asks it once to check the task and stop it if it is stuck (see "Stuck sessions") |
 
 **The morning report** lists what was done, the decisions made for you, what was skipped and needs your yes, rule clashes and events. It is saved in `~/.kaptyorka/overnight/reports/`. For a team session it also goes to your own page on the hub; a rule clash goes to the hub as a short fixed-text event (project, rule title, class), and the manager tells you once. A personal session sends nothing to the hub. Everything is kept in `~/.kaptyorka/overnight/`, readable by you only, with secrets dropped.
 
 **Tools.** Claude Code only. Codex, Cursor and OpenCode: not yet (`/hub overnight` and `kaptyorka doctor` say so). The crash restart and the "continue" after a wait need the bridge, so a machine that never joined a hub gets the night rules and the report, but no restart.
+
+## Stuck sessions
+
+A session can sit for hours doing nothing while the page says it works: a background task that never ends (a wait loop that matches itself, a command waiting for input) keeps it waiting for a notice that never comes. kaptyorka notices two cases (Claude Code; the research is in `docs/superpowers/specs/2026-11-24-stuck-sessions.md`):
+
+- **A silent background task**: the session's turn is over, and a background task it started has printed nothing for 30 minutes.
+- **Busy with no new step**: the session is busy and has written nothing to its transcript (or its subagents' transcripts) for 30 minutes. A foreground command is capped at 10 minutes, so a working session always writes sooner.
+
+Two steps per stuck episode, each once. At 30 minutes the hub asks the session itself, naming the task and its command, to check it and stop it if it is stuck (a session whose turn is over reads the message at once; a busy one only after its current step). At 60 minutes, if nothing changed, the hub tells its person (their other online sessions, else their page), a worker's boss, and the manager, with how to stop it (`claude stop <id>` on that machine for a background session); the manager follows up with the session and hears it once more 30 minutes later if it is still stuck. An episode ends when the task prints, ends, the session writes again, or it goes idle; the hub's own message does not count as writing. An idle session is never stuck, and a session in overnight mode is asked by its own bridge instead of the hub.
+
+On the page a session whose turn is over while a background task runs shows **Background task** instead of **Working**; a stuck one shows an amber **Silent 1 h** (its task) or **Stuck 2 h** (busy with no new step).
+
+![Stuck sessions on Home](docs/screens/stuck.png)
+
+The bridge measures and the hub judges; nothing is judged for a bridge older than 0.9.32 or a tool other than Claude Code. **Linux only**: background tasks are found through `/proc` (the session's child shells and their output files); macOS gets the busy-with-no-new-step check only.
 
 ## Workers
 
@@ -693,6 +709,7 @@ src/kaptyorka/
   bridge.py     per-machine bridge: reports sessions, pushes messages, starts workers
   workers.py    hub side of workers: states, linking, adopt, close
   usage.py      machine use per OS user (CPU, memory, GPU) and the "heavy" rule
+  stuck.py      stuck sessions: the rule, its two stages and their texts
   connects.py   connection requests made before 0.9.11: the admin decides
   memory.py     state notes, git activity and the done check
   rules.py      team rules, skills, proposals and conflicts in the hub

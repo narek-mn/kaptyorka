@@ -45,6 +45,29 @@ def fence_real_commands(request, monkeypatch):
     monkeypatch.setattr(subprocess.Popen, "__init__", guarded)
 
 
+@pytest.fixture(autouse=True)
+def slow_tests_message_only_their_own_sessions(request, monkeypatch):
+    """A `slow` test's real bridge sees the developer's own Claude Code sessions too, and its
+    hub sends notices by itself (a stuck session's wake-up): deliver only to sessions in a
+    test's scratch folder (.kaptyorka-* beside the repository, or the temp folder)."""
+    if not request.node.get_closest_marker("slow"):
+        return
+    import tempfile
+
+    from kaptyorka.adapters.base import DeliveryError
+    from kaptyorka.adapters.claude import ClaudeAdapter
+    real = ClaudeAdapter.deliver
+    temp = os.path.realpath(tempfile.gettempdir())
+
+    def guarded(self, key, text):
+        cwd = next((s.cwd for s in ClaudeAdapter.sessions(self) if s.key == key), "")
+        if "/.kaptyorka-" not in cwd and not os.path.realpath(cwd or "/").startswith(temp + "/"):
+            raise DeliveryError(f"a slow test may not message a session outside its scratch"
+                                f" folder: {key} in {cwd or 'an unknown folder'}")
+        real(self, key, text)
+    monkeypatch.setattr(ClaudeAdapter, "deliver", guarded)
+
+
 class _Every:
     """Holds every project name; lists none."""
 

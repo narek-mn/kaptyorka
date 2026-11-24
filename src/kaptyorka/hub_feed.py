@@ -2,16 +2,19 @@
 from dataclasses import asdict
 from typing import Optional
 
-from kaptyorka import __version__, admin_ops
+from kaptyorka import __version__, admin_ops, stuck
 from kaptyorka.manager import ManagerStore
 from kaptyorka.store import PRIVATE, Agent, Principal, Store, machine_name, private_name, session_id
 
 
 def agent_row(a: Agent, now: float) -> dict:
+    ep = stuck.of_agent(a, now)
     return {"name": a.name, "machine": a.machine, "tool": a.tool, "project": a.project,
             "status": a.status, "activity": a.activity, "label": a.label,
             "background": a.background, "title": a.title, "last_seen_s": round(now - a.last_seen),
-            "idle_s": None if a.active is None else max(0, round(now - a.active))}
+            "idle_s": None if a.active is None else max(0, round(now - a.active)),
+            # silent that long (stuck.py): "task" a background task, "busy" the session itself
+            "stuck": None if ep is None else {"kind": ep["kind"], "s": round(ep["age"])}}
 
 
 def visible(store: Store, principal: Principal, person_id, project: str) -> bool:
