@@ -2093,3 +2093,46 @@ def test_idle_sessions_fold_and_names_match_claude(tmp_path):
     finally:
         stop()
         store.close()
+
+
+def test_background_task_and_stuck_chips(tmp_path):
+    """A finished turn with a background task running shows "Background task", not "Working";
+    a session silent half an hour or more shows an amber "Silent 1 h" (its task) or "Stuck 2 h"
+    (busy with no new step). Screenshots to KAPTYORKA_SHOTS."""
+    import os
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    store = Store(tmp_path / "hub.db")
+    ManagerStore(store).set_enabled(False, "test")
+    stop = start_hub(store)
+    _, token = person(store, "alice", "admin")
+
+    def task(silent):
+        return [{"id": "bq1", "silent_s": silent, "command": "./run_suite.sh"}]
+    store.heartbeat("box-1", [
+        {"key": "k:sync", "tool": "claude-code", "project": "proj-a", "label": "data-sync",
+         "activity": "shell", "write_s": 5, "tasks": task(40)},
+        {"key": "k:night", "tool": "claude-code", "project": "proj-a", "label": "nightly-tests",
+         "activity": "shell", "write_s": 4000, "tasks": task(3700)},
+        {"key": "k:api", "tool": "claude-code", "project": "proj-b", "label": "api-dev",
+         "activity": "busy", "write_s": 7300, "tasks": []},
+        {"key": "k:ui", "tool": "claude-code", "project": "proj-b", "label": "ui-work",
+         "activity": "busy", "write_s": 3, "tasks": []}],
+        principal=store.authenticate(token), facts={"host": "box-1", "os_user": "u"})
+    row = '[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name").textContent === "%s")'
+    chip = row + '.querySelector(".chip")'
+    try:
+        for w, h, tag in ((1440, 900, "desktop"), (390, 844, "phone")):
+            with chrome(w, h) as page:
+                page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
+                page.wait(f'!!({row % "ui-work"})')
+                assert page.js(f'{chip % "data-sync"}.textContent') == "Background task"
+                assert page.js(f'{chip % "data-sync"}.title') == "Waiting on a background task"
+                assert page.js(f'{chip % "nightly-tests"}.textContent') == "Silent 1 h"
+                assert page.js(f'{chip % "nightly-tests"}.classList.contains("warn")')
+                assert page.js(f'{chip % "api-dev"}.textContent') == "Stuck 2 h"
+                assert page.js(f'{chip % "ui-work"}.textContent') == "Working"
+                assert page.js("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+                page.screenshot(shots / f"stuck-{tag}.png")
+    finally:
+        stop()
+        store.close()

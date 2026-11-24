@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.32 (unreleased)
+
+- **Stuck sessions are caught.** A session that ended its turn while a background task ran a wait loop that never ended sat for almost 17 hours with the page saying "Working". The bridge now reports, for Claude Code on Linux, each busy session's live background tasks (its child shells writing to Claude Code's task output files: id, command, how long since they printed) and when the session itself last wrote (messages delivered to it do not count). The hub calls a session stuck when a background task has printed nothing for 30 minutes, or when a busy session has written nothing for 30 minutes. It then asks the session once to check (a finished turn reads it at once), and at 60 minutes tells its person, a worker's boss and the manager how to stop it; the manager hears it once more 30 minutes later. Idle sessions, older bridges and other tools are never judged. Checked on real `claude --bg` sessions (Claude Code 2.1.331): the session file's status is `shell` while a background task runs after the turn, a background Bash call's `timeout` is not enforced, and a message to a finished turn starts a new one.
+- **The page shows "Background task" instead of "Working"** for a session whose turn is over while its background task runs, and an amber "Silent 1 h" or "Stuck 2 h" for a stuck one.
+- **Overnight mode wakes a session stuck on a silent task.** Its Stop hook lets a session with background work wait for it, so a task that never ended kept it asleep until the 16-hour cap. The bridge now asks it, once per silence, to check the task.
+- **Overnight mode no longer turns on from words about a past night** ("the overnight task results", "last night", "it ran all night"), unless the prompt also asks for tonight ("until I'm back", "while I sleep", "by morning", "overnight task:"). The morning report lists only the current night's notes, not those of earlier nights in the same session.
+
 ## 0.9.31
 
 - **A busy machine no longer shows live sessions offline for a moment.** The bridge rebuilt its machine facts (each tool's login check, machine use, git state) once a minute inside the loop that reports sessions; on a loaded machine that took long enough to push a session report past the hub's 30-second online window. The minute rebuild now runs beside the report; the first build and one the hub asks for still run at once. This was the intermittent slow-test failure.

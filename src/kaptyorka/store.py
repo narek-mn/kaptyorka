@@ -1,6 +1,7 @@
 """SQLite storage for the hub: agents, messages, notes, people and their access."""
 import getpass
 import hashlib
+import json
 import re
 import secrets
 import sqlite3
@@ -137,6 +138,11 @@ ADDED_COLUMNS = [
     ("messages", "push_error", "TEXT NOT NULL DEFAULT ''"),  # why the bridge's push failed
     # hub time of the session's last activity, from the bridge's idle_s; NULL: never told
     ("agents", "active", "REAL"),
+    # stuck measures (stuck.py): hub time of the session's own last write, and its live
+    # background tasks as JSON [{"id", "out" (hub time of its last output), "command"}];
+    # NULL: the bridge did not say
+    ("agents", "wrote", "REAL"),
+    ("agents", "tasks", "TEXT"),
 ]
 
 
@@ -173,6 +179,44 @@ def _idle_s(value) -> Optional[float]:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not value >= 0:
         return None  # also NaN
     return min(float(value), MAX_IDLE_S)
+
+
+MAX_TASKS = 20
+STEADY_S = 3  # a re-reported time this close to the kept one is the same moment (clock jitter)
+
+
+def _tasks_in(value) -> Optional[list]:
+    """A bridge's tasks: [{"id", "silent_s", "command"}], at most MAX_TASKS; None: not told."""
+    if not isinstance(value, list):
+        return None
+    out = []
+    for t in value[:MAX_TASKS]:
+        if not isinstance(t, dict) or not isinstance(t.get("id"), str) \
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", t["id"]):
+            continue
+        silent = _idle_s(t.get("silent_s"))
+        if silent is not None:
+            out.append({"id": t["id"], "silent_s": silent,
+                        "command": clean(t.get("command") if isinstance(t.get("command"), str)
+                                         else "", 120)})
+    return out
+
+
+def _tasks_from(text) -> Optional[list]:
+    if not text:
+        return None
+    try:
+        got = json.loads(text)
+    except ValueError:
+        return None
+    return got if isinstance(got, list) else None
+
+
+def _steady(old: Optional[float], new: Optional[float]) -> Optional[float]:
+    """The kept time unless the new one really moved: one silence keeps one start."""
+    if old is not None and new is not None and abs(new - old) < STEADY_S:
+        return old
+    return new
 
 
 def _same_folder(a: Optional[str], b: str) -> bool:
@@ -268,6 +312,8 @@ class Agent:
     background: bool = False
     title: str = ""
     active: Optional[float] = None  # hub time of its last activity; None: unknown
+    wrote: Optional[float] = None  # hub time of its own last write (stuck.py); None: unknown
+    tasks: Optional[list] = None  # its live background tasks (stuck.py); None: unknown
 
 
 @dataclass
@@ -1248,7 +1294,8 @@ class Store:
                      row["status"], row["activity"], row["last_seen"],
                      now - row["last_seen"] < ONLINE_S, row["label"], row["person_id"],
                      row["os_user"], row["host"], row["started"], row["cwd"], row["device_id"],
-                     bool(row["background"]), row["title"], row["active"])
+                     bool(row["background"]), row["title"], row["active"], row["wrote"],
+                     _tasks_from(row["tasks"]))
 
     def _online_rows(self, now):
         return self.db.execute("SELECT * FROM agents WHERE last_seen > ? ORDER BY rowid",
@@ -1261,6 +1308,23 @@ class Store:
         while name in taken:
             name, n = f"{base}-{n}", n + 1
         return name
+
+    def _stuck_measures(self, s: dict, now: float) -> None:
+        """Keep the bridge's write and task silences as hub times, steady while unchanged, so
+        one silence keeps one start (stuck.py counts its episodes by it). Under self.lock."""
+        row = self.db.execute("SELECT wrote, tasks FROM agents WHERE key=?",
+                              (s["key"],)).fetchone()
+        wrote = _steady(row["wrote"] if row else None,
+                        None if s["write_s"] is None else now - s["write_s"])
+        tasks = None
+        if s["tasks"] is not None:
+            old = {t["id"]: t["out"] for t in _tasks_from(row["tasks"] if row else None) or []
+                   if isinstance(t, dict) and isinstance(t.get("out"), (int, float))}
+            tasks = json.dumps([{"id": t["id"], "out": _steady(old.get(t["id"]),
+                                                               now - t["silent_s"]),
+                                 "command": t["command"]} for t in s["tasks"]])
+        self.db.execute("UPDATE agents SET wrote=?, tasks=? WHERE key=?",
+                        (wrote, tasks, s["key"]))
 
     def _touch(self, key, machine, tool, project, now, activity=None, label=None, cwd=None,
                background=None, title=None):
@@ -1399,7 +1463,9 @@ class Store:
                      "activity": (None if s.get("activity") is None
                                   else clean(s["activity"], MAX_ACTIVITY)),
                      # absent (an older bridge) or unknown: never idle
-                     "idle_s": _idle_s(s.get("idle_s"))}
+                     "idle_s": _idle_s(s.get("idle_s")),
+                     # absent or unknown: never stuck
+                     "write_s": _idle_s(s.get("write_s")), "tasks": _tasks_in(s.get("tasks"))}
                     for s in sessions]
         host, os_user, version = (clean(facts.get(k), 80) for k in ("host", "os_user", "version"))
         logs: List[tuple] = []
@@ -1428,6 +1494,7 @@ class Store:
                             s["label"], s["cwd"], s["background"], s["title"])
                 self.db.execute("UPDATE agents SET active=? WHERE key=?", (  # the latest only
                     None if s["idle_s"] is None else now - s["idle_s"], s["key"]))
+                self._stuck_measures(s, now)
                 if not manager_held:  # the manager's own shim names its machine
                     self._machine_now(s["key"], machine, now)
                 if host:

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import __version__, facts, http, identity, offhub, optin, orders, overnight, paths, repos, skills_sync, usage
+from kaptyorka import __version__, facts, http, identity, offhub, optin, orders, overnight, paths, repos, skills_sync, stuck, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES, Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
@@ -80,6 +80,7 @@ class Bridge:
         self.seen_ids: Dict[int, dict] = self._load_seen()
         self.pending: Dict[str, tuple] = {}  # worker -> (order, launch result, monotonic start)
         self._sessions: list = []  # the session objects of the last heartbeat
+        self._sessions_at = time.time()  # when they were read
         self.stop = threading.Event()
         self._problems: Dict[str, Optional[str]] = {}
         self.pending_confirm = False  # a new token is saved but the hub has not confirmed it
@@ -269,7 +270,7 @@ class Bridge:
         if self.hub and ask != self._gpu_queue_ask:  # a lost answer keeps the last ask
             self._gpu_queue_ask = ask
             self._facts_at = None  # switched on, changed or off: read it next beat
-        self._sessions = objs
+        self._sessions, self._sessions_at = objs, time.time()
         self._refresh_name()
         self._report("heartbeat", None if status in (200, 204)
                      else f"hub answered {status} to heartbeat" + _said(status, answer))
@@ -637,10 +638,18 @@ class Bridge:
             if r.returncode:
                 return False, "restart failed (tmux said no)"
             return True, "restarted with claude --resume in tmux"
+        def silent(sid: str):
+            """stuck.find on the last heartbeat's sessions, its ages moved to now: one silence
+            keeps one start even while heartbeats fail and the list grows old."""
+            s = next((s for s in self._sessions if s.key == f"claude:{sid}"), None)
+            ep = None if s is None else stuck.find(s.activity, s.write_s, s.tasks)
+            if ep is not None:
+                ep["age"] += max(0.0, time.time() - self._sessions_at)
+            return ep
         try:
             overnight.watch(lambda sid: offhub.session(sid, claude.home) is not None,
                             lambda sid, text: claude.deliver(f"claude:{sid}", text),
-                            resume, overnight.finish)
+                            resume, overnight.finish, silent=silent)
         except Exception as e:
             self.log(f"overnight watch failed: {e}")
 
