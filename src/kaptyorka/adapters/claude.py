@@ -15,7 +15,7 @@ from kaptyorka import offhub, paths, stuck
 from kaptyorka.adapters.base import (NIGHT_GUARD, DeliveryError, Session, connect_unix, drop_hooks, is_our_hook, login_output,
                                      mentions_hook, merge_json, write_atomic)
 
-CLAUDE_CODE_TESTED = "2.1.319"
+CLAUDE_CODE_TESTED = "2.1.331"  # moves only after tests/test_claude_compat_slow.py passes (CLAUDE.md)
 TITLE_TAIL = 256 * 1024  # how much of a transcript's end is read for its title
 TITLE_HEAD = 64 * 1024  # the first read also looks at the start, where the automatic title is
 MAX_TITLE = 80

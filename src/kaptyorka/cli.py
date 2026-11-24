@@ -356,6 +356,12 @@ def _status_of(cfg: dict) -> int:
         return 1
     if own:  # it answered, so it runs, even in the foreground
         print("hub: running")
+        try:  # the staged update of this hub's version (an admin token only)
+            roll = http.request("GET", hub.rstrip("/") + "/api/rollout", cfg["token"])
+        except http.HubUnreachable:
+            roll = None
+        if roll and roll[0] == 200 and isinstance(roll[1], dict) and roll[1].get("line"):
+            print(f"rollout: {roll[1]['line']}")
     if got[0] == 401:
         said = got[1] if isinstance(got[1], str) and got[1] != "unauthorized" else ""
         print(f"hub: {said}" if said else "hub: refused this machine's token (ask your admin for a new invite link, "
@@ -1199,6 +1205,21 @@ def _fleet_list(args) -> int:
     return 0
 
 
+def _fleet_rollout(args) -> int:
+    """The staged update of the hub's version: status, go (update the rest now), hold."""
+    got = _admin_call("GET", "/api/rollout") if args.action == "status" else \
+        _admin_call("POST", "/api/rollout", {"go": args.action == "go"})
+    if got is None:
+        return 1
+    if got[0] != 200:
+        print(_problem(got), file=sys.stderr)
+        return 1
+    print(got[1]["line"])
+    if args.action == "status" and got[1].get("behind"):
+        print("not updated yet: " + ", ".join(got[1]["behind"]))
+    return 0
+
+
 def _backup(args) -> int:
     from kaptyorka import backup
 
@@ -1439,13 +1460,16 @@ def entry() -> None:
     rs.add_argument("file", help="the backup file")
     rs.set_defaults(run=_restore)
     fl = sub.add_parser("fleet", help="set up other machines over ssh, or list the team's machines")
-    fs = fl.add_subparsers(dest="fleet_cmd", required=True, metavar="{add,list}")
+    fs = fl.add_subparsers(dest="fleet_cmd", required=True, metavar="{add,list,rollout}")
     fa = fs.add_parser("add", help="install kaptyorka on other machines over ssh and join them as a person's")
     fa.add_argument("targets", nargs="+", metavar="user@host")
     fa.add_argument("--person", required=True, help="the person these machines belong to")
     fa.add_argument("--key-from", help="file with one NAME=value line, sent to the bridge's environment")
     fa.set_defaults(run=_fleet_add)
     fs.add_parser("list", help="list the team's machines and who owns them").set_defaults(run=_fleet_list)
+    fr = fs.add_parser("rollout", help="the staged update after the hub's own: status, go (update the rest now) or hold")
+    fr.add_argument("action", choices=["status", "go", "hold"], nargs="?", default="status")
+    fr.set_defaults(run=_fleet_rollout)
     lc = sub.add_parser("login-copy", help="copy this machine's Claude Code, Codex and OpenCode logins to another machine of yours over ssh")
     lc.add_argument("target", help="user@host")
     lc.add_argument("--tool", choices=["claude", "codex", "opencode"],
