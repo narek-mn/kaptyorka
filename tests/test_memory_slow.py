@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import person
+from helpers import allowed_tools, person, remove_transcripts
 from kaptyorka import bridge as bridge_mod
 from kaptyorka import facts
 from kaptyorka import identity
@@ -99,10 +99,7 @@ def test_done_check_blocks_a_real_session_once(hub, tmp_path, monkeypatch):
              "--settings", str(tmp_path / "settings.json"),
              "--mcp-config", str(tmp_path / "mcp.json"), "--strict-mcp-config",
              "--permission-mode", "acceptEdits",
-             # a background session can't ask for permission: a look around first (pwd, ls)
-             # would wait forever, so read-only commands are allowed too
-             "--allowedTools=Bash(git *),Bash(pwd),Bash(ls *),Bash(cat *),Bash(head *),Write,"
-             "mcp__kaptyorka",
+             allowed_tools("Bash(git *)", "Write", "Edit", "mcp__kaptyorka"),
              TASK.format(git=f"git --git-dir={git_dir} --work-tree=.")],
             cwd=repo, capture_output=True, text=True, timeout=60)
         if "not trusted" in (r.stdout + r.stderr):
@@ -141,8 +138,5 @@ def test_done_check_blocks_a_real_session_once(hub, tmp_path, monkeypatch):
         for target in {*([job] if job else []), *_jobs(repo)}:
             for step in ("stop", "rm"):
                 _quiet(["claude", step, target])
+        remove_transcripts(scratch, real_home)
         shutil.rmtree(scratch, ignore_errors=True)
-        # the transcript folder Claude Code made for it: ~/.claude/projects/<path, / and . as ->
-        tag = scratch.name.lstrip(".")
-        for p in (real_home / ".claude" / "projects").glob(f"*{tag}*"):
-            shutil.rmtree(p, ignore_errors=True)

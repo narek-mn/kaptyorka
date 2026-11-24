@@ -12,7 +12,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -20,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from conftest import start_hub
-from helpers import person
+from helpers import allowed_tools, person, remove_transcripts, scratch_dir
 from kaptyorka import bridge as bridge_mod
 from kaptyorka import identity, stuck
 from kaptyorka.adapters.base import DeliveryError
@@ -37,12 +36,7 @@ TASK = ("Use the Bash tool with run_in_background set to true to run exactly"
 
 
 def _scratch() -> Path:
-    """_scratch_folder's place (beside the repository), also from a git worktree under
-    .claude/worktrees, which Claude Code does not trust."""
-    base = Path(__file__).resolve().parents[1]
-    while ".claude" in base.parts:
-        base = base.parent
-    return Path(tempfile.mkdtemp(prefix=".kaptyorka-worker-", dir=base.parent))
+    return scratch_dir(".kaptyorka-worker-")
 
 
 @pytest.mark.slow
@@ -85,7 +79,7 @@ def test_a_silent_background_task_is_found_and_the_session_woken(tmp_path, monke
         thread.start()
         r = subprocess.run(["claude", "--bg", "-n", "kaptyorka-stuck-slow", "--model", "haiku",
                             "--strict-mcp-config", "--permission-mode", "acceptEdits",
-                            "--allowedTools=Bash", TASK],
+                            allowed_tools("Bash"), TASK],
                            cwd=repo, capture_output=True, text=True, timeout=60)
         if "not trusted" in (r.stdout + r.stderr):
             pytest.skip(f"Claude Code does not trust {repo}; trust {scratch.parent} once")
@@ -130,10 +124,8 @@ def test_a_silent_background_task_is_found_and_the_session_woken(tmp_path, monke
                 _quiet(["claude", step, target])
         stop()
         store.close()
+        remove_transcripts(scratch, real_home)
         shutil.rmtree(scratch, ignore_errors=True)
-        tag = re.sub(r"[^A-Za-z0-9]", "-", scratch.name.lstrip("."))  # as Claude Code names it
-        for p in (real_home / ".claude" / "projects").glob(f"*{tag}*"):
-            shutil.rmtree(p, ignore_errors=True)
 
 
 @pytest.mark.slow

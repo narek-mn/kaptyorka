@@ -14,12 +14,13 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
 from pathlib import Path
 
 import pytest
+
+from helpers import allowed_tools, remove_transcripts, scratch_dir
 
 PORT = 18765
 HUB = f"http://127.0.0.1:{PORT}"
@@ -54,7 +55,7 @@ def _wait(what: str, seconds: float, check) -> None:
 
 def _start_session(cwd: Path, name: str, prompt: str) -> str:
     r = subprocess.run(["claude", "--bg", "-n", name, "--model", "haiku",
-                        "--permission-mode", "acceptEdits", "--allowedTools=mcp__kaptyorka",
+                        "--permission-mode", "acceptEdits", allowed_tools("mcp__kaptyorka"),
                         prompt], cwd=cwd, capture_output=True, text=True, timeout=60)
     if "Workspace not trusted" in r.stdout + r.stderr:
         pytest.skip(f"Claude Code does not trust {cwd.parent.parent}; trust it once to run this")
@@ -86,7 +87,7 @@ def test_two_sessions_talk():
     real_home_existed = real_home.exists()
     # Claude Code refuses --bg in an untrusted folder, and /tmp is not trusted; a hidden folder
     # beside the repo inherits the trust of its parent. The session names come from the folders.
-    root = Path(tempfile.mkdtemp(prefix=".kaptyorka-e2e-", dir=Path(__file__).resolve().parents[2]))
+    root = scratch_dir(".kaptyorka-e2e-")
     proj_a, proj_b = root / "proj-a", root / "proj-b"
     proj_a.mkdir()
     proj_b.mkdir()
@@ -156,5 +157,6 @@ def test_two_sessions_talk():
         if not real_home_existed:
             with contextlib.suppress(OSError):
                 real_home.rmdir()
+        remove_transcripts(root)
         shutil.rmtree(root, ignore_errors=True)
     assert _git_status() == git_before
