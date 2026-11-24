@@ -255,6 +255,8 @@ button.chip.bad:hover { border-color: var(--danger); }
 .m-host b { font-weight: var(--fw-semi); color: var(--ink); overflow-wrap: anywhere; }
 .m-kind { font-size: var(--fs-sm); color: var(--faint); }
 .m-use { display: block; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-sm); font-family: var(--mono); color: var(--muted); }
+/* an account at its usage limit (limits.py): one amber line each, under the use line */
+.m-limit { display: block; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-sm); color: var(--risk); }
 .m-acct { min-height: 52px; padding-left: var(--s-5); }
 .m-acct .a-top { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
 .m-acct .a-top b { min-width: 0; }
@@ -1516,9 +1518,11 @@ a.p-main { color: inherit; text-decoration: none; }
     var agents = feed.agents.filter(function (a) { return a.role !== "manager"; });
     var mgr = feed.agents.filter(function (a) { return a.role === "manager"; })[0] || null;
     if (admin) list.push({ key: "activity", name: "Activity", icon: "i-list", cls: "activity", sub: "", tip: "Every message", read: true });
-    var ms = mgr ? "up" : feed.manager || "off";
-    list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms, sub: mgr ? mgr.where || mgr.machine : "", act: mgr ? mgr.activity || "" : "",
-                to: "manager", tip: "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : "")
+    /* waiting: its account is at its usage limit; the grey line says until when */
+    var ms = feed.manager === "waiting" ? "waiting" : mgr ? "up" : feed.manager || "off";
+    list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms,
+                sub: ms === "waiting" ? String(feed.manager_why || "").replace(/^waiting for its usage limit, resets /, "limit resets ").replace(/^waiting for its usage limit \(reset time unknown\)$/, "limit, reset unknown") : mgr ? mgr.where || mgr.machine : "", act: mgr ? mgr.activity || "" : "",
+                to: "manager", tip: "the team's manager session" + (ms === "waiting" ? "\n" + feed.manager_why : "") + (mgr && mgr.status ? "\n" + mgr.status : "")
                   + (feed.manager_load ? "\nload: " + feed.manager_load : "") });
     agents.forEach(function (a) {
       var tip = [a.label || a.title ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status,
@@ -1906,7 +1910,7 @@ a.p-main { color: inherit; text-decoration: none; }
      needs none: the green dot on the badge says it */
   function statusChip(e) {
     if (e.icon) return null;
-    if (e.state) return chip(e.state, e.state === "starting" ? "active" : "idle", "n");
+    if (e.state) return chip(e.state, e.state === "starting" ? "active" : e.state === "waiting" ? "warn" : "idle", "n");
     var bg = e.bg ? el("span", { "class": "bg-lead" + (e.online ? " on" : ""), title: "background job" }, [icon("i-clock", 12)]) : null;
     if (!e.online) return chip("Offline", "idle", null, bg);
     var c;
@@ -3355,11 +3359,11 @@ a.p-main { color: inherit; text-decoration: none; }
      owner. Each computer: its size and use (admins only) and its GPU queue line */
   function machineHosts() {
     var hosts = {}, own = {}, listed = {};
-    function host(name) { return hosts[name] || (hosts[name] = { host: name, kind: "", use: "", queue: "", rows: [] }); }
+    function host(name) { return hosts[name] || (hosts[name] = { host: name, kind: "", use: "", queue: "", limits: [], rows: [] }); }
     account.machines.forEach(function (d) { own[d.id] = d; });
     if (isAdmin()) machines.forEach(function (m) {
       var h = host(m.host);
-      h.kind = m.kind || ""; h.use = m.use || ""; h.queue = m.gpu_queue || "";
+      h.kind = m.kind || ""; h.use = m.use || ""; h.queue = m.gpu_queue || ""; h.limits = m.limits || [];
       m.devices.forEach(function (d) {
         var mine = own[d.id];
         if (mine) listed[d.id] = 1;
@@ -3468,8 +3472,9 @@ a.p-main { color: inherit; text-decoration: none; }
     return el("div", { "class": "panel m-group", "data-host": h.host }, [
       el("div", { "class": "m-head" }, [avatar("machine", h.host, { dot: on }), el("div", { "class": "m-head-text" }, [
         el("div", { "class": "m-host" }, [el("b", { text: h.host }), h.kind ? el("span", { "class": "m-kind", text: h.kind }) : null]),
-        h.use ? el("span", { "class": "m-use", title: "How busy this computer is", text: h.use }) : null, queueLine(h.queue),
-        warnChips(placed.host[h.host])])])
+        h.use ? el("span", { "class": "m-use", title: "How busy this computer is", text: h.use }) : null, queueLine(h.queue)]
+        .concat((h.limits || []).map(function (l) { return el("span", { "class": "m-limit", title: "Sessions of this account wait until then; new work goes elsewhere", text: l }); }),
+                [warnChips(placed.host[h.host])]))])
     ].concat(rows.map(function (r) { return acctRow(r, placed.acct[h.host + "\n" + (r.d.os_user || "")]); })));
   }
   function setFilter(f) {

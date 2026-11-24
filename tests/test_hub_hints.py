@@ -184,6 +184,18 @@ def test_claude_prompt_on_the_hub_adds_the_hint_after_the_brief(laptop, monkeypa
     assert out.startswith("the brief\n\nkaptyorka hub: to see what other sessions do, call who")
 
 
+
+def test_opencode_prompt_on_the_hub_adds_the_hint(laptop, monkeypatch, capsys):
+    """kaptyorka's OpenCode plugin passes the prompt's text on stdin; the hint goes into the
+    system text the plugin adds, like Claude Code's."""
+    monkeypatch.setattr(hook.http, "request", lambda *a, **k: (200, "the brief"))
+    as_session(monkeypatch, "opencode:ses_1", "opencode", TEAM)
+    hook.main("opencode", "prompt", json.dumps({"prompt": "what is bob doing?"}))
+    assert "the brief\n\nkaptyorka hub: to see what other sessions do, call who" in \
+        capsys.readouterr().out  # after the state line OpenCode gets with each prompt
+    hook.main("opencode", "prompt", json.dumps({"prompt": HAND_BACK}))
+    assert "kaptyorka hub:" not in capsys.readouterr().out
+
 def test_refresh_keeps_the_names_the_person_can_see(laptop, monkeypatch):
     feed = {"agents": [
         {"id": "a", "person": "alice", "mine": True, "team": False, "machine": "box-1"},

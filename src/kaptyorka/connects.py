@@ -247,8 +247,10 @@ class ConnectStore:
     def due_reminders(self, now: float) -> List[str]:
         """The one reminder each open request gets, an hour after it was filed."""
         with self.lock:
+            # filed_by: one filed through door_request; a request from before 0.9.11 never
+            # reminds (it would come at the first tick after the update, however old)
             rows = self.db.execute("SELECT id FROM connects WHERE decided_at IS NULL AND"
-                                   " reminded_at IS NULL AND created<=?",
+                                   " reminded_at IS NULL AND filed_by!='' AND created<=?",
                                    (now - REMIND_S,)).fetchall()
             out = []
             for r in rows:

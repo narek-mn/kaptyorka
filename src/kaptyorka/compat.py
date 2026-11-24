@@ -125,6 +125,14 @@ DEPS: Tuple[Dep, ...] = (
         "V2: GET /api/session lists sessions; POST /api/session/<id>/prompt",
         "V2 sessions and push", "V2 /api/session gives no list",
         "its sessions are not listed", True),
+    Dep("opencode.activity", "opencode",
+        "session `time.updated` (ms, moves per step); V1 GET /session/status, V2 GET"
+        " /api/session/<id> time.busy/time.idle",
+        "idle time, working or idle, the busy-stuck check", "session times or status not readable",
+        "no idle time or stuck check for OpenCode", True),
+    Dep("opencode.limit_events", "opencode",
+        "plugin events: V1 `session.error`, V2 session hook `retry` with the error",
+        "why a session stopped (usage limit)", "", "", True, probed=False),
     Dep("opencode.tui_plugin", "opencode",
         "V2: a plugins/<dir>/tui.js TUI plugin (sst/opencode v2.3.2 packages/plugin/src/tui)",
         "/hub, the hub indicator, which session a window shows", "", "", True, probed=False),
@@ -135,6 +143,14 @@ DEPS: Tuple[Dep, ...] = (
     Dep("codex.app_server", "codex",
         "~/.codex/app-server-control/app-server-control.sock: thread/loaded/list, thread/read",
         "the session list", "app-server thread list changed", "its sessions are not listed", True),
+    Dep("codex.thread_status", "codex",
+        "thread/read `status` {type: idle | active, activeFlags}, parentThreadId, source",
+        "working or idle, subagents under their parent", "thread status changed",
+        "activity unknown", True),
+    Dep("codex.rate_limits", "codex",
+        "app-server account/rateLimits/read: rateLimits.primary/secondary {usedPercent,"
+        " resetsAt}, ordinaryUsageAllowed (rust-v0.166.0 v2/account.rs)",
+        "an account at its Codex usage limit", "", "", False, probed=False),
     Dep("codex.turn_start", "codex", "app-server turn/start {threadId, input} on a loaded thread",
         "push into a session", "", "", False, probed=False),
 )
@@ -443,6 +459,35 @@ def p_opencode_api(ctx: Ctx):
     return BROKEN, f"GET /api/session answered {status}"
 
 
+def p_opencode_activity(ctx: Ctx):
+    from kaptyorka.adapters import opencode
+
+    if opencode.major() < 2:
+        for pid, port in opencode.find_ports().items():
+            try:
+                status, data = opencode._call(pid, port, "GET", "/session/status")
+            except (OSError, ValueError):
+                continue
+            return (OK, "") if status == 200 and isinstance(data, dict) else \
+                (BROKEN, f"GET /session/status answered {status}")
+        return UNKNOWN, "no V1 TUI listening"
+    svc = opencode.service()
+    if svc is None:
+        return UNKNOWN, "no V2 service running"
+    try:
+        status, data = opencode._v2_call(svc, "GET", "/api/session?limit=1")
+        rows = data.get("data") if isinstance(data, dict) else None
+        if not rows:
+            return UNKNOWN, "no session yet"
+        status, data = opencode._v2_call(svc, "GET", f"/api/session/{rows[0]['id']}")
+    except (OSError, KeyError, TypeError) as e:
+        return UNKNOWN, str(e)[:100]
+    t = ((data or {}).get("data") or {}).get("time") if isinstance(data, dict) else None
+    if not isinstance(t, dict) or not isinstance(t.get("updated"), (int, float)):
+        return BROKEN, "session has no time.updated"
+    return OK, ""
+
+
 # --- Codex probes ----------------------------------------------------------------------
 
 def p_codex_version(ctx: Ctx):
@@ -475,6 +520,29 @@ def p_codex_app_server(ctx: Ctx):
     return OK, ""
 
 
+def p_codex_thread_status(ctx: Ctx):
+    from kaptyorka.adapters.codex import Rpc, RpcError, codex_home, default_socket
+
+    sock = default_socket(ctx.home) if not os.environ.get("CODEX_HOME") else \
+        codex_home() / "app-server-control" / "app-server-control.sock"
+    if not sock.exists():
+        return UNKNOWN, "app-server daemon not running"
+    try:
+        with Rpc(sock) as rpc:
+            ids = rpc.call("thread/loaded/list", {})["data"]
+            if not ids:
+                return UNKNOWN, "no loaded thread"
+            t = rpc.call("thread/read", {"threadId": ids[0]})["thread"]
+    except (ConnectionRefusedError, FileNotFoundError):
+        return UNKNOWN, "app-server daemon not running"
+    except (OSError, RpcError, KeyError, TypeError, ValueError) as e:
+        return BROKEN, str(e)[:100]
+    s = t.get("status")
+    kind = s.get("type") if isinstance(s, dict) else s
+    return (OK, "") if kind in ("idle", "active", "notLoaded", "systemError") else \
+        (BROKEN, f"thread status {str(s)[:60]}")
+
+
 PROBES: Dict[str, Callable[[Ctx], Tuple[str, str]]] = {
     "claude.version": p_claude_version, "claude.cli": p_claude_cli, "claude.auth": p_claude_auth,
     "claude.session_file": p_claude_session_file, "claude.status": p_claude_status,
@@ -486,7 +554,9 @@ PROBES: Dict[str, Callable[[Ctx], Tuple[str, str]]] = {
                              "claude.stop", "claude.rm")},
     "opencode.version": p_opencode_version, "opencode.v1_server": p_opencode_v1,
     "opencode.service": p_opencode_service, "opencode.api_session": p_opencode_api,
+    "opencode.activity": p_opencode_activity,
     "codex.version": p_codex_version, "codex.app_server": p_codex_app_server,
+    "codex.thread_status": p_codex_thread_status,
 }
 
 

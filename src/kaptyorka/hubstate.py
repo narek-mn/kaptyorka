@@ -205,6 +205,11 @@ def statusline(command: str, stdin: str) -> int:
         data = {}
     data = data if isinstance(data, dict) else {}
     out, rc = _run(command, stdin) if command else ("", 0)
+    try:  # this account's usage limits, for the bridge (limits.py)
+        from kaptyorka import limits
+        limits.save_statusline(data)
+    except Exception:
+        pass
     sid = data.get("session_id")
     try:
         word = state(sid, str(data.get("cwd") or "")) if isinstance(sid, str) else None

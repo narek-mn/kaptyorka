@@ -214,7 +214,7 @@ def test_doctor_shows_broken_internals_and_notes_what_it_could_not_check(home):
     assert not c.ok and c.detail == "inbox socket not found (push off: sessions read the hub on their next turn)"
     assert "tasks" in c.info and "transcript" in c.info
     c = doctor._internals("codex", home, Run({"--version": (0, "codex-cli 0.166.0\n")}))
-    assert c.ok and c.info == "not checked now: app_server"  # no daemon running
+    assert c.ok and c.info == "not checked now: app_server, thread_status"  # no daemon running
 
 
 # --- each feature degrades on its own when its internal breaks ---------------------------
