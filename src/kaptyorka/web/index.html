@@ -1501,6 +1501,16 @@ a.p-main { color: inherit; text-decoration: none; }
       var p = parties(m);
       return m.id > r && !notice(m) && p[0] !== ME && p.indexOf(ME) > 0 && inConv(m, k); }).length;
   }
+  /* the name a session had in its last message, for its chat once it is offline */
+  function nameOfId(k, msgs) {
+    for (var i = msgs.length - 1; i >= 0; i--) {
+      var m = msgs[i];
+      if (m.fromId === k) return m.sender;
+      var j = m.toId.indexOf(k);
+      if (j >= 0) return m.to[j];
+    }
+    return k;
+  }
   function buildEntries(msgs) {
     var admin = isAdmin(), list = [];
     var agents = feed.agents.filter(function (a) { return a.role !== "manager"; });
@@ -1515,8 +1525,9 @@ a.p-main { color: inherit; text-decoration: none; }
                  a.activity ? "doing: " + a.activity : null,
                  a.doors && a.doors.length ? "doors: " + a.doors.join(", ") : null,
                  isAdmin() ? harness(a.harness) : null].filter(Boolean).join("\n");
-      /* a hidden project: the row goes by the session's handle, which also tells two apart */
-      var k = hidden(a) ? a.id : a.name;
+      /* every session's chat goes by its handle: a name can move to another session */
+      var k = a.id;
+      if (readMap && readMap[k] == null && readMap[a.name] != null) readMap[k] = readMap[a.name];  /* read marks kept by name before */
       /* first on the grey line: never cut off. A session still busy or waiting on a task (a
          stuck one too) is not idle, however old its last write: it stays in sight */
       var idle = a.worker || (a.activity && a.activity !== "idle") ? "" : idleText(a.idle_s);
@@ -1535,7 +1546,8 @@ a.p-main { color: inherit; text-decoration: none; }
       list.push({ key: x, name: x.slice(1), icon: "i-person", sub: "", to: x.slice(1), tip: "On the web page" });
     });
     if (!list.some(function (e) { return e.key === conv; }) && conv !== "activity" && conv.charAt(0) !== "@" && !isGrp(conv)) {
-      list.push({ key: conv, name: labelOf(conv) || shortName(conv), online: false, sub: conv.split("/")[0], to: conv, tip: conv + "\noffline" });
+      var was = nameOfId(conv, msgs);
+      list.push({ key: conv, name: labelOf(conv) || shortName(was), online: false, sub: was.split("/")[0], to: conv, tip: was + "\noffline" });
     }
     list.forEach(function (e) { e.unread = e.read || e.off ? 0 : unread(msgs, e.key); });
     $("team-empty").hidden = agents.length > 0;
@@ -1684,22 +1696,18 @@ a.p-main { color: inherit; text-decoration: none; }
   }
   /* a feed that lost a session for a poll or two (a missed heartbeat, a tool between calls):
      the session stays where it was, as it was, for GRACE polls; then it goes. The same for a
-     group and for one session of a group. A session whose name changed keeps its open chat */
+     group and for one session of a group. Rows go by handle, so a renamed session keeps
+     its chat, draft and read mark, and two that swap names keep their own */
   var GRACE = 2, kept = { agents: {}, order: [], groups: {}, gorder: [], members: {} };
   var wt = { last: {}, pulse: {}, fresh: {}, seen: {} };  /* per group: last message id, when its rail pulsed; groups as last seen */
-  function keyOf(a) { return hidden(a) ? a.id : a.name; }
-  function renamed(was, now) {
-    if (conv === was) conv = now;
-    if (drafts[was] != null && drafts[now] == null) drafts[now] = drafts[was];
-    if (readMap && readMap[was] != null && readMap[now] == null) readMap[now] = readMap[was];
-  }
+  function keyOf(a) { return a.id; }  /* a session's chat: its handle, never its name */
   function steady(f) {
     var byId = {}, out = (f.agents || []).slice();
     out.forEach(function (a) { byId[a.id] = a; });
     kept.order.forEach(function (id, i) {
       var k = kept.agents[id], a = byId[id];
       if (!k) return;
-      if (a) { if (keyOf(a) !== keyOf(k.a)) renamed(keyOf(k.a), keyOf(a)); return; }
+      if (a) return;
       if (++k.miss > GRACE) { delete kept.agents[id]; return; }
       var prev = null;
       for (var j = i - 1; j >= 0 && !prev; j--) prev = byId[kept.order[j]] || null;
@@ -1952,7 +1960,7 @@ a.p-main { color: inherit; text-decoration: none; }
     var rows = [];
     messages.forEach(function (m) {
       var last = rows[rows.length - 1];
-      if (last && last.sender === m.sender && last.text === m.text && Math.abs(m.created - last.created) <= 1) {
+      if (last && last.sender === m.sender && last.fromId === (m.sender_id || "") && last.text === m.text && Math.abs(m.created - last.created) <= 1) {
         last.to.push(m.to);
         last.toMgr.push(!!m.to_manager);
         last.toId.push(m.to_id || "");
@@ -1969,12 +1977,12 @@ a.p-main { color: inherit; text-decoration: none; }
   function notice(m) { return m.kind !== "message" || m.sender === "hub"; }
   function fromMe(m) {
     if (m.web) return !!me && m.sender === me.person;
-    return feed.agents.some(function (a) { return a.mine && a.name === m.sender; });
+    return feed.agents.some(function (a) { return a.mine && (m.fromId ? a.id === m.fromId : a.name === m.sender); });
   }
   function senderBadge(m) {
     if (m.web) return avatar("person", m.sender);
     if (m.fromMgr || sessionKey(m.sender) === "mgr") return avatar("manager", "manager");
-    var a = feed.agents.filter(function (x) { return x.name === m.sender || (m.fromId && x.id === m.fromId); })[0];
+    var a = feed.agents.filter(function (x) { return m.fromId ? x.id === m.fromId : x.name === m.sender; })[0];
     return a && TOOLS[a.tool] ? avatar("session", "", { tool: a.tool }) : avatar("session", senderName(m));
   }
   function senderName(m) {
@@ -2288,7 +2296,7 @@ a.p-main { color: inherit; text-decoration: none; }
     var mineOut = outbox.some(function (o) { return o.conv === conv && o.state !== "failed"; });
     if (!mineOut && (!said || parties(said)[0] !== ME)) return null;
     var e = entryOf[conv] || {};
-    var a = feed.agents.filter(function (x) { return conv === "mgr" ? x.role === "manager" : x.role !== "manager" && (hidden(x) ? x.id : x.name) === conv; })[0];
+    var a = feed.agents.filter(function (x) { return conv === "mgr" ? x.role === "manager" : x.role !== "manager" && x.id === conv; })[0];
     if (conv === "mgr" && !a && ["starting", "up"].indexOf(feed.manager) >= 0) return { what: "waking the manager\u2026", cls: "waking" };
     if (!a || !a.activity || a.activity === "idle") return null;
     if (WAITING[a.activity]) return { who: e.name || "manager", what: WAITING[a.activity], cls: "waiting" };
@@ -2380,7 +2388,7 @@ a.p-main { color: inherit; text-decoration: none; }
   /* the warnings about the machine the open chat's session runs on */
   function chatWarns(rows) {
     var cur = isGrp(conv) || askOpen ? null : conv === "mgr" ? feed.agents.filter(function (a) { return a.role === "manager"; })[0]
-      : feed.agents.filter(function (a) { return a.name === conv || a.id === conv; })[0];
+      : feed.agents.filter(function (a) { return a.id === conv; })[0];
     if (!cur) return [];
     return rows.filter(function (w) {
       var n = w.os_user && w.host ? w.os_user + "@" + w.host : w.host;

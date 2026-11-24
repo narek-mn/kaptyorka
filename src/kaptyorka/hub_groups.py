@@ -177,14 +177,13 @@ def conversation(store: Store, principal: Principal, gid: str,
     """Every message between the sessions of the viewer's group `gid`, oldest first, masked as
     the feed masks them, and only those the viewer may read (_reader); None when the viewer
     has no such group. A hidden partner is never in the group, so its messages never come back."""
-    from kaptyorka.hub_feed import manager_sides, masked
+    from kaptyorka.hub_feed import message_row
 
     group = next((g for g in for_viewer(store, principal, links(store, manager_id), store.clock())
                   if g["id"] == gid), None)
     if group is None:
         return None
     keys, ok = [m["key"] for m in group["members"]], _reader(store, principal)
-    return [masked(store, principal, manager_sides(m, manager_id),
-                   (("_from", "sender"), ("_to", "to")))
+    return [message_row(store, principal, m, manager_id)
             for m in store.messages_among(keys) if ok(m["_from"], m["_to"])]
 
