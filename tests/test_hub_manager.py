@@ -401,7 +401,7 @@ def test_busy_goes_to_manager_when_online(hub):
     b, _, bob = busy_setup(hub)
     assert ask(hub, bob) == ("busy: box-1 has alice's session in that folder; the manager is"
                              " asking them (request 1); you will hear back here")
-    assert inbox(mgr, me) == [manager.text_busy("bob", "proj-a", "box-1", "alice", "/w/proj-a", 1, NO_REPORT)]
+    assert inbox(mgr, me) == [manager.text_busy("bob", "proj-a", "box-1", "alice", "/w/proj-a", 1, NO_REPORT, [])]
     assert hub.mm.request(1)["boss_key"] == "k:boss" and poll(hub, b) == []
 
 
@@ -499,9 +499,9 @@ def test_decide_twice_and_by_member_refused(hub):
     ask(hub, bob)
     assert "only the manager" in call_error(bob, BOSS, "work_decide", request_id=1,
                                             machine="wait", reason="x")
-    run(call(mgr, me, "work_decide", request_id=1, machine="wait", reason="x"))
-    assert "already decided: wait" in call_error(mgr, me, "work_decide", request_id=1,
-                                                 machine="wait", reason="y")
+    run(call(mgr, me, "work_decide", request_id=1, machine="no", reason="x"))
+    assert "already decided: no" in call_error(mgr, me, "work_decide", request_id=1,
+                                               machine="wait", reason="y")
     assert "reason" in call_error(mgr, me, "work_decide", request_id=1, machine="wait",
                                   reason="")
 
@@ -1155,7 +1155,7 @@ def test_busy_work_between_manager_runs_reaches_it(hub, clock):
     assert ask(hub, bob).startswith("busy: box-1 has alice's session in that folder; the"
                                     " manager is asking them (request 1)")
     texts = woken(hub, b)
-    busy = manager.text_busy("bob", "proj-a", "box-1", "alice", "/w/proj-a", 1, NO_REPORT)
+    busy = manager.text_busy("bob", "proj-a", "box-1", "alice", "/w/proj-a", 1, NO_REPORT, [])
     assert any(t.endswith(busy) for t in texts)
 
 
@@ -1280,7 +1280,7 @@ def test_heavy_use_holds_with_numbers(hub):
     _, _, bob = in_use_setup(hub, use=HEAVY)
     assert ask(hub, bob).startswith("busy: box-1 is in use by alice;")
     text = inbox(mgr, me)[0]
-    assert text == manager.text_in_use("bob", "proj-a", HOST, ["alice"], [ALICE_LINE], 1)
+    assert text == manager.text_in_use("bob", "proj-a", HOST, ["alice"], [ALICE_LINE], 1, [])
     assert "Rule of thumb: heavy means" in text
 
 

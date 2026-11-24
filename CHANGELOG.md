@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.35 (unreleased)
+
+- **The manager can close the workers it approved.** It promised "tell me when the test is over and I'll close it", then `close_worker` answered "no worker ... of yours": a worker started on its decision belongs to the asker. Now the manager may close a worker the hub started on a request it decided, for that request's person, and no other: `close_worker(name, reason)` needs who asked, the close is logged with it, and the worker's boss hears "the manager closed worker `...`: ...". Its rules say exactly that, so it never promises more. `workers` lists those workers with their real state (before, it saw only itself).
+- **Request notices say which workers run there now.** The manager answered "angh already has gros-w6" minutes after that worker had closed itself: it decided from memory, as nothing told it about the close. Each busy-machine and machine-in-use notice now lists the live workers on that machine from the database at that moment ("Live workers on box-1 now: ..." or "No live workers on box-1 now"); its rules say to decide from that list. No extra message per close.
+- **A wait can become a yes or a no.** `work_decide` on a request decided `wait` answered "already decided: wait", so the asker had to ask again. Now the manager may decide a `wait` again, with a machine or the new `no`, within an hour of the request; the asker hears it as a first decision. A start or a `no` is final.
+
 ## 0.9.34
 
 - **A team has one hub.** A first `kaptyorka start` on a machine with no hub data now changes nothing without `--new-hub` and says what it would do ("This creates a NEW hub: a new team with you as its admin...") and how to add the machine to a team instead (`kaptyorka join <link>`); it no longer asks a question, since agents answer them. A start on a machine joined to a hub at another address refuses, even with `--new-hub` (first `kaptyorka leave`). A join to a hub at another address stops and disables a hub an earlier `kaptyorka start` left on this account, keeps its data and says so; the hub machine's accounts joining their own hub keep it. Restarts, updates and the service on the hub machine need no flag. The manager's rules say a machine joins only with `kaptyorka join <link>`.

@@ -29,6 +29,10 @@ REOFFER_S = 60
 WAITING_S = 1800  # how often a boss hears that a worker waits for a permission
 WAITING = ("permission_prompt", "needs_input")
 LIVE = ("starting", "up", "unattended", "abandoned")
+# a worker row `w` the hub started on a work request the manager decided (request_decide),
+# for that request's person: a later worker that reused the name never matches
+APPROVED = ("EXISTS (SELECT 1 FROM work_requests r WHERE r.worker=w.name AND r.worker!=''"
+            " AND r.person_id=w.boss_person AND r.decision LIKE 'start %')")
 HUB_KEY, HUB_NAME = "hub:workers", "hub"  # the sender of worker notices; not a session
 
 SCHEMA = """
@@ -1062,6 +1066,10 @@ class WorkerStore:
         with self.lock:
             if principal.is_admin():
                 rows = self.db.execute("SELECT * FROM workers ORDER BY created, name").fetchall()
+            elif principal.role == "manager":  # its own, and those started on its decision
+                rows = self.db.execute(
+                    "SELECT * FROM workers w WHERE w.boss_person=? OR " + APPROVED
+                    + " ORDER BY w.created, w.name", (principal.person_id,)).fetchall()
             else:
                 rows = self.db.execute("SELECT * FROM workers WHERE boss_person=?"
                                        " ORDER BY created, name",
@@ -1200,11 +1208,26 @@ class WorkerStore:
                     (new_boss_key, w["boss_key"], w["key"])).rowcount
             return {**self._dict(self._row(name)), "delivered": moved}
 
+    def live_on(self, host: str) -> List[str]:
+        """One short line per live worker on `host` right now: name, person, project, state."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT w.name, w.project, w.state, p.name AS person FROM workers w LEFT JOIN"
+                " people p ON p.id=w.boss_person WHERE w.host=? AND w.manager=0 AND w.state IN"
+                f" ({','.join('?' * len(LIVE))}) ORDER BY w.created, w.name",
+                (host, *LIVE)).fetchall()
+        return [f"`{r['name']}` of {r['person'] or '?'} in {r['project']} ({r['state']})"
+                for r in rows]
+
     def close(self, principal: Principal, name: str) -> dict:
+        """The boss's person, an admin, or the manager for a worker it approved (APPROVED)."""
         with self.lock:
             w = self._row(name)
+            started = principal.role == "manager" and w is not None and w["manager"] == 0 \
+                and self.db.execute("SELECT 1 FROM workers w WHERE w.name=? AND " + APPROVED,
+                                    (name,)).fetchone() is not None
             if w is None or not (w["boss_person"] == principal.person_id
-                                 or principal.is_admin()):
+                                 or principal.is_admin() or started):
                 raise KaptyorkaError(f"no worker {name} of yours")
             if w["state"] in ("closed", "failed"):
                 raise KaptyorkaError(f"worker {name} is already {w['state']}")

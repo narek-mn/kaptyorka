@@ -985,7 +985,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                      chosen["folder"])
                 tell(manager_key, manager.text_busy(principal.person_name, project,
                                                     chosen["host"], others[0],
-                                                    chosen["folder"], rid, load))
+                                                    chosen["folder"], rid, load,
+                                                    ws.live_on(chosen["host"])))
                 return (f"busy: {chosen['host']} has {others[0]}'s session in that folder; the"
                         f" manager is asking them (request {rid}); you will hear back here")
             if others:  # no manager online: the asker picks again
@@ -997,7 +998,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 rid = mm.request_add(principal.person_id, agent.key, project, task, tool,
                                      resume or None, chosen["host"], heavy[0], chosen["folder"])
                 tell(manager_key, manager.text_in_use(principal.person_name, project,
-                                                      chosen["host"], heavy, load, rid))
+                                                      chosen["host"], heavy, load, rid,
+                                                      ws.live_on(chosen["host"])))
                 return (f"busy: {chosen['host']} is in use by {heavy[0]}; the manager is"
                         f" deciding (request {rid}); you will hear back here")
         w = ws.create(principal, project, task, chosen, tool, agent.key, resume or None,
@@ -1014,8 +1016,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.tool()
     @_tool_errors
     def work_decide(request_id: int, machine: str, reason: str, ctx: Context) -> str:
-        """Manager only: decide a work request. machine: a host to start the worker on, or
-        "wait". reason: why, 1 to 500 characters."""
+        """Manager only: decide a work request. machine: a host to start the worker on,
+        "wait" or "no". reason: why, 1 to 500 characters. A request decided "wait" may be
+        decided again within an hour of it; a start or a no is final."""
         _, principal = caller(ctx)
         if principal.role != "manager":
             raise KaptyorkaError("only the manager decides work requests")
@@ -1032,9 +1035,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         r = mm.request(request_id)
         if r is None:
             raise KaptyorkaError(f"no request {request_id}")
-        if r["decided_at"] is not None:
-            raise KaptyorkaError(f"request {request_id} is already decided: {r['decision']}")
         now = store.clock()
+        if r["decided_at"] is not None and r["decision"] != "wait":
+            raise KaptyorkaError(f"request {request_id} is already decided: {r['decision']}")
+        if r["decided_at"] is not None and r["created"] <= now - manager.REQUEST_TTL_S:
+            raise KaptyorkaError(f"request {request_id} waited over an hour and is closed; the"
+                                 " asker files a new one with work")
         names = {p["id"]: p["name"] for p in store.people()}
         page = "web:" + names.get(r["person_id"], "")
         online = ws.session_online(r["boss_key"], now)
@@ -1045,6 +1051,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             tell(asker, f"the manager says wait on {project}: {reason}")
             store.log_add("manager", "work_decide", f"request {request_id}: wait — {reason}")
             return f"request {request_id}: told them to wait"
+        if machine == "no":
+            mm.request_decide(request_id, "no", reason)
+            tell(asker, f"the manager says no to {project} for now: {reason}")
+            store.log_add("manager", "work_decide", f"request {request_id}: no — {reason}")
+            return f"request {request_id}: told them no"
         row = next((p for p in store.people() if p["id"] == r["person_id"]), None)
         boss = store.agent(r["boss_key"])
         who = replace(principal, person_id=r["person_id"], person_name=row["name"] if row else "",
@@ -1105,10 +1116,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     @server.tool()
     @_tool_errors
-    async def close_worker(name: str, ctx: Context) -> str:
+    async def close_worker(name: str, ctx: Context, reason: str = "") -> str:
         """End one of your workers (its session on that machine is stopped). A worker calls it
-        with its own name when its task is done and reported: its boss hears what it left."""
+        with its own name when its task is done and reported: its boss hears what it left.
+        The manager may close a worker started on a request it decided; reason: who asked."""
         agent, principal = caller(ctx)
+        if principal.role == "manager" and not (clean(reason, 300)):
+            raise KaptyorkaError("say who asked, or why, in reason")
         if principal.legacy:
             raise KaptyorkaError(OWN_TOKEN)
         mine = ws.by_key(agent.key)
@@ -1120,6 +1134,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if chained(agent, principal):
             raise KaptyorkaError(ON_SHARED)
         w = ws.close(principal, name)
+        if principal.role == "manager":
+            store.log_add("manager", "worker_close", f"{name}: {clean(reason, 300)}")
+            boss = ws.boss_key(name)  # its boss hears who closed it and why
+            if boss:
+                tell(boss, f"the manager closed worker `{name}`: {clean(reason, 300)}")
         off = ""
         if principal.is_admin() and w.get("manager"):  # what the admin closed must not be relaunched by the tick
             mm.set_enabled(False, principal.person_name)

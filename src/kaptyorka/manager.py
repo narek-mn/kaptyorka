@@ -64,7 +64,18 @@ A new run gets it in its first message; read it again any time with `state("mana
 
 - A busy machine: a person wants a project on a machine that is occupied. Message \
 the person who occupies it, read the answer, then call `work_decide(request_id, \
-machine_or_wait, reason)`. Pick the machine, another machine, or `wait`.
+machine_or_wait, reason)`. Pick the machine, another machine, `wait` or `no`.
+- Each request notice lists the workers live on that machine right now, from the hub. \
+Decide from that list, never from memory: a worker you remember may have closed itself.
+- You decided `wait` and things changed: decide the same request again, with a machine or \
+`no`, within an hour of the request; the asker hears it as a first decision. A start or a \
+`no` is final.
+- Closing workers: you may close, with `close_worker(name, reason)`, only a worker the hub \
+started on a request you decided. Do it when its boss session or its person asks you, or \
+when the hub tells you it is abandoned; put who asked in the reason. You cannot close any \
+other worker, so never promise that: tell the person to close it themselves (`close_worker` \
+from their session, or the page). `workers` lists the workers you started, with their real \
+state.
 - A machine in use: a person wants work on a machine where someone else uses much of it \
 (light use starts at once). The notice gives the use (GPUs, CPU cores, memory) and the rule of thumb for heavy; \
 a GPU queue line means its shares are all held, the GPU is taken whole or a job waits. Judge \
@@ -281,25 +292,37 @@ def request_line(rid: int, machine: str) -> str:
             " \"wait\", reason).")
 
 
+def _live(machine: str, live: Optional[List[str]]) -> str:
+    """The live workers on the machine as the hub's database has them right now (a worker
+    that closed itself is gone from it), so the manager decides from that, not its memory."""
+    if live is None:
+        return ""
+    if not live:
+        return f"No live workers on {machine} now. "
+    return f"Live workers on {machine} now: {'; '.join(live)}. "
+
+
 def _load(lines: List[str]) -> str:
     return (f"Use now: {'; '.join(lines)}. Rule of thumb: {usage.RULE}. ") if lines else ""
 
 
 def text_busy(person: str, project: str, machine: str, other: str, folder: str,
-              rid: int, load: Optional[List[str]] = None) -> str:
+              rid: int, load: Optional[List[str]] = None,
+              live: Optional[List[str]] = None) -> str:
     """The knock text for a busy machine. Plain f-strings: braces in any value stay as they
-    are."""
+    are. `live`: ws.live_on(machine), the workers running there now."""
     return (f"{person} wants {project} on {machine}, occupied by {other} in {folder}. "
-            "Ask them, or pick another machine. " + _load(load or [])
+            "Ask them, or pick another machine. " + _load(load or []) + _live(machine, live)
             + request_line(rid, machine))
 
 
 def text_in_use(person: str, project: str, machine: str, who: List[str], load: List[str],
-                rid: int) -> str:
+                rid: int, live: Optional[List[str]] = None) -> str:
     """Another person works on the machine (any folder) or uses much of it."""
     return (f"{person} wants {project} on {machine}, which {', '.join(who)} is using right now. "
-            + _load(load) + "Decide whether both can work normally there now: start it, wait,"
-            " or another machine, and tell both why. " + request_line(rid, machine))
+            + _load(load) + _live(machine, live) + "Decide whether both can work normally"
+            " there now: start it, wait, or another machine, and tell both why. "
+            + request_line(rid, machine))
 
 
 def text_unchecked(person: str, project: str, machine: str, who: List[str]) -> str:
