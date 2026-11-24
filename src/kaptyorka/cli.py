@@ -783,6 +783,16 @@ def _people_revoke(args) -> int:
                      f"{args.device} of {args.name} is signed out")
 
 
+def _auto_doors(args) -> int:
+    return _admin_do("POST", "/api/settings", {"auto_doors": args.state == "on"},
+                     f"doors between sessions of one shared project open by themselves: {args.state}")
+
+
+def _manager_doors(args) -> int:
+    return _admin_do("POST", "/api/settings", {"manager_doors": args.state == "on"},
+                     f"the manager opens doors for a teammate's own request: {args.state}")
+
+
 def _shared_token(args) -> int:
     return _admin_do("POST", f"/api/legacy/{args.state}", {}, f"the shared token is {args.state}")
 
@@ -1322,6 +1332,14 @@ def entry() -> None:
                              " project count")]
     gl_rest[0].set_defaults(run=_gitlab_off)
     gl_rest[1].set_defaults(run=_gitlab_status)
+    ad = sub.add_parser("auto-doors", help="let doors between two sessions of one shared project open by"
+                        " themselves (on, the default) or go to the admin like other door requests (off)")
+    ad.add_argument("state", choices=("on", "off"))
+    ad.set_defaults(run=_auto_doors)
+    md = sub.add_parser("manager-doors", help="let the manager open a door for a teammate's own request"
+                        " (on, the default) or send each to the admin (off)")
+    md.add_argument("state", choices=("on", "off"))
+    md.set_defaults(run=_manager_doors)
     st = sub.add_parser("shared-token", help="switch the old shared token (machines from before invites) on or off")
     st.add_argument("state", choices=("on", "off"))
     st.set_defaults(run=_shared_token)
