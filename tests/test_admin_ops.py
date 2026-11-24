@@ -47,7 +47,7 @@ def shared_device(store, person_id, host="box-1"):
     """A device with a signing secret whose bridge was seen just now."""
     with store.lock:
         return store.db.execute(
-            "INSERT INTO devices (person_id, name, token_hash, secret_hash, created, last_used, host)"
+            "INSERT INTO devices (person_id, name, token_hash, secret_hash, created, bridge_seen, host)"
             " VALUES (?,?,?,?,?,?,?)",
             (person_id, host, hashlib.sha256(host.encode()).hexdigest(), "s" * 64,
              store.clock(), store.clock(), host)).lastrowid

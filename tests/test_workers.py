@@ -378,7 +378,7 @@ def test_boss_blip_is_not_unattended(store, ws, alice, alice_p, boss, clock):
 def bridge_beat(store, token, t, clock):
     """The bridge reports at time t, without the worker's session."""
     clock[0] = t
-    store.authenticate(token)
+    store.heartbeat("box-1", [], principal=store.authenticate(token))
 
 
 def test_worker_session_gone_closes_it_and_back_reopens(store, ws, alice, alice_p, boss,
@@ -725,7 +725,7 @@ def test_warnings_texts_and_order(store, ws, alice, bob, clock):
     ws.facts_seen(a, {"version": "0.2.9", "tmux": True, "hooks_ok": {"claude-code": False}}, {})
     ws.facts_seen(b, {"version": "0.3.0", "tmux": False, "hooks_ok": {"claude-code": True}}, {})
     ws.facts_seen(c, {"version": "0.3.0", "tmux": True}, {})
-    store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (clock[0] - 125 * 60, c))
+    store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?", (clock[0] - 125 * 60, c))
     since = clock[0] - 300
     _worker_row(store, "w1", a, "box-1", "unattended", clock[0], unattended_since=since)
     _worker_row(store, "w2", a, "box-1", "abandoned", clock[0])
@@ -907,7 +907,7 @@ def test_manager_never_unattended(store, ws, clock):
         clock[0] += ABANDONED_S // 2
         store.seen("claude:m", "manager@box-1", "claude-code", "manager")
         with store.lock:
-            store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (clock[0], row["id"]))
+            store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?", (clock[0], row["id"]))
         ws.tick(clock[0])
         assert ws.by_name("manager")["state"] == "up"
     with store.lock:  # even a row left unattended by an older hub goes back to up
@@ -975,7 +975,8 @@ def test_no_offline_warning_without_bridge_facts(store, ws, alice, clock):
     m = device(store, alice, "box-1", "alice")[0]  # never ran a bridge: no facts
     b = device(store, alice, "box-2", "alice")[0]
     ws.facts_seen(b, {"version": "0.3.0"}, {})
-    store.db.execute("UPDATE devices SET last_used=? WHERE id IN (?,?)", (clock[0] - 125 * 60, m, b))
+    store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (clock[0] - 125 * 60, m))
+    store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?", (clock[0] - 125 * 60, b))
     got = [w["text"] for w in ws.warnings(clock[0], "0.3.0")]
     assert got == ["bridge on alice@box-2 has been offline for 125 minutes"]
 
@@ -996,7 +997,7 @@ def test_old_version_reason_is_short_and_fixed(store, ws, alice, clock):
     w = ws.warnings(clock[0], "0.3.0")[0]
     assert w["reason"] == "auto-update is off for this machine"
     assert w["short"] == "kaptyorka 0.2.9 \u00b7 auto-update off"
-    store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (clock[0] - 3600, a))
+    store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?", (clock[0] - 3600, a))
     got = ws.warnings(clock[0], "0.3.0")
     assert [x["reason"] for x in got if "reason" in x] == ["bridge offline"]
 

@@ -2541,15 +2541,16 @@ a.p-main { color: inherit; text-decoration: none; }
       var i = k.indexOf("\n");
       if (k.slice(0, i) === p.name) { if (pending[k]) held[k.slice(i + 1)] = 1; else delete held[k.slice(i + 1)]; }
     });
-    var last = live.reduce(function (n, d) { return Math.max(n, d.last_used || 0); }, 0);
+    /* a machine is online when its bridge reported, not when its token was used for anything */
+    var last = live.reduce(function (n, d) { return Math.max(n, d.bridge_seen || d.last_used || 0); }, 0);
     return { name: p.name, admin: p.role === "admin", self: !!me && p.name === me.person,
              admins: feed.people.filter(function (x) { return x.role === "admin"; }).length,
-             online: live.some(function (d) { return d.last_used != null && now - d.last_used < 30; }) ||
+             online: live.some(function (d) { return d.bridge_seen != null && now - d.bridge_seen < 30; }) ||
                      feed.agents.some(function (a) { return a.person === p.name; }),
              joined: live.some(function (d) { return d.last_used != null; }), last: last || null,
              held: held, projects: names,
              accounts: live.filter(function (d) { return d.host; }).map(function (d) {
-               return { id: d.id, name: machineName(d), online: d.last_used != null && now - d.last_used < 30, last: d.last_used }; }),
+               return { id: d.id, name: machineName(d), online: d.bridge_seen != null && now - d.bridge_seen < 30, last: d.bridge_seen || d.last_used }; }),
              gitlab: gitlabOn() ? p.gitlab_user || "" : null, linked: !!p.gitlab_user,
              manager: isManagerAccount(p), team: !!p.team };
   }
@@ -2671,7 +2672,7 @@ a.p-main { color: inherit; text-decoration: none; }
     return feed.people.filter(function (p) { return p.team; }).map(function (p) {
       var devs = p.devices.filter(function (d) { return d.revoked_at == null && d.expires == null && d.host; });
       return { name: p.name, hidden: p.hidden_from || [], names: devs.map(machineName),
-               online: devs.some(function (d) { return d.last_used != null && Date.now() / 1000 - d.last_used < 30; }) };
+               online: devs.some(function (d) { return d.bridge_seen != null && Date.now() / 1000 - d.bridge_seen < 30; }) };
     }).sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
   }
   function seenLine(on, last) {

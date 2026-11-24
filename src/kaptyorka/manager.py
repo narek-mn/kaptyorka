@@ -110,6 +110,9 @@ Only you can read it.
 - Never answer other people's knocks. Only message to settle a request.
 - When a person asks to reach someone else, tell the admin who, whom and why; the admin opens \
 the door.
+- A new machine joins the team only with `kaptyorka join <link>`, the link the admin makes \
+(`kaptyorka invite`, or Settings > Machines > Add machine on the page). Never suggest \
+`kaptyorka start`: it makes a second, separate hub, and a team has one.
 - A decision always carries its reason.
 - When unsure, ask the admin.
 - No code work.
@@ -379,7 +382,7 @@ class ManagerStore:
                 " d.person_id=(SELECT person_id FROM devices WHERE token_hash=:key AND"
                 " revoked_at IS NULL)) AND d.host=:host AND d.legacy=0 AND d.revoked_at IS NULL"
                 " AND d.secret_hash!=''")
-        order = " ORDER BY d.last_used IS NULL, d.last_used DESC LIMIT 1"
+        order = " ORDER BY d.bridge_seen IS NULL, d.bridge_seen DESC LIMIT 1"
         with self.lock:
             row = self.db.execute("SELECT d.* FROM devices d" + live + " AND d.os_user=:me" + order,
                                   {"key": hub_key, "host": host, "me": me}).fetchone() \
@@ -396,7 +399,7 @@ class ManagerStore:
             print(f"kaptyorka: no bridge runs as the hub's OS user {me!r} on {host}; the manager"
                   f" uses the bridge of {row['os_user']!r} instead", flush=True)
         out = {k: row[k] for k in row.keys() if k not in ("token_hash", "secret_hash")}
-        out["online"] = row["last_used"] is not None and now - row["last_used"] < ONLINE_S
+        out["online"] = row["bridge_seen"] is not None and now - row["bridge_seen"] < ONLINE_S
         return out
 
     def boss(self, device: dict) -> Optional[int]:

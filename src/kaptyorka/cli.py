@@ -180,12 +180,15 @@ def _start(args) -> int:
     hub_unit = service.is_active("kaptyorka-hub")
     cfg = paths.load_config()
     if cfg.get("hub") and cfg.get("token") and not paths.is_own_hub(cfg["hub"], saved):
-        print(f"this machine is joined to {cfg['hub']}; it does not run a hub. "
-              "To turn its bridge back on: kaptyorka join", file=sys.stderr)
+        print(f"this machine is joined to the hub at {cfg['hub']}; a team has one hub. To really"
+              " run a second, separate hub here: kaptyorka leave, then kaptyorka start --new-hub",
+              file=sys.stderr)
         return 1
+    # a team has one hub: a first start (no hub data here) never makes one without --new-hub,
+    # and never asks either (an agent would answer the question)
     if first and not saved and hub_unit is None and not getattr(args, "new_hub", False) \
-            and not (paths.home() / "hub.db").exists() \
-            and not _confirm_new_hub():
+            and not (paths.home() / "hub.db").exists():
+        print(NEW_HUB_NOTE, file=sys.stderr)
         return 1
     args.port = args.port or saved.get("port", 8765)
     args.host = args.host or saved.get("host")
@@ -214,25 +217,10 @@ def _start(args) -> int:
     return rc
 
 
-NEW_HUB_NOTE = ("this creates a NEW, separate hub on this machine. To join your team's existing"
-                " hub instead, run: kaptyorka join <invite link>")
-
-
-def _confirm_new_hub(isatty=None, ask=None) -> bool:
-    """A first start on a machine with no hub: a teammate should join, not start a second hub.
-    True once they typed `new hub` (or the caller passed --new-hub)."""
-    print(NEW_HUB_NOTE, file=sys.stderr)
-    if not (sys.stdin.isatty() if isatty is None else isatty):
-        print("not started: add --new-hub to create a new hub here", file=sys.stderr)
-        return False
-    try:
-        answer = (ask or input)("Type new hub to continue: ")
-    except (EOFError, KeyboardInterrupt):
-        answer = ""
-    if answer.strip().lower() != "new hub":
-        print("not started; nothing changed", file=sys.stderr)
-        return False
-    return True
+NEW_HUB_NOTE = ("This creates a NEW hub: a new team with you as its admin. To add this machine to"
+                " an existing team, stop and run `kaptyorka join <link>` (ask your admin, or"
+                " Settings > Machines > Add machine on the page).\n"
+                "not started; nothing changed. To create a new hub here: kaptyorka start --new-hub")
 
 
 def _already_running(args) -> int:
@@ -873,7 +861,8 @@ def _gitlab_status(args) -> int:
 
 def _stop(args) -> int:
     hub_stopped = False
-    for unit, name in (("kaptyorka-bridge", "bridge"), ("kaptyorka-hub", "hub")):
+    units = (("kaptyorka-bridge", "bridge"), ("kaptyorka-hub", "hub"))
+    for unit, name in units[1:] if getattr(args, "hub", False) else units:
         active = service.is_active(unit)
         if active is None:  # never installed here (a member machine has no hub)
             continue
@@ -1103,8 +1092,9 @@ def _join(args) -> int:
         if person:
             cfg["person"] = person
         paths.save_config(cfg)
+        moved = bool(old.get("token")) and (old.get("hub"), old.get("token")) != (hub, token)
         return join.main(hub, token, args.name, only=args.only, secret=secret, person=person,
-                         first=True, **extra)
+                         first=True, moved=moved, **extra)
     if not args.hub and not args.token:  # no flags: the previous arguments, saved by the last join
         cfg = paths.load_config()
         if not cfg.get("hub") or not cfg.get("token"):
@@ -1233,7 +1223,8 @@ def entry() -> None:
     m.add_argument("--no-manager", action="store_true", help="do not keep a manager session")
     m.add_argument("--manager", action="store_true", help="keep a manager session (the default)")
     s.add_argument("--new-hub", action="store_true",
-                   help="first start only: create a new hub here without asking")
+                   help="first start only: create a NEW hub (a new team) here; to add this"
+                   " machine to a team, use kaptyorka join <link> instead")
     s.set_defaults(run=_start)
     j = sub.add_parser("join", help="connect this machine to a hub with the invite link your admin sent (with no flags: retry the last join)")
     j.add_argument("invite", nargs="?", help="invite link from your admin")
@@ -1247,8 +1238,11 @@ def entry() -> None:
                         "installed; join brings it back")
     lv.add_argument("--yes", action="store_true", help="do not ask first")
     lv.set_defaults(run=_leave)
-    sub.add_parser("stop", help="stop the hub and the bridge on this machine "
-                   "(start brings back the hub; join brings back the bridge)").set_defaults(run=_stop)
+    st = sub.add_parser("stop", help="stop the hub and the bridge on this machine "
+                        "(start brings back the hub; join brings back the bridge)")
+    st.add_argument("--hub", action="store_true", help="stop only this account's own hub"
+                    " (kaptyorka start); the bridge keeps reporting to the hub it joined")
+    st.set_defaults(run=_stop)
     sub.add_parser("update", help="update kaptyorka (pipx) to the latest version and restart "
                    "the services").set_defaults(run=_update)
     sub.add_parser("remove", help="remove kaptyorka from this machine completely").set_defaults(run=_remove)

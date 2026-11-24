@@ -49,10 +49,10 @@ On the machine that stays on (the hub):
 
 ```bash
 pipx install kaptyorka
-kaptyorka start
+kaptyorka start --new-hub
 ```
 
-The first start on a machine asks you to type `new hub`: it creates a new, separate hub. A teammate joining the team's hub runs `kaptyorka join <invite link>` instead, never `start`. In a script, with no terminal to ask, add `--new-hub`.
+A team has one hub, on one machine. `--new-hub` is needed only this first time: it creates a new hub, a new team with you as its admin. Without it, a first `kaptyorka start` changes nothing and says to use `kaptyorka join <link>` instead (it never asks a question: agents answer questions). Every other machine, and every teammate, joins with `kaptyorka join <link>`, the link from the admin (`kaptyorka invite`, or Settings > Machines > Add machine on the page), never `start`. Later starts on the hub machine (a restart, an update, a reboot) need no flag.
 
 kaptyorka needs Python 3.10 or newer. On an older Python, `pip` and `pipx` only say `No matching distribution found for kaptyorka`; see "Jetson and older Linux" below.
 
@@ -64,7 +64,7 @@ open the page: http://<ip>:<port>/#t=<token>  (keep this link private: it signs 
 invite a teammate: kaptyorka invite <name>
 ```
 
-The first start creates the admin, a person named like the user who runs the hub, and the admin's own device token (device `hub`, kept in `~/.kaptyorka/admin-token`). The page link carries that token; this machine is saved as joined with it. `kaptyorka start` when the hub already runs with the same settings changes nothing: it answers `the hub is already running` and prints the page link again. A start with a new port or host restarts the hub and says `hub restarted`; this machine follows the new address. On a machine that only joined someone else's hub, `start` says so and does not start a second hub. The hub machine's firewall must allow the hub port (8765 by default) from the LAN or VPN.
+The first start creates the admin, a person named like the user who runs the hub, and the admin's own device token (device `hub`, kept in `~/.kaptyorka/admin-token`). The page link carries that token; this machine is saved as joined with it. `kaptyorka start` when the hub already runs with the same settings changes nothing: it answers `the hub is already running` and prints the page link again. A start with a new port or host restarts the hub and says `hub restarted`; this machine follows the new address. On a machine joined to a hub at another address, `start` refuses ("a team has one hub"); to really run a second, separate hub there: `kaptyorka leave`, then `kaptyorka start --new-hub`. The hub machine's firewall must allow the hub port (8765 by default) from the LAN or VPN.
 
 Run `kaptyorka join` to set up the agent tools on the hub machine. Then invite each teammate, from the hub machine or any machine joined as the admin:
 
@@ -697,7 +697,7 @@ Everything is in `~/.kaptyorka`:
 
 | Command | What it does |
 |---|---|
-| `kaptyorka start` | Run the hub on this machine; `--no-manager` keeps no manager session, `--manager` switches it back on; `--new-hub` creates a first hub here without asking |
+| `kaptyorka start` | Run the hub on this machine; `--no-manager` keeps no manager session, `--manager` switches it back on; `--new-hub` is needed for the first start only, which creates a new hub (a new team) |
 | `kaptyorka join <invite-link>` | Join this machine as the invited person |
 | `kaptyorka invite <person>` | Admin: make an invite link, 7 days, one use (creates the person if new) |
 | `kaptyorka invites` | Admin: list open invite links, and used ones that can still link GitLab (`used`); `--cancel <code>` stops one |
@@ -731,7 +731,9 @@ Everything is in `~/.kaptyorka`:
 ## Leave, stop, update, remove
 
 - `kaptyorka leave` takes this machine off the hub: the bridge and everything `join` set up in your agent tools and shell rc files (your own entries stay), and the team skill folders the bridge wrote (`~/.claude/skills/team-*`; only those with its marker). kaptyorka stays installed, and so does the hub if it runs here. `kaptyorka join` brings the machine back. It prints `left: ...` and that the machine stays on the team until the admin removes it (People); on a machine that is not joined it says `this machine is not joined; nothing to undo`. On the machine that runs the hub, with the manager on, it first asks `Leave anyway? [y/N]` (leaving stops the bridge that wakes the manager); without a terminal it refuses, and `--yes` skips the question.
-- `kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot. It says `bridge stopped` / `hub stopped`, or `... already stopped`, and after the hub that teammates cannot reach it until `kaptyorka start`. `kaptyorka start` starts the hub again (and the bridge); `kaptyorka join` starts the bridge.
+- `kaptyorka stop` stops the bridge (and the hub, if it runs here) and keeps them off after a reboot. It says `bridge stopped` / `hub stopped`, or `... already stopped`, and after the hub that teammates cannot reach it until `kaptyorka start`. `kaptyorka start` starts the hub again (and the bridge); `kaptyorka join` starts the bridge. `kaptyorka stop --hub` stops only this account's own hub and leaves the bridge running.
+- `kaptyorka join` to another hub, with another token or name restarts a running bridge (it reads its config only when it starts) and says `bridge: restarted, so it reports to <hub>`. When this account also has its own hub from an earlier `kaptyorka start`, joining a hub at another address stops and disables it, keeps its data, and says so ("stopped this machine's own hub ...; its data is kept in ~/.kaptyorka"). The hub machine's accounts joining their own hub keep it.
+- A machine counts as online (Machines, People, `kaptyorka fleet list`, worker starts, the bridge-offline warning) only while its bridge reports. Other uses of its token (a status line, a tool call, the page) no longer make it look online.
 - `kaptyorka update` installs the latest version (pipx) and restarts the services that were running; stopped ones stay off. When you already have the latest it says `kaptyorka <version> is already the latest` and restarts nothing.
 - `kaptyorka remove` takes kaptyorka off this machine: the services, everything `join` set up in your agent tools and shell rc files (your own entries stay), the team skill folders the bridge wrote (`~/.claude/skills/team-*` with its marker), `~/.kaptyorka`, and the pipx install. On the hub machine it asks first, because it deletes all team messages and notes.
 

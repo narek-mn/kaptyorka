@@ -712,7 +712,7 @@ def test_the_account_panel_holds_only_your_own_data(hub, lab):
 
     hub.store.device_add(hub.ids["alice"], "alice@box-9")
     with hub.store.lock:
-        hub.store.db.execute("UPDATE devices SET os_user='bob', host='box-1', last_used=? WHERE person_id=?",
+        hub.store.db.execute("UPDATE devices SET os_user='bob', host='box-1', bridge_seen=? WHERE person_id=?",
                              (hub.now[0] - 5, hub.ids["bob"]))
     hub.store.device_add(hub.ids["bob"], "bob@box-2")
     for name in ("proj-a", "proj-b"):

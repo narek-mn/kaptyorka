@@ -34,6 +34,7 @@ def team(store):
     pid, code = store.team_machine_add("jet-1", "alice")
     token, _ = store.invite_redeem(code, "jet-1", host="jet-1", os_user="nvidia")
     p = store.authenticate(token)
+    store.heartbeat("jet-1", [], principal=p)  # its bridge reports
     store.seen("t-a", "jet-1", "claude", "proj-a", principal=p)
     store.seen("t-b", "jet-1", "claude", "proj-b", principal=p)
     return pid, p

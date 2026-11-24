@@ -147,6 +147,9 @@ ADDED_COLUMNS = [
     # "task", "woke", "told", "again"} (hub times), and the task ids this session has seen and
     # answered for, never asked about again while the session lives
     ("agents", "stuck_ep", "TEXT"),
+    # hub time of the device's last bridge heartbeat: online for a machine means this, never
+    # any token use (a status line or a tool call also refresh last_used)
+    ("devices", "bridge_seen", "REAL"),
     ("agents", "stuck_acked", "TEXT"),
 ]
 
@@ -717,7 +720,7 @@ class Store:
                 devs = [{"id": d["id"], "name": d["name"], "person": d["person"],
                          "person_id": d["person_id"], "os_user": d["os_user"],
                          "shared": bool(d["shared"]), "legacy": bool(d["legacy"]), "version": d["version"],
-                         "last_used": d["last_used"]}
+                         "last_used": d["last_used"], "bridge_seen": d["bridge_seen"]}
                         for d in self.db.execute(
                             "SELECT d.*, p.name AS person FROM devices d JOIN people p"
                             " ON p.id=d.person_id WHERE d.host=? AND d.revoked_at IS NULL"
@@ -1472,7 +1475,7 @@ class Store:
 
     def heartbeat(self, machine: str, sessions: List[dict], tools: Sequence[str] = (),
                   principal: Optional[Principal] = None, facts: Optional[dict] = None,
-                  gone: Sequence[str] = ()) -> None:
+                  gone: Sequence[str] = (), bridge: bool = True) -> None:
         """`tools` are the tools whose sessions this list is complete for: the rest of their agents
         on this machine are gone, so their names are free at once. `facts` (host, os_user,
         version) say which computer the sessions run on; an older bridge sends none. `gone`:
@@ -1497,6 +1500,9 @@ class Store:
         logs: List[tuple] = []
         with self.lock:
             now = self.clock()
+            if bridge and principal is not None:  # the bridge itself, not a shim or a one-off
+                self.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?",
+                                (now, principal.device_id))
             # a legacy bridge on an assigned machine: its sessions and facts go to that person
             assigned = (self._assigned_device(machine, principal.person_id)
                         if principal is not None and principal.legacy else None)

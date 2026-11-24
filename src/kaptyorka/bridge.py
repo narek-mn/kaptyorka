@@ -266,7 +266,7 @@ class Bridge:
                 tools.append(a.tool)  # complete for it; with no list some are held back
         projects = self.hub.get("projects", [])
         folders = facts.folders(projects if isinstance(projects, list) else [], shown, Path.home())
-        body = {"machine": self.cfg["machine"], "sessions": sessions, "tools": tools,
+        body = {"machine": self.cfg["machine"], "sessions": sessions, "tools": tools, "bridge": True,
                 "facts": {**self._sendable(self._machine_facts(shown), {s.cwd for s in shown}),
                           **({"update_failed": paths.update_reason(self._problems["update"])}
                              if self._problems.get("update") else {})},

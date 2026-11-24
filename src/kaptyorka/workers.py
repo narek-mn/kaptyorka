@@ -357,7 +357,7 @@ class WorkerStore:
                 return None
             for r in self.db.execute(
                     "SELECT d.id, f.facts FROM devices d JOIN device_facts f ON f.device_id=d.id"
-                    " WHERE d.host=? AND d.revoked_at IS NULL AND d.legacy=0 AND d.last_used>?"
+                    " WHERE d.host=? AND d.revoked_at IS NULL AND d.legacy=0 AND d.bridge_seen>?"
                     " ORDER BY d.id", (d["host"], now - ONLINE_S)):
                 if _version_tuple(json.loads(r["facts"]).get("version") or "") >= (0, 9, 23):
                     return q if r["id"] == device_id else None
@@ -435,7 +435,7 @@ class WorkerStore:
             for m in rows:
                 for d in m["devices"]:
                     d["facts"], d["folders"] = self._facts_row(d["id"])
-                    d["online"] = d["last_used"] is not None and d["last_used"] > now - ONLINE_S
+                    d["online"] = d["bridge_seen"] is not None and d["bridge_seen"] > now - ONLINE_S
                     s = self.db.execute(
                         "SELECT s.auto_update, p.role, d.person_id FROM devices d JOIN people p"
                         " ON p.id=d.person_id LEFT JOIN device_settings s ON s.device_id=d.id"
@@ -481,7 +481,7 @@ class WorkerStore:
         now = self.clock()
         with self.lock:
             devs = self.db.execute(
-                "SELECT d.id, d.name, d.label, d.host, d.os_user, d.last_used, d.person_id,"
+                "SELECT d.id, d.name, d.label, d.host, d.os_user, d.bridge_seen, d.person_id,"
                 " p.name AS person, p.team, p.role FROM devices d JOIN people p ON p.id=d.person_id"
                 " WHERE d.revoked_at IS NULL AND d.legacy=0 AND d.expires IS NULL AND d.host!=''"
                 " AND p.removed_at IS NULL AND NOT (p.name=? AND p.role='manager')"
@@ -491,14 +491,14 @@ class WorkerStore:
         for d in devs:
             h = hosts.setdefault(d["host"], {"host": d["host"], "people": [], "team": [],
                                              "online": False, "devices": []})
-            online = d["last_used"] is not None and d["last_used"] > now - ONLINE_S
+            online = d["bridge_seen"] is not None and d["bridge_seen"] > now - ONLINE_S
             h["online"] = h["online"] or online
             (h["team"] if d["team"] else h["people"]).append(d["person"])
             h["devices"].append({"id": d["id"],
                                  "name": machine_name(d["label"], d["os_user"], d["host"], d["name"]),
                                  "label": d["label"], "person": d["person"], "team": bool(d["team"]),
                                  "os_user": d["os_user"], "online": online,
-                                 "last_seen": d["last_used"], "tools": d["tools"]})
+                                 "last_seen": d["bridge_seen"], "tools": d["tools"]})
         out = []
         for h in hosts.values():
             here = self.host_use(h["host"], now)
@@ -551,7 +551,7 @@ class WorkerStore:
                                        f" `kaptyorka machine team --from {named}`")
                     continue
                 who = f"{d['host']} ({d['person']})"
-                if d["last_used"] is None or d["last_used"] <= now - ONLINE_S:
+                if d["bridge_seen"] is None or d["bridge_seen"] <= now - ONLINE_S:
                     reasons.append(f"{who}: bridge offline; on that machine run"
                                    " `kaptyorka doctor --fix`")
                     continue
@@ -1084,13 +1084,13 @@ class WorkerStore:
             judging = now >= self.started + STARTUP_S
             # a bridge that never comes back: nobody could stop or report its workers
             for w in self.db.execute(
-                    "SELECT w.name, w.boss_key, d.last_used, d.revoked_at FROM workers w"
+                    "SELECT w.name, w.boss_key, d.bridge_seen, d.revoked_at FROM workers w"
                     " LEFT JOIN devices d ON d.id=w.device_id WHERE w.state IN"
                     f" ({','.join('?' * len(LIVE))})", LIVE).fetchall():
                 if w["revoked_at"] is not None:
                     why = "device revoked"
-                elif judging and w["last_used"] is not None \
-                        and w["last_used"] < now - BRIDGE_GONE_S:
+                elif judging and w["bridge_seen"] is not None \
+                        and w["bridge_seen"] < now - BRIDGE_GONE_S:
                     why = "bridge offline for over an hour"
                 else:
                     continue
@@ -1098,7 +1098,7 @@ class WorkerStore:
                 notices.append((w["boss_key"], f"worker `{w['name']}` is closed: {why}"))
             rows = self.db.execute(
                 "SELECT w.*, a.last_seen AS own_seen, a.activity, b.last_seen AS boss_seen,"
-                " d.last_used AS bridge_seen FROM workers w LEFT JOIN agents a ON a.key=w.key"
+                " d.bridge_seen FROM workers w LEFT JOIN agents a ON a.key=w.key"
                 " LEFT JOIN agents b ON b.key=w.boss_key LEFT JOIN devices d ON d.id=w.device_id"
                 " WHERE w.state IN ('up','unattended','abandoned')").fetchall()
             for w in rows:
@@ -1241,10 +1241,10 @@ class WorkerStore:
         the bridge then says what the worker left, and never stops it while overnight mode is
         on in it."""
         now = self.clock()
-        dev = self.db.execute("SELECT last_used, revoked_at FROM devices WHERE id=?",
+        dev = self.db.execute("SELECT bridge_seen, revoked_at FROM devices WHERE id=?",
                               (w["device_id"],)).fetchone()
         offline = dev is None or dev["revoked_at"] is not None or \
-            dev["last_used"] is None or dev["last_used"] <= now - ONLINE_S
+            dev["bridge_seen"] is None or dev["bridge_seen"] <= now - ONLINE_S
         notes = []
         if w["state"] == "starting":  # nothing to kill yet: the launch is never sent
             self._end(name, auto or "", "closed before start", now)
@@ -1286,11 +1286,11 @@ class WorkerStore:
         """Shared-machine bridges silent for more than OFFLINE_S."""
         with self.lock:
             rows = self.db.execute(
-                "SELECT id, host, os_user, last_used FROM devices WHERE shared=1 AND legacy=0"
-                " AND revoked_at IS NULL AND last_used IS NOT NULL AND last_used < ?",
+                "SELECT id, host, os_user, bridge_seen FROM devices WHERE shared=1 AND legacy=0"
+                " AND revoked_at IS NULL AND bridge_seen IS NOT NULL AND bridge_seen < ?",
                 (now - OFFLINE_S,)).fetchall()
         return [{"id": r["id"], "host": r["host"], "os_user": r["os_user"],
-                 "minutes": int((now - r["last_used"]) // 60)} for r in rows]
+                 "minutes": int((now - r["bridge_seen"]) // 60)} for r in rows]
 
     def failed_twice(self, now: float) -> List[dict]:
         """People with two or more failed launches in the last hour, with the latest error."""
@@ -1371,7 +1371,7 @@ class WorkerStore:
         failed, offline, rest = [], [], []
         with self.lock:
             devices = self.db.execute(
-                "SELECT d.id, d.host, d.os_user, d.shared, d.version, d.last_used, p.name AS person,"
+                "SELECT d.id, d.host, d.os_user, d.shared, d.version, d.bridge_seen, p.name AS person,"
                 " p.team, f.facts, s.auto_update FROM devices d LEFT JOIN people p ON p.id=d.person_id"
                 " LEFT JOIN device_facts f ON f.device_id=d.id"
                 " LEFT JOIN device_settings s ON s.device_id=d.id"
@@ -1391,11 +1391,10 @@ class WorkerStore:
                 out.append({"host": host, "os_user": user, "person": d["person"] or "",
                             "text": text, "short": short, "blocks": blocks, "device_id": d["id"],
                             "team": bool(d["team"]), **more})
-            gone = (d["facts"] and d["last_used"] is not None  # only bridges report facts
-                    and d["last_used"] < now - OFFLINE_S)
+            gone = d["bridge_seen"] is not None and d["bridge_seen"] < now - OFFLINE_S
             if gone:
                 add(offline, f"bridge on {who} has been offline for"
-                    f" {int((now - d['last_used']) // 60)} minutes", "bridge offline", True)
+                    f" {int((now - d['bridge_seen']) // 60)} minutes", "bridge offline", True)
             facts = json.loads(d["facts"]) if d["facts"] else {}
             v = facts.get("version") or d["version"] or ""
             if _version_tuple(v) and _version_tuple(v) < _version_tuple(hub_version):

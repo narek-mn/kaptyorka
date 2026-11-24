@@ -348,7 +348,7 @@ def account(store, principal: Principal, ws=None) -> dict:
         p = store.db.execute("SELECT name, role, gitlab_user FROM people WHERE id=?",
                              (principal.person_id,)).fetchone()
         devices = store.db.execute(
-            f"SELECT id, name, label, os_user, host, last_used FROM devices WHERE person_id=? AND {_MACHINE}"
+            f"SELECT id, name, label, os_user, host, bridge_seen FROM devices WHERE person_id=? AND {_MACHINE}"
             " ORDER BY name", (principal.person_id,)).fetchall()
         tools = {d["id"]: device_tools(store.db, d["id"]) for d in devices}
         browsers = store.db.execute(
@@ -369,9 +369,9 @@ def account(store, principal: Principal, ws=None) -> dict:
         "machines": [{"id": d["id"], "name": machine_name(d["label"], d["os_user"], d["host"], d["name"]),
                       "machine": d["name"], "label": d["label"],
                       "auto": machine_name("", d["os_user"], d["host"], d["name"]),
-                      "os_user": d["os_user"], "host": d["host"], "last_seen": d["last_used"],
+                      "os_user": d["os_user"], "host": d["host"], "last_seen": d["bridge_seen"],
                       "tools": tools[d["id"]],
-                      "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S,
+                      "online": d["bridge_seen"] is not None and d["bridge_seen"] > now - ONLINE_S,
                       "current": d["id"] == principal.device_id,
                       "emergency": d["id"] == emergency, **extra(d)}
                      for d in devices],
@@ -379,8 +379,8 @@ def account(store, principal: Principal, ws=None) -> dict:
                       "current": b["id"] == principal.device_id} for b in browsers],
         "team_machines": [{"name": machine_name(d["label"], d["os_user"], d["host"], d["name"]),
                            "os_user": d["os_user"], "host": d["host"], "tools": d["tools"],
-                           "last_seen": d["last_used"], "projects": d["projects"],
-                           "online": d["last_used"] is not None and d["last_used"] > now - ONLINE_S,
+                           "last_seen": d["bridge_seen"], "projects": d["projects"],
+                           "online": d["bridge_seen"] is not None and d["bridge_seen"] > now - ONLINE_S,
                            **extra(d)}
                           for d in team],
         "projects": [{"name": x["name"], "role": x["role"]} for x in store.projects_for(principal)],
@@ -394,7 +394,7 @@ def _team_machines(store, person_id: int) -> List[dict]:
     projects the person has a role in (their sessions stay behind Store._team_reach)."""
     out = []
     for d in store.db.execute(
-            "SELECT d.id, d.name, d.label, d.os_user, d.host, d.last_used, d.person_id FROM devices d"
+            "SELECT d.id, d.name, d.label, d.os_user, d.host, d.bridge_seen, d.person_id FROM devices d"
             " JOIN people p ON p.id=d.person_id WHERE p.team=1 AND p.removed_at IS NULL"
             f" AND d.host!='' AND d.person_id!=? AND {_MACHINE} ORDER BY d.name",
             (person_id,)).fetchall():

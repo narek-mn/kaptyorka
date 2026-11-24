@@ -4,20 +4,24 @@ import re
 import socket
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from kaptyorka import http, paths, service
 from kaptyorka.adapters.base import TOOL_NAMES
 
 
-def install_bridge(exe: str, install=None, extra_env: Optional[dict] = None) -> Optional[bool]:
+def install_bridge(exe: str, install=None, extra_env: Optional[dict] = None,
+                   restart: bool = False) -> Optional[bool]:
     """Install and start the bridge service. None after printing why if that failed; else whether
-    anything changed (a new or rewritten unit, or one that was not running)."""
+    anything changed (a new or rewritten unit, or one that was not running). restart: the
+    config changed (another hub, token or name), so a running bridge is restarted even when its
+    unit is the same: it reads the config only when it starts."""
     if os.environ.get("KAPTYORKA_SKIP_SERVICE") == "1":
         return False
     changed = False
     try:
-        for line in (install or service.install)("kaptyorka-bridge", [exe, "bridge"], keep_running=True,
+        for line in (install or service.install)("kaptyorka-bridge", [exe, "bridge"],
+                                                 keep_running=not restart,
                                                  env={"PATH": os.environ.get("PATH", ""), **(extra_env or {})}):
             if line.startswith("installed "):  # a unit file path means nothing to a newcomer
                 changed = True
@@ -27,6 +31,17 @@ def install_bridge(exe: str, install=None, extra_env: Optional[dict] = None) -> 
         print(f"bridge service failed: {e}", file=sys.stderr)
         return None
     return changed
+
+
+def _hub_json() -> dict:
+    """What `kaptyorka start` saved about the hub this account runs; {} when none."""
+    import json
+
+    try:
+        got = json.loads((paths.home() / "hub.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
 
 
 ENV_LINE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.S)
@@ -81,7 +96,14 @@ def redeem(url: str, name: str) -> Optional[Tuple[str, str, str, str]]:
 def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
          install=service.install, only: Optional[List[str]] = None,
          secret: Optional[str] = None, person: Optional[str] = None, env: Optional[dict] = None,
-         first: Optional[bool] = None) -> int:
+         first: Optional[bool] = None, moved: Optional[bool] = None,
+         local_hub: Optional[Callable[[], Optional[bool]]] = None,
+         stop_hub: Optional[Callable[[], object]] = None) -> int:
+    """moved: the config named another hub, token or machine name before (the invite flow
+    saves the new one before it gets here, so it says so itself). local_hub: this account's
+    own hub service from an earlier `kaptyorka start` (service.is_active: None when not
+    installed), stopped by stop_hub when the machine joins another hub; the real ones only
+    with the real service layer."""
     hub = hub.strip()
     hub = (hub if "://" in hub else "http://" + hub).rstrip("/")
     token = token.strip().strip("'\"")
@@ -112,6 +134,9 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     saved = paths.load_config()
     if first is None:  # the invite flow saves the config before it gets here, so it says so itself
         first = not saved.get("token")
+    if moved is None:
+        moved = bool(saved.get("token")) and (saved.get("hub"), saved.get("token"),
+                                              saved.get("machine")) != (hub, token, name)
     # keep the signing secret saved for this same token (a retry after a failed join)
     secret = secret or (saved.get("secret") if saved.get("token") == token else None)
     if secret:
@@ -139,9 +164,25 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
             changed.append(a)
         for line in lines:  # the lines already name the tool ("Claude Code: ...")
             print(line if line.startswith(TOOL_NAMES.get(a.tool, "\0")) else f"{a.tool}: {line}")
-    bridge = install_bridge(exe, install, env)
+    bridge = install_bridge(exe, install, env, restart=moved)
     if bridge is None:
         rc = 1
+    elif moved and os.environ.get("KAPTYORKA_SKIP_SERVICE") != "1":
+        print(f"bridge: restarted, so it reports to {hub}")
+    real = install is service.install and os.environ.get("KAPTYORKA_SKIP_SERVICE") != "1"
+    local_hub = local_hub or ((lambda: service.is_active("kaptyorka-hub")) if real
+                              else (lambda: None))
+    stop_hub = stop_hub or (lambda: service.stop("kaptyorka-hub"))
+    # a team has one hub: joining another one switches off the hub `kaptyorka start` made here
+    # (its data stays); the hub machine's own accounts joining their own hub keep it
+    if local_hub() is not None and not paths.is_own_hub(hub, _hub_json()):
+        try:
+            stop_hub()
+            print("stopped this machine's own hub (kaptyorka start had been run here); its data"
+                  f" is kept in {paths.home()}")
+        except service.ServiceError as e:
+            print(f"could not stop this machine's own hub: {e}; run `kaptyorka stop --hub`",
+                  file=sys.stderr)
     if not done:
         print(", ".join(f"{t} is not installed" for t in only) if only
               else "no supported agent tool found", file=sys.stderr)

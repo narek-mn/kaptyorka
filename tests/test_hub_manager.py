@@ -247,7 +247,7 @@ def test_no_launch_while_claude_is_logged_out(hub, clock):
         hub.tick()
         clock[0] += 130
         with hub.store.lock:
-            hub.store.db.execute("UPDATE devices SET last_used=? WHERE id=?",
+            hub.store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?",
                                  (clock[0], b.device_id))
     assert orders(hub, b) == [] and state(hub) is None
     assert hub.mm.may_launch(clock[0]) == (False, "Claude Code is not logged in on the hub"
@@ -600,7 +600,7 @@ def test_pushes_once_each(hub, clock):
     hub.store.project_register("proj-x", by="test")
     hub.store.request_access(alice, "project", "proj-x", "need it")
     with hub.store.lock:
-        hub.store.db.execute("UPDATE devices SET last_used=? WHERE id=?",
+        hub.store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?",
                              (now - 700, b.device_id))
         hub.store.db.execute(
             "INSERT INTO proposals (person_id, session_key, text, evidence, status, time)"
@@ -931,7 +931,7 @@ def test_trust_failure_blocks_relaunch_until_start_manager(hub, clock):
     for _ in range(2 * 60 * 4):  # two hours of 15 s ticks, the admin's bridge online
         clock[0] += 15
         with hub.store.lock:
-            hub.store.db.execute("UPDATE devices SET last_used=? WHERE id=?",
+            hub.store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?",
                                  (clock[0], b.device_id))
         hub.tick()
     assert orders(hub, b) == [] and hub.mm.may_launch(clock[0])[0] is False

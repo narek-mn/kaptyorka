@@ -795,8 +795,9 @@ def test_start_on_a_member_machine_refused(monkeypatch, home, capsys):
     assert entry_with_exit(["start"]) == 1
     assert calls == []
     assert capsys.readouterr().err.strip() == (
-        "this machine is joined to http://other:1; it does not run a hub. "
-        "To turn its bridge back on: kaptyorka join")
+        "this machine is joined to the hub at http://other:1; a team has one hub. To really run"
+        " a second, separate hub here: kaptyorka leave, then kaptyorka start --new-hub")
+    assert entry_with_exit(["start", "--new-hub"]) == 1 and calls == []  # the flag does not help
 
 
 def test_start_new_port_moves_this_machine(monkeypatch, home, capsys):
@@ -822,46 +823,39 @@ def test_first_start_output(monkeypatch, home, capsys):
     assert calls == [("install", "kaptyorka-hub")]
 
 
-def _first_start(monkeypatch, tty, answer=None):
+def _first_start(monkeypatch):
     _units(monkeypatch)
-    served, asked = [], []
+    served = []
     monkeypatch.setattr(cli, "_serve", lambda args: served.append(args) or 0)
+    monkeypatch.setattr("builtins.input", lambda q: pytest.fail("never asks: agents answer prompts"))
+    return served
+
+
+@pytest.mark.parametrize("tty", [True, False])
+def test_first_start_needs_new_hub_and_creates_nothing_without_it(monkeypatch, home, capsys, tty):
+    served = _first_start(monkeypatch)
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: tty, raising=False)
-    monkeypatch.setattr("builtins.input", lambda q: asked.append(q) or answer)
-    return served, asked
-
-
-def test_first_start_asks_and_new_hub_goes_on(monkeypatch, home, capsys):
-    served, asked = _first_start(monkeypatch, True, "new hub")
-    assert entry_with_exit(["start"]) in (0, None)
-    assert asked == ["Type new hub to continue: "] and len(served) == 1
+    assert entry_with_exit(["start"]) == 1
+    assert served == []
     err = capsys.readouterr().err
-    assert "NEW, separate hub" in err and "kaptyorka join <invite link>" in err
-    assert (paths.home() / "hub.json").exists()
+    assert err.startswith("This creates a NEW hub: a new team with you as its admin. To add this"
+                          " machine to an existing team, stop and run `kaptyorka join <link>`")
+    assert "kaptyorka start --new-hub" in err
+    assert not (paths.home() / "hub.json").exists() and not (paths.home() / "hub.db").exists()
+    assert not paths.config_path().exists()
 
 
-def test_first_start_anything_else_aborts(monkeypatch, home, capsys):
-    served, asked = _first_start(monkeypatch, True, "yes")
-    assert entry_with_exit(["start"]) == 1
-    assert len(asked) == 1 and served == []
-    assert "nothing changed" in capsys.readouterr().err
-    assert not (paths.home() / "hub.json").exists()
-
-
-def test_first_start_without_a_terminal_needs_the_flag(monkeypatch, home, capsys):
-    served, asked = _first_start(monkeypatch, False)
-    assert entry_with_exit(["start"]) == 1
-    assert asked == [] and served == []
-    assert "add --new-hub" in capsys.readouterr().err
+def test_first_start_with_new_hub_goes_on(monkeypatch, home):
+    served = _first_start(monkeypatch)
     assert entry_with_exit(["start", "--new-hub"]) in (0, None)
-    assert asked == [] and len(served) == 1
+    assert len(served) == 1 and (paths.home() / "hub.json").exists()
 
 
-def test_start_with_a_hub_here_never_asks(monkeypatch, home):
-    served, asked = _first_start(monkeypatch, True, "")
+def test_start_with_a_hub_here_needs_no_flag(monkeypatch, home):
+    served = _first_start(monkeypatch)
     _hub_json()
     assert entry_with_exit(["start"]) in (0, None)
-    assert asked == [] and len(served) == 1
+    assert len(served) == 1
 
 
 def test_restart_output_is_one_line(monkeypatch, home, capsys):
@@ -1028,7 +1022,7 @@ def test_start_refused_on_member_with_old_hub_files(monkeypatch, home, capsys):
     paths.save_config({"hub": "http://10.0.0.9:8765", "token": "t", "machine": "pc"})
     assert entry_with_exit(["start"]) == 1
     assert served == []
-    assert "joined to http://10.0.0.9:8765" in capsys.readouterr().err
+    assert "joined to the hub at http://10.0.0.9:8765" in capsys.readouterr().err
 
 
 def test_start_on_own_hub_still_runs(monkeypatch, home):
@@ -1299,6 +1293,6 @@ def test_cli_people_role_help_says_how_to_recover(capsys):
 
 
 def test_start_after_a_restore_never_asks(monkeypatch, home):
-    served, asked = _first_start(monkeypatch, True, "")
+    served = _first_start(monkeypatch)
     (paths.home() / "hub.db").write_bytes(b"")
-    assert entry_with_exit(["start"]) in (0, None) and asked == [] and len(served) == 1
+    assert entry_with_exit(["start"]) in (0, None) and len(served) == 1

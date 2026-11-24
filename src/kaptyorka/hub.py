@@ -1151,9 +1151,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if isinstance(facts, dict) and isinstance(facts.get("git"), dict):
             facts = {**facts, "git": {c: g for c, g in facts["git"].items() if c in kept or (
                 isinstance(c, str) and store.team_project(c.rstrip("/").rsplit("/", 1)[-1]))}}
+        # the bridge sends tools and facts every time; a shim's heartbeat has no tools, and a
+        # /hub off or leave's one-off drop no facts: those never make the machine online
+        bridge = body.get("bridge") is True or (
+            isinstance(body.get("tools"), list) and isinstance(facts, dict))
         store.heartbeat(body["machine"], body["sessions"], body.get("tools", ()),
                         principal=principal, facts=facts if isinstance(facts, dict) else None,
-                        gone=body.get("gone", ()))
+                        gone=body.get("gone", ()), bridge=bridge)
         if principal is None:
             return Response(status_code=204)
         own = not principal.legacy

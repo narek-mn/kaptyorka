@@ -33,7 +33,7 @@ def admin_with_bridge(store, online=True):
     pid, _ = person(store, "root", "admin")
     with store.lock:
         store.db.execute("UPDATE devices SET host=?, os_user='u', secret_hash='x',"
-                         " last_used=? WHERE person_id=?",
+                         " bridge_seen=? WHERE person_id=?",
                          (HOST, store.clock() if online else None, pid))
     return pid
 
@@ -97,27 +97,27 @@ def test_may_launch_rules(store, ms, clock):
     assert not ok and "off" in why
     ms.set_enabled(True, "root")
     with store.lock:
-        store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'",
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE name!='manager'",
                          (clock[0] - ONLINE_S - 1,))
     assert not ms.may_launch(clock[0])[0]
     with store.lock:
-        store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'", (clock[0],))
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE name!='manager'", (clock[0],))
     ms.record_launch(clock[0])
     ok, why = ms.may_launch(clock[0] + 60)
     assert not ok and "2 minutes" in why
     with store.lock:
-        store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'",
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE name!='manager'",
                          (clock[0] + 200,))
     assert ms.may_launch(clock[0] + 200) == (True, "")
     ms.record_launch(clock[0] + 200)
     with store.lock:
-        store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'",
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE name!='manager'",
                          (clock[0] + 400,))
     assert ms.may_launch(clock[0] + 400) == (True, "")  # normal wake-ups never wait
     assert ms.launches_last_hour(clock[0] + 400) == 2
     assert ms.launches_last_hour(clock[0] + 4000) == 0
     with store.lock:
-        store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'",
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE name!='manager'",
                          (clock[0] + 4000,))
         store.db.execute(
             "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
@@ -146,7 +146,7 @@ def test_no_relaunch_within_two_minutes_of_a_failure(store, ms, clock):
     assert ms.crashes() == [t - 30]
     clock[0] = t + 91  # 121 s after the failure; the bridge still online
     with store.lock:
-        store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'", (clock[0],))
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE name!='manager'", (clock[0],))
     assert ms.may_launch(clock[0]) == (True, "")
 
 
@@ -168,7 +168,7 @@ def test_launch_reason_texts(store, ms, clock):
                                                " ago; it tries again by itself")
     ms.record_launch(clock[0] + 200)
     with store.lock:
-        store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'",
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE name!='manager'",
                          (clock[0] + 400,))
     assert ms.launch_reason(clock[0] + 400) == ""
     ms.set_blocked("trust")
@@ -370,7 +370,7 @@ def sleeping(store, ms, clock):
     its worker closed as `session gone`. Returns (admin principal, manager principal)."""
     _, atoken = person(store, "root", "admin")
     with store.lock:
-        store.db.execute("UPDATE devices SET host=?, os_user='u', secret_hash='x', last_used=?",
+        store.db.execute("UPDATE devices SET host=?, os_user='u', secret_hash='x', bridge_seen=?",
                          (HOST, clock[0]))
     admin = store.authenticate(atoken)
     mgr = store.authenticate(ms.ensure_account(HOST, "root"))
@@ -383,7 +383,7 @@ def sleeping(store, ms, clock):
                          (admin.device_id,))
     clock[0] += 3600
     with store.lock:
-        store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'", (clock[0],))
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE name!='manager'", (clock[0],))
     return admin, mgr
 
 
@@ -435,7 +435,7 @@ def test_manager_gone_after_a_minute(store, ms, clock):
     with store.lock:
         store.db.execute("UPDATE agents SET last_seen=? WHERE key IN ('claude:m1','claude:w1')",
                          (clock[0] - ONLINE_S - 61,))
-        store.db.execute("UPDATE devices SET last_used=? WHERE name!='manager'", (clock[0],))
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE name!='manager'", (clock[0],))
     ws.tick(clock[0])
     assert ws.by_name("manager")["state"] == "closed"
     assert ws.by_name("manager")["error"] == "session gone"
