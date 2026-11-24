@@ -2545,19 +2545,27 @@ class Store:
 
     def note_section(self, topic: str, header: str, lines: List[str], cap: int,
                      author: str) -> None:
-        """Add lines to the section under `header` at the end of a team note, keeping its last
-        `cap` lines; everything above the header stays as it is (machine_events.py)."""
+        """Add lines to the section under the `header` line of a team note, keeping its last
+        `cap` lines. Only that section changes: it runs to the next "## " heading or the end,
+        and text before and after it stays as it is; with no such section, it is added at the
+        end (machine_events.py)."""
         if not lines:
             return
         with self.lock:
             row = self.db.execute("SELECT text FROM notes WHERE topic=? AND project IS NULL AND"
                                   " deleted_at IS NULL ORDER BY id DESC", (topic,)).fetchone()
-            text = row["text"] if row else ""
-            head, _, tail = text.partition(header)
-            kept = [x for x in tail.splitlines() if x.strip()] + list(lines)
-            body = head.rstrip()
-            self._note(topic, (body + "\n\n" if body else "") + header + "\n"
-                       + "\n".join(kept[-cap:]) + "\n", author)
+            all_lines = (row["text"] if row else "").splitlines()
+            start = next((i for i, x in enumerate(all_lines) if x.strip() == header), None)
+            if start is None:
+                before, own, after = all_lines, [], []
+            else:
+                end = next((i for i in range(start + 1, len(all_lines))
+                            if all_lines[i].startswith("## ")), len(all_lines))
+                before, own, after = all_lines[:start], all_lines[start + 1:end], all_lines[end:]
+            kept = ([x for x in own if x.strip()] + list(lines))[-cap:]
+            parts = ["\n".join(before).rstrip(), header + "\n" + "\n".join(kept),
+                     "\n".join(after).strip()]
+            self._note(topic, "\n\n".join(p for p in parts if p) + "\n", author)
 
     def notes_list(self, principal: Optional[Principal] = None,
                    project: Optional[str] = None) -> List[dict]:

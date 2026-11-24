@@ -549,13 +549,14 @@ A **team machine** is one OS account everyone logs into, such as a Jetson in the
 
 ### Machine events
 
-The hub records what happens to team machines by itself, so a reflashed Jetson or four machines dropping off at once is never noticed only by chance. For every event it writes one dated line to the team note `machines`, under **Machine events (written by the hub)** at its end (the rest of the note stays as it is; the section keeps its last 50 lines), and sends the manager one message, which warns the sessions working on that machine and tidies the note.
+The hub records what happens to team machines by itself, so a reflashed Jetson or four machines dropping off at once is never noticed only by chance. For every event it writes one dated line to the team note `machines`, under **Machine events (written by the hub)**, the note's last section (the hub changes only that section, up to the next heading, and keeps its last 50 lines; the manager writes above it), and sends the manager one message, which warns the sessions working on that machine and tidies the note. A team machine that is also marked shared gets only this offline event, not the older "shared machine offline" notice.
 
 | Event | Recorded when |
 |---|---|
 | Offline | The machine's bridge has been silent for more than 10 minutes. Machines that went silent within 3 minutes of each other make one line: "jet-1, jet-2, jet-3 went offline within 2 min (since 11:20): likely network or power". |
 | Back online | Its bridge reports again, with how long it was gone. |
-| Rebooted; OS release, JetPack, L4T, kernel, hostname, address or agent tool version changed | The machine reported the new value in 3 facts reports in a row (one a minute). A value that flips back before that records nothing. |
+| Rebooted; OS release, JetPack, L4T, kernel, hostname or address changed | The machine reported the new value in 3 facts reports in a row (one a minute). A value that flips back before that records nothing. |
+| An agent tool updated | Confirmed the same way, then written to the note only (no manager message), one line for every machine that updated within 10 minutes of the first: "Claude Code 2.1.331 -> 2.1.332 on box-1, box-2, box-3". |
 | Joined again as a new device (a reinstall) | The same machine and account join with a new device; what changed since is recorded once it reports it 3 times, such as "JetPack 6.2 -> 7.2.1". |
 | New machine, or another account on it | A new team machine device sends its first report. |
 

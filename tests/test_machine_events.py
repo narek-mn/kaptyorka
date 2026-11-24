@@ -73,7 +73,10 @@ def note(hub):
 
 def event_lines(hub):
     text = note(hub)
-    return text.split(me.NOTE_HEADER, 1)[1].strip().splitlines() if me.NOTE_HEADER in text else []
+    if me.NOTE_HEADER not in text:
+        return []
+    section = text.split(me.NOTE_HEADER, 1)[1].split("\n## ", 1)[0]  # up to the next heading
+    return [x for x in section.strip().splitlines() if x.strip()]
 
 
 def stay(mgr, who):
@@ -109,7 +112,51 @@ def test_a_change_counts_after_three_builds_in_a_row(hub, clock):
     for _ in range(2):
         clock[0] += 60
         beat(hub, d, kernel="6.8.0-tegra", tools={"claude-code": "2.1.331"})
-    assert events(mgr, who) == ["jet-1: claude-code 2.1.329 -> 2.1.331"]
+    assert events(mgr, who) == []  # a tool update: the note only, never the manager
+
+
+def test_tool_updates_go_to_the_note_only_one_line_for_many_machines(hub, clock):
+    mgr, who = online(hub)
+    ds = [team(hub, f"jet-{i}") for i in (1, 2, 3, 4)]
+    for d in ds:
+        beat(hub, d)
+    events(mgr, who)
+    new = {"claude-code": "2.1.332"}
+    start = clock[0]
+    for i, d in enumerate(ds[:3]):  # confirmed at start+120, +470, +820: the third is late
+        clock[0] = start + 350 * i
+        for k in range(3):
+            clock[0] += 60 if k else 0
+            beat(hub, d, tools=new)
+    lines = lambda: [x.split(" ", 3)[3] for x in event_lines(hub) if "Claude Code" in x]
+    clock[0] = start + 120 + me.TOOL_GROUP_S - 1
+    hub.tick()
+    assert lines() == []  # the window is still open
+    clock[0] += 1
+    hub.tick()
+    assert lines() == ["Claude Code 2.1.329 -> 2.1.332 on jet-1, jet-2"]
+    for _ in range(3):
+        clock[0] += 60
+        beat(hub, ds[3], tools=new)
+    clock[0] += me.TOOL_GROUP_S
+    hub.tick()
+    assert lines() == ["Claude Code 2.1.329 -> 2.1.332 on jet-1, jet-2",
+                       "Claude Code 2.1.329 -> 2.1.332 on jet-3, jet-4"]
+    assert events(mgr, who) == []
+
+
+def test_a_shared_team_machine_gets_only_the_machine_event(hub, clock):
+    mgr, who = online(hub)
+    d = team(hub, "jet-1")
+    beat(hub, d)
+    hub.store.device_set_shared(hub.store.authenticate(d.token).device_id, True)
+    events(mgr, who)
+    clock[0] += 3600
+    stay(mgr, who)
+    hub.tick()
+    texts = inbox(mgr, who)
+    assert [t for t in texts if t.startswith("machine event: jet-1: offline since")]
+    assert not [t for t in texts if "a shared machine, has been offline" in t]
 
 
 def test_a_value_that_flips_back_records_nothing(hub, clock):
@@ -266,6 +313,21 @@ def test_the_note_keeps_its_text_and_the_last_fifty_lines(hub, clock):
     lines = event_lines(hub)
     assert len(lines) == me.NOTE_CAP and lines[0].endswith("event 5") and lines[-1].endswith("event 54")
     assert hub.store.notes_read("machines").author == "hub"
+
+
+def test_the_hub_changes_only_its_own_section(hub, clock):
+    person(hub.store, "root", "admin")
+    m = me.MachineEvents(hub.store, lambda: HOST)
+    m.write_note(["jet-1: event 1"], clock[0])
+    # someone writes after the hub's section and edits above it
+    text = note(hub).replace("## Machine", "# Machines\n\n- jet-1: lab\n\n## Machine") \
+        + "\n## GPUs\n\n- jet-1: one Orin\n"
+    hub.store.notes_write_from_web("root", "machines", text)
+    m.write_note(["jet-1: event 2"], clock[0])
+    got = note(hub)
+    assert got.startswith("# Machines\n\n- jet-1: lab\n\n" + me.NOTE_HEADER)
+    assert got.endswith("## GPUs\n\n- jet-1: one Orin\n")  # never swallowed
+    assert [x.rsplit(" ", 2)[-2:] for x in event_lines(hub)] == [["event", "1"], ["event", "2"]]
 
 
 def test_switched_off_manager_still_gets_the_note(hub, clock):

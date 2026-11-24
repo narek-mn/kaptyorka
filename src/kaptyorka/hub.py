@@ -372,6 +372,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                  f"worker `{w['name']}` of {w['person']} is abandoned (unattended a day)"
                  f" on {w['host']}; tell {them} in one line")
         for d in ws.shared_offline(now):
+            if mev.tracked_team(d["id"]):
+                continue  # a team machine: its machine event says it
             push(f"offline:{d['id']}", 86400,
                  f"bridge on {d['host']} ({d['os_user']}), a shared machine, has been offline"
                  f" {d['minutes']} minutes; tell {them}")
@@ -588,6 +590,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             print(f"kaptyorka: stuck check failed: {e}", flush=True)
         try:
             machine_news(mev.tick(now), now)
+            mev.write_note(mev.tool_news(now), now)  # agent tool updates: the note only
         except Exception as e:  # nor may a machine event
             print(f"kaptyorka: machine events failed: {e}", flush=True)
         try:

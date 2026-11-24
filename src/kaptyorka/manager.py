@@ -204,15 +204,18 @@ or close it yourself, and never send more than these two messages per stuck sess
 MACHINES_SECTION = """## Machine events
 
 - The hub may send you "machine event: ...": a team machine (or the hub's own computer) went \
-offline, came back, rebooted, changed its OS, JetPack, kernel, hostname, address or agent tool \
-versions, joined again as a new device (a reinstall), or is new. Several machines that went \
+offline, came back, rebooted, changed its OS, JetPack, kernel, hostname or address, joined \
+again as a new device (a reinstall), or is new. Several machines that went \
 offline together come as one event. The hub has already written one dated line for it under \
 "Machine events" in the `machines` team note; every line there is confirmed by the machine \
 itself.
 - Warn the sessions working on that machine in one short message each (`who` shows them): what \
 changed and what it may break for them (homes wiped, a CI runner gone, tools to reinstall).
 - Tidy the `machines` note: bring its description of that machine up to date. Leave the hub's \
-event lines as they are.
+event lines as they are: its "Machine events" section stays the last section of the note, and \
+you write everything else above it.
+- Agent tool updates (such as a new Claude Code version) are only written in that section; \
+the hub does not message you about them.
 - Add a reason or a result (such as "CI runner set up again") only after a session tells you \
 the work is done. Never write plans or intentions ("will reinstall") into the notes.
 

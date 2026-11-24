@@ -1,6 +1,7 @@
 """Machine events: the hub compares each team machine's bridge facts with the previous ones and
 records only what the machine itself confirmed. One dated line per event goes to the team note
-`machines` (its own section at the end, the last NOTE_CAP lines) and one message to the manager.
+`machines` (its own section, the last NOTE_CAP lines) and one message to the manager; agent
+tool updates go to the note only, one line for every machine that updated within TOOL_GROUP_S.
 
 Only team machines and the hub's own computer: a personal laptop going offline is a closed
 lid, and it sends no extra facts. Rules, strict: a changed value counts only after the
@@ -32,7 +33,11 @@ CREATE TABLE IF NOT EXISTS machine_state (
     device_id INTEGER PRIMARY KEY, host TEXT NOT NULL, confirmed TEXT NOT NULL,
     pending TEXT NOT NULL DEFAULT '{}', seen REAL NOT NULL, seq INTEGER, counted REAL,
     offline_at REAL);
+CREATE TABLE IF NOT EXISTS machine_tool_news (
+    tool TEXT NOT NULL, old TEXT NOT NULL, new TEXT NOT NULL, host TEXT NOT NULL,
+    at REAL NOT NULL, PRIMARY KEY(tool, old, new, host));
 """
+TOOL_GROUP_S = 600  # agent tool updates confirmed this close together make one note line
 
 
 def hm(t: float) -> str:
@@ -99,6 +104,13 @@ class MachineEvents:
         with self.lock:
             return self._scope(self._device(device_id))
 
+    def tracked_team(self, device_id: int) -> bool:
+        """A team machine's device these events watch: its going offline is a machine event,
+        so the older "shared machine offline" notice is not sent as well."""
+        with self.lock:
+            return self._scope(self._device(device_id)) == "team" and self.db.execute(
+                "SELECT 1 FROM machine_state WHERE device_id=?", (device_id,)).fetchone() is not None
+
     def observe(self, device_id: int, facts: dict, now: float) -> List[str]:
         """One facts report of a device's bridge; the event texts it confirms."""
         with self.lock:
@@ -124,6 +136,12 @@ class MachineEvents:
                     (seq is None and (counted is None or now - counted >= COUNT_GAP_S)):
                 counted = now
                 changes = self._count(confirmed, pending, now_values)
+                for key, old, new in [c for c in changes if c[0].startswith("tool:")]:
+                    # agent tools update often: the note only, one line for all machines
+                    self.db.execute("INSERT OR REPLACE INTO machine_tool_news (tool, old, new,"
+                                    " host, at) VALUES (?,?,?,?,?)",
+                                    (key[5:], str(old), str(new), host, now))
+                changes = [c for c in changes if not c[0].startswith("tool:")]
                 if changes:
                     events.append(f"{host}: " + "; ".join(describe(*c) for c in changes))
             self.db.execute(
@@ -224,6 +242,29 @@ class MachineEvents:
                     events.append(f"{', '.join(hosts)} went offline within {within} (since"
                                   f" {hm(group[0]['seen'])}): likely network or power")
         return events
+
+    def tool_news(self, now: float) -> List[str]:
+        """Agent tool updates, for the note only: one line per update (tool, old, new) for
+        every machine that confirmed it within TOOL_GROUP_S of the first, written once that
+        window has passed: "Claude Code 2.1.331 -> 2.1.332 on box-1, box-2, box-3"."""
+        from kaptyorka.adapters.base import TOOL_NAMES
+        out: List[str] = []
+        with self.lock:
+            rows = self.db.execute("SELECT tool, old, new, MIN(at) AS first FROM"
+                                   " machine_tool_news GROUP BY tool, old, new ORDER BY first"
+                                   ).fetchall()
+            for r in rows:
+                if now < r["first"] + TOOL_GROUP_S:
+                    continue
+                key = (r["tool"], r["old"], r["new"])
+                hosts = [h["host"] for h in self.db.execute(
+                    "SELECT host FROM machine_tool_news WHERE tool=? AND old=? AND new=? AND"
+                    " at<=? ORDER BY host", (*key, r["first"] + TOOL_GROUP_S))]
+                self.db.execute("DELETE FROM machine_tool_news WHERE tool=? AND old=? AND new=?"
+                                " AND at<=?", (*key, r["first"] + TOOL_GROUP_S))
+                out.append(f"{TOOL_NAMES.get(r['tool'], r['tool'])} {r['old']} -> {r['new']}"
+                           f" on {', '.join(hosts)}")
+        return out
 
     def write_note(self, texts: List[str], now: float) -> None:
         """One dated line per event in the team note `machines`, in its own section at the end
