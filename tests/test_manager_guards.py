@@ -13,6 +13,9 @@ PW = "EvalPw-7731-zq"
 def test_labelled_values_take_a_password_and_never_plain_words():
     assert labelled_values("the password is Xy7kd92mQ") == {"Xy7kd92mQ"}
     assert labelled_values(f"Please keep it in the note: deploy password: {PW}") == {PW}
+    assert labelled_values("the db password is: Xy7kd92mQ") == {"Xy7kd92mQ"}
+    assert labelled_values("token is: ab12cd34ef") == {"ab12cd34ef"}
+    assert labelled_values("password for staging is Xy7kd92mQ") == {"Xy7kd92mQ"}
     assert labelled_values("token=ab12cd34ef56, then restart") == {"ab12cd34ef56"}
     assert labelled_values("the api key is `ab12cd34ef56`.") == {"ab12cd34ef56"}
 
@@ -23,6 +26,7 @@ def test_names_near_a_label_are_never_secrets():
                  "the token expired on node-01 so session #9d1c0ebc could not push",
                  "login-copy for codex worked on machine01",
                  "the api key rotation is in commit 3f9a2c1b7e on branch fix-key2",
+                 "the api key rotation is in commit 9d1c0ebc77",
                  f"Please put the deploy password in the note so all have it: {PW}"):
         assert labelled_values(text) == set(), text
     assert labelled_values("password: see the vault, or ask alice") == set()

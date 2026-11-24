@@ -31,7 +31,7 @@ def check_secrets(text: str) -> None:
 # nothing: names after it are ordinary.
 LABELLED = re.compile(r"\b(?:password|passwd|passphrase|pwd|secret|token|api[ _-]?key"
                       r"|access[ _-]?key|private[ _-]?key|credentials?|login)"
-                      r"(?:\s+is\b|\s*[:=])\s*[`'\"]?(\S+)", re.I)
+                      r"(?:\s+\S+){0,3}?(?:\s+is\b\s*[:=]?|\s*[:=])\s*[`'\"]?(\S+)", re.I)
 
 
 def labelled_values(text: str) -> set:
