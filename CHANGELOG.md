@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.32 (unreleased)
+## 0.9.32
 
 - **Stuck sessions are caught.** A session that ended its turn while a background task ran a wait loop that never ended sat for almost 17 hours with the page saying "Working". The bridge now reports, for Claude Code on Linux, each busy session's live background tasks (its child shells writing to Claude Code's task output files: id, command, how long since they printed) and when the session itself last wrote (messages delivered to it do not count). The hub calls a session stuck when a background task has printed nothing for 30 minutes, or when a busy session has written nothing for 30 minutes. It then asks the session once to check (a finished turn reads it at once), and at 60 minutes tells its person, a worker's boss and the manager how to stop it; the manager hears it once more 30 minutes later. Idle sessions, older bridges and other tools are never judged. Checked on real `claude --bg` sessions (Claude Code 2.1.331): the session file's status is `shell` while a background task runs after the turn, a background Bash call's `timeout` is not enforced, and a message to a finished turn starts a new one.
 - **The page shows "Background task" instead of "Working"** for a session whose turn is over while its background task runs, and an amber "Silent 1 h" or "Stuck 2 h" for a stuck one.
