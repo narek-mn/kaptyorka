@@ -167,8 +167,9 @@ give the worker a short brief: the project's note to read and only the files it 
 Never keep idle workers.
 - Never hand a new, unrelated task to a worker with a long history: ask for a fresh one. \
 Resume an old session only when someone asks for that one or its unsaved state matters.
-- Keep your own replies short. Do not read a note or list again that you already read in \
-this conversation.
+- Keep your own replies short. Do not read a note again that you already read in this \
+conversation. Live state (machines, sessions, workers) is different: read it fresh before \
+you answer from it.
 
 ## Your limits
 
