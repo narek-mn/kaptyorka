@@ -1043,3 +1043,46 @@ def test_warnings_for_scopes_by_viewer(store, ws, alice, bob, clock):
     assert all("device_id" not in w and "boss_id" not in w for w in mine)
     assert len(ws.warnings_for(principal(store, adm), clock[0], "0.3.0")) \
         == len(ws.warnings(clock[0], "0.3.0"))
+
+
+def test_the_upgrade_fills_bridge_seen_from_last_use_for_bridges_only(tmp_path):
+    """A hub updated while a bridge is already down still warns about it and closes its
+    workers: the new column starts at the token's last use for devices that reported facts."""
+    import sqlite3
+
+    clock = [1_000_000.0]
+    path = tmp_path / "hub.db"
+    store = Store(path, clock=lambda: clock[0])
+    ws = WorkerStore(store)
+    alice = person(store, "alice")[0]
+    gone = device(store, alice, "box-1", "alice")[0]
+    never = device(store, alice, "box-2", "alice")[0]
+    ws.facts_seen(gone, {"version": "0.3.0", "tmux": True}, {})
+    with store.lock:
+        store.db.execute("DELETE FROM device_facts WHERE device_id=?", (never,))
+        _worker_row(store, "w1", gone, "box-1", "up", clock[0])
+        store.db.execute("UPDATE devices SET last_used=? WHERE id IN (?,?)",
+                         (clock[0] - 2 * 3600, gone, never))
+    store.close()
+    db = sqlite3.connect(path)  # the database as an older hub left it
+    db.execute("ALTER TABLE devices DROP COLUMN bridge_seen")
+    db.commit()
+    db.close()
+    store = Store(path, clock=lambda: clock[0])
+    ws = WorkerStore(store)
+    with store.lock:
+        seen = {r[0]: r[1] for r in store.db.execute("SELECT id, bridge_seen FROM devices")}
+    assert seen[gone] == clock[0] - 2 * 3600 and seen[never] is None
+    assert [w["short"] for w in ws.warnings(clock[0], "0.3.0")] == ["bridge offline"]
+    ws.started = clock[0] - 600  # past its own start-up grace
+    ws.tick(clock[0])
+    w = ws.by_name("w1")
+    assert w["state"] == "closed" and "bridge offline for over an hour" in (w["error"] or "")
+    with store.lock:
+        store.db.execute("UPDATE devices SET bridge_seen=NULL")
+    store.close()
+    store = Store(path, clock=lambda: clock[0])  # once, at the upgrade: never again
+    with store.lock:
+        assert store.db.execute("SELECT bridge_seen FROM devices WHERE id=?",
+                                (gone,)).fetchone()[0] is None
+    store.close()

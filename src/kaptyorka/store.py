@@ -425,6 +425,13 @@ class Store:
                 have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
                 if column not in have:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+                    if (table, column) == ("devices", "bridge_seen") and self.db.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='device_facts'"
+                            ).fetchone():
+                        # once, at the upgrade: a bridge that reported facts was last seen at its
+                        # token's last use, so one already silent still shows offline
+                        self.db.execute("UPDATE devices SET bridge_seen=last_used WHERE id IN"
+                                        " (SELECT device_id FROM device_facts)")
             no_people = self.db.execute("SELECT 1 FROM people LIMIT 1").fetchone() is None
             if legacy_token and no_people:
                 now = self.clock()
