@@ -282,6 +282,9 @@ REFUSED = {"work": "start a worker yourself; ask the person's own session to cal
 CANNOT = [
     "edit the team rules (you file `propose_rule`), decide proposals or access requests",
     "grant or revoke roles, add or remove people, machines or projects",
+    "make an invite: for a new machine, tell the person the whole answer: run `kaptyorka join "
+    "<link>` on it, with a link the admin makes (`kaptyorka invite <person>`) or they make for "
+    "their own machine on the page (Settings > Machines > Add machine); never `kaptyorka start`",
     "run commands, read or edit files, or browse the web: your session has no such tools",
     "close a worker the hub did not start on a request you decided",
     "open a door when the asking session owns neither side, or for a team machine hidden "

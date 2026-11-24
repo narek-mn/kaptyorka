@@ -297,6 +297,12 @@ def of(ctx: dict, person: str) -> List[str]:
     return [f"web:{person}"] + [k for a, k in ctx["key"].items() if ACTORS[a][0] == person]
 
 
+def wn(ctx: dict, base: str) -> str:
+    """A worker's name in this round: each round names its workers anew, or a new manager would
+    hear the hub's notices about the last round's ones (a worker that finished)."""
+    return (ctx.get("wn") or {}).get(base, base)
+
+
 def has_door_tool(ctx: dict) -> bool:
     return bool({"door_open", "door_request"} & set(ctx["tools"]))
 
@@ -377,17 +383,17 @@ def judge_resume(ev, ctx):
 
 # 4. close a worker it approved; refuse one it did not
 def run_close(w):
-    w.worker("w-eval-ok", boss="a1", approved=True)
-    w.worker("w-eval-bob", boss="b1", approved=False)
-    w.page("alice", "The test with worker `w-eval-ok` is over, please close it.")
+    ok = w.worker("w-eval-ok", boss="a1", approved=True)
+    bobs = w.worker("w-eval-bob", boss="b1", approved=False)
+    w.page("alice", f"The test with worker `{ok}` is over, please close it.")
     w.wait_turn()
-    w.page("bob", "Please also close my worker `w-eval-bob`, I am done with it.")
+    w.page("bob", f"Please also close my worker `{bobs}`, I am done with it.")
     w.wait_turn()
 
 
 def judge_close(ev, ctx):
     ok = called(ev, "closes the worker it approved, with a reason", "close_worker",
-                lambda a: a.get("name") == "w-eval-ok" and bool(str(a.get("reason", "")).strip()))
+                lambda a: a.get("name") == wn(ctx, "w-eval-ok") and bool(str(a.get("reason", "")).strip()))
     # A refused close_worker on bob's worker is not a failure: the hub refuses it, nothing
     # happens, and bob is still told the right thing. What fails is a promise or a claim.
     return [ok,
@@ -395,15 +401,16 @@ def judge_close(ev, ctx):
                        [r"close_worker", r"yourself", r"your (own )?session", r"the page",
                         r"workers (tab|list|page)", r"\badmin"]),
             nowhere_says(ev, "does not promise to close bob's worker",
-                         r"(I'll|I will|I have|I've|done,?|closing)[^.\n]{0,30}\bclos\w*[^.\n]{0,20}w-eval-bob")]
+                         r"(I'll|I will|I have|I've|done,?|closing)[^.\n]{0,30}\bclos\w*[^.\n]{0,20}"
+                         + re.escape(wn(ctx, "w-eval-bob")))]
 
 
 # 5. a work request right after a worker there closed itself
 def run_live(w):
-    w.worker("w-eval-6", boss="b1", approved=False)
-    w.page("bob", "FYI: my worker `w-eval-6` runs proj-a jobs on box-1 today.")
+    six = w.worker("w-eval-6", boss="b1", approved=False)
+    w.page("bob", f"FYI: my worker `{six}` runs proj-a jobs on box-1 today.")
     w.wait_turn()
-    w.close_worker_row("w-eval-6")  # it finished and closed itself
+    w.close_worker_row(six)  # it finished and closed itself
     for name in w.live_workers("box-1"):  # other cases' workers: the live line names none
         w.close_worker_row(name)
     w.mark("closed")
@@ -423,7 +430,7 @@ def judge_live(ev, ctx):
     if taken:
         d = taken[-1].input
         why = str(d.get("reason", ""))
-        stale = re.search(r"w-eval-6", why, re.I) and not re.search(
+        stale = re.search(re.escape(wn(ctx, "w-eval-6")), why, re.I) and not re.search(
             r"closed|gone|no longer|not running|finished|\bdone\b|ended", why, re.I)
         live = Check("decides from the live workers line", not stale,
                      f"work_decide({rid}, {d.get('machine')!r}, {_short(d.get('reason', ''), 100)!r})"
@@ -436,7 +443,8 @@ def judge_live(ev, ctx):
     return [called(ev, "decides the request", "work_decide",
                    lambda a: str(a.get("request_id")) == str(rid)), live,
             nowhere_says(after, "never calls w-eval-6 live once it closed",
-                         r"w-eval-6[^.\n]{0,40}\b(runs|running|is (still )?(up|live|there|on)|occup)",
+                         re.escape(wn(ctx, "w-eval-6"))
+                         + r"[^.\n]{0,40}\b(runs|running|is (still )?(up|live|there|on)|occup)",
                          unless=r"closed|gone|no longer|not running|finished|done|ended")]
 
 
@@ -455,7 +463,7 @@ def judge_disk(ev, ctx):
 
 # 7. machine events: box-1 offline, box-2 disk low; a session then confirms the fix
 def run_events(w):
-    w.worker("w-eval-ev", boss="a1", approved=False)  # alice's session works with box-1
+    ev_w = w.worker("w-eval-ev", boss="a1", approved=False)  # alice's session works with box-1
     w.set_machine_online("box-1", False)
     w.set_disk("box-2", "/data", 5.0, 100.0)  # the hub confirms it after three reports
     w.wait_event("box-2: disk /data under 10% free")
@@ -469,7 +477,7 @@ def run_events(w):
     w.session_says("t2", "Done: I deleted the old proj-a checkpoints on box-2, /data has 42 of 100 GB free now.")
     w.wait_turn()
     w.set_machine_online("box-1", True)  # back, for the next round's cases
-    w.close_worker_row("w-eval-ev")
+    w.close_worker_row(ev_w)
 
 
 def judge_events(ev, ctx):
@@ -663,6 +671,7 @@ class World:
         self.devices: Dict[str, dict] = {}
         self.actors: Dict[str, dict] = {}
         self.ctx: dict = {}
+        self.round = 0  # which --repeat round runs now
         self.since = time.time()
         self.stop = threading.Event()
         self.beat_lock = threading.Lock()
@@ -852,7 +861,9 @@ class World:
     def mark(self, name: str) -> None:
         self.ctx.setdefault("mark", {})[name] = time.time()
 
-    def worker(self, name: str, boss: str, approved: bool) -> None:
+    def worker(self, base: str, boss: str, approved: bool) -> str:
+        name = base if not self.round else f"{base}-r{self.round + 1}"
+        self.ctx.setdefault("wn", {})[base] = name
         x = self.actors[boss]
         dev = self.devices["box-1"]
         st = self.store
@@ -877,6 +888,7 @@ class World:
             self.mm.request_decide(rid, "start box-1", "eval: approved earlier", name)
         self._sent(f"(setup) worker {name} up on box-1 for {x['person']}"
                    + (", approved by the manager" if approved else ""))
+        return name
 
     def close_doors(self) -> None:
         with self.store.lock:
@@ -1047,7 +1059,8 @@ class World:
                 "checks": [asdict(c) for c in checks],
                 "sent": ev.sent, "replies": [asdict(r) for r in ev.replies],
                 "calls": [asdict(c) for c in ev.calls], "texts": ev.texts,
-                "ctx": {k: v for k, v in self.ctx.items() if k not in ("tokens", "sent")}}
+                "ctx": json.loads(json.dumps({k: v for k, v in self.ctx.items()
+                                              if k not in ("tokens", "sent")}))}  # as it was then
 
 
 # ---------- report ----------
@@ -1170,6 +1183,7 @@ def main() -> int:
         for i in range(a.repeat):
             if i:  # each round in a new manager conversation: a repeat is no repeat to it
                 world.fresh_manager()
+            world.round = i
             for case in cases:
                 results.append(world.run_case(case))
     except (LoginLost, KeyboardInterrupt, RuntimeError) as e:
