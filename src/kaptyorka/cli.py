@@ -62,8 +62,6 @@ def _purge_personal(store) -> None:
 def _serve(args) -> int:
     token = _token()
     if args.foreground:
-        import uvicorn
-
         from kaptyorka.hub import build_app
         from kaptyorka.retention import prune_loop
         from kaptyorka.store import Store
@@ -75,8 +73,11 @@ def _serve(args) -> int:
         app = build_app(store, manager_url=getattr(args, "manager_url", None)
                         or f"http://127.0.0.1:{args.port}")
         _purge_personal(store)
-        uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning",
-                    timeout_graceful_shutdown=3)  # open agent streams must not hold up a stop
+        from kaptyorka import tls
+
+        # plain http, and https beside it once `kaptyorka tls on` ran (tls.py); open agent
+        # streams must not hold up a stop
+        tls.run(tls.servers(app, args.port, log_level="warning", timeout_graceful_shutdown=3))
         return 0
     was_running = service.is_active("kaptyorka-hub") is True
     exe = str(Path(sys.argv[0]).resolve())
@@ -91,7 +92,8 @@ def _serve(args) -> int:
     for line in lines:
         if not line.startswith("installed "):  # a unit file path means nothing to a newcomer
             print(line, file=sys.stderr)
-    url = f"http://{args.host or _outbound_ip()}:{args.port}"
+    plain = f"http://{args.host or _outbound_ip()}:{args.port}"
+    url = _public_url(args.host or _outbound_ip(), args.port)  # what people open
     admin = _admin_device(token)
     from kaptyorka.store import Store
 
@@ -101,10 +103,12 @@ def _serve(args) -> int:
     finally:
         store.close()
     cfg = paths.load_config()
+    # this machine's own config stays on plain http here: its bridge moves it to https
+    # itself, with the pins, when the hub announces it (tls.follow)
     if not cfg.get("hub") or not cfg.get("token"):  # this machine joins as the admin
-        paths.save_config({"hub": url, "token": admin, "machine": _default_name()})
-    elif cfg["hub"].rstrip("/") == getattr(args, "old_url", None) and cfg["hub"].rstrip("/") != url:
-        paths.save_config({**cfg, "hub": url})  # this machine's own hub moved: follow it
+        paths.save_config({"hub": plain, "token": admin, "machine": _default_name()})
+    elif cfg["hub"].rstrip("/") == getattr(args, "old_url", None) and cfg["hub"].rstrip("/") != plain:
+        paths.save_config({**cfg, "hub": plain})  # this machine's own hub moved: follow it
         args.moved = True
     if getattr(args, "first_start", True):
         print(f"hub running: {url}")
@@ -203,8 +207,9 @@ def _start(args) -> int:
     else:
         rc = _serve(args)
     if rc == 0:
+        keep = {"tls": saved["tls"]} if isinstance(saved.get("tls"), dict) else {}  # kaptyorka tls
         saved_file.write_text(json.dumps({"port": args.port, "host": args.host,
-                                          "manager": not args.no_manager}))
+                                          "manager": not args.no_manager, **keep}))
         # a moved hub needs the bridge to read the new address; `stop` may have turned it off
         bridge = service.is_active("kaptyorka-bridge")
         if bridge is False or (args.moved and bridge):
@@ -233,10 +238,41 @@ def _already_running(args) -> int:
         _apply_manager(store, args)  # --manager clears the trust block; no restart needed
     finally:
         store.close()
-    url = f"http://{args.host or _outbound_ip()}:{args.port}"
+    url = _public_url(args.host or _outbound_ip(), args.port)
     print(f"the hub is already running: {url}")
     print(PAGE_LINK.format(url=url, token=admin))
     return 0
+
+
+def _public_url(host: str, port: int) -> str:
+    """The hub's address for people and machines: https on its TLS port once it uses https."""
+    from kaptyorka import tls
+
+    return tls.base_url("http", f"{host}:{port}")
+
+
+def _tls(args) -> int:
+    """`kaptyorka tls`: encrypted connections to this machine's hub (tls.py)."""
+    from kaptyorka import tls
+    from kaptyorka.store import Store
+
+    if not (paths.home() / "hub.db").exists():
+        print("no hub here: run this on the hub machine", file=sys.stderr)
+        return 1
+
+    def restart() -> None:
+        if service.is_active("kaptyorka-hub"):
+            for line in service.restart("kaptyorka-hub"):
+                print(line)
+
+    store = Store(paths.home() / "hub.db", legacy_token=_token())
+    try:
+        return tls.admin(args.action, store, force=args.force, port=args.port, restart=restart)
+    except (RuntimeError, service.ServiceError) as e:
+        print(e, file=sys.stderr)
+        return 1
+    finally:
+        store.close()
 
 
 def _ago(seconds) -> str:
@@ -362,6 +398,11 @@ def _status_of(cfg: dict) -> int:
             roll = None
         if roll and roll[0] == 200 and isinstance(roll[1], dict) and roll[1].get("line"):
             print(f"rollout: {roll[1]['line']}")
+        from kaptyorka import tls
+
+        st = tls.state()
+        if st["mode"] != "off":  # encrypted connections (kaptyorka tls status for each machine)
+            print(f"tls: {st['mode']}, machines use {st.get('use')}, https on port {st['port']}")
     if got[0] == 401:
         said = got[1] if isinstance(got[1], str) and got[1] != "unauthorized" else ""
         print(f"hub: {said}" if said else "hub: refused this machine's token (ask your admin for a new invite link, "
@@ -888,6 +929,14 @@ def _gitlab_print(st: dict) -> int:
         hub = paths.load_config().get("hub", "http://<hub>").rstrip("/")
         print("sign-in:    on" if st["signin"] is None else f"sign-in:    off: {st['signin']}")
         print(f"            GitLab app redirect URI: {hub}/auth/gitlab/callback (scope read_user)")
+        from urllib.parse import urlsplit
+
+        from kaptyorka import tls
+
+        u = urlsplit(hub)
+        moved = tls.base_url(u.scheme or "http", u.netloc) if u.netloc else hub
+        if moved != hub:  # on the hub machine during the move to https: GitLab needs both lines
+            print(f"            and, for https: {moved}/auth/gitlab/callback")
     return rc
 
 
@@ -1131,6 +1180,9 @@ def _join(args) -> int:
         if got is None:
             return 1
         hub, token, secret, person = got
+        from kaptyorka import tls
+
+        pin = tls.split_invite(args.invite)[1]
         if old.get("hub") and old.get("token"):
             same = old["hub"].rstrip("/").lower() == hub.rstrip("/").lower()
             print(f"rejoined {hub}" if same else f"moved from {old['hub']} to {hub}")
@@ -1138,10 +1190,12 @@ def _join(args) -> int:
         cfg = {"hub": hub, "token": token, "machine": args.name, "secret": secret}
         if person:
             cfg["person"] = person
+        if pin and hub.startswith("https://"):
+            cfg["hub_pins"] = [pin]
         paths.save_config(cfg)
         moved = bool(old.get("token")) and (old.get("hub"), old.get("token")) != (hub, token)
         return join.main(hub, token, args.name, only=args.only, secret=secret, person=person,
-                         first=True, moved=moved, **extra)
+                         first=True, moved=moved, pins=[pin] if pin else None, **extra)
     if not args.hub and not args.token:  # no flags: the previous arguments, saved by the last join
         cfg = paths.load_config()
         if not cfg.get("hub") or not cfg.get("token"):
@@ -1151,7 +1205,22 @@ def _join(args) -> int:
     if not (args.hub and args.token):
         print("join needs both --hub and --token, or an invite link: kaptyorka join <invite link>", file=sys.stderr)
         return 2
+    fp = _fingerprint_arg(getattr(args, "fingerprint", None))
+    if fp is False:
+        print("--fingerprint takes the hub certificate's SHA-256: 64 hex digits", file=sys.stderr)
+        return 2
+    if fp:
+        extra["pins"] = [fp]
     return join.main(args.hub, args.token, args.name, only=args.only, **extra)
+
+
+def _fingerprint_arg(value):
+    """--fingerprint as 64 lower-case hex digits; None when not given, False when malformed."""
+    if not value:
+        return None
+    v = value.strip().lower().replace(":", "")
+    v = v[7:] if v.startswith("sha256=") else v
+    return v if re.fullmatch(r"[0-9a-f]{64}", v) else False
 
 
 def _fleet_add(args) -> int:
@@ -1292,6 +1361,7 @@ def entry() -> None:
     j.add_argument("invite", nargs="?", help="invite link from your admin")
     j.add_argument("--hub", help="hub address")
     j.add_argument("--token", help="hub token")
+    j.add_argument("--fingerprint", help="an https hub certificate's SHA-256 (64 hex digits), as `kaptyorka tls status` prints it")
     j.add_argument("--name", default=_default_name(), help="this machine's name on the team (default: user@host)")
     j.add_argument("--only", action="append", help=hide)
     j.add_argument("--env-stdin", action="store_true", help=hide)
@@ -1460,6 +1530,11 @@ def entry() -> None:
     rs = sub.add_parser("restore", help="put a backup file back (stop the hub first)")
     rs.add_argument("file", help="the backup file")
     rs.set_defaults(run=_restore)
+    tl = sub.add_parser("tls", help="encrypted connections to this machine's hub (optional): status, on, only, off, rotate, ca")
+    tl.add_argument("action", choices=["status", "on", "only", "off", "rotate", "ca"], nargs="?", default="status")
+    tl.add_argument("--force", action="store_true", help="go on although some machines have not moved yet")
+    tl.add_argument("--port", type=int, help="the https port for `on` (default: the hub's port + 1)")
+    tl.set_defaults(run=_tls)
     fl = sub.add_parser("fleet", help="set up other machines over ssh, or list the team's machines")
     fs = fl.add_subparsers(dest="fleet_cmd", required=True, metavar="{add,list,rollout}")
     fa = fs.add_parser("add", help="install kaptyorka on other machines over ssh and join them as a person's")

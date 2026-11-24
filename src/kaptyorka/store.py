@@ -295,6 +295,11 @@ def machine_name(label: str, os_user: str, host: str, fallback: str) -> str:
     return fallback
 
 
+def _session_key(key) -> bool:
+    """A session's key, not a page ("web:<person>") nor the hub's own sender ("hub:...")."""
+    return isinstance(key, str) and bool(key) and not key.startswith(("web:", "hub:"))
+
+
 def session_id(key: str) -> str:
     """A session's stable public handle, "#" and 8 hex digits: it names a session without
     its project, and the key cannot be read back from it."""
@@ -2230,6 +2235,10 @@ class Store:
                 d[k] = None if m[p + "machine"] is None else {
                     "key": m[p + "key"], "person_id": m[p + "pid"], "machine": m[p + "machine"],
                     "tool": m[p + "tool"], "project": m[p + "project"]}
+            # each session side's handle, also once its session is gone: the page's chat
+            # identity (names are reused; a handle never is). Never the key itself
+            d["_ids"] = tuple(session_id(k) if _session_key(k) else ""
+                              for k in (m["sender_key"], m["to_key"]))
             out.append(d)
         return out
 

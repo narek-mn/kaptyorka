@@ -649,9 +649,9 @@ def test_plain_serve_keeps_the_switch_and_start_manager_turns_it_on(home, monkey
     ManagerStore(store).set_enabled(False, "admin")
     store.close()
     built = []
-    import uvicorn
-    from kaptyorka import hub
-    monkeypatch.setattr(uvicorn, "run", lambda app, **k: built.append(app))
+    from kaptyorka import hub, tls
+    monkeypatch.setattr(tls, "servers", lambda app, port, **k: [app])  # the listeners tls.py makes
+    monkeypatch.setattr(tls, "run", built.extend)
     monkeypatch.setattr(hub, "build_app", lambda s, **k: "app")
     with pytest.raises(SystemExit):
         run_cli(["serve", "--foreground", "--port", "9999"])
