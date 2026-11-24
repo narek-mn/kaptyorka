@@ -14,7 +14,7 @@ from conftest import start_hub
 from helpers import person
 from kaptyorka.manager import ManagerStore
 from kaptyorka.store import Store, session_id
-from test_working_together import said, worker
+from test_working_together import both, said, worker
 
 pytestmark = [pytest.mark.slow,
               pytest.mark.skipif(chrome_path() is None, reason="no Chrome or Chromium installed")]
@@ -62,7 +62,19 @@ def team(tmp_path):
         {"key": "t2", "tool": "codex", "project": "proj-a", "label": "eval-runs"}])
     beat(ctoken, "box-4", "carol", [{"key": "c1", "tool": "codex", "project": "proj-c", "label": "billing"}])
     worker(store, "bw", "b1", bob, name="parser-tests", ago=450)
-    for a, b, text, ago in (
+    for a, b, text, ago in (  # earlier work first: a link needs 4 real messages each way over 15 min
+            ("b1", "t1", "Is the training data for proj-a on the new disk yet?", 2400),
+            ("t1", "b1", "Yes, copied this morning, 2.1 TB, checksums match.", 2350),
+            ("b1", "t1", "Good. Please switch the loader to the new path then.", 2000),
+            ("t1", "b1", "Switched; a dry run reads all shards without errors.", 1900),
+            ("b1", "t1", "Next I will change the tokenizer; wait for my message.", 1500),
+            ("t1", "b1", "Waiting. The GPU stays reserved for us until tonight.", 1450),
+            ("b2", "c1", "Hello, I am writing the export docs for proj-a.", 2400),
+            ("c1", "b2", "Hi, the export lives in the billing service.", 2300),
+            ("b2", "c1", "Does it support CSV as well as the JSON format?", 1800),
+            ("c1", "b2", "Both, CSV since last month; JSON is the default.", 1700),
+            ("b2", "c1", "And is there a size limit per export file?", 1200),
+            ("c1", "b2", "Yes, 50 MB; bigger exports are split in parts.", 1100),
             ("b1", "t1", "Can you rerun the training with the new tokenizer?", 600),
             ("t1", "b1", "Started. First epoch in about 4 minutes.", 560),
             ("b1", "bw", "Write tests for the parser edge cases: empty input, BOM, CRLF.", 400),
@@ -142,7 +154,7 @@ def test_member_list_by_machine_and_working_together(team, tmp_path):
             assert page.js('document.getElementById("chat-name").textContent') == "proj-a"
             assert page.js('document.getElementById("chat-sub").textContent') == "3 sessions · active 2m ago"
             assert page.js('document.getElementById("compose").hidden') and page.js('document.getElementById("read-only").hidden')
-            heads = page.js('[...document.querySelectorAll("#log .group .head")].map(h => h.querySelector("b").textContent + ">" + (h.querySelector(".to")?.textContent || ""))')
+            heads = page.js('[...document.querySelectorAll("#log .group .head")].map(h => h.querySelector("b").textContent + ">" + (h.querySelector(".to")?.textContent || ""))')[-5:]
             assert heads == ["api-dev>trainer", "trainer>api-dev", "api-dev>parser-tests", "parser-tests>api-dev",
                              "trainer>api-dev"], heads
             assert "How is the run going?" not in page.js('document.getElementById("log").textContent')
@@ -262,8 +274,7 @@ def test_admin_mine_by_machine_and_everyone(tmp_path):
     store.heartbeat("box-4", [{"key": "c1", "tool": "codex", "project": "proj-c", "label": "billing"},
                               {"key": "c2", "tool": "codex", "project": "proj-c", "label": "reports"}],
                     principal=store.authenticate(ctoken), facts={"host": "box-4", "os_user": "carol"})
-    said(store, "a1", "c1", "ping", 60)
-    said(store, "c1", "a1", "pong", 50)
+    both(store, "a1", "c1", ago=50)  # real work between them
     stop = start_hub(store)
     try:
         with chrome() as page:
@@ -302,9 +313,11 @@ def test_stuck_and_background_task_chips_in_groups(team):
           const b1 = f.agents.find(a => a.label === "api-dev"), b4 = f.agents.find(a => a.label === "migrations");
           b1.stuck = { kind: "busy", s: 7300 };
           b4.activity = "shell";
+          f.groups[0].quiet = true; f.groups[0].active_s = 3 * 3600 + 120;  // hours since the last real message
           return f; }""")
         page.wait(f'{row("api-dev")}.textContent.includes("Stuck 2 h")')
         assert page.js(f'!!{row("api-dev")}.closest(".wt-rows")')
+        assert page.js('document.querySelector("#agents .wt-head").textContent').endswith("quiet 3 h")  # kept, not dropped
         assert page.js(f'{row("migrations")}.textContent').endswith("Background task")
         assert page.js(f'{row("migrations")}.closest(".bg-rows").id') == "g-m_bob_box-2"  # under its machine, not Idle
         page.js(f'{row("api-dev")}.click()')

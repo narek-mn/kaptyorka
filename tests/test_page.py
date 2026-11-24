@@ -61,11 +61,12 @@ def test_home_two_pane_chat(hub):
     assert 'if (admin) list.push({ key: "activity", name: "Activity"' in html
     assert "isAdmin() ? harness(a.harness) : null" in html  # what the tool loaded, on hover
     assert '$("text").placeholder = "Message " + (e.name || "manager");' in html  # whom you write to
-    # messages in full, grouped by sender, a line per day; very long ones fold at 12 lines
+    # messages in full, grouped by sender, a line per day; very long ones fold at about 20 lines, never the newest
     assert 'function notice(m) { return m.kind !== "message" || m.sender === "hub"; }' in html
     assert '(showNotices ? "hide notices" : "show notices") + " (" + notices + ")"' in html
     assert 'el("b", { "class": p[0] === ME ? "mine" : null, text: senderName(m) })' in html
-    assert "-webkit-line-clamp: 12" in html and '"Show more"' in html and "dayLabel(m.created)" in html
+    assert ".msg .text.clamp { max-height: 32em;" in html and '"Show more"' in html and "dayLabel(m.created)" in html
+    assert "if (m.id !== newest && " in html and "var text = md(m.text);" in html  # markdown, built from text nodes
     assert "overflow-wrap: anywhere" in html
 
 
@@ -365,3 +366,13 @@ def test_chat_shows_sending_sent_delivered_and_working(hub):
     # no moving dots for those who asked for less motion
     reduced = html[html.index("@media (prefers-reduced-motion: reduce)"):]
     assert ".working .dots, .tick .spin { display: none; }" in reduced[:400]
+
+
+def test_markdown_is_built_from_text_nodes(hub):
+    """Message markdown never goes through HTML: the renderer makes elements and text nodes, and
+    links only to http or https (test_page_reading_slow.py tries scripts and javascript: links)."""
+    html = page(hub)
+    code = html[html.index("var MD_LINK"):html.index("  function renderMessages(jump) {")]
+    assert "innerHTML" not in code and "insertAdjacentHTML" not in code and "outerHTML" not in code
+    assert "var MD_LINK = /^https?:\\/\\/[^\\s<>]+$/i;" in code and 'rel: "noopener noreferrer nofollow"' in code
+    assert "innerHTML" not in html  # nowhere on the page
