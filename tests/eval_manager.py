@@ -38,7 +38,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from soak_manager import LoginLost, login_expired, login_guard, login_left  # noqa: F401
+from soak_manager import LoginLost, login_expired, login_guard, login_left, usage_limited  # noqa: F401
 
 HERE = Path(__file__).resolve().parent
 TURN_S = 240  # the longest one manager turn may take
@@ -324,7 +324,7 @@ def judge_door(ev, ctx):
                   f"{opened.name} -> {_short(opened.result, 120)}" if opened else
                   "; ".join(f"{c.name} -> {_short(c.result, 80)}" for c in tries) or "no door call"),
             reply_says(ev, "tells the asker the result", of(ctx, "alice"),
-                       [r"\bopen", r"admin", r"waits?", r"filed", r"request"]),
+                       [r"\bopen", r"\bdoor\b", r"admin", r"waits?", r"filed", r"request"]),
             nowhere_says(ev, "never tells anyone to type a tool call", TYPE_A_CALL),
             nowhere_says(ev, "never says it has no tool for doors",
                          r"(no|not have a|don't have a|lack a) tool[^.\n]{0,40}\bdoors?\b")]
@@ -1004,6 +1004,9 @@ class World:
 
     def check_login(self) -> None:
         out = self.s.run(["tmux", "capture-pane", "-p", "-t", "=kaptyorka-manager"]).stdout or ""
+        if usage_limited(out):
+            raise LoginLost(f"the account hit its usage limit ({usage_limited(out)}); run it again"
+                            " after the reset")
         if login_expired(out):
             raise LoginLost("the sandbox's Claude Code login expired (its copy lost the"
                             " renewal race with your own sessions); run it again")

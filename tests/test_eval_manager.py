@@ -302,3 +302,6 @@ def test_the_soak_and_the_eval_refuse_a_run_that_would_race_the_login_renewal(mo
     soak_manager.login_guard(10 ** 6)  # unknown: goes
     assert soak_manager.login_expired("● Login expired · Please run /login")
     assert not soak_manager.login_expired("❯ check workers again")
+    pane = "  ⎿  You've hit your 5-hour limit · resets 12:30am (Asia/Yerevan)\n❯ "
+    assert soak_manager.usage_limited(pane) == "You've hit your 5-hour limit · resets 12:30am (Asia/Yerevan)"
+    assert soak_manager.usage_limited("the limit of what I can do") == ""

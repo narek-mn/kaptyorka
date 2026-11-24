@@ -84,6 +84,15 @@ def login_expired(pane: str) -> bool:
     return "Please run /login" in pane or "Login expired" in pane
 
 
+def usage_limited(pane: str) -> str:
+    """The manager's screen says the account hit a usage limit ("You've hit your 5-hour limit
+    · resets 12:30am"): the line, or "". Nothing runs until it resets, so a run stops."""
+    for line in pane.splitlines():
+        if "hit your" in line and "limit" in line or "Usage limit reached" in line:
+            return line.strip(" ⎿⚠")
+    return ""
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -281,6 +290,9 @@ print(json.dumps({"root": root, "alice": alice, "bob": bob, "invite": code}))
         if login_expired(pane):
             raise LoginLost("the sandbox's Claude Code login expired: its copy lost the renewal"
                             " race with your own sessions; run it again")
+        if usage_limited(pane):
+            raise LoginLost(f"the account hit its usage limit ({usage_limited(pane)}); run it"
+                            " again after the reset")
         w, a, crashes, launches = self.manager_rows()
         sessions, procs = self.managers_running()
         now = time.time()
