@@ -226,6 +226,15 @@ def test_claude_md_has_the_knowledge_keeper_and_keeps_the_limits():
     assert "knowledge digest" in text
 
 
+def test_claude_md_has_the_usage_section():
+    text = manager.claude_md("always test")
+    u = text.split("## Keep usage low", 1)[1].split("\n## ", 1)[0]
+    for s in ["One worker per task", "short brief", "Never keep idle workers", "fresh one", "short"]:
+        assert s in u, s
+    assert text.index("## Several things at once") < text.index("## Keep usage low") \
+        < text.index("## Your limits")
+
+
 def test_text_busy():
     t = manager.text_busy("alice", "proj-a", "box-1", "bob", "/p", 7)
     assert t == ("alice wants proj-a on box-1, occupied by bob in /p. Ask them, or pick another"
