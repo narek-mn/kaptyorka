@@ -324,6 +324,10 @@ Sometimes a session in another folder works for the team: a coordinator on your 
 - Nothing of the folder goes to the hub, even then: no folder name, no path, no git activity, no file list. Only the session itself, under the project it chose.
 - The choice is kept per session on this machine (`~/.kaptyorka/team/`), so it survives a restart of the kaptyorka tools in that session, and ends with the session. Other sessions in the same folder stay personal.
 
+### Team machines: every session is on the hub
+
+On a team machine (an account the hub counts as shared: a team machine, or a device marked shared) every session is on the hub by itself, in any folder and any tool, so nobody has to remember `/hub team`. In a folder that is no team project it joins as a coordinator, exactly as `/hub team` does: nothing of its folder leaves the machine. `/hub off` (Codex: `$hub off`) takes one session off; the next session starts on again (Cursor's choice is per folder, so there it stays off until `/hub on`). The bridge saves what the hub says about the account in `~/.kaptyorka/team.json` with each heartbeat; before its first answer, and on personal machines, nothing changes. The start guide says so in one line.
+
 ### The hub guide at session start
 
 Nobody has to remember these commands. At the start of each session, kaptyorka gives the agent a short guide (at most 500 characters), built on your machine from that session's own state; nothing about the folder or the session goes to the hub for it.
@@ -332,6 +336,7 @@ Nobody has to remember these commands. At the start of each session, kaptyorka g
 - **Team project folder:** the hub's own start brief, plus one line: for private work here, `/hub off`.
 - **Coordinator:** the hub's brief, plus: name a project for notes and work.
 - **Off (`/hub off`):** only that it is off and `/hub on` brings it back.
+- **Team machine:** the hub's brief, plus: this is a team machine, so this session is on the hub (as a coordinator in a personal folder), and `/hub off` takes only this session off.
 
 Codex says `$hub` instead of `/hub`. It arrives through each tool's own user-level hook, never a file in your project: Claude Code's `SessionStart` hook, Codex's `SessionStart` hook (`additionalContext`), OpenCode's plugin (its system text, with every request) and Cursor's `sessionStart` hook in `~/.cursor/hooks.json` (`additional_context`). Cursor has no start brief from the hub, so a team folder there gets only the `/hub off` line.
 

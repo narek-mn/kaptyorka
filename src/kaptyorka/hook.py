@@ -293,7 +293,8 @@ def _hub_run(tool: str, event: str, data: dict, run=subprocess.run) -> str:
                 offhub.started(sid, *found, os.environ)
         if offhub.off(ident.key):  # kept off the hub: nothing is sent, only its one line
             return _local(fmt, event, guide.off(ident.key) if guided else "", shown)
-        joined = optin.get(ident.key) is not None
+        # joined with /hub team, or a team machine's coordinator: nothing of its folder is sent
+        joined = optin.get(ident.key) is not None or ident.project == paths.COORDINATOR
         if tool == "cursor" and event == "start":  # its brief comes with tool calls, not here
             return _local(fmt, event, guide.on_hub(ident.key, ident.project, joined), shown)
 
@@ -307,7 +308,7 @@ def _hub_run(tool: str, event: str, data: dict, run=subprocess.run) -> str:
         reason = ""
         if stop:
             query = ""
-            if tool in ("claude-code", "codex") and optin.get(ident.key) is None:
+            if tool in ("claude-code", "codex") and not joined:
                 # a session that joined the team sends nothing of its folder
                 query = _git_query(data.get("cwd") or os.getcwd(), run, deadline)
             status, check = get("/api/done-check" + query)
