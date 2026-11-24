@@ -1511,8 +1511,8 @@ a.p-main { color: inherit; text-decoration: none; }
     /* waiting: its account is at its usage limit; the grey line says until when */
     var ms = feed.manager === "waiting" ? "waiting" : mgr ? "up" : feed.manager || "off";
     list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms,
-                sub: ms === "waiting" ? (feed.manager_why || "") : mgr ? mgr.where || mgr.machine : "", act: mgr ? mgr.activity || "" : "",
-                to: "manager", tip: "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : "")
+                sub: ms === "waiting" ? String(feed.manager_why || "").replace(/^waiting for its usage limit, resets /, "limit resets ").replace(/^waiting for its usage limit \(reset time unknown\)$/, "limit, reset unknown") : mgr ? mgr.where || mgr.machine : "", act: mgr ? mgr.activity || "" : "",
+                to: "manager", tip: "the team's manager session" + (ms === "waiting" ? "\n" + feed.manager_why : "") + (mgr && mgr.status ? "\n" + mgr.status : "")
                   + (feed.manager_load ? "\nload: " + feed.manager_load : "") });
     agents.forEach(function (a) {
       var tip = [a.label || a.title ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status,

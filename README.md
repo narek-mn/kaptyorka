@@ -319,6 +319,8 @@ Sessions of one OS account on one computer share that account's login to an agen
 - **Cleared** at the reset time, when the bridge's next reading says the account is under its limits, or, with no reset time known (5 hours at most), once a session of that account wrote again.
 - **The manager** runs on one account on the hub machine. While that account is at its limit the hub does not relaunch it: `kaptyorka status` and the page's manager row say "waiting for its usage limit, resets 19:30" (amber **waiting**), every admin's page hears it once, messages to it wait, and whoever writes to it meanwhile gets one line: "the manager is at its usage limit until 19:30; your message waits". At the reset a manager still running is told to read its inbox; one that ended starts again. A run that ended or failed while its account was at its limit never counts as a crash, so no backoff follows.
 
+![The manager waiting for its usage limit, and an account at its limit on Machines](docs/screens/limits-manager-desktop.png)
+
 ## Workers
 
 A worker is an agent session that runs on another machine for you. Say "do this on the GPU box" and your agent calls `work`. Here is the story:
