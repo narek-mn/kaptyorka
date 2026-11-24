@@ -215,6 +215,64 @@ def primary_ip(hub_url: str) -> str:
         return ""
 
 
+PSEUDO_FS = {"tmpfs", "devtmpfs", "overlay", "squashfs", "proc", "sysfs", "cgroup", "cgroup2",
+             "devpts", "mqueue", "debugfs", "tracefs", "securityfs", "pstore", "bpf", "autofs",
+             "fusectl", "configfs", "hugetlbfs", "binfmt_misc", "nsfs", "efivarfs", "ramfs",
+             "rpc_pipefs", "fuse.snapfuse", "fuse.portal", "fuse.gvfsd-fuse", "nfsd", "zram"}
+SKIP_UNDER = ("/proc", "/sys", "/dev", "/run", "/snap", "/var/snap", "/var/lib/docker",
+              "/var/lib/snapd", "/boot")
+MAX_DISKS = 8
+GB = 1024 ** 3
+
+
+def _space(path: str) -> Optional[Tuple[float, float, int]]:
+    """(total GB, free GB for users, device id) of the filesystem holding path."""
+    try:
+        st, dev = os.statvfs(path), os.stat(path).st_dev
+    except OSError:
+        return None
+    if not st.f_blocks:
+        return None
+    return (round(st.f_blocks * st.f_frsize / GB, 1), round(st.f_bavail * st.f_frsize / GB, 1),
+            dev)
+
+
+def disks(full: bool, mounts: str = "/proc/self/mounts", home: Optional[str] = None) -> List[dict]:
+    """Free disk space, from os.statvfs (no command): [{"mount", "total_gb", "free_gb"}].
+    `full` (a team machine or the hub's computer): every real mounted filesystem, one per
+    device, "/", the home filesystem and /workspace first, at most MAX_DISKS. Otherwise only
+    "/" and the home filesystem, named "home": a personal laptop sends no other path."""
+    home = home or str(Path.home())
+    out, seen = [], set()
+
+    def add(path: str, name: str) -> None:
+        got = _space(path)
+        if got is not None and got[2] not in seen and len(out) < MAX_DISKS:
+            seen.add(got[2])
+            out.append({"mount": name, "total_gb": got[0], "free_gb": got[1]})
+    if not full:
+        add("/", "/")
+        add(home, "home")
+        return out
+    found = []
+    for line in _read(mounts, 1 << 20).splitlines():
+        parts = line.split()
+        if len(parts) < 3 or parts[2] in PSEUDO_FS or parts[2].startswith("fuse."):
+            continue
+        point = parts[1].replace("\\040", " ")
+        if any(point == p or point.startswith(p + "/") for p in SKIP_UNDER):
+            continue
+        found.append(point)
+    home_mount = max((p for p in found if home == p or home.startswith(p.rstrip("/") + "/")),
+                     key=len, default="/")
+    first = ["/", home_mount] + (["/workspace"] if "/workspace" in found else [])
+    rest = sorted((p for p in found if p not in first),
+                  key=lambda p: -((_space(p) or (0, 0, 0))[0]))
+    for p in dict.fromkeys(first + rest):
+        add(p, p)
+    return out
+
+
 def infra(hub_url: str, with_ip: bool) -> dict:
     """What a team machine (or the hub's own machine) adds for the hub's machine events:
     OS release, Jetson L4T and JetPack, kernel, boot time, and for a team machine its address.

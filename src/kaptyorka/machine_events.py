@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS machine_tool_news (
     at REAL NOT NULL, PRIMARY KEY(tool, old, new, host));
 """
 TOOL_GROUP_S = 600  # agent tool updates confirmed this close together make one note line
+DISK_LOW, DISK_OK = 0.10, 0.15  # a team machine's disk: under 10% free warns, over 15% re-arms
 
 
 def hm(t: float) -> str:
@@ -66,12 +67,27 @@ def values(facts: dict, host: str, scope: str) -> Dict[str, object]:
     for tool, version in (facts.get("tools") or {}).items():
         if isinstance(version, str) and version:
             out["tool:" + tool] = version
+    if scope == "team":
+        for d in (facts.get("use") or {}).get("disk") or []:
+            ratio = d["free_gb"] / d["total_gb"] if d.get("total_gb") else None
+            if ratio is not None:  # between the two marks: no new word, the old one holds
+                level = "low" if ratio < DISK_LOW else "ok" if ratio > DISK_OK else None
+                if level is not None:
+                    out["disk:" + d["mount"]] = level
     return out
+
+
+def disk_note(facts: dict, mount: str) -> str:
+    d = next((d for d in (facts.get("use") or {}).get("disk") or [] if d.get("mount") == mount),
+             None)
+    return "" if d is None else f" ({d['free_gb']:g} of {d['total_gb']:g} GB)"
 
 
 def describe(key: str, old, new) -> str:
     if key == "boot":
         return f"rebooted at {hm(float(new))}"
+    if key.startswith("disk:"):
+        return f"disk {key[5:]} under {round(DISK_LOW * 100)}% free"
     name = key[5:] if key.startswith("tool:") else LABEL.get(key, key)
     return f"{name} {old} -> {new}"
 
@@ -141,9 +157,13 @@ class MachineEvents:
                     self.db.execute("INSERT OR REPLACE INTO machine_tool_news (tool, old, new,"
                                     " host, at) VALUES (?,?,?,?,?)",
                                     (key[5:], str(old), str(new), host, now))
-                changes = [c for c in changes if not c[0].startswith("tool:")]
+                # a disk back above DISK_OK only re-arms the warning; it is no news
+                changes = [c for c in changes if not c[0].startswith("tool:")
+                           and not (c[0].startswith("disk:") and c[2] != "low")]
                 if changes:
-                    events.append(f"{host}: " + "; ".join(describe(*c) for c in changes))
+                    events.append(f"{host}: " + "; ".join(
+                        describe(*c) + (disk_note(facts, c[0][5:]) if c[0].startswith("disk:")
+                                        else "") for c in changes))
             self.db.execute(
                 "UPDATE machine_state SET host=?, confirmed=?, pending=?, seen=?, seq=?,"
                 " counted=?, offline_at=NULL WHERE device_id=?",
@@ -158,6 +178,8 @@ class MachineEvents:
         changes = []
         for key, v in now_values.items():
             old = confirmed.get(key)
+            if old is None and key.startswith("disk:"):
+                old = confirmed[key] = "ok"  # a disk first seen nearly full is still warned of
             if old is None:
                 confirmed[key] = v
             elif v == old:
@@ -181,7 +203,8 @@ class MachineEvents:
         (a reinstall); then what it had before is carried over, so the changes it reports
         are recorded once confirmed. An older device (tracking just started) is taken as it is."""
         events: List[str] = []
-        confirmed = dict(now_values)
+        # a disk starts as fine, so one first seen nearly full is warned of once confirmed
+        confirmed = {k: v for k, v in now_values.items() if not k.startswith("disk:")}
         # joins only for team machines: on the hub's own computer they are its setup (the
         # admin's and the manager's accounts), not news
         if dev["team"] and dev["created"] >= now - NEW_S:

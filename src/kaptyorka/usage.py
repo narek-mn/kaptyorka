@@ -384,7 +384,33 @@ def short(use: Optional[dict]) -> str:
         parts.append(f"CPU {round(100 * sum(u.get('cpu') or 0 for u in users) / cpus)}%")
     if mem:
         parts.append(f"memory {round(100 * sum(u.get('mem') or 0 for u in users) / mem)}%")
+    disk = [d for d in use.get("disk") or [] if isinstance(d, dict)]
+    if disk:
+        parts.append(f"disk {size(disk[0]['free_gb'])} free")
     return " · ".join(parts)
+
+
+def size(gb: float) -> str:
+    """212 GB, 1.2 TB, 0.5 GB."""
+    if gb >= 1000:
+        return f"{gb / 1024:.1f} TB"
+    return f"{gb:.0f} GB" if gb >= 10 else f"{gb:.1f} GB"
+
+
+def disk_line(use: Optional[dict]) -> str:
+    """"disk: / 212 of 468 GB free, /workspace 1.2 of 3.6 TB free" from the last report;
+    "" when the machine sent none."""
+    disk = [d for d in (use or {}).get("disk") or [] if isinstance(d, dict)]
+    if not disk:
+        return ""
+
+    def one(d):
+        free, total = size(d["free_gb"]), size(d["total_gb"])
+        unit = total.split()[1]
+        if free.endswith(" " + unit):
+            free = free.split()[0]
+        return f"{d['mount']} {free} of {total} free"
+    return "disk: " + ", ".join(one(d) for d in disk)
 
 
 # the GPU share queue: jobs coordinate with flock(1) on one lock file L. A job holds L shared

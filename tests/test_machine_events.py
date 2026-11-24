@@ -395,3 +395,130 @@ def test_a_hub_that_was_down_does_not_call_every_machine_offline(hub, clock):
     assert m.tick(clock[0]) == []
     clock[0] += me.OFFLINE_S + me.GROUP_S
     assert len(m.tick(clock[0])) == 1  # still silent after the hub is back: offline
+
+
+# ---------- free disk space ----------
+
+def disk(free, total=100.0, mount="/data"):
+    return {"use": {"cpus": 4, "mem_mb": 1024, "users": {},
+                    "disk": [{"mount": "/", "total_gb": 100.0, "free_gb": 50.0},
+                             {"mount": mount, "total_gb": total, "free_gb": free}]}}
+
+
+def test_a_team_machine_disk_under_ten_percent_once_per_crossing(hub, clock):
+    mgr, who = online(hub)
+    d = team(hub, "jet-1")
+    beat(hub, d, **disk(40))
+    events(mgr, who)
+
+    def run3(free):
+        out = []
+        for _ in range(3):
+            clock[0] += 60
+            beat(hub, d, **disk(free))
+            out += events(mgr, who)
+        return out
+    assert run3(12) == []  # between the marks: nothing
+    clock[0] += 60
+    beat(hub, d, **disk(8))
+    clock[0] += 60
+    beat(hub, d, **disk(8))
+    clock[0] += 60
+    beat(hub, d, **disk(11))  # back between the marks before the third report: nothing
+    assert events(mgr, who) == []
+    assert run3(8) == ["jet-1: disk /data under 10% free (8 of 100 GB)"]
+    assert run3(5) == [] and run3(12) == []  # still low, then between: no second warning
+    assert run3(9) == []
+    assert run3(20) == []  # recovered above 15%: re-armed, and no news
+    assert run3(7) == ["jet-1: disk /data under 10% free (7 of 100 GB)"]
+    assert any("disk /data under 10% free" in x for x in event_lines(hub))
+
+
+def test_a_disk_first_seen_nearly_full_is_warned_of(hub, clock):
+    mgr, who = online(hub)
+    d = team(hub, "jet-1")
+    beat(hub, d, **disk(3))
+    for _ in range(2):
+        clock[0] += 60
+        beat(hub, d, **disk(3))
+    assert events(mgr, who) == ["jet-1: new machine joined",
+                                "jet-1: disk /data under 10% free (3 of 100 GB)"]
+
+
+def test_the_hub_computer_makes_no_disk_event(hub, clock):
+    mgr, who = online(hub)
+    pid, _ = person(hub.store, "root", "admin")
+    token, _ = hub.store.invite_redeem(hub.store.invite_create(pid), HOST, host=HOST,
+                                       os_user="root")
+    d = SimpleNamespace(token=token, host=HOST, os_user="root", seq=0)
+    for _ in range(4):
+        clock[0] += 60
+        beat(hub, d, **disk(1))
+    assert events(mgr, who) == []
+
+
+def test_machines_tool_shows_the_disk_line_to_the_manager_only(hub, clock):
+    from helpers import call_error
+    mgr, who = online(hub)
+    d = team(hub, "jet-1")
+    beat(hub, d, **disk(1228.8, 3686.4, "/workspace"))
+    [m] = [m for m in run(call(mgr, who, "machines")) if m["host"] == "jet-1"]
+    assert m["disk"] == "disk: / 50 of 100 GB free, /workspace 1.2 of 3.6 TB free"
+    assert m["use"].endswith("disk 50 GB free") and m["online"] and m["team"]
+    _, token = person(hub.store, "bob")
+    err = call_error(SimpleNamespace(url=hub.url, token=token),
+                     {"key": "k:bob", "machine": "laptop", "tool": "codex", "project": "p"},
+                     "machines")
+    assert "for the admin and the manager" in err
+
+
+def test_clean_disk_keeps_only_sound_entries():
+    from kaptyorka.workers import clean_disk
+    assert clean_disk([{"mount": "/", "total_gb": 100, "free_gb": 20},
+                       {"mount": "home", "total_gb": 50, "free_gb": 5},
+                       {"mount": "rel/path", "total_gb": 1, "free_gb": 1},
+                       {"mount": "/x", "total_gb": 10, "free_gb": 11},
+                       {"mount": "/y", "total_gb": "10", "free_gb": 1}] + [
+                       {"mount": f"/m{i}", "total_gb": 1, "free_gb": 1} for i in range(10)]) == [
+        {"mount": "/", "total_gb": 100.0, "free_gb": 20.0},
+        {"mount": "home", "total_gb": 50.0, "free_gb": 5.0},
+        {"mount": "/m0", "total_gb": 1.0, "free_gb": 1.0},
+        {"mount": "/m1", "total_gb": 1.0, "free_gb": 1.0},
+        {"mount": "/m2", "total_gb": 1.0, "free_gb": 1.0}]
+    assert clean_disk("no") is None
+
+
+def test_disks_real_filesystems_only_and_paths_only_when_allowed(tmp_path, monkeypatch):
+    mounts = tmp_path / "mounts"
+    mounts.write_text("\n".join([
+        "/dev/sda2 / ext4 rw 0 0", "proc /proc proc rw 0 0", "tmpfs /run tmpfs rw 0 0",
+        "/dev/loop3 /snap/core/1 squashfs ro 0 0", "overlay /var/lib/docker/x overlay rw 0 0",
+        "/dev/sda2 /var/snap/firefox/common ext4 ro 0 0", "/dev/sdb1 /workspace ext4 rw 0 0",
+        "/dev/sdc1 /home ext4 rw 0 0", "/dev/sdd1 /data\\040big xfs rw 0 0",
+        "/dev/sda1 /boot/efi vfat rw 0 0", "server:/x /mnt/nfs nfs4 rw 0 0"]) + "\n")
+    sizes = {"/": (468.0, 212.0, 1), "/workspace": (3686.4, 1228.8, 2), "/home": (900.0, 100.0, 3),
+             "/data big": (50.0, 5.0, 4), "/mnt/nfs": (2000.0, 1000.0, 5),
+             "/var/snap/firefox/common": (468.0, 212.0, 1), "/home/u": (900.0, 100.0, 3)}
+    monkeypatch.setattr(facts_mod, "_space", lambda p: sizes.get(p))
+    got = facts_mod.disks(True, str(mounts), home="/home/u")
+    assert [d["mount"] for d in got] == ["/", "/home", "/workspace", "/mnt/nfs", "/data big"]
+    assert got[0] == {"mount": "/", "total_gb": 468.0, "free_gb": 212.0}
+    personal = facts_mod.disks(False, str(mounts), home="/home/u")
+    assert personal == [{"mount": "/", "total_gb": 468.0, "free_gb": 212.0},
+                        {"mount": "home", "total_gb": 900.0, "free_gb": 100.0}]
+    monkeypatch.setattr(facts_mod, "MAX_DISKS", 2)
+    assert len(facts_mod.disks(True, str(mounts), home="/home/u")) == 2
+
+
+def test_bridge_sends_disk_paths_only_for_team_and_hub(monkeypatch, tmp_path):
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path))
+    seen = []
+    monkeypatch.setattr(facts_mod, "disks", lambda full: seen.append(full) or [])
+    monkeypatch.setattr(facts_mod, "infra", lambda hub_url, with_ip: {})
+    b = Bridge({"hub": "http://h", "token": "t", "machine": "m"}, [], lambda *_: None)
+    b._build_facts([])
+    b._infra_scope = "team"
+    b._build_facts([])
+    b._infra_scope = "hub"
+    b._build_facts([])
+    assert seen == [False, True, True] and b._facts["use"]["disk"] == []

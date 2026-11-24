@@ -161,6 +161,26 @@ def clean_use(use) -> Optional[dict]:
             row["cpu"] = _n(u["cpu"], 1e6)
         users[name[:MAX_FACT]] = row
     out["users"] = users
+    disk = clean_disk(use.get("disk"))
+    if disk is not None:
+        out["disk"] = disk
+    return out
+
+
+def clean_disk(disk) -> Optional[list]:
+    """The bridge's free disk space (facts.disks): at most 8 filesystems, each a mount point
+    (a full path, or "home" from a personal laptop) with its total and free GB."""
+    if not isinstance(disk, list):
+        return None
+    out = []
+    for d in disk[:8]:
+        if not isinstance(d, dict) or not isinstance(d.get("mount"), str):
+            continue
+        mount = d["mount"][:100]
+        total, free = _n(d.get("total_gb"), 1e7), _n(d.get("free_gb"), 1e7)
+        if (mount == "home" or (mount.startswith("/") and "\n" not in mount)) \
+                and total and free is not None and 0 <= free <= total:
+            out.append({"mount": mount, "total_gb": total, "free_gb": free})
     return out
 
 
@@ -485,6 +505,7 @@ class WorkerStore:
             h["people"] = sorted(set(h["people"]))
             h["team"] = sorted(set(h["team"]))
             h["use"] = usage.short(here[0]) if here else ""
+            h["disk"] = usage.disk_line(here[0]) if here else ""
             h["gpu_queue"] = self.queue_text(h["host"], now, True)
             h["kind"] = self.host_kind(h["host"])
             out.append(h)

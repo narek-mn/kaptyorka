@@ -35,7 +35,7 @@ TRANSPORT_ERRORS = (types.CONNECTION_CLOSED, types.REQUEST_TIMEOUT)  # the clien
 FALLBACK_TOOLS = ["who", "send", "inbox", "status", "notes_list", "notes_read", "notes_write",
                   "projects", "knock", "answer", "door_close", "request_access", "fetch_file",
                   "work", "workers", "adopt", "close_worker", "state", "state_write", "decide",
-                  "rules", "propose_rule", "conflict", "work_decide", "log"]
+                  "rules", "propose_rule", "conflict", "work_decide", "log", "machines"]
 JOIN = types.Tool(  # answered by the shim itself: it saves the choice on this machine
     name="join_team",
     description=("Put this session on the team hub when its folder is no team project. Only "

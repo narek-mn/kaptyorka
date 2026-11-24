@@ -6,12 +6,13 @@ PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "pro
 BOX = {"key": "claude:2", "machine": "box-1", "tool": "claude-code", "project": "proj-b"}
 
 
-def test_tool_count_is_25(hub):
+def test_tool_count_is_26(hub):
     assert tool_names(hub) == {"who", "send", "inbox", "status",
                                "notes_list", "notes_read", "notes_write", "projects",
                                "knock", "answer", "door_close", "request_access", "fetch_file",
                                "work", "workers", "adopt", "close_worker", "state", "state_write", "decide",
-                               "rules", "propose_rule", "conflict", "work_decide", "log"}
+                               "rules", "propose_rule", "conflict", "work_decide", "log",
+                               "machines"}
 
 
 def test_wrong_token_401(hub):

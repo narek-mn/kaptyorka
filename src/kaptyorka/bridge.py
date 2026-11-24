@@ -144,6 +144,8 @@ class Bridge:
                 self._report("infra", f"reading machine facts failed: {e}")
         try:  # use per OS user: numbers only; never stops the heartbeat
             new["use"] = self._usage.read()
+            # free disk space; mount points only from a team machine or the hub's computer
+            new["use"]["disk"] = facts.disks(full=self._infra_scope in ("team", "hub"))
         except Exception as e:
             self._report("use", f"reading machine use failed: {e}")
         self._checks(new)

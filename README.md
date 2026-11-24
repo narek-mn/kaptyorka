@@ -161,8 +161,9 @@ The bridge re-adds kaptyorka's own Claude Code hooks each time it starts (a line
 | `close_worker` | End one of your workers |
 | `work_decide` | The manager only: decide a busy-machine work request (a machine, or `wait`), with a reason |
 | `log` | Admin and manager only: the team's activity log, newest first (`limit`, at most 1,000) |
+| `machines` | Admin and manager only: each machine as its bridge last reported it: online, size, use and free disk space ("disk: / 212 of 468 GB free, ...") |
 
-The hub offers 25 tools in all.
+The hub offers 26 tools in all.
 
 `work(project, task, machine="", tool="claude-code", resume="")` starts a worker. `tool` is `claude-code`, `codex` or `opencode`. `adopt(name)` and `close_worker(name)` take the worker's name.
 
@@ -577,8 +578,11 @@ The hub records what happens to team machines by itself, so a reflashed Jetson o
 | An agent tool updated | Confirmed the same way, then written to the note only (no manager message), one line for every machine that updated within 10 minutes of the first: "Claude Code 2.1.331 -> 2.1.332 on box-1, box-2, box-3". |
 | Joined again as a new device (a reinstall) | The same machine and account join with a new device; what changed since is recorded once it reports it 3 times, such as "JetPack 6.2 -> 7.2.1". |
 | New machine, or another account on it | A new team machine device sends its first report. |
+| A disk under 10% free | A team machine reported it in 3 reports in a row (one line per crossing; the warning comes again only after that disk was back above 15% free). |
 
 Only confirmed facts are written: a change only once the machine itself reported it, an upgrade only once the machine is back and says so (until then only "offline since 11:20" exists), and never a plan. Only team machines and the hub's own computer are watched: a personal laptop going offline is a closed lid, so it makes no events and sends nothing new. A team machine's bridge also sends its OS release, kernel, boot time, Jetson L4T and JetPack versions (read from `/etc/os-release`, `/proc/stat`, `/etc/nv_tegra_release` and dpkg's status file; no command is run) and the address it reaches the hub from; the hub's own computer sends the same without the address and gets no join lines (those are its own setup). The hub tells each bridge which of these to send. A hub that was down does not call every machine offline when it starts again: silence counts from its start.
+
+**Free disk space.** Every bridge sends free disk space with its machine use, read with `statvfs` (no command). A team machine and the hub's own computer send each real mounted filesystem (no tmpfs, overlay, snap or other system mounts; one per device; `/`, the home filesystem and `/workspace` first; at most 8) with its mount point; a personal laptop sends only `/` and its home filesystem, named `home`, and no other path. The manager has no shell, so it reads this through its `machines` tool (admin and manager only): one row per machine with its size, use and a line such as "disk: / 212 of 468 GB free, /workspace 1.2 of 3.6 TB free". The Machines page shows the first filesystem's free space after memory.
 
 ### Commands
 

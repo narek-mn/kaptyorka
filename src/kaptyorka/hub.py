@@ -1091,6 +1091,17 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     @server.tool()
     @_tool_errors
+    def machines(ctx: Context) -> List[dict]:
+        """Each machine as its bridge last reported it (admin and manager only): host, online,
+        size, use, free disk space ("disk: / 212 of 468 GB free, ...")."""
+        _, principal = caller(ctx)
+        if not (principal.is_admin() or principal.role == "manager"):
+            raise KaptyorkaError("the machines list is for the admin and the manager")
+        return [{"host": h["host"], "online": h["online"], "team": bool(h["team"]),
+                 "kind": h["kind"], "use": h["use"], "disk": h["disk"]} for h in ws.overview()]
+
+    @server.tool()
+    @_tool_errors
     def propose_rule(text: str, evidence: str, ctx: Context) -> str:
         """Suggest a team rule when your person corrected you the same way twice. Say what
         the rule is and what happened (evidence). The admin decides."""
