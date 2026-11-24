@@ -104,6 +104,28 @@ def test_the_hub_lists_who_to_warn_on_and_with_a_machine(hub, clock):
     assert f"Warn these sessions (the hub's list): {', '.join(sorted([j1, 'pc-2/codex/proj-a']))}." in t
 
 
+def test_reach_says_door_or_not_online_or_not_and_what_became_of_the_message(hub, clock):
+    mgr, me = manager_online(hub)
+    _, _, bob = plain(hub, "bob")
+    B1, B2 = ident("k:b1", project="proj-b", machine="pc-1"), ident("k:b2", project="proj-b", machine="pc-2")
+    run(call(bob, B1, "inbox"))
+    run(call(bob, B2, "inbox"))
+    _, _, cat = plain(hub, "cat")
+    C = ident("k:cat", project="proj-b", machine="pc-3")
+    run(call(cat, C, "inbox"))
+    out = run(call(mgr, me, "reach", sender="pc-1/codex/proj-b", target="pc-3/codex/proj-b"))
+    assert "may not message pc-3/codex/proj-b: that takes a door" in out
+    assert "pc-3/codex/proj-b is online" in out and "sent it no message" in out
+    clock[0] += 300  # b2 went quiet: offline, its message waits
+    run(call(mgr, me, "status", text="x"))
+    run(call(bob, B1, "send", to="pc-2/codex/proj-b", text="the build is done"))
+    out = run(call(mgr, me, "reach", sender="pc-1/codex/proj-b", target="pc-2/codex/proj-b"))
+    assert "may message pc-2/codex/proj-b: no door needed." in out
+    assert "is offline, last seen 5 min ago" in out and "waiting for delivery (the target is offline)" in out
+    assert "for the admin and the manager" in call_error(bob, B1, "reach", sender="pc-1/codex/proj-b",
+                                                          target="pc-2/codex/proj-b")
+
+
 def test_a_machine_event_names_the_sessions_to_warn():
     t = machine_events.manager_text("box-1: offline since 10:00", ["alice-laptop/claude-code/proj-a"])
     assert t.startswith("machine event: box-1: offline since 10:00. Follow your machine-events rule")

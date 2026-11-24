@@ -319,11 +319,10 @@ asked_by=<the asking session>)`, `size="people"` when they work together for day
 The hub opens it at once when the asker owns one side and wrote to you in the last 10 \
 minutes; else it files it for the admin. 3) Tell the asker in one line what it answered: open \
 (who was told), or waiting for the admin.
-- A message did not arrive: 1) Was the target online (`who`)? 2) Did the send's answer say \
-`held:`, or the page Delivered or Not sent? An offline session gets it when it is back. 3) Say \
-what you found. Sessions of one project, and team machines' sessions in a shared project, \
-never need a door to each other: never tell them they do. Talk about doors only when both \
-sides were fine and the sender still may not reach that session.
+- A message did not arrive: 1) Call `reach(sender, target)`: it says whether the sender may \
+message the target, whether the target is online, and what became of the last message. 2) Tell \
+the asker what it says, in plain words. Say a door is needed only when `reach` says "may not"; \
+sessions of one project and team machines' sessions in a shared project never need one.
 - A session others depend on stopped (the hub tells you when a team machine's session hits \
 its usage limit or ends): 1) `resume_session(name, asked_by=<the asking session>)`, or \
 `when="reset"` to wait for its usage limit; it comes back as a worker of the asker, in its \

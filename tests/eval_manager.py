@@ -254,13 +254,13 @@ def first_index(ev: Evidence, tool: str) -> Optional[int]:
 
 
 def checked_before_door(ev: Evidence, name: str) -> Check:
-    """`who` (whether the target is online) was read before any reply that brings up doors."""
+    """`who` or `reach` (whether the target is online) came before any reply about doors."""
     rx = _rx(r"\bdoors?\b")
-    look = [i for i, c in enumerate(ev.calls) if c.name == "who"]
+    look = [i for i, c in enumerate(ev.calls) if c.name in ("who", "reach")]
     sends = [(i, c) for i, c in enumerate(ev.calls) if c.name == "send"
              and rx.search(str(c.input.get("text", "")))]
     if not look:
-        return Check(name, False, "never called who")
+        return Check(name, False, "never called who or reach")
     if sends and sends[0][0] < look[0]:
         return Check(name, False, f"talked of doors before checking: "
                                   f"{_short(sends[0][1].input.get('text', ''))}")
@@ -468,6 +468,8 @@ def run_events(w):
     w.set_disk("box-2", "/data", 42.0, 100.0)
     w.session_says("t2", "Done: I deleted the old proj-a checkpoints on box-2, /data has 42 of 100 GB free now.")
     w.wait_turn()
+    w.set_machine_online("box-1", True)  # back, for the next round's cases
+    w.close_worker_row("w-eval-ev")
 
 
 def judge_events(ev, ctx):
@@ -825,6 +827,8 @@ class World:
                 for k in keys:
                     self.store.db.execute("UPDATE agents SET last_seen=? WHERE key=?",
                                           (time.time() - 600, k))
+        else:
+            self.beat_all()
 
     def set_disk(self, dev: str, mount: str, free: float, total: float) -> None:
         d = self.devices[dev]

@@ -141,6 +141,7 @@ The bridge re-adds kaptyorka's own Claude Code hooks each time it starts (a line
 | `knock` | The admin only: ask another person's session (or the person) to open a door |
 | `answer` | The admin only: answer a knock with "yes" or "no" |
 | `door_close` | Close a door |
+| `reach` | The admin and the manager: may one session message another, is the target online, and what became of the last message between them |
 | `door_request` | Ask the admin for a door between two sessions of different people (the manager for someone who asked it; a member for one of its own sessions); two sessions of one shared project get it at once |
 | `door_decide` | The admin only: answer a door request with "sessions", "people" (7 days) or "deny" |
 | `resume_session` | The manager only: resume a session that ended (on a team machine or the asker's own machine) as a worker of the asker, now or at its usage limit's reset |

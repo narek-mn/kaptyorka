@@ -898,6 +898,50 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     @server.tool()
     @_tool_errors
+    def reach(sender: str, target: str, ctx: Context) -> str:
+        """Admin and manager only: may session `sender` message session `target` (names or
+        #ids as in who), is the target online, and what became of the sender's last message to
+        it. Ask this before you say anything about doors."""
+        _, principal = caller(ctx)
+        if not (principal.is_admin() or principal.role == "manager"):
+            raise KaptyorkaError("reach is for the admin and the manager")
+        def side(name: str) -> str:  # one gone longer than 10 minutes: by its exact name
+            try:
+                return _door_side(name, principal, own=False)
+            except KaptyorkaError:
+                with store.lock:
+                    row = store.db.execute("SELECT key FROM agents WHERE name=? OR key=? ORDER"
+                                           " BY last_seen DESC LIMIT 1", (name, name)).fetchone()
+                if row is None:
+                    raise
+                return row["key"]
+        s_key, t_key = side(sender), side(target)
+        now = store.clock()
+        with store.lock:
+            s = store.db.execute("SELECT * FROM agents WHERE key=?", (s_key,)).fetchone()
+            t = store.db.execute("SELECT * FROM agents WHERE key=?", (t_key,)).fetchone()
+            may = store._may_message(s, t)
+            last = store.db.execute(
+                "SELECT created, push_state, push_error FROM messages WHERE sender_key=? AND"
+                " to_key=? AND kind='message' ORDER BY id DESC LIMIT 1", (s_key, t_key)).fetchone()
+        out = [f"{s['name']} {'may' if may else 'may not'} message {t['name']}"
+               + (": no door needed." if may else ": that takes a door (door_request).")]
+        away = now - t["last_seen"]
+        out.append(f"{t['name']} is online." if away < ONLINE_S else
+                   f"{t['name']} is offline, last seen {_ago(int(away))} ago; a message to it waits"
+                   " and is delivered when it reports again.")
+        if last is None:
+            out.append(f"{s['name']} sent it no message.")
+        else:
+            state = {"pushed": "delivered", "failed": "not delivered: "
+                     + paths.push_reason(last["push_error"] or "")}.get(
+                last["push_state"], "waiting for delivery" + (" (the target is offline)"
+                                                              if away >= ONLINE_S else ""))
+            out.append(f"Its last message to it, {_ago(int(now - last['created']))} ago: {state}.")
+        return " ".join(out)
+
+    @server.tool()
+    @_tool_errors
     def door_request(a: str, b: str, why: str, ctx: Context, asked_by: str = "",
                      size: str = "sessions") -> str:
         """A door between two sessions of different people (names or #ids as in who). The
