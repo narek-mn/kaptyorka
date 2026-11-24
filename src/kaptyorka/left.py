@@ -80,7 +80,9 @@ def tick(store, mm, live: dict, tell: Callable[[str, str], None], now: float) ->
     online = store.online()
     mid = mm.person_id()
     by_key = {a.key: a for a in online}
-    # a child whose parent ended: its owner hears it once
+    # a child whose parent ended: its owner hears it once. All found in one tick (the first
+    # report of an updated bridge can name many at once) go to each owner as one message.
+    told: Dict[Optional[int], list] = {}  # owner -> [(session, text)]
     for a in online:
         if not (a.parent and a.parent_gone and _ours(a, live, mid)):
             continue
@@ -92,8 +94,11 @@ def tick(store, mm, live: dict, tell: Callable[[str, str], None], now: float) ->
         parent = f"`{p.name}`" if p is not None else "another session"
         text = (f"Session `{a.name}` on {a.machine} was started by {parent}, which has ended;"
                 f" it still runs. To stop it: `claude stop {short_id(a.key)}` on {a.machine}.")
-        for k in _recipients(store, a, online, live, mid, set()):
-            tell(k, text)
+        told.setdefault(a.person_id, []).append((a, text))
+    for found in told.values():
+        orphans = {a.key for a, _ in found}  # never told to one another
+        for k in _recipients(store, found[0][0], online, live, mid, orphans):
+            tell(k, "\n".join(text for _, text in found))
     # the daily line, per person and machine
     groups: Dict[tuple, list] = {}
     for a in online:
