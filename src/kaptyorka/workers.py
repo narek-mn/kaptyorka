@@ -699,7 +699,8 @@ class WorkerStore:
             return self._dict(self._row(name))
 
     def create_manager(self, admin_person_id: int, manager_person_id: int, device: dict,
-                       folder: str, first_message: str) -> dict:
+                       folder: str, first_message: str, model: str = "",
+                       effort: str = "") -> dict:
         """The manager worker on the admin's own bridge (`device`: a devices row, as
         ManagerStore.admin_device gives it). Its boss is the admin's page; `link` gives its
         session to the manager person. The order's person is the device's owner (the bridge
@@ -730,6 +731,7 @@ class WorkerStore:
                 "issued": now, "worker": WORKER, "person": owner, "tool": "claude-code",
                 "project": "manager", "folder": folder, "worktree": False, "task": task,
                 "boss": admin, "resume": None, "first_message": first_message,
+                **({"model": model} if model else {}), **({"effort": effort} if effort else {}),
                 "manager": True})
             return self._dict(self._row(WORKER))
 

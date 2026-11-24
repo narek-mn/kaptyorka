@@ -75,3 +75,22 @@ def test_the_launch_carries_the_lessons(hub, clock):
     hub.tick()
     [o] = orders(hub, b)
     assert o["first_message"].endswith("say who was told")
+
+
+def test_the_manager_runs_on_the_pinned_model_and_effort(hub, clock):
+    b = admin_bridge(hub)
+    _, admin = person(hub.store, "boss", "admin")
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    [o] = orders(hub, b)
+    assert (o["model"], o["effort"]) == ("claude-opus-5-5", "medium")
+    status, body = http.request("POST", hub.url + "/api/settings", admin,
+                                {"manager_model": "gpt-9"})
+    assert status == 400 and "use one of: claude-opus-5-5, opus, sonnet, haiku, fable" in body
+    status, body = http.request("POST", hub.url + "/api/settings", admin,
+                                {"manager_effort": "turbo"})
+    assert status == 400 and "low, medium, high, xhigh, max" in body
+    assert http.request("POST", hub.url + "/api/settings", admin,
+                        {"manager_model": "sonnet", "manager_effort": "high"})[1] \
+        ["manager_model"] == "sonnet"
+    assert (hub.mm.model(), hub.mm.effort()) == ("sonnet", "high")

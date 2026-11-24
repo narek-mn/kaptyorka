@@ -48,7 +48,7 @@ def test_subcommands_listed(capsys):
     listed = out.split("positional arguments:")[1].split("options:")[0]
     names = [l.split()[0] for l in listed.splitlines()[2:] if l.startswith("    ") and l[4] != " "]
     assert names == ["start", "join", "leave", "stop", "update", "remove", "invite", "people", "invites", "grant",
-                     "revoke", "project", "gitlab", "lesson", "auto-doors", "manager-doors", "shared-token", "machine", "who", "status", "page", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
+                     "revoke", "project", "gitlab", "manager-model", "lesson", "auto-doors", "manager-doors", "shared-token", "machine", "who", "status", "page", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
     for hidden in ("serve", "mcp", "bridge", "hook"):
         assert hidden not in names
 
@@ -1099,6 +1099,16 @@ def test_status_manager_off_is_ok(monkeypatch, home, capsys):
     monkeypatch.setattr(http, "request", lambda *a, **k: (200, {"manager_state": "off", "manager_reason": ""}))
     assert entry_with_exit(["status"]) == 0
     assert capsys.readouterr().out.splitlines()[-2] == "manager: off"
+
+
+def test_status_shows_the_managers_model_and_effort(monkeypatch, home, capsys):
+    _joined()
+    _hub_json()
+    _units(monkeypatch, bridge=True, hub=True)
+    monkeypatch.setattr(http, "request", lambda *a, **k: (200, {
+        "manager_state": "up", "manager_model": "claude-opus-5-5", "manager_effort": "medium"}))
+    assert entry_with_exit(["status"]) == 0
+    assert "manager: running (model claude-opus-5-5, effort medium)\n" in capsys.readouterr().out
 
 
 def test_status_shows_the_managers_load(monkeypatch, home, capsys):

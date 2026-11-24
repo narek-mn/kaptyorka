@@ -123,8 +123,15 @@ class Launcher:
             # `--tools=` as one element: the variadic `--tools x` would take the first message.
             # Agent: the manager's own subagents get no more tools than it has (checked on
             # Claude Code 2.1.329: ToolSearch and the kaptyorka tools only)
+            # the model and effort the hub pins (manager.MODELS, EFFORTS); none from an older hub
+            pinned = []
+            for flag, value in (("--model", order.get("model")), ("--effort", order.get("effort"))):
+                if value is not None:
+                    if not isinstance(value, str) or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,63}", value):
+                        raise LaunchError(f"bad {flag[2:]}")
+                    pinned += [flag, value]
             return ["tmux", "new-session", "-d", "-s", MANAGER_TMUX, "-c", folder,
-                    exe, "-n", name, "--settings", str(base / paths.MANAGER_SETTINGS),
+                    exe, "-n", name, *pinned, "--settings", str(base / paths.MANAGER_SETTINGS),
                     "--strict-mcp-config", "--mcp-config", str(base / paths.MANAGER_MCP),
                     "--setting-sources", "project,local", "--tools=ToolSearch,Agent", first]
         resume = order.get("resume")

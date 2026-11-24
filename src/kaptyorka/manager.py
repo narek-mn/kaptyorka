@@ -34,6 +34,12 @@ TASKS_AFTER = 15  # messages handled since its task list was saved: remind it to
 TASKS_EVERY_S = 7200  # or this long since the last save
 TASKS_NUDGE_KEY = "manager_tasks_nudged_at"
 TASKS_LINE = 'save your task list now (state_write("manager", text))'
+# The manager's model and reasoning effort, pinned by kaptyorka (`claude --model`, `--effort`,
+# checked on Claude Code 2.1.331: `-p --model claude-opus-5-5 --effort medium` ran on
+# claude-opus-5-5 and its transcript says "effort":"medium"; with --effort low, "low").
+MODELS = ("claude-opus-5-5", "opus", "sonnet", "haiku", "fable")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")  # `claude --help`
+MODEL_DEFAULT, EFFORT_DEFAULT = "claude-opus-5-5", "medium"
 LESSONS_MAX = 40  # lines of manager-lessons the first message carries, newest first
 LESSONS_TOPIC = "lessons"  # a note of project `manager`: only the manager reads it
 TASKS_FIRST_MAX = 6000  # characters of the saved task list the launch's first message carries
@@ -443,6 +449,25 @@ class ManagerStore:
         with self.lock:
             self.db.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
                             " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+    def model(self) -> str:
+        return self._get("manager_model") or MODEL_DEFAULT
+
+    def effort(self) -> str:
+        return self._get("manager_effort") or EFFORT_DEFAULT
+
+    def set_model(self, model: Optional[str], effort: Optional[str], by: str) -> None:
+        """The manager's model and effort, from its next launch. Unknown values are refused
+        with the valid ones."""
+        from kaptyorka.store import KaptyorkaError
+        if model is not None and model not in MODELS:
+            raise KaptyorkaError(f"unknown model {model!r}; use one of: {', '.join(MODELS)}")
+        if effort is not None and effort not in EFFORTS:
+            raise KaptyorkaError(f"unknown effort {effort!r}; use one of: {', '.join(EFFORTS)}")
+        for key, value in (("manager_model", model), ("manager_effort", effort)):
+            if value is not None:
+                self._set(key, value)
+                self.store.log_add(by, "settings", f"{key}={value}")
 
     def enabled(self) -> bool:
         return self._get("manager_enabled") != "0"

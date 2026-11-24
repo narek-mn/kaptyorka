@@ -239,7 +239,8 @@ def test_log_kinds_and_paging_routes(app):
 def test_settings_show_the_manager_switch(app):
     status, body = call(app, "alice", "GET", "/api/settings")
     assert status == 200 and body == {"retention_days": 180, "auto_doors": True,
-                                      "manager_doors": True, "manager_enabled": False,
+                                      "manager_doors": True, "manager_model": "claude-opus-5-5",
+                                      "manager_effort": "medium", "manager_enabled": False,
                                       "manager_state": "off",
                                       "manager_reason": "the manager is switched off",
                                       "manager_error": "", "manager_load": "0 messages in the last hour,"

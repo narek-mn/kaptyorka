@@ -571,7 +571,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return
         folder = paths.home() / manager.DIR
         ws.create_manager(boss, mm.person_id(), admin, str(folder),
-                          manager.first_message(MANAGER_FIRST, mm.tasks()[0], mm.lessons()))
+                          manager.first_message(MANAGER_FIRST, mm.tasks()[0], mm.lessons()),
+                          mm.model(), mm.effort())
         mm.record_launch(now)
         wake_bridges()
 
@@ -2000,6 +2001,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         return JSONResponse({
             "retention_days": store.retention_days(), "auto_doors": store.auto_doors(),
             "manager_doors": store.manager_doors(),
+            "manager_model": mm.model(), "manager_effort": mm.effort(),
             "manager_enabled": mm.enabled(),
             "manager_state": state, "manager_reason": reason,
             "manager_error": (row["error"] or "") if row and row["state"] == "failed" else "",
@@ -2017,13 +2019,17 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             for key in ("auto_doors", "manager_doors"):
                 if key in body:
                     store.set_auto_doors(body[key], by, key)
-            if "retention_days" in body or not ({"auto_doors", "manager_doors"} & set(body)):
+            if "manager_model" in body or "manager_effort" in body:
+                mm.set_model(body.get("manager_model"), body.get("manager_effort"), by)
+            if "retention_days" in body or not ({"auto_doors", "manager_doors", "manager_model",
+                                                 "manager_effort"} & set(body)):
                 store.set_retention_days(body.get("retention_days"), by)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"retention_days": store.retention_days(),
                              "auto_doors": store.auto_doors(),
-                             "manager_doors": store.manager_doors()})
+                             "manager_doors": store.manager_doors(),
+                             "manager_model": mm.model(), "manager_effort": mm.effort()})
 
     @server.custom_route("/api/legacy", methods=["GET"])
     async def api_legacy(request: Request) -> Response:
