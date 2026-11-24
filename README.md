@@ -720,6 +720,30 @@ Updates are staged. When the hub runs a new version, a first group updates: the 
 
 Agent tool updates. kaptyorka reads parts of Claude Code, OpenCode and Codex that they do not document (Claude Code's session files, inbox socket, transcripts, background task files, which session started another and `--bg`/`stop` output; OpenCode's `service.json` and local API; Codex's app-server socket). `src/kaptyorka/compat.py` lists each one, what uses it and what that feature does without it. Each bridge checks the ones it can by only reading, every 10 minutes and after a tool update, and a broken one shows on the Machines page as a warning such as "Claude Code 2.1.340 on box-1: background task files not found (stuck check off for background tasks)"; the feature itself turns off rather than giving wrong answers (no push means sessions read their messages on their next turn). `kaptyorka doctor` shows the same as `tool: <tool> internals`. When a Claude Code newer than the one kaptyorka was tested with appears on the team, the admins get one message per version with the number of machines.
 
+## Encrypted connections (optional)
+
+By default the hub speaks plain http on the LAN, so device tokens, invite links and the page's GitLab sign-in travel unencrypted: anyone on the same network can read them. `kaptyorka tls` moves the hub to https with a certificate it makes itself. Machines do not trust a certificate authority; they check the hub certificate's fingerprint (SHA-256), which reaches a new machine inside its invite link and a joined one in its bridge's heartbeat answer, signed with that machine's own secret. Plain http stays the default until you switch. The design and the research behind it: `docs/superpowers/specs/2026-11-25-hub-tls.md`.
+
+Steps, on the hub machine:
+
+1. Update every machine to kaptyorka 0.9.35 or newer (older bridges cannot follow), and check `kaptyorka fleet list`.
+2. GitLab sign-in only: in the GitLab application (your own applications in your GitLab profile, a group's applications, or the instance's in the admin area: the same place it was made), add a second redirect URI line `https://<hub address>:<hub port + 1>/auth/gitlab/callback` next to the http one. `kaptyorka gitlab status` prints both lines during the move.
+3. `kaptyorka tls on`: makes the certificate (needs `openssl`) and serves https on the hub port + 1 (`--port` to choose) beside http. The hub restarts once, so agent connections reconnect. Each bridge moves to https on its next heartbeat, after a test call with the fingerprint works.
+4. `kaptyorka tls status`: each machine with `https, pinned` or still `http`. Wait until every online machine says https (usually a minute).
+5. `kaptyorka tls only`: plain http now answers only the hub computer itself (the manager); a browser opening the old address is sent to https, anything else is told the hub moved. Links the hub gives out (page, invites) are https from step 3 on; invite links end in `#sha256=<fingerprint>`.
+6. Browsers: open the https page once and accept the warning, or install the hub's CA so there is none: `kaptyorka tls ca` prints its file (`~/.kaptyorka/tls/ca.crt`); import it as a trusted authority in the browser or the system. Never copy `ca.key`.
+
+Undo: `kaptyorka tls off` reopens plain http and machines move back on their next heartbeat; `kaptyorka tls off` again (once `tls status` shows them on http) stops https. New certificate: `kaptyorka tls rotate` makes it and announces it; `kaptyorka tls rotate` again, once `tls status` shows every machine with it, switches. The certificate lasts 825 days; the admins get a message 30 days before it ends. `kaptyorka status` on the hub has a `tls:` line while it is on.
+
+What can go wrong:
+
+- A machine that was off during the move cannot follow: plain http tells it the hub moved, and it needs a new invite link (`kaptyorka join <link>`). Telling it the fingerprint over plain http would let someone in between give it a false one. `tls status` shows who has not moved before you run `only`; `only` refuses while an online machine is still on http (`--force` skips that).
+- A fingerprint mismatch ("its certificate ... is not the one this machine joined with") means the hub's certificate changed without telling that machine, or someone is in between. Nothing was sent. Check with the admin, then join with a new link.
+- The hub's LAN address changed: machines keep working (they check the fingerprint, not the name), but browsers warn again until `kaptyorka tls rotate` makes a certificate for the new address.
+- GitLab sign-in fails with a redirect error: the https line from step 2 is missing in the GitLab application.
+- The hub runs behind a reverse proxy or has a certificate from a real authority: machines without a fingerprint check it against the system's authorities as usual.
+- A team that already runs Tailscale or WireGuard everywhere can instead keep plain http on the tunnel's addresses; the tunnel encrypts it.
+
 ## Backup
 
 `kaptyorka backup <user@host:path>` copies the hub's data (`hub.db` and `files/`) to another machine over ssh. When `gpg` is installed the copy is encrypted. The passphrase is in `~/.kaptyorka/backup-pass`: keep a copy of it somewhere else, or the backup cannot be opened. Without `gpg` the copy is a plain tar, and the command says so.
@@ -789,6 +813,7 @@ Everything is in `~/.kaptyorka`:
 | `kaptyorka doctor` | Check this machine's setup; `--fix` repairs what it can |
 | `kaptyorka fleet add <user@host>...` | Admin: set up machines over ssh (`--person <name>`, `--key-from <file>`) |
 | `kaptyorka fleet list` | Admin: list machines |
+| `kaptyorka tls [status\|on\|only\|off\|rotate\|ca]` | On the hub machine: encrypted connections (optional); see "Encrypted connections" |
 | `kaptyorka fleet rollout [status\|go\|hold]` | Admin: the staged update after the hub's own; go updates the rest now, hold keeps them back |
 | `kaptyorka login-copy <user@host>` | Copy your Claude Code, Codex and OpenCode logins to another machine of yours over ssh (`--tool` picks one, `--force` replaces one already there) |
 | `kaptyorka backup <user@host:path>` | Copy the hub's data to another machine; `--nightly` every day at 03:00 |

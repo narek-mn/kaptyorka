@@ -67,11 +67,15 @@ def read_env(text: str) -> dict:
 def redeem(url: str, name: str) -> Optional[Tuple[str, str, str, str]]:
     """Use an invite link: (hub, token, secret, person), or None after printing why it
     failed."""
-    m = re.fullmatch(r"(https?://[^/\s]+)/i/([\w-]+)/?", url.strip())
+    from kaptyorka import tls
+
+    link, pin = tls.split_invite(url)  # an https hub's link ends in #sha256=<fingerprint>
+    m = re.fullmatch(r"(https?://[^/\s]+)/i/([\w-]+)/?", link)
     if not m:
         print("that is not an invite link (expected http://<hub>/i/<code>)", file=sys.stderr)
         return None
     base, code = m.groups()
+    pins = [pin] if pin and base.startswith("https://") else None
     try:
         host = socket.gethostname().split(".")[0]
         try:
@@ -79,7 +83,10 @@ def redeem(url: str, name: str) -> Optional[Tuple[str, str, str, str]]:
         except Exception:
             os_user = ""
         status, body = http.request("POST", f"{base}/i/{code}", "", {
-            "device_name": name, "host": host, "os_user": os_user})
+            "device_name": name, "host": host, "os_user": os_user}, pins=pins)
+    except http.HubCertMismatch as e:
+        print(f"{e}: the link's fingerprint does not match the hub; nothing was sent", file=sys.stderr)
+        return None
     except http.HubUnreachable:
         print(http.unreachable(base), file=sys.stderr)
         return None
@@ -98,7 +105,7 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
          secret: Optional[str] = None, person: Optional[str] = None, env: Optional[dict] = None,
          first: Optional[bool] = None, moved: Optional[bool] = None,
          local_hub: Optional[Callable[[], Optional[bool]]] = None,
-         stop_hub: Optional[Callable[[], object]] = None) -> int:
+         stop_hub: Optional[Callable[[], object]] = None, pins: Optional[List[str]] = None) -> int:
     """moved: the config named another hub, token or machine name before (the invite flow
     saves the new one before it gets here, so it says so itself). local_hub: this account's
     own hub service from an earlier `kaptyorka start` (service.is_active: None when not
@@ -115,8 +122,14 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
         if t not in valid:
             print(f"unknown tool {t}; valid: {', '.join(valid)}", file=sys.stderr)
             return 2
+    saved = paths.load_config()
+    if pins is None and saved.get("hub", "").rstrip("/") == hub:  # a retry keeps what it pinned
+        pins = saved.get("hub_pins") or None
     try:
-        status, _ = http.request("GET", hub + "/api/feed", token)
+        status, _ = http.request("GET", hub + "/api/feed", token, pins=pins if hub.startswith("https://") else [])
+    except http.HubCertMismatch as e:
+        print(f"{e}: nothing was sent", file=sys.stderr)
+        return 1
     except http.HubUnreachable:
         print(http.unreachable(hub), file=sys.stderr)
         return 1
@@ -131,7 +144,8 @@ def main(hub: str, token: str, name: str, adapters: Optional[list] = None,
     exe = str(exe if exe == Path.home() / ".local/bin/kaptyorka" else exe.resolve())
     done = [a for a in adapters if a.installed() and (not only or a.tool in only)]
     cfg = {"hub": hub, "token": token, "machine": name}
-    saved = paths.load_config()
+    if pins and hub.startswith("https://"):
+        cfg["hub_pins"] = list(pins)
     if first is None:  # the invite flow saves the config before it gets here, so it says so itself
         first = not saved.get("token")
     if moved is None:

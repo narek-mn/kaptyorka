@@ -21,7 +21,7 @@ from urllib.parse import quote
 import kaptyorka
 # Everything a tool call needs is loaded now: an upgrade replaces these files under a running
 # shim, and a module first imported after it would be the new one next to old ones in memory.
-from kaptyorka import facts, http, identity, launch, offhub, optin, overnight, paths, repos  # noqa: F401
+from kaptyorka import facts, http, identity, launch, offhub, optin, overnight, paths, repos, tls  # noqa: F401
 from kaptyorka.adapters.opencode import valid_id as opencode_id
 from kaptyorka.store import MAX_FILE
 
@@ -60,7 +60,12 @@ class Relay:
         stop = anyio.Event()
         started = False
         try:
-            async with httpx2.AsyncClient(headers=self.headers,
+            # the bridge may have moved the hub to https since this shim started (tls.py); an
+            # https hub this machine pinned is trusted by that certificate alone
+            self.url = await anyio.to_thread.run_sync(tls.current_url, self.url)
+            pins = tls.pins_for(self.url) if self.url.startswith("https://") else []
+            verify = await anyio.to_thread.run_sync(tls.client_context, self.url, pins) if pins else True
+            async with httpx2.AsyncClient(headers=self.headers, verify=verify,
                                          timeout=httpx2.Timeout(TIMEOUT_S, read=None)) as h:
                 async with Client(streamable_http_client(self.url + "/mcp", http_client=h)) as c:
                     started = True

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import __version__, compat, facts, http, identity, left, limits, offhub, optin, orders, overnight, paths, repos, skills_sync, stuck, usage
+from kaptyorka import __version__, compat, facts, http, identity, left, limits, offhub, optin, orders, overnight, paths, repos, skills_sync, stuck, tls, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES, Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
@@ -143,6 +143,7 @@ class Bridge:
                 new.update(facts.infra(self.cfg["hub"], with_ip=scope == "team"))
             except Exception as e:  # never stops the heartbeat
                 self._report("infra", f"reading machine facts failed: {e}")
+        new.update(tls.machine_facts(self.cfg))  # plain http or https, and its pins (short)
         try:  # the agent tools' undocumented internals still as kaptyorka reads them (compat.py)
             new.update(compat.facts(new.get("tools") or {}, compat.Ctx(Path.home(), self.runner)))
         except Exception as e:
@@ -295,6 +296,8 @@ class Bridge:
         if closed and status in (200, 204):
             self._closed = [k for k in self._closed if k not in closed]
         self.hub = answer if status == 200 and isinstance(answer, dict) else {}
+        if self.hub.get("tls") is not None:  # the hub moves to https or back (tls.py)
+            self.cfg = tls.follow(self.cfg, self.hub, lambda m: self._report("tls", m))
         self._learn_team(status, answer)
         v = self.hub.get("skills_version")
         if isinstance(v, str) and v != self._skills_version:

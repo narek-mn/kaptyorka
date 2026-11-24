@@ -259,6 +259,10 @@ def clean_facts(facts: dict) -> dict:
         out["gpu_queue"] = q
     if facts.get("update_failed") in paths.UPDATE_REASONS:  # a fixed reason, never raw text
         out["update_failed"] = facts["update_failed"]
+    t = facts.get("hub_tls")  # tls.machine_facts: the scheme it uses and its pins (16 hex each)
+    if isinstance(t, dict) and t.get("scheme") in ("http", "https"):
+        out["hub_tls"] = {"scheme": t["scheme"], "pins": [p for p in t.get("pins") or []
+                                                          if isinstance(p, str) and re.fullmatch(r"[0-9a-f]{16}", p)][:2]}
     for key in compat.FACT.values():  # "ok" or the ids of broken tool internals, never raw text
         value = compat.clean(facts.get(key))
         if value is not None:

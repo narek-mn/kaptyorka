@@ -31,7 +31,7 @@ from kaptyorka.secrets_check import PATTERNS as SECRET_PATTERNS
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
-from kaptyorka import compat, hub_groups, left, limits, rollout
+from kaptyorka import compat, hub_groups, left, limits, rollout, tls
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
@@ -717,8 +717,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     tell(key, text)
         except Exception as e:  # nor may the rollout
             print(f"kaptyorka: rollout check failed: {e}", flush=True)
-        try:  # a Claude Code newer than the tested one: the admins, once per version
-            for text in compat.version_news(store, now):
+        try:  # a Claude Code newer than the tested one, the https certificate near its end
+            for text in compat.version_news(store, now) + tls.expiry_news(store, now):
                 store.log_add("hub", "compat", text[:500])
                 for name in admin_ops.admins(store):
                     tell(f"web:{name}", text)
@@ -1570,8 +1570,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         # left behind (left.py): its bridge checks each again before it closes it
         close = left.close_keys(store, principal.device_id, ws.live_keys(), mm.person_id(),
                                 store.clock()) if own else []
+        announce = tls.announcement(device_signing(principal.device_id),
+                                    request.headers.get("host") or request.url.netloc, store.clock())
         return JSONResponse({"version": __version__,
                              **({"close_left": close} if close else {}),
+                             **({"tls": announce} if announce else {}),  # tls.py: signed
                              "auto_update": own and ws.auto_update(principal.device_id)
                              and rollout.allows(store, principal.device_id, __version__),  # staged
                              "projects": [] if principal.legacy else
@@ -1844,7 +1847,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             code = admin_ops.invite_self(store, p)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=429 if "already have" in str(e) else 403)
-        url = f"{hub_url(request)}/i/{code}"
+        url = invite_url(request, code)
         return JSONResponse({"url": url, "command": f"kaptyorka join {url}",
                              "expires": admin_ops.invite_expires(store, code)}, headers=NO_STORE)
 
@@ -2031,7 +2034,24 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         return None
 
     def hub_url(request: Request) -> str:
-        return f"http://{request.headers.get('host') or request.url.netloc}"
+        """The hub's address for links: https on its TLS port once it uses https (tls.py)."""
+        return tls.base_url(request.url.scheme, request.headers.get("host") or request.url.netloc)
+
+    def own_url(request: Request) -> str:
+        """The address this request came to: a machine joined over plain http stays there
+        (it has no pin yet) and its bridge follows the hub's signed announcement."""
+        return f"{request.url.scheme}://{request.headers.get('host') or request.url.netloc}"
+
+    def invite_url(request: Request, code: str) -> str:
+        return tls.invite_url(hub_url(request), code)  # over https with the fingerprint
+
+    def device_signing(device_id) -> Optional[str]:
+        """The device's signing key (its secret's hash), None for a legacy token."""
+        if device_id is None:
+            return None
+        with store.lock:
+            row = store.db.execute("SELECT secret_hash FROM devices WHERE id=?", (device_id,)).fetchone()
+        return row["secret_hash"] if row and row["secret_hash"] else None
 
     @server.custom_route("/api/log", methods=["GET"])
     @_bad_request
@@ -2309,7 +2329,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     else store.invite_create(person["id"], by=principal.person_name))
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
-        return JSONResponse({"code": code, "url": f"{hub_url(request)}/i/{code}",
+        return JSONResponse({"code": code, "url": invite_url(request, code),
                              "expires": admin_ops.invite_expires(store, code)})
 
     @server.custom_route("/api/team-machines", methods=["POST"])
@@ -2326,7 +2346,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                              request.scope["state"]["principal"].person_name)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=409 if "taken" in str(e) else 400)
-        url = f"{hub_url(request)}/i/{code}"
+        url = invite_url(request, code)
         return JSONResponse({"name": str(body["name"]).strip(), "url": url,
                              "command": f"kaptyorka join {url}",
                              "expires": admin_ops.invite_expires(store, code)}, headers=NO_STORE)
@@ -2340,7 +2360,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if denied:
             return denied
         base = hub_url(request)
-        return JSONResponse([{**v, "url": f"{base}/i/{v['code']}"}
+        return JSONResponse([{**v, "url": tls.invite_url(base, v["code"])}
                              for v in admin_ops.invites_open(store)])
 
     @server.custom_route("/api/invites/{code}", methods=["DELETE"])
@@ -2926,7 +2946,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     + f"<p>This invite is for {html.escape(who['name'])}.</p>"
                     + INVITE_GITLAB.format(action=html.escape(f"/i/{code}/gitlab")))
             return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)
-        cmd = html.escape(f"kaptyorka join {hub_url(request)}/i/{code}")
+        cmd = html.escape(f"kaptyorka join {invite_url(request, code)}")
         if on:  # sign in first; the join command still works afterwards
             who = signin.invite_person(store, code)
             body = ("<h1>Join the team hub</h1>"
@@ -2957,7 +2977,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         except KaptyorkaError as e:
             limiter.hit(key)
             return PlainTextResponse(str(e), status_code=400)
-        return JSONResponse({"token": token, "secret": secret, "hub": hub_url(request),
+        return JSONResponse({"token": token, "secret": secret, "hub": own_url(request),
                              "person": person},
                             headers={"Cache-Control": "no-store"})
 
