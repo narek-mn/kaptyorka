@@ -86,6 +86,7 @@ const limit = (sessionID, error, cwd) => {
   try {
     const child = execFile(KAPTYORKA, ["hook", "opencode", "failure"], { cwd, timeout: 4000,
       env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } }, () => {});
+    child.stdin.on("error", () => {});
     child.stdin.end(JSON.stringify({ session_id: sessionID, cwd, error: "rate_limit",
       error_details: text.slice(0, 600) }));
   } catch {}
@@ -102,7 +103,8 @@ export const Kaptyorka = async ({ directory, client }) => {
   const run = async (sessionID, args, ms = 4000, input = "") => {
     const p = exec(KAPTYORKA, args, { cwd: directory, timeout: ms,
       env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } });
-    p.child.stdin.end(input);
+    p.child.stdin.on("error", () => {});  // it may exit before reading: no EPIPE crash
+    p.child.stdin.end(input || undefined);
     return (await p).stdout.trim();
   };
   const hook = async (sessionID, event, prompt = "") => {  // the prompt's text: hub hints
@@ -177,6 +179,7 @@ export default {
       try {
         const run = exec(KAPTYORKA, ["hook", "opencode", event], { cwd: directory, timeout: 4000,
           env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } });
+        run.child.stdin.on("error", () => {});
         run.child.stdin.end(JSON.stringify({ prompt }));
         return (await run).stdout.trim();
       } catch {
