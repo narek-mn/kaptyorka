@@ -296,7 +296,18 @@ class MachineEvents:
         self.store.note_section(NOTE_TOPIC, NOTE_HEADER, lines, NOTE_CAP, AUTHOR)
 
 
-def manager_text(event: str) -> str:
-    return (f"machine event: {event}. Follow your machine-events rule: warn the sessions working"
-            " on that machine, tidy the `machines` note, add a reason only once a session"
-            " confirms the work is done.")
+def event_hosts(event: str) -> List[str]:
+    """The machines an event text is about: "box-1: ..." or "box-1, box-2 went offline ..."."""
+    if " went offline within " in event:
+        return [h.strip() for h in event.split(" went offline within ", 1)[0].split(",") if h.strip()]
+    return [event.split(":", 1)[0].strip()] if ":" in event else []
+
+
+def manager_text(event: str, warn: Optional[List[str]] = None) -> str:
+    """`warn`: the sessions the hub found for it (hub.sessions_to_warn); None leaves it out."""
+    who = "" if warn is None else (
+        f" Warn these sessions (the hub's list): {', '.join(warn)}." if warn
+        else " No session to warn: nobody works on or with that machine now.")
+    return (f"machine event: {event}. Follow your machine-events rule: warn the sessions that"
+            " work on or with that machine, tidy the `machines` note, add a reason only once a"
+            " session confirms the work is done." + who)

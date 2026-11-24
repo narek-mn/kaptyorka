@@ -29,6 +29,9 @@ REOFFER_S = 60
 WAITING_S = 1800  # how often a boss hears that a worker waits for a permission
 WAITING = ("permission_prompt", "needs_input")
 LIVE = ("starting", "up", "unattended", "abandoned")
+# words that say a named worker ended, so a reason naming it does not lean on it being live
+GONE_WORDS = re.compile(r"\b(closed|done|finished|ended|gone|stopped|failed|no longer|not"
+                        r" (running|live|there))\b", re.I)
 # a worker row `w` the hub started on a work request the manager decided (request_decide),
 # for that request's person: a later worker that reused the name never matches
 APPROVED = ("EXISTS (SELECT 1 FROM work_requests r WHERE r.worker=w.name AND r.worker!=''"
@@ -1224,6 +1227,18 @@ class WorkerStore:
                 (host, *LIVE)).fetchall()
         return [f"`{r['name']}` of {r['person'] or '?'} in {r['project']} ({r['state']})"
                 for r in rows]
+
+    def named_not_live(self, text: str) -> List[Tuple[str, str]]:
+        """(name, state) of each worker that `text` names but that is not live now, unless the
+        text says it ended ("closed", "done", ...): a reason that leans on a worker the
+        manager remembers, which may have closed itself since."""
+        if GONE_WORDS.search(text or ""):
+            return []
+        with self.lock:
+            rows = self.db.execute("SELECT name, state FROM workers WHERE manager=0").fetchall()
+        return [(r["name"], r["state"]) for r in rows if r["state"] not in LIVE
+                and r["name"] in text
+                and re.search(rf"(?<![\w-]){re.escape(r['name'])}(?![\w-])", text)]
 
     def close(self, principal: Principal, name: str) -> dict:
         """The boss's person, an admin, or the manager for a worker it approved (APPROVED)."""

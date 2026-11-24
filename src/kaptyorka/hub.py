@@ -36,7 +36,7 @@ from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
 from kaptyorka.memory import MemoryStore, check_state
-from kaptyorka.secrets_check import check_secrets
+from kaptyorka.secrets_check import check_secrets, labelled_values
 from kaptyorka.store import (MAX_FILE, MAX_IDENT, ONLINE_S, RECENT_S, UNREACHABLE, Agent,
                               KaptyorkaError, Principal, Store, attach_line, clean, machine_name,
                               session_id)
@@ -52,6 +52,9 @@ REMOVED = "{project} was removed; ask the admin to register it again"
 ASK_MANAGER = ("to reach another person's session, message the manager: say whom and why;"
                " only the admin opens a door")
 ON_SHARED = "a worker on a shared account cannot start, adopt or close workers; ask your boss"
+SECRET_DAYS = 30  # values sent to the manager as a password or token, refused in its writes
+SECRET_RULE = ("Never store or repeat a secret: leave the value out, and tell the sender in one"
+               " line to rotate it, since it has been sent.")
 MANAGER_NO_WORK = ("the manager never starts workers itself: ask the person's own session to call"
                    " work, so that session is the worker's boss")
 CSP = ("default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; "
@@ -668,7 +671,37 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         for text in events:
             store.log_add("hub", "machine", text[:500])
             if key is not None:
-                tell(key, machine_events.manager_text(text))
+                warn = sessions_to_warn(machine_events.event_hosts(text), now)
+                tell(key, machine_events.manager_text(text, warn))
+
+    def sessions_to_warn(hosts: List[str], now: float) -> List[str]:
+        """The online sessions a machine event concerns: those on the machine, the bosses of
+        its live workers, and those that talked with a session there in the last day (an
+        offline machine's own sessions are gone, its partners are not). Never the manager."""
+        if not hosts:
+            return []
+        mid = mm.person_id()
+        marks = ",".join("?" * len(hosts))
+        live = ",".join("?" * len(LIVE))
+        with store.lock:
+            there = {r["key"] for r in store.db.execute(
+                f"SELECT key FROM agents WHERE machine IN ({marks}) OR host IN ({marks})",
+                (*hosts, *hosts))}
+            keys = set(there)
+            keys |= {r["boss_key"] for r in store.db.execute(
+                f"SELECT boss_key FROM workers WHERE host IN ({marks}) AND manager=0 AND state"
+                f" IN ({live})", (*hosts, *LIVE))}
+            if there:
+                inner = ",".join("?" * len(there))
+                for r in store.db.execute(
+                        f"SELECT sender_key, to_key FROM messages WHERE created>? AND kind='message'"
+                        f" AND (sender_key IN ({inner}) OR to_key IN ({inner}))",
+                        (now - 86400, *there, *there)):
+                    keys |= {r["sender_key"], r["to_key"] or ""}
+            rows = store.db.execute(
+                f"SELECT key, name, person_id FROM agents WHERE last_seen>? AND key IN"
+                f" ({','.join('?' * len(keys)) or 'NULL'})", (now - ONLINE_S, *keys)).fetchall()
+        return sorted({r["name"] for r in rows if r["person_id"] != mid or mid is None})
 
     def tick() -> None:
         """Move workers on; deliver what the bosses hear; keep the manager alive."""
@@ -725,6 +758,30 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         except Exception as e:
             print(f"kaptyorka: compatibility news failed: {e}", flush=True)
 
+    def manager_secret(principal: Principal, *texts: str) -> None:
+        """The manager never stores or repeats a secret: a text it writes (a note, its task
+        list, a lesson, a decision, a proposal, a message) that holds a known secret pattern, or
+        a value someone sent it as a password or token in the last SECRET_DAYS, is refused."""
+        if principal.role != "manager":
+            return
+        text = "\n".join(t for t in texts if t)
+        try:
+            check_secrets(text)
+        except KaptyorkaError as e:
+            raise KaptyorkaError(f"refused: {e}. {SECRET_RULE}") from None
+        if not text.strip():
+            return
+        with store.lock:
+            rows = store.db.execute(
+                "SELECT m.text FROM messages m JOIN agents a ON a.key=m.to_key"
+                " WHERE a.person_id=? AND m.created>?",
+                (principal.person_id, store.clock() - SECRET_DAYS * 86400)).fetchall()
+        for r in rows:
+            for v in labelled_values(r["text"]):
+                if v in text:
+                    raise KaptyorkaError(f"refused: this holds a secret someone sent you"
+                                         f" ({v[:3]}…). {SECRET_RULE}")
+
     def to_admins(text: str) -> None:
         """A line for every admin: their online sessions, else their page."""
         now = store.clock()
@@ -756,8 +813,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.tool()
     @_tool_errors
     async def send(to: str, text: str, ctx: Context, file: str = "") -> str:
-        """Send text to one session by name or label, or to 'all'. file: the local path of one
-        file to attach (png jpg gif webp svg txt md log json csv pdf, up to 5 MB)."""
+        """Send text to one session by name or label, or to 'all' (the manager: also 'admins',
+        every admin's online sessions, else their page). file: the local path of one file to
+        attach (png jpg gif webp svg txt md log json csv pdf, up to 5 MB)."""
         file_id = None
         if file:
             m = re.fullmatch(r"id:(\d+)", file)
@@ -765,7 +823,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 raise KaptyorkaError("attach a file by passing its local path; "
                                      "the kaptyorka tool uploads it")
             file_id = int(m.group(1))
-        key, held = me(ctx).key, []
+        agent, principal = caller(ctx)
+        manager_secret(principal, text)
+        key, held = agent.key, []
+        if to == "admins" and principal.role == "manager":  # every admin, wherever they are
+            to_admins(f"from the manager: {text}")
+            wake_bridges()
+            return "sent to the admins (their online sessions, else their page)"
         n = ws.send_via_manager(key, to, text, mm.person_id(), file_id, held)
         if n is None:
             n = store.send(key, to, text, file_id, held)
@@ -978,6 +1042,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if principal.role != "manager":
             raise KaptyorkaError("only the manager records lessons; the admin adds one with"
                                  " kaptyorka lesson")
+        manager_secret(principal, text)
         n = mm.add_lesson(text, principal.person_name)
         return f"lesson saved ({n} in all); your next run starts with them"
 
@@ -1076,6 +1141,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         """Write a new version of a note (older versions are kept); with project, that
         project's note."""
         agent, principal = caller(ctx)
+        manager_secret(principal, text)
         project = project or None
         is_state = project is not None and topic.strip() == "state"
         if is_state:
@@ -1110,6 +1176,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         agent, principal = caller(ctx)
         if not project:
             raise KaptyorkaError("project is empty")
+        manager_secret(principal, text)
         # the manager's own task list (project `manager`, only it may write it) is free text
         problem = None if project == manager.PERSON and principal.role == "manager" \
             else check_state(text)
@@ -1128,6 +1195,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         line = clean(text, 500)
         if not line:
             raise KaptyorkaError("text is empty")
+        manager_secret(principal, line)
         day = datetime.fromtimestamp(store.clock(), timezone.utc).strftime("%Y-%m-%d")
         entry = f"- {day} {principal.person_name}: {line}"
         with decide_lock:  # read then write must not interleave
@@ -1341,6 +1409,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if r["decided_at"] is not None and r["created"] <= now - manager.REQUEST_TTL_S:
             raise KaptyorkaError(f"request {request_id} waited over an hour and is closed; the"
                                  " asker files a new one with work")
+        live_line = manager.live_text(r["wanted"], ws.live_on(r["wanted"]))
+        stale = ws.named_not_live(reason)
+        if stale:  # it decides from a worker it remembers, not from the hub's live list
+            named = ", ".join(f"`{n}` ({s})" for n, s in stale)
+            raise KaptyorkaError(f"not decided: your reason leans on {named}, which is not live"
+                                 f" now. {live_line} Decide again from that list; if you meant"
+                                 " that it ended, say so in the reason.")
         names = {p["id"]: p["name"] for p in store.people()}
         page = "web:" + names.get(r["person_id"], "")
         online = ws.session_online(r["boss_key"], now)
@@ -1350,7 +1425,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             mm.request_decide(request_id, "wait", reason)
             tell(asker, f"the manager says wait on {project}: {reason}")
             store.log_add("manager", "work_decide", f"request {request_id}: wait — {reason}")
-            return f"request {request_id}: told them to wait"
+            # what to watch before deciding it again
+            return f"request {request_id}: told them to wait. {live_line}"
         if machine == "no":
             mm.request_decide(request_id, "no", reason)
             tell(asker, f"the manager says no to {project} for now: {reason}")
@@ -1487,6 +1563,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         agent, principal = caller(ctx)
         if principal.legacy:
             raise KaptyorkaError(OWN_TOKEN)
+        manager_secret(principal, text, evidence)
         pid = rs.propose(principal, agent.key, text, evidence)
         return f"Proposal {pid} filed; the admin decides on the Rules tab."
 

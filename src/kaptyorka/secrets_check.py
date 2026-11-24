@@ -22,3 +22,25 @@ def check_secrets(text: str) -> None:
     for what, pattern in PATTERNS:
         if pattern.search(text):
             raise KaptyorkaError(f"looks like a secret: {what}")
+
+
+# A value someone names as a secret in plain words ("the deploy password: Kx9-..", "token is
+# ab12cd34.."). No pattern knows a password, so the manager's writes are checked against the
+# values people sent it this way (hub.py, manager_secret).
+LABEL = re.compile(r"\b(password|passwd|passphrase|pwd|secret|token|api[ _-]?key|access[ _-]?key"
+                   r"|private[ _-]?key|credentials?|login)\b", re.I)
+VALUE = re.compile(r"\S+")  # a whole word: a path or a session name stays one word
+LABEL_REACH = 80  # characters after the label word in which its value may stand
+
+
+def labelled_values(text: str) -> set:
+    """Values that follow a secret's label within LABEL_REACH characters: 8 or more
+    characters with a letter and a digit (so plain words never count), no path or address."""
+    out = set()
+    for m in LABEL.finditer(text or ""):
+        for v in VALUE.finditer(text, m.end(), min(len(text), m.end() + LABEL_REACH)):
+            word = v.group(0).strip("`'\".,;:()[]<>")
+            if len(word) >= 8 and re.search(r"[A-Za-z]", word) and re.search(r"\d", word) \
+                    and "/" not in word and ":" not in word:
+                out.add(word)
+    return out

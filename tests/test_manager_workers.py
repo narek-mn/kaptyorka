@@ -64,8 +64,8 @@ def test_workers_lists_the_ones_it_approved(hub, clock):
 
 def test_rules_say_exactly_what_it_may_close():
     md = manager.claude_md("")
-    assert "only a worker the hub started on a request you decided" in md
-    assert "never promise that" in md
+    assert "works only on a worker the hub started on a request you decided" in md
+    assert "never promise and never try" in md
 
 
 # 2. the live workers come from the database
@@ -79,13 +79,33 @@ def test_request_notice_lists_the_live_workers_now(hub, clock):
     insert_worker(hub, "proj-a-w7", "up", bob_id, clock[0])
     ask_work(hub, bob)
     [text] = [t for t in inbox(mgr, me) if "Request 2" in t]
-    assert f"Live workers on {HOST} now: `proj-a-w7` of bob in proj-a (up)." in text
+    assert text.startswith(f"Live workers on {HOST} now (the hub's list): `proj-a-w7` of bob"
+                           " in proj-a (up).")  # first: the decision rests on it
     assert "proj-a-w1" not in text
 
 
 def test_live_line_when_none():
     t = manager.text_busy("bob", "proj-a", "box-1", "alice", "/w", 3, live=[])
-    assert "No live workers on box-1 now. Request 3:" in t
+    assert t.startswith("No live workers on box-1 now (the hub's list; a worker you remember is"
+                        " gone). bob wants proj-a on box-1")
+    t = manager.text_in_use("bob", "proj-a", "box-1", ["alice"], [], 3, live=[])
+    assert t.startswith("No live workers on box-1 now")
+
+
+def test_a_decision_leaning_on_a_closed_worker_is_refused_and_the_live_list_comes_back(hub, clock):
+    from helpers import call_error
+    mgr, me = manager_online(hub)
+    b, bob_id, bob = busy_setup(hub)
+    insert_worker(hub, "proj-a-w6", "closed", bob_id, clock[0])  # it closed itself
+    ask_work(hub, bob)
+    err = call_error(mgr, me, "work_decide", request_id=1, machine="wait",
+                     reason="box-1 still has proj-a-w6 running")
+    assert "not decided" in err and "`proj-a-w6` (closed)" in err
+    assert "No live workers on box-1 now" in err
+    assert hub.mm.request(1)["decided_at"] is None  # nothing decided, nothing told
+    out = run(call(mgr, me, "work_decide", request_id=1, machine="wait",
+                   reason="proj-a-w6 is done; alice still works in that folder"))
+    assert "told them to wait. No live workers on box-1 now" in out
 
 
 # 3. wait, then yes or no

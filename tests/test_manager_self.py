@@ -20,6 +20,7 @@ def test_capability_table_comes_from_the_real_tools(hub):
         assert f"`{tool}`" not in can and f"- `{tool}`: " in cannot
     assert "check this list and load the tool with ToolSearch" in table
     assert "run commands, read or edit files" in cannot
+    assert "- `work`: " not in can and "- `work`: start a worker yourself" in cannot
     assert "## Playbooks" in md and "A session others depend on stopped" in md
 
 
