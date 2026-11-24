@@ -60,6 +60,23 @@ HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 TRIGGER = re.compile(r"\bover\s?-?night\b|\bwhile i(?:'m| am)?\s+(?:sleep|sleeping|asleep|away)\b"
                      r"|\bbefore (?:the )?morning\b|\bby (?:the )?morning\b", re.I)
+# Words about a night that is over ("the overnight task results", "last night", "ran all night"):
+# then only a clear ask for tonight turns it on.
+PAST = re.compile(r"\blast night\b|\bthis morning\b|\byesterday\b|\ball night\b"
+                  r"|\bover\s?-?night(?:\s+(?:task|run|job|work|mode))?(?:'s|s)?\s+"
+                  r"(?:results?|reports?|summary|summaries|output|outcome)\b"
+                  r"|\b(?:results?|reports?|summary|output|outcome)\s+(?:of|from)\s+"
+                  r"(?:\w+\s+){0,2}over\s?-?night\b"
+                  r"|\bover\s?-?night(?:\s+(?:task|run|job|work|mode))?\s+"
+                  r"(?:was|were|did|didn't|ran|turned|went|stayed|got|had|has|failed|finished)\b",
+                  re.I)
+ASK = re.compile(r"\b(?:turn|switch|put)\s+(?:on\s+)?overnight mode\b|\bovernight mode on\b"
+                 r"|\b(?:until|till)\s+i(?:'m| am)?\s+back\b"
+                 r"|\bwhile i(?:'m| am)?\s+(?:sleep|sleeping|asleep|away)\b"
+                 r"|\b(?:before|by)\s+(?:the\s+)?morning\b|^\s*overnight task\s*:"
+                 r"|\b(?:do|work|run|fix|finish|continue|keep|handle|build|try)\b[^.?!\n]{0,60}"
+                 r"\bover\s?-?night\b(?!\s+(?:task|run|job|mode)?\s*(?:results?|reports?))",
+                 re.I | re.M)
 HUB_OVERNIGHT = re.compile(r"\s*/hub\s+overnight(?:\s+(on|off))?\s*", re.I)
 YES = re.compile(r"\s*(ok|okay|yes|yep|go|confirm(?:ed)?|fine|sounds good|good)[.!]*\s*", re.I)
 ALLOW = [  # "you may move the motors": one class, for this task
@@ -771,7 +788,10 @@ def asks(tool: str, tool_input: dict, rules: List[str]) -> str:
 # ---------- on, off and the words of the developer ----------
 
 def triggered(prompt: str) -> bool:
-    return bool(TRIGGER.search(prompt or ""))
+    prompt = prompt or ""
+    if PAST.search(prompt):
+        return bool(ASK.search(prompt))
+    return bool(TRIGGER.search(prompt))
 
 
 def turn_on(sid: str, project: str, cwd: str, team: bool, key: str, machine: str,
@@ -975,7 +995,7 @@ def instructions(st: dict, exe: str = "kaptyorka") -> str:
 
 def report(sid: str, st: dict, why: str, now: Optional[float] = None) -> str:
     now = time.time() if now is None else now
-    items = notes(sid)
+    items = [n for n in notes(sid) if float(n.get("t", 0)) >= float(st["started"])]  # this night
 
     def hm(t):
         return time.strftime("%H:%M", time.localtime(t))
