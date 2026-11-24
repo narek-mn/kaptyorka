@@ -16,6 +16,6 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e . pytest
-      - run: python -m pytest tests -q -o faulthandler_timeout=90
+      - run: pip install -e . pytest pytest-xdist
+      - run: python -m pytest tests -q -n auto --dist worksteal -o faulthandler_timeout=90
         timeout-minutes: 12

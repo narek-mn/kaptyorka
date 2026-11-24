@@ -1,11 +1,48 @@
 import os
 import shlex
+import shutil
+import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 from types import SimpleNamespace
 
 import pytest
+
+_REAL_CONNECT = sqlite3.connect
+
+
+def _connect_without_fsync(*args, **kwargs):
+    """Test databases are thrown away: no fsync per write (the store writes in autocommit
+    mode, so each write was a disk sync; a hub-backed test spent most of its setup there).
+    Only what survives a power cut changes, which no test checks."""
+    conn = _REAL_CONNECT(*args, **kwargs)
+    conn.execute("PRAGMA synchronous=OFF")
+    return conn
+
+
+def pytest_configure(config):
+    sqlite3.connect = _connect_without_fsync
+    # the fast suite never sees the real home: ~/.claude, ~/.kaptyorka and ~/.gitconfig of
+    # whoever runs it stay untouched, also with several workers (-n auto). Slow tests start
+    # real agent tools, which need the real home and its logins.
+    if config.getoption("markexpr", "").strip() == "not slow":
+        fake = tempfile.mkdtemp(prefix="kaptyorka-test-home-")
+        os.environ["HOME"] = fake
+        os.environ["KAPTYORKA_HOME"] = os.path.join(fake, ".kaptyorka")
+        for k in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+            os.environ.setdefault(k, "test")
+        for k in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+            os.environ.setdefault(k, "test@example.invalid")
+        config._kaptyorka_fake_home = fake
+
+
+def pytest_unconfigure(config):
+    fake = getattr(config, "_kaptyorka_fake_home", None)
+    if fake:
+        shutil.rmtree(fake, ignore_errors=True)
+
 
 # Commands that touch the real machine: services, the pipx install, agent tools.
 FENCED = {"nvidia-smi", "systemctl", "launchctl", "loginctl", "systemd-run", "pipx",

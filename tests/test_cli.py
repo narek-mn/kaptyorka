@@ -1241,6 +1241,10 @@ def test_page_prints_the_link_and_opens_it_where_there_is_a_screen(monkeypatch, 
     import webbrowser
 
     _joined("http://10.0.0.9:8765")
+
+    def unreachable(*a, **k):  # no hub there: answer at once instead of a 5 s network timeout
+        raise http.HubUnreachable("http://10.0.0.9:8765")
+    monkeypatch.setattr(http, "request", unreachable)
     opened = []
     monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url) or True)
     monkeypatch.setattr(sys, "platform", "linux")
