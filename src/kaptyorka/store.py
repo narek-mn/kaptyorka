@@ -2007,21 +2007,43 @@ class Store:
                 f" WHERE ? OR {sender}=? OR {receiver}=? ORDER BY m.id DESC LIMIT ?",
                 (principal.is_admin(), principal.person_id, principal.person_id,
                  limit)).fetchall()
-            out = []
-            for m in reversed(rows):
-                d = asdict(Message(m["id"], m["sender_name"], m["to_name"], m["text"],
-                                   m["created"], m["read_at"] is not None,
-                                   m["sender_key"].startswith("web:"),
-                                   (m["to_key"] or "").startswith("web:"), m["kind"],
-                                   self._file_info(m["file_id"]),
-                                   failed=paths.push_reason(m["push_error"]) if m["push_state"] == "failed"
-                                   and m["read_at"] is None else ""))
-                for k, p in (("_from", "s_"), ("_to", "r_")):
-                    d[k] = None if m[p + "machine"] is None else {
-                        "key": m[p + "key"], "person_id": m[p + "pid"], "machine": m[p + "machine"],
-                        "tool": m[p + "tool"], "project": m[p + "project"]}
-                out.append(d)
-            return out
+            return self._message_dicts(rows)
+
+    def messages_among(self, keys, limit: int = 300) -> List[dict]:
+        """Messages from one of the sessions `keys` to another, oldest first, shaped as
+        messages_for's: what a "working together" group said to itself."""
+        keys = list(keys)
+        if not keys:
+            return []
+        marks = ",".join("?" * len(keys))
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT m.*, s.person_id AS s_pid, s.machine AS s_machine, s.tool AS s_tool,"
+                " s.project AS s_project, s.key AS s_key, r.key AS r_key,"
+                " r.person_id AS r_pid, r.machine AS r_machine,"
+                " r.tool AS r_tool, r.project AS r_project FROM messages m"
+                " JOIN agents s ON s.key=m.sender_key JOIN agents r ON r.key=m.to_key"
+                f" WHERE m.kind='message' AND m.sender_key IN ({marks}) AND m.to_key IN ({marks})"
+                " ORDER BY m.id DESC LIMIT ?", (*keys, *keys, limit)).fetchall()
+            return self._message_dicts(rows)
+
+    def _message_dicts(self, rows) -> List[dict]:
+        """Lock held. Rows of the messages_for query, newest first, as dicts oldest first."""
+        out = []
+        for m in reversed(rows):
+            d = asdict(Message(m["id"], m["sender_name"], m["to_name"], m["text"],
+                               m["created"], m["read_at"] is not None,
+                               m["sender_key"].startswith("web:"),
+                               (m["to_key"] or "").startswith("web:"), m["kind"],
+                               self._file_info(m["file_id"]),
+                               failed=paths.push_reason(m["push_error"]) if m["push_state"] == "failed"
+                               and m["read_at"] is None else ""))
+            for k, p in (("_from", "s_"), ("_to", "r_")):
+                d[k] = None if m[p + "machine"] is None else {
+                    "key": m[p + "key"], "person_id": m[p + "pid"], "machine": m[p + "machine"],
+                    "tool": m[p + "tool"], "project": m[p + "project"]}
+            out.append(d)
+        return out
 
     def messages(self, limit: int = 500) -> List[Message]:
         with self.lock:
