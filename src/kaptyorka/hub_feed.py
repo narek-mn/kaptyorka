@@ -19,10 +19,11 @@ def agent_row(a: Agent, now: float) -> dict:
 
 
 def visible(store: Store, principal: Principal, person_id, project: str) -> bool:
-    """Your own sessions show in full. An unregistered folder is only a name two people can
-    share by chance, so another person's session shows its project only when it is a
-    registered project you have a role in."""
-    return person_id == principal.person_id or \
+    """Your own sessions show in full, and every session to the manager (it routes work and
+    resumes sessions, so it needs their projects). An unregistered folder is only a name two
+    people can share by chance, so another person's session shows its project only when it
+    is a registered project you have a role in."""
+    return person_id == principal.person_id or principal.role == "manager" or \
         store.project_role(project, principal.person_id) is not None
 
 

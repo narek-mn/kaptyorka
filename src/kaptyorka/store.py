@@ -112,6 +112,11 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 # columns added after 0.1: an older database gets them by ALTER TABLE when it is opened
 ADDED_COLUMNS = [
+    ("agents", "stopped", "TEXT NOT NULL DEFAULT ''"),  # session_end: error, or "end:<reason>"
+    ("agents", "stopped_at", "REAL"),
+    ("agents", "resets_at", "REAL"),  # its usage limit resets then (when its text said)
+    ("agents", "resume_at", "REAL"),  # the manager asked to resume it then (resume_session)
+    ("agents", "resume_boss", "TEXT NOT NULL DEFAULT ''"),
     ("doors", "expires_at", "REAL"),  # a group door the admin allowed for a while; NULL: no end
     ("connects", "asked_by", "TEXT NOT NULL DEFAULT ''"),  # door requests: who wanted it
     ("connects", "filed_by", "TEXT NOT NULL DEFAULT ''"),  # the manager or the member's session

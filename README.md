@@ -143,6 +143,7 @@ The bridge re-adds kaptyorka's own Claude Code hooks each time it starts (a line
 | `door_close` | Close a door |
 | `door_request` | Ask the admin for a door between two sessions of different people (the manager for someone who asked it; a member for one of its own sessions); two sessions of one shared project get it at once |
 | `door_decide` | The admin only: answer a door request with "sessions", "people" (7 days) or "deny" |
+| `resume_session` | The manager only: resume a session that ended (on a team machine or the asker's own machine) as a worker of the asker, now or at its usage limit's reset |
 | `inbox` | Read your messages |
 | `fetch_file` | Save a file from a message to `~/.kaptyorka/inbox/` |
 | `status` | Say what you are working on |
@@ -165,7 +166,7 @@ The bridge re-adds kaptyorka's own Claude Code hooks each time it starts (a line
 | `log` | Admin and manager only: the team's activity log, newest first (`limit`, at most 1,000) |
 | `machines` | Admin and manager only: each machine as its bridge last reported it: online, size, use and free disk space ("disk: / 212 of 468 GB free, ...") |
 
-The hub offers 28 tools in all.
+The hub offers 29 tools in all.
 
 `work(project, task, machine="", tool="claude-code", resume="")` starts a worker. `tool` is `claude-code`, `codex` or `opencode`. `adopt(name)` and `close_worker(name)` take the worker's name.
 
@@ -471,6 +472,8 @@ Keeping it alive: Claude Code does not stop it when it is idle. Before a new man
 Switching it off: `kaptyorka start --no-manager` (kept in `hub.json`, so a restart keeps it) or `close_worker("manager")` by the admin. Switched off, it gets no notices and cannot decide, `work` answers as with no manager, and a hub that starts switched off closes a manager session still running. `kaptyorka start --manager` switches it on again. Its files are in `~/.kaptyorka/manager/` (`CLAUDE.md`: the team rules and the manager's own instructions, written again when the rules change; `settings.json` and `mcp.json`: its permissions, hooks and MCP server) and `~/.kaptyorka/manager-config.json` (its token). The config lives outside the folder, and the hooks and the tool shim use it only for a session started in that folder.
 
 On the page, Home lists it with its state (`up`, `starting`, `blocked`, `off`). When it is not running, `kaptyorka status` says why (for example the admin's bridge on the hub machine is offline).
+
+When a session others depend on stops: a team session's own Claude Code hooks tell the hub why (StopFailure: a usage limit, with its reset time when the error text names one, such as "resets 7:30pm", or an API error; SessionEnd: its end). Personal sessions send nothing. A send to that session then says `held: jet-1/claude-code/proj-a hit its usage limit, resets 19:30; it gets the message when it next reports`, and for a team machine's session the manager hears it once. The manager resumes the same session by name with `resume_session(name, asked_by, when)`: the hub fills in its session id, machine and folder, and starts it again with its whole conversation as a worker of the asking session, now or at the reset (`when="reset"`). Only a session on a team machine or on the asker's own machines; the asker is the session that wrote to the manager (as for doors). Its rules give the order: resume the same session; else a fresh worker handed the project note and the last 20 messages between the two sessions; another running session only if the asker agrees, it is idle and in the same project. `who` shows the manager every session's project, status line, busy or idle, and stuck.
 
 Its task list: its conversation can end or be compacted at any time, so it keeps every open promise, who waits for what and each relay not yet passed on in its own state note, `state_write("manager", text)` (any text; only it reads it). This rule is the first thing in its instructions, and its `CLAUDE.md` has a `# Compact instructions` section that keeps the same things through a compaction. A new run gets the last saved list in its first message. After 15 messages from people and sessions, or 2 hours, since the last save, the hub adds one line, `save your task list now (state_write("manager", text))`, to the next notice it sends the manager anyway; it never sends a message just for that.
 
