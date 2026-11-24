@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.34 (unreleased)
+
+- **Working together no longer shows a member other people's talk.** With open doors to two people, a member saw a group of those two people's sessions and could read what they said to each other at `/api/groups/<id>/messages`, which they could never read before. Now a member's groups form only from links of their own sessions and links between two team machine sessions they see by project role, and the group's conversation returns only those messages: what they could already read. A door still lets them talk to that person, never read that person's other conversations. The admin still sees every group.
+
 ## 0.9.33
 
 - **Free disk space reaches the manager.** The manager could not answer "how much disk is free on the hub machine?": it has no shell, and stays without one. Every bridge now sends free disk space with its machine use (`statvfs`, no command): a team machine and the hub's own computer each real filesystem with its mount point (no tmpfs, overlay, snap or system mounts, one per device, `/`, home and `/workspace` first, at most 8); a personal laptop only `/` and its home filesystem, named `home`, no other path. A new `machines` tool (admin and manager only) lists each machine's size, use and a disk line such as "disk: / 212 of 468 GB free, /workspace 1.2 of 3.6 TB free"; the manager's rules say to read it for disk questions. The Machines page shows the free space after memory. A team machine's disk under 10% free, confirmed in 3 reports, is a machine event (note and manager), once per crossing; it comes again only after the disk was back above 15%.

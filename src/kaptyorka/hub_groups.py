@@ -3,9 +3,11 @@ and a session with the workers it started. Linked sessions form one group (conne
 that graph); a group goes away when its sessions go quiet, a worker stays with its boss while
 it is live. The manager is never in a group: it talks to everyone and would join all of them.
 
-A viewer sees a group as far as they may see its sessions (store.listed): links between two
-sessions they may see, and an "other sessions" count for a partner they may not; nothing of
-that partner (name, machine, project, messages). The admin sees every session."""
+A member sees only links they could already read (_reader): those of their own sessions, and
+those between two team machine sessions they see by project role; never a link between two
+other people's sessions, even behind a door. A partner of their own session they may not see
+is an "other sessions" count, with nothing of it (name, machine, project, messages). The
+admin sees every link."""
 from typing import Dict, List, Optional, Set, Tuple
 
 from kaptyorka.store import Agent, Principal, Store, session_id
@@ -60,6 +62,29 @@ def _seen(store: Store, principal: Principal, ln: Links) -> Set[str]:
             if store.listed(principal.person_id, k, a.person_id)}
 
 
+def _reader(store: Store, principal: Principal):
+    """ok(side_a, side_b): may this viewer read what passed between two sessions (each side
+    {key, person_id})? The admin: always. Anyone else, what they can already read: a message
+    their own person sent or received (store.messages_for), or one between two team machine
+    sessions they see by project role (store.listed). A door to someone shows that person's
+    sessions, never what they say to others."""
+    if principal.is_admin():
+        return lambda a, b: True
+    me, team = principal.person_id, {}
+
+    def is_team(pid):
+        if pid not in team:
+            team[pid] = pid is not None and store.is_team(pid)
+        return team[pid]
+
+    def ok(a, b):
+        if a["person_id"] == me or b["person_id"] == me:
+            return True
+        return all(is_team(s["person_id"]) and store.listed(me, s["key"], s["person_id"])
+                   for s in (a, b))
+    return ok
+
+
 def _parts(nodes: Set[str], pairs) -> List[Set[str]]:
     up = {n: n for n in nodes}
 
@@ -81,16 +106,19 @@ def for_viewer(store: Store, principal: Principal, ln: Links, now: float) -> Lis
     """The groups this viewer may see: {id, project, members: [{id, key, boss?}], others,
     active_s, last_id}. `key` is the hub's own and is removed before the page gets it."""
     seen = _seen(store, principal, ln)
-    linked = {k for pair in ln.edges for k in pair}
-    inside = [(a, b) for a, b in ln.edges if a in seen and b in seen]
+    ok = _reader(store, principal)
+    side = {k: {"key": k, "person_id": a.person_id} for k, a in ln.agents.items()}
+    edges = {p: v for p, v in ln.edges.items() if ok(side[p[0]], side[p[1]])}  # only readable links
+    linked = {k for pair in edges for k in pair}
+    inside = [(a, b) for a, b in edges if a in seen and b in seen]
     out = []
     for part in _parts(seen & linked, inside):
         # a partner outside the part is one this viewer may not see (else it would be inside)
-        hidden = {b if a in part else a for a, b in ln.edges if (a in part) != (b in part)}
+        hidden = {b if a in part else a for a, b in edges if (a in part) != (b in part)}
         if len(part) < 2 and not hidden:
             continue
-        touching = [v for p, v in ln.edges.items() if p[0] in part or p[1] in part]
-        own = [v for p, v in ln.edges.items() if p[0] in part and p[1] in part]
+        touching = [v for p, v in edges.items() if p[0] in part or p[1] in part]
+        own = [v for p, v in edges.items() if p[0] in part and p[1] in part]
         order = sorted(part, key=lambda k: (ln.agents[k].started or 0.0, k))
         members = []
         for k in order:  # bosses first, each followed by its workers (the page draws a tree)
@@ -125,16 +153,16 @@ def feed_groups(store: Store, principal: Principal, manager_id: Optional[int]) -
 def conversation(store: Store, principal: Principal, gid: str,
                  manager_id: Optional[int]) -> Optional[List[dict]]:
     """Every message between the sessions of the viewer's group `gid`, oldest first, masked as
-    the feed masks them; None when the viewer has no such group. Only sessions the viewer may
-    see are in their group, so a hidden partner's messages never come back."""
+    the feed masks them, and only those the viewer may read (_reader); None when the viewer
+    has no such group. A hidden partner is never in the group, so its messages never come back."""
     from kaptyorka.hub_feed import manager_sides, masked
 
     group = next((g for g in for_viewer(store, principal, links(store, manager_id), store.clock())
                   if g["id"] == gid), None)
     if group is None:
         return None
-    keys = [m["key"] for m in group["members"]]
+    keys, ok = [m["key"] for m in group["members"]], _reader(store, principal)
     return [masked(store, principal, manager_sides(m, manager_id),
                    (("_from", "sender"), ("_to", "to")))
-            for m in store.messages_among(keys)]
+            for m in store.messages_among(keys) if ok(m["_from"], m["_to"])]
 

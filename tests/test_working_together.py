@@ -158,17 +158,62 @@ def test_hidden_team_machine(team):
     assert session_id("t-a") not in str(g)
 
 
-def test_a_project_the_viewer_cannot_read_is_not_named(team):
-    """t-b and t-b's partner both in proj-b for the admin; a group bob sees by a door has the
-    title "mixed", never a project he has no role in."""
+def test_own_session_with_a_door_partner(team):
+    """bob's own session and carol's behind a door: shown with her session named, the title
+    "mixed", never a project he has no role in."""
     s = team.store
-    s.seen("c2", "pc-c", "codex", "proj-c", principal=s.authenticate(team.tok["carol"]))
     s.open_door_group(team.ids["bob"], team.ids["carol"], "alice")
-    both(s, "c1", "c2")
+    both(s, "b1", "c1")
     [g] = groups(team, "bob")
-    assert sorted(member_ids(g)) == sorted(ids("c1", "c2")) and g["project"] == "mixed"
-    [g] = groups(team, "carol")
-    assert g["project"] == "proj-c"
+    assert sorted(member_ids(g)) == sorted(ids("b1", "c1")) and g["project"] == "mixed"
+    assert g["others"] == 0
+
+
+def door_people(team):
+    """bob has open doors with carol and with dave; carol's c1 and dave's d1."""
+    s = team.store
+    dave, dtok = person(s, "dave")
+    s.seen("d1", "pc-d", "codex", "proj-d", principal=s.authenticate(dtok))
+    s.open_door_group(team.ids["bob"], team.ids["carol"], "alice")
+    s.open_door_group(team.ids["bob"], dave, "alice")
+
+
+def second_team_session(team):
+    s = team.store
+    s.seen("t-a2", "box-1", "codex", "proj-a",
+           principal=s.authenticate(s.device_add(team.team_id, "box-1b")))
+
+
+def test_a_door_never_shows_two_other_people_talking(team):
+    s = team.store
+    door_people(team)
+    both(s, "c1", "d1")
+    assert groups(team, "bob") == []  # no group, no "another session"
+    assert len(groups(team, "alice")) == 1  # the admin sees it
+
+
+def test_two_team_machine_sessions_in_my_project(team):
+    second_team_session(team)
+    both(team.store, "t-a", "t-a2")
+    [g] = groups(team, "bob")
+    assert sorted(member_ids(g)) == sorted(ids("t-a", "t-a2"))
+    assert groups(team, "carol") == []  # no role in proj-a
+
+
+def test_mixed_group_keeps_only_readable_links(team):
+    """b1 - c1 (door), c1 - d1 (two others), t-a - b2: bob sees b1 with c1, and b2 with t-a;
+    d1 is in no group of his, not even as another session."""
+    s = team.store
+    door_people(team)
+    both(s, "b1", "c1")
+    both(s, "c1", "d1")
+    both(s, "t-a", "b2")
+    got = sorted(sorted(member_ids(g)) for g in groups(team, "bob"))
+    assert got == sorted([sorted(ids("b1", "c1")), sorted(ids("b2", "t-a"))])
+    assert all(g["others"] == 0 for g in groups(team, "bob"))
+    assert session_id("d1") not in str(groups(team, "bob"))
+    [g] = [g for g in groups(team, "alice") if len(g["members"]) == 3]
+    assert sorted(member_ids(g)) == sorted(ids("b1", "c1", "d1"))
 
 
 @pytest.fixture
@@ -225,3 +270,27 @@ def test_page_draws_groups_and_holds_still(hub):
     assert "var GRACE = 2," in html and "feed = steady(JSON.parse(text));" in html
     assert "morph(live, box);" in html and "box.textContent = \"\";\n    box.removeAttribute" not in html
     assert '@keyframes wt-pulse' in html and ".working.kept { animation: none; }" in html
+
+
+def test_conversation_never_shows_two_other_people_talking(hub):
+    """The door case on the route: carol and dave talk; bob's group of b1 and c1 returns only
+    what b1 and c1 said, and no other group id opens carol and dave's talk for him."""
+    s = hub.store
+    door_people(hub)
+    both(s, "c1", "d1")
+    both(s, "b1", "c1")
+    [g] = groups(hub, "bob")
+    _, body = conv(hub, "bob", g["id"])
+    c1 = "pc-c/codex/(private)"  # her project stays hidden from him
+    assert [(m["sender"], m["to"]) for m in body["messages"]] == [(s.agent("b1").name, c1), (c1, s.agent("b1").name)]
+    [ga] = groups(hub, "alice")  # the admin's one group of the three
+    assert len(conv(hub, "alice", ga["id"])[1]["messages"]) == 4
+    for gid in {ga["id"], "g" + session_id("c1")[1:], "g" + session_id("d1")[1:]} - {g["id"]}:
+        assert conv(hub, "bob", gid)[0] == 404
+
+
+def test_conversation_of_team_machine_sessions(hub):
+    second_team_session(hub)
+    both(hub.store, "t-a", "t-a2")
+    [g] = groups(hub, "bob")
+    assert len(conv(hub, "bob", g["id"])[1]["messages"]) == 2
