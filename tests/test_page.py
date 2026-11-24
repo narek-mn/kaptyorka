@@ -73,9 +73,10 @@ def test_home_warns_only_what_blocks(hub):
     html = page(hub)
     assert 'var rows = (isAdmin() ? fleet.warnings : feed.warnings || []).filter(function (w) { return w.blocks; });' in html
     assert 'id="warns"' in html and 'id="warn-banner"' not in html
-    assert 'JSON.stringify(group.map(nameOf).filter(function (n, i, all) { return all.indexOf(n) === i; }))' in html  # replaced, not grown
+    # one line over the chat, only for its own machine; the rest behind the top bar's sign
+    assert "var w = mine[0], fix = warnFix(w), more = rows.length - 1;" in html and 'id="warn-ind"' in html and 'id="warn-pop"' in html
     assert 'attrs.title = "A team machine: shared by the team" + (d.projects.length ?' in html
-    assert "run agents (no tool logged in)" in html and "kaptyorka.login-warn-dismissed" in html  # one line, its x kept here
+    assert "kaptyorka.warn-dismissed" in html and "#warns { flex: none; position: relative; z-index: 4; height: 0; }" in html  # no layout jump
 
 
 def test_home_names_a_session_by_its_title(hub):

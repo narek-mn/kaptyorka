@@ -1926,9 +1926,9 @@ def test_machines_gpu_queue_line(tmp_path, w, h):
 
 @pytest.mark.parametrize("w,h", [(1440, 900), (390, 844)])
 def test_login_warnings_make_one_line(tmp_path, w, h):
-    """Six accounts with no logged-in tool: one line over the chat with a link to Machines and a
-    x that remembers the accounts; a chat on one of them still shows that account's own bar with
-    the login command. One such account keeps its own bar. Screenshots to KAPTYORKA_SHOTS."""
+    """Six accounts with no logged-in tool: the top bar's sign counts them; a chat on one of
+    them shows that account's one line with the login command and "+5 more"; its x is kept in
+    this browser. Screenshots to KAPTYORKA_SHOTS."""
     import json as _json
     import os
     shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
@@ -1950,32 +1950,31 @@ def test_login_warnings_make_one_line(tmp_path, w, h):
                               store.clock()))
         devs.append(p)
     store.seen("s-1", "alice-box-1", "claude", "proj-a", principal=devs[0])
-    warns = 'document.querySelectorAll("#warns li")'
+    line = 'document.querySelector("#warns .warn-line")'
     base = f"http://127.0.0.1:{stop.port}"
     try:
         with chrome(w, h) as page:
             page.go(f"{base}/#t={token}")
-            page.wait(f'{warns}.length === 1')
-            line = page.js('document.querySelector("#warns li").textContent')
-            assert "6 accounts can't run agents (no tool logged in)" in line and "See machines" in line
+            # the manager's chat: no line, the six behind the top bar's sign
+            page.wait('document.getElementById("warn-n").textContent === "6"')
+            assert page.js(f"!{line}")
             time.sleep(0.4)
             page.screenshot(shots / f"login-warn-one-line-{tag}.png")
-            # a chat on one of them: that account's own bar, with the command and the group
+            # a chat on one of them: that account's one line, its command and "+5 more"
             page.wait('[...document.querySelectorAll(".list .row")].some(r => r.textContent.includes("proj-a"))')
             page.js('[...document.querySelectorAll(".list .row")].find(r => r.textContent.includes("proj-a")).click()')
-            page.wait(f'{warns}.length === 2')
-            assert "alice@box-1" in page.js('document.querySelector("#warns li").textContent')
-            assert "claude auth login" in page.js('document.getElementById("warns").textContent')
-            page.js('localStorage.setItem("kaptyorka.login-warn-dismissed", JSON.stringify(["old@gone", "old@gone"]))')
-            page.js('document.querySelector("#warns .login-group button").click()')
-            assert page.js('JSON.parse(localStorage.getItem("kaptyorka.login-warn-dismissed"))') == \
-                [f"alice@box-{i}" for i in range(2, 7)]  # exactly this group, no old names
-            page.wait(f'{warns}.length === 1')
-            assert "claude auth login" in page.js('document.getElementById("warns").textContent')
+            page.wait(f"!!{line}")
+            assert page.js(f'{line}.querySelector(".warn-text").textContent') == "alice@box-1: no agent tool is logged in"
+            assert page.js(f'{line}.querySelector("code").textContent') == "claude auth login"
+            assert page.js(f'{line}.querySelector(".warn-more").textContent') == "+5 more"
+            page.js(f'{line}.querySelector("button[aria-label=Dismiss]").click()')
+            page.wait(f"!{line}")
             page.js("location.reload()")
             page.wait('document.querySelectorAll(".list .row").length > 0')
+            page.js('[...document.querySelectorAll(".list .row")].find(r => r.textContent.includes("proj-a")).click()')
             time.sleep(1.5)
-            assert not page.js('document.querySelector("#warns .login-group")')  # stays dismissed
+            assert page.js(f"!{line}")  # stays dismissed in this browser
+            assert page.js('document.getElementById("warn-n").textContent') == "6"  # and is found again there
     finally:
         stop()
         store.close()

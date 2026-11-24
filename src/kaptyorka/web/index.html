@@ -475,15 +475,44 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .chat-title small span:first-child { color: var(--muted); }
 #notices-toggle { margin-left: auto; }
 #notices-toggle small { color: var(--faint); font-size: var(--fs-xs); }
-/* a slim bar over the chat: only what stops someone working, and its command */
-#warns { flex: none; list-style: none; margin: 0; padding: 0; }
-#warns:empty { display: none; }
-#warns li { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 5px var(--s-4) 5px var(--s-6); font-size: var(--fs-md); color: var(--risk);
-  background: rgba(194, 148, 47, .09); border-bottom: 1px solid rgba(194, 148, 47, .35); animation: drop var(--dur-2) var(--ease-out); }
-#warns li > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#warns a { color: inherit; text-decoration: underline; }
-#warns code { flex: none; border-radius: var(--radius); max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; font: var(--fs-sm) var(--mono);
-  color: var(--ink); background: var(--bg); border: 1px solid var(--line); user-select: all; }
+/* warnings (Primer's single-line banner, one at a time; the rest behind a status indicator with
+   a popover, as Vercel and Linear do). Over the chat: one line at most, only for the open chat's
+   own machine. It floats over the top of the messages (no height of its own), so nothing moves
+   when it comes or goes */
+#warns { flex: none; position: relative; z-index: 4; height: 0; }
+.warn-line { position: absolute; top: var(--s-2); left: var(--s-6); right: var(--s-6); display: flex; align-items: center; gap: var(--s-2); height: 36px;
+  padding: 0 4px 0 12px; border: 1px solid rgba(194, 148, 47, .38); border-radius: var(--radius); font-size: var(--fs-md); color: var(--risk);
+  background: color-mix(in srgb, var(--risk) 9%, var(--surface)); box-shadow: var(--shadow-2); animation: drop var(--dur-2) var(--ease-out); }
+.warn-line > svg { flex: none; }
+.warn-line .warn-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warn-line code, .warn-pop code { flex: 0 1 auto; min-width: 0; border-radius: var(--radius); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px;
+  font: var(--fs-sm) var(--mono); color: var(--ink); background: var(--bg); border: 1px solid var(--line); user-select: all; }
+.warn-line code { max-width: 34%; }
+.warn-line .btn.icon { width: 28px; height: 28px; min-width: 28px; padding: 0; justify-content: center; color: var(--risk); border-color: transparent; background: none; }
+.warn-line .btn.icon:hover { background: rgba(194, 148, 47, .14); }
+.warn-more { flex: none; height: 28px; padding: 0 8px; border-radius: var(--radius); font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--risk); white-space: nowrap;
+  transition: background-color var(--ease); }
+.warn-more:hover { background: rgba(194, 148, 47, .14); }
+/* the top bar's warning sign: how many, a click lists them all in full */
+.warn-ind { display: flex; align-items: center; gap: 5px; height: 28px; margin: auto var(--s-2) auto 0; padding: 0 9px 0 8px; border: 1px solid rgba(194, 148, 47, .38);
+  border-radius: var(--pill); font-size: var(--fs-xs); font-weight: var(--fw-semi); color: var(--risk); background: rgba(194, 148, 47, .1);
+  transition: background-color var(--ease), border-color var(--ease); }
+.warn-ind:hover, .warn-ind[aria-expanded="true"] { border-color: var(--risk); background: rgba(194, 148, 47, .18); }
+.warn-pop { position: absolute; top: calc(100% + 2px); right: 0; z-index: 30; width: min(460px, calc(100vw - 32px)); max-height: min(70vh, 560px); overflow-y: auto;
+  border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--raised); box-shadow: var(--shadow-2); animation: drop var(--dur-2) var(--ease-out); }
+.warn-pop:focus { outline: none; }
+.warn-pop .wp-head { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) 14px; border-bottom: 1px solid var(--line); font-weight: var(--fw-semi); }
+.warn-pop .wp-head small { color: var(--faint); font-weight: var(--fw-regular); }
+.warn-pop .wp-head a { margin-left: auto; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--accent); text-decoration: none; }
+.warn-pop .wp-head a:hover { text-decoration: underline; }
+.warn-pop ul { list-style: none; margin: 0; padding: 0; }
+.warn-pop li { display: flex; gap: 10px; padding: var(--s-3) 14px; border-top: 1px solid var(--line-soft); color: var(--risk); }
+.warn-pop li:first-child { border-top: 0; }
+.warn-pop li > svg { margin-top: 3px; }
+.warn-pop .wp-body { flex: 1; min-width: 0; }
+.warn-pop p { margin: 0; font-size: var(--fs-md); line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
+.warn-pop .wp-fix { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.warn-pop .wp-fix .btn.icon { width: 28px; height: 28px; min-width: 28px; padding: 0; justify-content: center; }
 #log { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-6) 18px; }
 .day { display: flex; align-items: center; gap: var(--s-3); margin: 18px 0 6px; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--faint); }
 .day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
@@ -779,8 +808,9 @@ a.p-main { color: inherit; text-decoration: none; }
   .chat-head:has(.chat-with:not([hidden])) { flex-wrap: wrap; height: auto; min-height: 58px; padding-top: 9px; padding-bottom: 8px; row-gap: 6px; }
   .chat-with { order: 9; flex-basis: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: none; }
   .chat-with::-webkit-scrollbar { display: none; }
-  #warns li { padding-left: var(--s-3); padding-right: var(--s-3); }
-  #warns li > span { white-space: normal; }
+  .warn-line { left: var(--s-3); right: var(--s-3); }
+  .warn-line code { display: none; }  /* the copy button still copies it */
+  .warn-pop { position: fixed; top: calc(var(--row) + 2px); left: var(--s-4); right: var(--s-4); width: auto; }
   #log { padding: 6px var(--s-4) 14px; }
   .access-pane { padding: var(--s-3) var(--s-4); }
   .compose { padding: var(--s-2) var(--s-3) var(--s-3); }
@@ -905,6 +935,8 @@ a.p-main { color: inherit; text-decoration: none; }
       <button class="tab" role="tab" data-view="home" id="tab-home"><svg width="16" height="16" aria-hidden="true"><use href="#i-home"/></svg>Home</button>
     </nav>
     <div class="viewer" id="viewer">
+      <button type="button" class="warn-ind" id="warn-ind" aria-expanded="false" aria-controls="warn-pop" aria-haspopup="dialog" hidden><svg width="13" height="13" aria-hidden="true"><use href="#i-warn"/></svg><span id="warn-n"></span></button>
+      <div class="warn-pop" id="warn-pop" role="dialog" aria-label="Warnings" tabindex="-1" hidden><div class="wp-head">Warnings <small id="warn-pop-n"></small><a href="#settings/machines" id="warn-machines">See machines</a></div><ul id="warn-list"></ul></div>
       <button type="button" class="acct" id="viewer-name" aria-label="Settings" title="Settings"><span class="av av-person sm" id="viewer-av" aria-hidden="true"></span><span id="viewer-label"></span><span class="count" id="n-acct" hidden></span></button>
     </div>
     <div class="live" id="live" title="Connecting"><i></i></div>
@@ -927,7 +959,7 @@ a.p-main { color: inherit; text-decoration: none; }
           <div class="chat-with" id="chat-with" hidden></div>
           <button type="button" class="btn small quiet" id="notices-toggle" aria-pressed="false" hidden></button>
         </div>
-        <ul id="warns" role="alert"></ul>
+        <div id="warns" hidden></div>
         <div id="log"></div>
         <div class="access-pane" id="access-pane" hidden>
         <div class="panel" id="my-access" hidden>
@@ -2139,42 +2171,97 @@ a.p-main { color: inherit; text-decoration: none; }
     renderWarns();
   }
 
-  /* over the chat: only what stops this person working, its command and a copy button */
+  /* what stops someone working (the hub's blocking warnings this viewer may see; a member only
+     their own). Over the chat: one line, only for the open chat's own machine, with its
+     command, Copy, "+N more" and a dismiss. Every warning in full under the top bar's warning
+     sign, a dismissed one too (Show again puts it back) */
+  var warnPop = false;
+  function warnKey(w) { return [w.host || "", w.os_user || "", w.short || w.text].join("|"); }
+  function warnText(w) { return w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, ""); }
+  function warnFix(w) { var m = /`([^`]+)`/.exec(w.text); return m ? m[1] : null; }
+  function warnGone() { return store(function (st) { return JSON.parse(st.getItem("kaptyorka.warn-dismissed") || "[]"); }) || []; }
+  function setWarnGone(list) { var j = JSON.stringify(list); store(function (st) { st.setItem("kaptyorka.warn-dismissed", j); }); }
+  /* the warnings about the machine the open chat's session runs on */
+  function chatWarns(rows) {
+    var cur = isGrp(conv) || askOpen ? null : conv === "mgr" ? feed.agents.filter(function (a) { return a.role === "manager"; })[0]
+      : feed.agents.filter(function (a) { return a.name === conv || a.id === conv; })[0];
+    if (!cur) return [];
+    return rows.filter(function (w) {
+      var n = w.os_user && w.host ? w.os_user + "@" + w.host : w.host;
+      return n === cur.where || n === cur.machine || w.host === cur.machine;
+    });
+  }
+  function warnCopy(fix) {
+    var code = el("code", { text: fix });
+    var b = button([icon("i-copy", 14)], "icon", function () { copyCode(code, b); }, { title: "Copy", "aria-label": "Copy " + fix });
+    return [code, b];
+  }
   function renderWarns() {
     var rows = (isAdmin() ? fleet.warnings : feed.warnings || []).filter(function (w) { return w.blocks; });
+    var gone = warnGone(), mine = chatWarns(rows).filter(function (w) { return gone.indexOf(warnKey(w)) < 0; });
+    renderWarnSign(rows, gone);
+    if (!changed("warns", [mine.map(function (w) { return [warnKey(w), w.text]; }), rows.length])) return;
     var box = $("warns");
-    var isLogin = function (w) { return /: no agent tool is logged in\./.test(w.text); };
-    var nameOf = function (w) { return w.text.split(": no agent tool")[0]; };
-    var dismissed = store(function (st) { return JSON.parse(st.getItem("kaptyorka.login-warn-dismissed") || "[]"); }) || [];
-    var login = rows.filter(isLogin), others = rows.filter(function (w) { return !isLogin(w); }), shown = others, group = [];
-    if (login.length < 2) shown = rows;
-    else {
-      /* the open chat's own account keeps its bar (with the login command); the rest is one line */
-      var cur = feed.agents.filter(function (a) { return a.name === conv || a.id === conv; })[0];
-      var own = cur ? login.filter(function (w) { return nameOf(w) === cur.where || nameOf(w) === cur.machine; }) : [];
-      group = login.filter(function (w) { return own.indexOf(w) < 0; });
-      shown = others.concat(own);
-      if (group.every(function (w) { return dismissed.indexOf(nameOf(w)) >= 0; })) group = [];
-    }
-    if (!changed("warns", [shown, group.map(nameOf)])) return;
     box.textContent = "";
-    shown.forEach(function (w) {
-      var fix = /`([^`]+)`/.exec(w.text), code = fix ? el("code", { text: fix[1] }) : null;
-      var copy = code ? button([icon("i-copy", 14)], "icon", function () { copyCode(code, copy); }, { title: "Copy" }) : null;
-      box.appendChild(el("li", { title: w.text }, [icon("i-warn", 14),
-        el("span", { text: w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, "") }), code, copy]));
-    });
-    if (group.length) {
-      var more = el("a", { href: "#settings/machines", text: "See machines" });
-      more.addEventListener("click", function () { mFilter = "all"; store(function (st) { st.setItem("kaptyorka.machines-filter", "all"); }); });
-      var x = button([icon("i-x", 14)], "icon", function () {
-        store(function (st) { st.setItem("kaptyorka.login-warn-dismissed", JSON.stringify(group.map(nameOf).filter(function (n, i, all) { return all.indexOf(n) === i; }))); });
-        seen.warns = null; renderWarns();
-      }, { title: "Dismiss", "aria-label": "Dismiss" });
-      box.appendChild(el("li", { "class": "login-group", title: group.map(nameOf).join("\n") }, [icon("i-warn", 14),
-        el("span", { text: group.length + (group.length === 1 ? " account can't" : " accounts can't") + " run agents (no tool logged in) \u00b7 " }, [more]), x]));
-    }
+    box.hidden = !mine.length;
+    if (!mine.length) return;
+    var w = mine[0], fix = warnFix(w), more = rows.length - 1;
+    var plus = more ? el("button", { type: "button", "class": "warn-more", "aria-controls": "warn-pop", title: "See all warnings", text: "+" + more + " more" }) : null;
+    if (plus) plus.addEventListener("click", function () { openWarnPop(); });
+    var x = button([icon("i-x", 14)], "icon", function () {
+      setWarnGone(warnGone().concat([warnKey(w)]));
+      seen.warns = null; seen["warn-pop"] = null; renderWarns();
+      $("warn-ind").focus();
+    }, { title: "Dismiss: it stays under the warning sign at the top", "aria-label": "Dismiss" });
+    box.appendChild(el("div", { "class": "warn-line", role: "alert", title: w.text }, [icon("i-warn", 14), el("span", { "class": "warn-text", text: warnText(w) })]
+      .concat(fix ? warnCopy(fix) : [], [plus, x])));
   }
+  /* the top bar's sign: the count, and the list when open */
+  function renderWarnSign(rows, gone) {
+    var b = $("warn-ind"), n = rows.length;
+    b.hidden = !n;
+    $("warn-n").textContent = String(n);
+    b.title = n + (n === 1 ? " problem stops" : " problems stop") + " agents working";
+    b.setAttribute("aria-label", "Warnings: " + n);
+    if (!n && warnPop) closeWarnPop();
+    if (!warnPop || !changed("warn-pop", [rows.map(function (w) { return [warnKey(w), w.text]; }), gone])) return;
+    $("warn-pop-n").textContent = String(n);
+    var list = $("warn-list");
+    list.textContent = "";
+    rows.forEach(function (w) {
+      var fix = warnFix(w), hid = gone.indexOf(warnKey(w)) >= 0;
+      var again = hid ? button("Show again", "quiet", function () {
+        setWarnGone(warnGone().filter(function (k) { return k !== warnKey(w); }));
+        seen.warns = null; seen["warn-pop"] = null; renderWarns();
+      }, { title: "Show it over its chat again" }) : null;
+      list.appendChild(el("li", null, [icon("i-warn", 14), el("div", { "class": "wp-body" }, [el("p", { text: warnText(w) }),
+        fix || again ? el("div", { "class": "wp-fix" }, (fix ? warnCopy(fix) : []).concat([again])) : null])]));
+    });
+  }
+  function openWarnPop() {
+    warnPop = true;
+    $("warn-pop").hidden = false;
+    $("warn-ind").setAttribute("aria-expanded", "true");
+    seen["warn-pop"] = null;
+    renderWarns();
+    $("warn-pop").focus();
+  }
+  function closeWarnPop() {
+    warnPop = false;
+    $("warn-pop").hidden = true;
+    $("warn-ind").setAttribute("aria-expanded", "false");
+  }
+  $("warn-ind").addEventListener("click", function () { if (warnPop) closeWarnPop(); else openWarnPop(); });
+  $("warn-machines").addEventListener("click", function () {
+    mFilter = "warnings"; store(function (st) { st.setItem("kaptyorka.machines-filter", "warnings"); });
+    closeWarnPop();
+  });
+  document.addEventListener("pointerdown", function (e) {
+    if (warnPop && !(e.target.closest && e.target.closest("#warn-pop, #warn-ind, .warn-more"))) closeWarnPop();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && warnPop) { closeWarnPop(); $("warn-ind").focus(); }
+  });
   function grow() { var t = $("text"); t.style.height = "48px"; t.style.height = Math.max(48, Math.min(t.scrollHeight + 2, 200)) + "px"; }
   function sendErr(msg) { $("send-err").hidden = !msg; $("send-err").textContent = msg || ""; }
   /* the chosen file as a chip "name · size ×" beside the message */
