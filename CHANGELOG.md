@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.34 (unreleased)
+## 0.9.34
 
 - **A team has one hub.** A first `kaptyorka start` on a machine with no hub data now changes nothing without `--new-hub` and says what it would do ("This creates a NEW hub: a new team with you as its admin...") and how to add the machine to a team instead (`kaptyorka join <link>`); it no longer asks a question, since agents answer them. A start on a machine joined to a hub at another address refuses, even with `--new-hub` (first `kaptyorka leave`). A join to a hub at another address stops and disables a hub an earlier `kaptyorka start` left on this account, keeps its data and says so; the hub machine's accounts joining their own hub keep it. Restarts, updates and the service on the hub machine need no flag. The manager's rules say a machine joins only with `kaptyorka join <link>`.
 - **A join to another hub restarts the running bridge.** An account that ran `kaptyorka start` earlier and was then joined to the team (`kaptyorka fleet add`, which runs `kaptyorka join` over ssh) got the new config, but its running bridge kept the old one in memory and never reported to the team hub. Join now restarts the bridge whenever the hub, token or machine name changed, and says so. `kaptyorka stop --hub` stops only this account's own hub.
