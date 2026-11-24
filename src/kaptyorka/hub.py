@@ -31,6 +31,7 @@ from kaptyorka.secrets_check import PATTERNS as SECRET_PATTERNS
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
+from kaptyorka import hub_groups
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
@@ -1317,6 +1318,15 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         # everyone writes to the manager, so everyone sees its state word on Home
         return JSONResponse({**feed(store, request.scope["state"]["principal"], ws, cs),
                              "manager": manager_state()[0]})
+
+    @server.custom_route("/api/groups/{gid}/messages", methods=["GET"])
+    async def api_group_messages(request: Request) -> Response:
+        """A "working together" group's conversation, as far as this viewer may see it."""
+        msgs = hub_groups.conversation(store, request.scope["state"]["principal"],
+                                       request.path_params["gid"], mm.person_id())
+        if msgs is None:
+            return PlainTextResponse("no such group", status_code=404)
+        return JSONResponse({"messages": msgs})
 
     @server.custom_route("/api/files", methods=["POST"])
     async def api_file_upload(request: Request) -> Response:

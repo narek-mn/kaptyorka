@@ -1807,7 +1807,7 @@ def test_home_mine_everyone_and_the_machine_switch(tmp_path, w, h):
             page.go(f"{base}/#t={token}")
             page.wait('!document.getElementById("h-scope").hidden && document.querySelectorAll("#agents .row").length === 4')
             assert page.js('document.querySelector("#h-scope [aria-pressed=true]").textContent') == "Mine"
-            assert page.js(rows) == ["alice@box-1", "nvidia@jet-1"]  # yours and the team machine's; not bob's
+            assert page.js(heads) == ["alice@box-11|true", "nvidia@jet-1Team1|true"]  # yours and the team machine's; not bob's
             assert page.js(wide)
             page.screenshot(shots / f"home-admin-mine-{tag}.png")
             page.js('document.querySelector("#h-scope [data-scope=everyone]").click()')
@@ -1860,7 +1860,7 @@ def test_home_mine_everyone_and_the_machine_switch(tmp_path, w, h):
         with chrome(w, h) as page:  # shown again
             page.go(f"{base}/#t={bob_t}")
             page.wait('document.querySelectorAll("#agents .row").length === 3')
-            assert page.js(rows) == ["bob@box-2", "nvidia@jet-1"]
+            assert page.js(heads) == ["bob@box-21|true", "nvidia@jet-1Team1|true"]  # one header per machine
             page.screenshot(shots / f"home-member-{tag}.png")
     finally:
         stop()

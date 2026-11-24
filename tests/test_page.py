@@ -325,7 +325,7 @@ def test_home_mine_and_everyone(hub):
     code = html[html.index("function homeAll()"):html.index("function lead(e) {")]
     assert "function inMine(e) { return !e.sess || e.mine || e.team; }" in code
     assert 'st.setItem("kaptyorka.home-scope", hScope)' in code and '"kaptyorka.home-groups"' in code
-    assert "var open = groupOpen[g.key] != null ? !!groupOpen[g.key] : g.own;" in code
+    assert "var open = groupOpen[g.key] != null ? !!groupOpen[g.key] : g.own || !!g.machine;" in code
     assert 'el("small", { text: String(g.rows.length) })' in code and "unseen ?" in code
 
 
