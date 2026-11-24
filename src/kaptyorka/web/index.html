@@ -1703,8 +1703,10 @@ a.p-main { color: inherit; text-decoration: none; }
   }
   function grpSize(g) { return g.members.length + (g.others || 0); }
   function grpLine(g) { return grpSize(g) + " sessions"; }
+  /* "active 2m ago" while the last real message is under 30 minutes old (the hub says), then "quiet 3 h" */
+  function grpWhen(g) { return g.quiet ? "quiet " + spanText(g.active_s) : "active " + ago(g.active_s); }
   function wtSig() {
-    return (feed.groups || []).map(function (g) { return [g.id, g.members, g.others, g.project, Math.floor(g.active_s / 60), wt.pulse[g.id] || 0]; });
+    return (feed.groups || []).map(function (g) { return [g.id, g.members, g.others, g.project, g.quiet, Math.floor(g.active_s / 60), wt.pulse[g.id] || 0]; });
   }
   /* Working together, under the manager: per group its title line (opens the group's chat)
      and its sessions on one rail, a worker under its boss. `mine`: an admin's Mine, where a
@@ -1727,7 +1729,7 @@ a.p-main { color: inherit; text-decoration: none; }
       var head = el("button", { type: "button", "class": "wt-head" + (on ? " on" : ""), "data-key": k, "aria-current": on ? "true" : null,
                                 title: "What these sessions said to each other" }, [
         icon("i-chat", 12), el("b", { text: g.project }), el("span", { text: "· " + grpLine(g) }),
-        el("span", { text: "· active " + ago(g.active_s) })]);
+        el("span", { text: "· " + grpWhen(g) })]);
       head.addEventListener("click", function () { select(k); loadGroupConv(); });
       box.appendChild(head);
       var kids = rows.map(function (r) {
@@ -1800,7 +1802,7 @@ a.p-main { color: inherit; text-decoration: none; }
   function grpEntry(k) {
     var id = k.slice(4), g = grpOf(k), last = g || wt.seen[id];
     return { key: k, grp: true, icon: "grp", off: true, name: last ? last.project : "Working together",
-             sub: !last ? "" : g ? grpLine(g) + " · active " + ago(g.active_s) : "no longer working together" };
+             sub: !last ? "" : g ? grpLine(g) + " · " + grpWhen(g) : "no longer working together" };
   }
   function loadGroupConv() {
     if (!isGrp(conv)) return;

@@ -1,7 +1,14 @@
-"""Sessions working together: those that wrote to each other both ways in the last 30 minutes,
-and a session with the workers it started. Linked sessions form one group (connected parts of
-that graph); a group goes away when its sessions go quiet, a worker stays with its boss while
-it is live. The manager is never in a group: it talks to everyone and would join all of them.
+"""Sessions working together. Two sessions are linked when they really work together: at least
+MIN_EACH_WAY real messages each way (MIN_CHARS or more after trimming; hub notices and
+file-only messages never count), the first and last of them at least MIN_SPAN_S apart, all
+within LINK_S. Pings, a one-off question and its answer, or a mistaken message never link. A
+link stays while both sessions are online, until LINK_S after their last counted message, so
+a quiet stretch does not drop it; it ends at once when either session goes offline (the page
+holds a vanished session for 2 polls). A session and the workers it started are linked while
+the worker is live. Linked sessions form one group (connected parts of that graph). The
+manager is never in a group: it talks to everyone and would join all of them. Measured on a
+real hub over 6 days: real collaborations had 6 or more messages each way over 20 minutes or
+more; noise had at most 3 each way within minutes.
 
 A member sees only links they could already read (_reader): those of their own sessions, and
 those between two team machine sessions they see by project role; never a link between two
@@ -13,7 +20,11 @@ from typing import Dict, List, Optional, Set, Tuple
 from kaptyorka.store import Agent, Principal, Store, session_id
 from kaptyorka.workers import LIVE
 
-WINDOW_S = 30 * 60
+MIN_EACH_WAY = 4  # counted messages each way before two sessions are linked
+MIN_SPAN_S = 900  # first to last counted message, at least 15 minutes
+MIN_CHARS = 20  # a counted message: this many characters after trimming
+LINK_S = 86400  # a link forms from messages within a day and lasts a day after the last one
+ACTIVE_S = 1800  # a group is "active" while its last counted message is younger than this
 
 
 class Links:
@@ -30,27 +41,36 @@ def links(store: Store, manager_id: Optional[int] = None) -> Links:
     now = store.clock()
     agents = {a.key: a for a in store.online()
               if manager_id is None or a.person_id != manager_id}
-    with store.lock:
+    with store.lock:  # one pass over two days: a link may stand on messages up to LINK_S old
         said = store.db.execute(
-            "SELECT sender_key, to_key, MAX(created) AS t, MAX(id) AS id FROM messages"
+            "SELECT sender_key, to_key, created, id FROM messages"
             " WHERE kind='message' AND created > ? AND to_key IS NOT NULL"
-            " GROUP BY sender_key, to_key", (now - WINDOW_S,)).fetchall()
+            " AND length(trim(text, ' ' || char(9, 10, 13))) >= ? ORDER BY id",
+            (now - 2 * LINK_S, MIN_CHARS)).fetchall()
         workers = store.db.execute(
             "SELECT key, boss_key, COALESCE(up_at, created) AS t FROM workers WHERE key IS NOT NULL"
             f" AND state IN ({','.join('?' * len(LIVE))})", LIVE).fetchall()
-    one_way = {(r["sender_key"], r["to_key"]): (r["t"], r["id"]) for r in said
-               if r["sender_key"] in agents and r["to_key"] in agents}
+    talk: Dict[Tuple[str, str], List[Tuple[float, int, str]]] = {}  # pair -> (time, id, sender)
+    for r in said:
+        a, b = r["sender_key"], r["to_key"]
+        if a in agents and b in agents and a != b:
+            talk.setdefault(tuple(sorted((a, b))), []).append((r["created"], r["id"], a))
     edges: Dict[Tuple[str, str], Tuple[float, int]] = {}
-    for (a, b), (t, i) in one_way.items():
-        back = one_way.get((b, a))
-        if back is not None and a < b:
-            edges[(a, b)] = (max(t, back[0]), max(i, back[1]))
+    latest = {pair: (max(m[0] for m in msgs), max(m[1] for m in msgs)) for pair, msgs in talk.items()}
+    for pair, msgs in talk.items():
+        last = latest[pair][0]
+        if last <= now - LINK_S:
+            continue  # a day since they last said something real: no longer together
+        burst = [m for m in msgs if m[0] >= last - LINK_S]  # the day that led to the last one
+        each = [sum(1 for m in burst if m[2] == k) for k in pair]
+        if min(each) >= MIN_EACH_WAY and last - min(m[0] for m in burst) >= MIN_SPAN_S:
+            edges[pair] = latest[pair]
     bosses = {}
     for w in workers:
         if w["key"] in agents and w["boss_key"] in agents and w["key"] != w["boss_key"]:
             bosses[w["key"]] = w["boss_key"]
             pair = tuple(sorted((w["key"], w["boss_key"])))
-            t, i = edges.get(pair, (0.0, 0))
+            t, i = latest.get(pair, (0.0, 0))  # their messages, counted, even below the rule
             edges[pair] = (max(t, w["t"] or 0.0), i)
     return Links(agents, edges, bosses)
 
@@ -104,7 +124,8 @@ def _parts(nodes: Set[str], pairs) -> List[Set[str]]:
 
 def for_viewer(store: Store, principal: Principal, ln: Links, now: float) -> List[dict]:
     """The groups this viewer may see: {id, project, members: [{id, key, boss?}], others,
-    active_s, last_id}. `key` is the hub's own and is removed before the page gets it."""
+    active_s, quiet, last_id}. `quiet`: its last counted message is ACTIVE_S
+    old or more. `key` is the hub's own and is removed before the page gets it."""
     seen = _seen(store, principal, ln)
     ok = _reader(store, principal)
     side = {k: {"key": k, "person_id": a.person_id} for k, a in ln.agents.items()}
@@ -136,6 +157,7 @@ def for_viewer(store: Store, principal: Principal, ln: Links, now: float) -> Lis
         out.append({"id": "g" + session_id(order[0])[1:], "project": project or "mixed",
                     "members": members, "others": len(hidden),
                     "active_s": round(now - max(t for t, _ in touching)),
+                    "quiet": now - max(t for t, _ in touching) >= ACTIVE_S,
                     "last_id": max([i for _, i in own] or [0])})
     out.sort(key=lambda g: g["active_s"])
     return out
