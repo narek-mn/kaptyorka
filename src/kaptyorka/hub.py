@@ -495,8 +495,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         (the Machines page shows the warning anyway)."""
         if now < ws.started + OLD_VERSION_S:
             return
+        # a machine whose auto-update has not run yet while the staged rollout holds it back
+        # (or has just let it go) updates by itself: asking its person would be noise
+        st = rollout.state(store, __version__, now)
+        settled = st["state"] == "passed" and now - (st.get("decided_at") or now) >= OLD_VERSION_S
         old = [w for w in ws.warnings(now, __version__)
-               if w.get("reason") and w["person"] and w["person"] != manager.PERSON]
+               if w.get("reason") and w["person"] and w["person"] != manager.PERSON
+               and (w["reason"] != paths.UPDATE_WAITING or settled or w["device_id"] in st["first"])]
         key = manager_to_wake() if old else None
         if key is None:
             return
