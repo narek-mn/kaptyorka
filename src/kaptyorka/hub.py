@@ -45,6 +45,8 @@ from kaptyorka.workers import LIVE, MAX_FACT, STARTUP_S, WorkerStore, _git as cl
 MAX_WAIT_S = 25
 TICK_S = 15
 ARRIVAL_GAP_S = 600  # no own session on a host this long: the next one is an arrival
+RESUME_LATE_S = 6 * 3600  # a resume-at-reset this late is dropped, not launched
+ROLLOUT_FRESH_S = 120  # after a start the rollout waits this long for fresh reports at most
 OLD_VERSION_S = 1800  # a machine behind the hub this long after the hub started: the manager tells
 OWN_TOKEN = ("use your own device token: run kaptyorka join with an invite, or ask the admin to"
              " assign this machine")
@@ -84,8 +86,8 @@ SIGN_IN_FIRST = "the page needs a GitLab sign-in: open the hub in a browser and 
 
 
 def _ago(s: int) -> str:
-    """34 s, 3 min: how long a held send's target has been gone."""
-    return f"{s} s" if s < 120 else f"{s // 60} min"
+    """34 s, 3 min, 7 h: how long ago."""
+    return f"{s} s" if s < 120 else f"{s // 60} min" if s < 7200 else f"{s // 3600} h"
 
 
 def old_version_text(w: dict, admins: List[str]) -> str:
@@ -497,7 +499,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return
         # a machine whose auto-update has not run yet while the staged rollout holds it back
         # (or has just let it go) updates by itself: asking its person would be noise
-        st = rollout.state(store, __version__, now)
+        st = rollout.state(store, __version__, now, rollout_ready(now), night["keys"])
         settled = st["state"] == "passed" and now - (st.get("decided_at") or now) >= OLD_VERSION_S
         old = [w for w in ws.warnings(now, __version__)
                if w.get("reason") and w["person"] and w["person"] != manager.PERSON
@@ -708,7 +710,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             print(f"kaptyorka: session resumes failed: {e}", flush=True)
         store.legacy_auto_off(now)
         try:  # a staged update that failed on the first machines: the admins and the manager
-            for text in rollout.tick(store, __version__, now):
+            for text in rollout.tick(store, __version__, now, rollout_ready(now), night["keys"]):
                 store.log_add("hub", "rollout", text[:500])
                 for name in admin_ops.admins(store):
                     tell(f"web:{name}", text)
@@ -735,6 +737,19 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     " AND a.last_seen>? ORDER BY a.last_seen DESC", (name, now - ONLINE_S))]
             for key in keys or [f"web:{name}"]:
                 tell(key, text)
+
+    beats: Dict[int, int] = {}  # heartbeats per device since this hub started (rollout_ready)
+
+    def rollout_ready(now: float) -> bool:
+        """The staged rollout picks its first group from fresh data only: two heartbeats from
+        each online team machine since the start, or ROLLOUT_FRESH_S after it."""
+        if now >= ws.started + ROLLOUT_FRESH_S:
+            return True
+        with store.lock:
+            team = [r[0] for r in store.db.execute(
+                "SELECT d.id FROM devices d JOIN people p ON p.id=d.person_id WHERE p.team=1"
+                " AND d.revoked_at IS NULL AND d.bridge_seen>?", (now - rollout.ONLINE_S,))]
+        return all(beats.get(i, 0) >= 2 for i in team)  # no team machine online: nothing to wait for
 
     def doors_tick(now: float) -> None:
         """An hour-old door request reminds the admin once; the doors that opened by
@@ -880,13 +895,20 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     def stopped_rows(viewer: Principal, asker_pid: Optional[int]) -> List[dict]:
         """Lock held. Sessions gone within the last day that the manager may resume for this
-        asker: on a team machine, or the asker's own."""
+        asker, by `work`'s rules: the asker's own; or a team machine's that is not hidden from
+        the asker, in a project the asker may write (an admin: any)."""
         now = store.clock()
+
+        def may(r) -> bool:
+            if r["person_id"] == asker_pid:
+                return True
+            if not store._is_team(r["person_id"]) or store._hidden(r["person_id"], asker_pid):
+                return False
+            return store._role(paths.team_name(r["project"]), asker_pid) in ("write", "manage")
         return [r for r in store.db.execute(
             "SELECT * FROM agents WHERE last_seen<=? AND last_seen>? AND device_id IS NOT NULL"
             " ORDER BY last_seen DESC", (now - ONLINE_S, now - 86400)).fetchall()
-            if r["person_id"] is not None and (store._is_team(r["person_id"])
-                                               or r["person_id"] == asker_pid)
+            if r["person_id"] is not None and asker_pid is not None and may(r)
             and r["tool"] in ("claude-code", "codex") and r["cwd"]]
 
     def stopped_why(r) -> str:
@@ -929,8 +951,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if when not in ("now", "reset"):
             raise KaptyorkaError('when is "now" or "reset"')
         boss = _door_side(asked_by, principal, own=False) if asked_by else _last_asker(agent.key)
-        if boss is None:
-            raise KaptyorkaError("say who asked, in asked_by (a session that wrote to you)")
+        with store.lock:  # the asker as for doors: it wrote to you in the last 10 minutes
+            wrote = boss is not None and store.db.execute(
+                "SELECT 1 FROM messages WHERE sender_key=? AND to_key=? AND created>? LIMIT 1",
+                (boss, agent.key, store.clock() - RECENT_S)).fetchone() is not None
+        if not wrote:
+            raise KaptyorkaError("resume a session only for the session that asked you, in"
+                                 " asked_by: one that wrote to you in the last 10 minutes")
         with store.lock:
             asker_pid = store.db.execute("SELECT person_id FROM agents WHERE key=?",
                                          (boss,)).fetchone()["person_id"]
@@ -952,20 +979,27 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         return f"{why}; " + launch_resume(r["key"], boss)
 
     def resumes_tick(now: float) -> None:
-        """Sessions the manager asked to resume at their usage limit's reset."""
+        """Sessions the manager asked to resume at their usage limit's reset. One whose reset
+        is over RESUME_LATE_S past (the hub was down) is dropped and the asker told: a hub
+        back after days never starts old sessions."""
         with store.lock:
-            due = store.db.execute("SELECT key, resume_boss, name, last_seen FROM agents WHERE"
-                                   " resume_at IS NOT NULL AND resume_at<=?", (now,)).fetchall()
+            due = store.db.execute("SELECT key, resume_boss, name, last_seen, resume_at FROM"
+                                   " agents WHERE resume_at IS NOT NULL AND resume_at<=?",
+                                   (now,)).fetchall()
             for r in due:
                 store.db.execute("UPDATE agents SET resume_at=NULL WHERE key=?", (r["key"],))
         mkey = mm.session_key(now) if mm.enabled() else None
         for r in due:
             if r["last_seen"] > now - ONLINE_S:
                 continue  # it is back by itself
-            try:
-                text = launch_resume(r["key"], r["resume_boss"])
-            except KaptyorkaError as e:
-                text = f"could not resume {r['name']} at its reset: {e}"
+            if now - r["resume_at"] > RESUME_LATE_S:
+                text = (f"{r['name']} was not resumed: its reset was {_ago(int(now - r['resume_at']))}"
+                        " ago while the hub was down; ask the manager again if it is still needed")
+            else:
+                try:
+                    text = launch_resume(r["key"], r["resume_boss"])
+                except KaptyorkaError as e:
+                    text = f"could not resume {r['name']} at its reset: {e}"
             for to in {r["resume_boss"], mkey} - {None}:
                 tell(to, text)
 
@@ -1540,6 +1574,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if principal is None:
             return Response(status_code=204)
         own = not principal.legacy
+        beats[principal.device_id] = beats.get(principal.device_id, 0) + 1
         if own:  # which boss sessions ended, which workers are in overnight mode
             tools = body.get("tools")
             ws.bridge_seen(principal.device_id, [str(s.get("key")) for s in body["sessions"]],
@@ -1576,7 +1611,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                              **({"close_left": close} if close else {}),
                              **({"tls": announce} if announce else {}),  # tls.py: signed
                              "auto_update": own and ws.auto_update(principal.device_id)
-                             and rollout.allows(store, principal.device_id, __version__),  # staged
+                             and rollout.allows(store, principal.device_id, __version__,
+                                                rollout_ready(store.clock()), night["keys"]),  # staged
                              "projects": [] if principal.legacy else
                              [p["name"] for p in store.projects_for(principal)],
                              "team": store.team_projects(),  # the bridge reports only these
@@ -2483,7 +2519,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             s = rollout.decide(store, __version__, body["go"], who)
             store.log_add(who, "rollout", ("released " if body["go"] else "held ") + __version__)
         else:
-            s = rollout.status(store, __version__)
+            s = rollout.status(store, __version__, None, rollout_ready(store.clock()),
+                               night["keys"])
         return JSONResponse({**s, "line": rollout.line(s)})
 
     @server.custom_route("/api/devices/{device_id:int}/auto_update", methods=["POST"])
