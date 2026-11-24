@@ -52,7 +52,7 @@ def test_shim_hub_down(home):
                              "request_access", "fetch_file", "work", "workers", "adopt",
                              "close_worker", "state", "state_write", "decide",
                              "rules", "propose_rule", "conflict", "work_decide", "log", "machines",
-                             "door_request", "door_decide", "resume_session", "lesson",
+                             "door_request", "door_decide", "resume_session", "lesson", "reach",
                              "join_team"}
             t0 = time.monotonic()
             r = await c.call_tool("who", {})
