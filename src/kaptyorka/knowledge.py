@@ -17,6 +17,7 @@ DIGEST_HOUR = 4  # the hub machine's local time: nobody works then
 DIGEST_KEY = "knowledge_digest_at"
 LIGHT_KEY = "knowledge_light_at"
 LIGHT_GAP_S = 600  # at most one light notice per 10 minutes; the rest wait for the next
+LIGHT_WAIT_S = 300  # a light notice waits this long after the first change, to bundle a burst
 STALE_S = 14 * 86400
 MAX_ITEMS = 15  # per section; the rest is counted
 MAX_LINE = 140
@@ -97,7 +98,7 @@ def changed_notes(store: Store, since: float, team: List[str],
                 continue
             k = (r["project"], r["topic"])
             d = out.setdefault(k, {"project": r["project"], "topic": r["topic"], "authors": [],
-                                   "versions": 0, "time": r["time"]})
+                                   "versions": 0, "time": r["time"], "first": r["time"]})
             d["versions"] += 1
             d["time"] = r["time"]
             if r["author"] not in d["authors"]:
@@ -110,6 +111,7 @@ def changed_notes(store: Store, since: float, team: List[str],
                                    " deleted_at IS NULL AND time<=? ORDER BY id DESC LIMIT 1",
                                    (topic, project, since)).fetchone()
             d["hint"] = _hint(old["text"] if old else None, new["text"] if new else "")
+            d["same"] = old is not None and new is not None and old["text"] == new["text"]
     return sorted(out.values(), key=lambda d: d["time"])
 
 
@@ -233,16 +235,20 @@ def digest(store: Store, since: float, now: float) -> Optional[str]:
     return text
 
 
-def light(store: Store, since: float) -> Optional[str]:
-    """One short notice for project notes written and workers finished since `since`."""
+def light(store: Store, since: float, now: Optional[float] = None) -> Optional[str]:
+    """One short notice for project notes changed and workers finished since `since`: each
+    note once however often it was written. None until the first of them is LIGHT_WAIT_S old
+    (given `now`), so a burst comes as one notice. Left out, as they need nothing from the
+    manager: a write that left the text as it was, and a failed worker (the digest has it);
+    the manager's own writes and the team notes are never in it (changed_notes)."""
     team = _team(store)
-    notes = changed_notes(store, since, team, projects_only=True)
-    workers = finished_workers(store, since, team)
-    items = [f"{_note_name(d)} written by {', '.join(d['authors'])}" for d in notes] \
-        + [f"worker `{w['name']}` in {w['project']} {'failed' if w['state'] == 'failed' else 'finished'}"
-           for w in workers]
-    if not items:
+    notes = [d for d in changed_notes(store, since, team, projects_only=True) if not d["same"]]
+    workers = [w for w in finished_workers(store, since, team) if w["state"] != "failed"]
+    first = [d["first"] for d in notes] + [w["closed_at"] for w in workers]
+    if not first or (now is not None and min(first) > now - LIGHT_WAIT_S):
         return None
+    items = [f"{_note_name(d)} written by {', '.join(d['authors'])}" for d in notes] \
+        + [f"worker `{w['name']}` in {w['project']} finished" for w in workers]
     more = len(items) - MAX_ITEMS
     body = "; ".join(_safe(i) for i in items[:MAX_ITEMS]) + (f"; and {more} more" if more > 0 else "")
     text = (f"knowledge: {body}. If it changes what the team knows, update the team notes"

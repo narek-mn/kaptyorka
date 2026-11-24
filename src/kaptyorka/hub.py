@@ -81,6 +81,11 @@ MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
 SIGN_IN_FIRST = "the page needs a GitLab sign-in: open the hub in a browser and sign in with GitLab"
 
 
+def _ago(s: int) -> str:
+    """34 s, 3 min: how long a held send's target has been gone."""
+    return f"{s} s" if s < 120 else f"{s // 60} min"
+
+
 def old_version_text(w: dict, admins: List[str]) -> str:
     """The manager's notice for one machine behind the hub (a WorkerStore.warnings row): the
     machine, its person and the short fixed reason, never the update's own output."""
@@ -93,6 +98,31 @@ def old_version_text(w: dict, admins: List[str]) -> str:
     return (head + f" Send {w['person']} one short message (their online session, else their"
             f" page web:{w['person']}) naming {who}, the reason, and `kaptyorka update` to run"
             " there. Once; never repeat it.")
+
+
+def old_versions_text(due: List[dict], admins: List[str]) -> str:
+    """One notice for every machine found behind the hub at once: one alone as
+    old_version_text, several as one list, so a burst is one message."""
+    if len(due) == 1:
+        return old_version_text(due[0], admins)
+    names = [machine_name("", w["os_user"], w["host"], w["host"]) for w in due]
+    listed = "; ".join(f"{n} runs {w['version']} ({w['reason']})" for n, w in zip(names, due))
+    team = [n for n, w in zip(names, due) if w.get("team")]
+    own: Dict[str, List[str]] = {}
+    for n, w in zip(names, due):
+        if not w.get("team"):
+            own.setdefault(w["person"], []).append(n)
+    do = []
+    if team:
+        do.append(f"tell each admin ({', '.join(admins)}) in one line to run `kaptyorka update`"
+                  f" on the team machines ({', '.join(team)})")
+    for person, machines in own.items():
+        do.append(f"send {person} one short message (their online session, else their page"
+                  f" web:{person}) naming {', '.join(machines)}, the reason and `kaptyorka"
+                  " update` to run there")
+    todo = "; ".join(do)
+    return (f"{len(due)} machines run an old kaptyorka, the hub runs {__version__}: {listed}."
+            f" {todo[0].upper() + todo[1:]}. Once; never repeat it.")
 
 
 def machine_route(method: str, path: str) -> bool:
@@ -330,6 +360,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         sent["event"] = asyncio.Event()
 
     def tell(to_key: str, text: str) -> None:
+        if to_key == mm.last_key():  # the manager: a due task-list reminder rides along
+            text += mm.tasks_nudge(store.clock())
         if ws.notify(to_key, text):
             wake_bridges()
 
@@ -367,7 +399,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
         def push(push_key: str, ttl: Optional[float], text: str) -> None:
             if mm.push_once(push_key, now, ttl):
-                ws.notify(key, text)
+                tell(key, text)
         for w in ws.abandoned():
             push(f"abandoned:{w['name']}", None,
                  f"worker `{w['name']}` of {w['person']} is abandoned (unattended a day)"
@@ -414,16 +446,32 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return
         if knowledge.digest_due(last, now):
             text = knowledge.digest(store, last, now)
+            if text and not people_first("digest", now):
+                return
             if text:
-                ws.notify(key, text)
+                tell(key, text)
             mm.set_stamp(knowledge.DIGEST_KEY, now)
             mm.set_stamp(knowledge.LIGHT_KEY, now)  # the digest covers them
             return
         since = max(light or last, last)
-        text = knowledge.light(store, since)
-        if text and mm.push_once("knowledge-light", now, knowledge.LIGHT_GAP_S):
-            ws.notify(key, text)
+        text = knowledge.light(store, since, now)
+        if text and people_first("light", now) \
+                and mm.push_once("knowledge-light", now, knowledge.LIGHT_GAP_S):
+            tell(key, text)
             mm.set_stamp(knowledge.LIGHT_KEY, now)
+
+    held_since: Dict[str, float] = {}  # routine notice -> when it was first due and held
+
+    def people_first(what: str, now: float) -> bool:
+        """True when a routine notice to the manager may go now: no person's or session's
+        message to it waits unanswered (younger than PEOPLE_FIRST_S), or it has been held
+        PEOPLE_FIRST_MAX_S. Urgent notices never ask."""
+        if mm.person_waiting(now):
+            first = held_since.setdefault(what, now)
+            if now - first < manager.PEOPLE_FIRST_MAX_S:
+                return False
+        held_since.pop(what, None)
+        return True
 
     def manager_tick(now: float) -> None:
         if started["first"]:
@@ -446,10 +494,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         key = manager_to_wake() if old else None
         if key is None:
             return
-        for w in old:
-            if not mm.push_once(f"old-version:{w['device_id']}:{__version__}", now):
-                continue
-            tell(key, old_version_text(w, admin_ops.admins(store)))
+        due = [w for w in old if not mm.pushed(f"old-version:{w['device_id']}:{__version__}")]
+        if not due or not people_first("old-version", now):
+            return
+        for w in due:
+            mm.push_once(f"old-version:{w['device_id']}:{__version__}", now)
+        tell(key, old_versions_text(due, admin_ops.admins(store)))
 
     def arrivals(now: float) -> None:
         """A person's first own session on a host (none there for ARRIVAL_GAP_S) while someone
@@ -515,7 +565,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if boss is None:
             return
         folder = paths.home() / manager.DIR
-        ws.create_manager(boss, mm.person_id(), admin, str(folder), MANAGER_FIRST)
+        ws.create_manager(boss, mm.person_id(), admin, str(folder),
+                          manager.first_message(MANAGER_FIRST, mm.tasks()[0]))
         mm.record_launch(now)
         wake_bridges()
 
@@ -636,11 +687,14 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 raise KaptyorkaError("attach a file by passing its local path; "
                                      "the kaptyorka tool uploads it")
             file_id = int(m.group(1))
-        key = me(ctx).key
-        n = ws.send_via_manager(key, to, text, mm.person_id(), file_id)
+        key, held = me(ctx).key, []
+        n = ws.send_via_manager(key, to, text, mm.person_id(), file_id, held)
         if n is None:
-            n = store.send(key, to, text, file_id)
+            n = store.send(key, to, text, file_id, held)
         wake_bridges()
+        if held:
+            return "; ".join(f"held: {name} was last seen {_ago(s)} ago; it gets the message"
+                             " when it next reports" for name, s in held)
         return f"sent to {n} session" + ("" if n == 1 else "s")
 
     @server.tool()
@@ -752,11 +806,14 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @_tool_errors
     def state_write(project: str, text: str, ctx: Context) -> str:
         """Update a project's state note. It needs the headings What it is, Where it stands,
-        Decisions, Open problems, How to run and test, in that order."""
+        Decisions, Open problems, How to run and test, in that order. The manager's own task
+        list, state_write("manager", text), takes any text."""
         agent, principal = caller(ctx)
         if not project:
             raise KaptyorkaError("project is empty")
-        problem = check_state(text)
+        # the manager's own task list (project `manager`, only it may write it) is free text
+        problem = None if project == manager.PERSON and principal.role == "manager" \
+            else check_state(text)
         if problem:
             raise KaptyorkaError(problem)
         store.notes_write(agent.key, "state", text, project)
@@ -1440,8 +1497,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.custom_route("/api/feed", methods=["GET"])
     async def api_feed(request: Request) -> Response:
         # everyone writes to the manager, so everyone sees its state word on Home
-        return JSONResponse({**feed(store, request.scope["state"]["principal"], ws, cs),
-                             "manager": manager_state()[0]})
+        principal = request.scope["state"]["principal"]
+        load = {"manager_load": manager.load_line(mm.load(store.clock()), store.clock())} \
+            if principal.role == "admin" else {}  # the manager's load: for the admin only
+        return JSONResponse({**feed(store, principal, ws, cs), "manager": manager_state()[0],
+                             **load})
 
     @server.custom_route("/api/groups/{gid}/messages", methods=["GET"])
     async def api_group_messages(request: Request) -> Response:
@@ -1626,7 +1686,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         return JSONResponse({
             "retention_days": store.retention_days(), "manager_enabled": mm.enabled(),
             "manager_state": state, "manager_reason": reason,
-            "manager_error": (row["error"] or "") if row and row["state"] == "failed" else ""})
+            "manager_error": (row["error"] or "") if row and row["state"] == "failed" else "",
+            "manager_load": manager.load_line(mm.load(store.clock()), store.clock())})
 
     @server.custom_route("/api/settings", methods=["POST"])
     @_bad_request
@@ -2630,6 +2691,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     app.add_middleware(NoWebSocket)  # outside Auth: a stray WebSocket client is not a failed login
     quiet_upgrade_warnings()
     app.state.tick = tick  # tests run a tick by hand
+    app.state.tell = tell  # and send a hub notice
     app.state.signin = si
     inner = app.router.lifespan_context
 

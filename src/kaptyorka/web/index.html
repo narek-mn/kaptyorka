@@ -1459,7 +1459,8 @@ a.p-main { color: inherit; text-decoration: none; }
     if (admin) list.push({ key: "activity", name: "Activity", icon: "i-list", cls: "activity", sub: "", tip: "Every message", read: true });
     var ms = mgr ? "up" : feed.manager || "off";
     list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms, sub: mgr ? mgr.where || mgr.machine : "", act: mgr ? mgr.activity || "" : "",
-                to: "manager", tip: "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : "") });
+                to: "manager", tip: "the team's manager session" + (mgr && mgr.status ? "\n" + mgr.status : "")
+                  + (feed.manager_load ? "\nload: " + feed.manager_load : "") });
     agents.forEach(function (a) {
       var tip = [a.label || a.title ? a.name : null, a.mine ? null : a.person, a.project, a.tool, a.status,
                  a.activity ? "doing: " + a.activity : null,

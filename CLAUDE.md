@@ -10,3 +10,4 @@
 - `Store.lock` is not reentrant: never call a locking store method from inside a `with self.lock` block.
 - Never run `kaptyorka` commands against the real machine (`~/.kaptyorka`, your Claude config, services). Try them only in tests or with `KAPTYORKA_HOME=<temp folder>` on a free port; never `start`, `join`, `leave`, `stop`, `update`, `remove` for real.
 - Before a release that touches the manager (launch, bridge reports, keep-alive), run `python3 tests/soak_manager.py` (about 18 minutes; sandboxed, real `claude`) and keep its `result.txt`.
+- Never run `tests/soak_manager.py` and the slow suite (`-m slow`) at the same time: both start real `claude` sessions and their timers fail each other. A failed slow test keeps its session transcripts in `~/.cache/kaptyorka-test-failures/` (or `$KAPTYORKA_TEST_KEEP`); the failure output names the folder.

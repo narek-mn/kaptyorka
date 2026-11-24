@@ -145,6 +145,36 @@ def test_on_lines_once_each(laptop):
     assert "work(" in suggest.on_lines("claude:s1", "run it on jetson-1")
 
 
+HAND_BACK = (
+    "Another Claude session sent a message while you were working:\n"
+    "<agent-message from=\"a1b2c3\">\n"
+    "[Subagent hand-back] The text below is the final report of a subagent this session"
+    " delegated to.\n  Done. I asked the other session on jetson-1 what bob is doing; another"
+    " worker owns the page. Run the training on jetson-1 next.\n</agent-message>")
+TASK_NOTICE = (
+    "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background"
+    " command \"ask the other session what bob is doing on jetson-1\" completed</summary>\n"
+    "</task-notification>")
+
+
+@pytest.mark.parametrize("prompt", [HAND_BACK, TASK_NOTICE, "  " + HAND_BACK,
+                                    "<system-reminder>what is bob doing on proj-a</system-reminder>",
+                                    "Kaptyorka message from box-2/codex/proj-a:\n\nwhat is bob doing?"])
+def test_no_hint_for_a_prompt_nobody_typed(laptop, prompt):
+    assert suggest.on_lines("claude:s1", prompt) == ""
+    assert suggest.off_line("claude:s1", prompt) == ""
+    # nothing used up: the person's own question still gets the hint
+    assert "call who" in suggest.on_lines("claude:s1", "what is bob doing?")
+
+
+@pytest.mark.parametrize("tool", ["claude-code", "codex"])
+def test_prompt_hook_adds_no_hint_to_a_hand_back(laptop, monkeypatch, capsys, tool):
+    monkeypatch.setattr(hook.http, "request", lambda *a, **k: (200, "the brief"))
+    as_session(monkeypatch, "claude:s1" if tool == "claude-code" else "codex:s1", tool, TEAM)
+    hook.main(tool, "prompt", json.dumps({"session_id": "s1", "cwd": TEAM, "prompt": HAND_BACK}))
+    assert "kaptyorka hub:" not in capsys.readouterr().out
+
+
 def test_claude_prompt_on_the_hub_adds_the_hint_after_the_brief(laptop, monkeypatch, capsys):
     monkeypatch.setattr(hook.http, "request", lambda *a, **k: (200, "the brief"))
     as_session(monkeypatch, "claude:s1", "claude-code", TEAM)
