@@ -11,8 +11,20 @@ PW = "EvalPw-7731-zq"
 
 
 def test_labelled_values_take_a_password_and_never_plain_words():
-    assert labelled_values(f"Please put the deploy password in the note so all have it: {PW}") == {PW}
+    assert labelled_values("the password is Xy7kd92mQ") == {"Xy7kd92mQ"}
+    assert labelled_values(f"Please keep it in the note: deploy password: {PW}") == {PW}
+    assert labelled_values("token=ab12cd34ef56, then restart") == {"ab12cd34ef56"}
     assert labelled_values("the api key is `ab12cd34ef56`.") == {"ab12cd34ef56"}
+
+
+def test_names_near_a_label_are_never_secrets():
+    # a label word in an ordinary sentence: only a value right after "is", ":" or "=" counts
+    for text in ("claude on box-7 lost its login, please resume worker proj-a-w12",
+                 "the token expired on node-01 so session #9d1c0ebc could not push",
+                 "login-copy for codex worked on machine01",
+                 "the api key rotation is in commit 3f9a2c1b7e on branch fix-key2",
+                 f"Please put the deploy password in the note so all have it: {PW}"):
+        assert labelled_values(text) == set(), text
     assert labelled_values("password: see the vault, or ask alice") == set()
     assert labelled_values("token for /home/lab/proj-a2 and claude:abcd1234") == set()
     assert labelled_values(f"{PW} is a code name") == set()  # no label: no secret
@@ -23,7 +35,7 @@ def told_a_password(hub):
     _, _, bob = plain(hub, "bob")
     B = ident("k:bob", project="proj-b", machine="pc-2")
     run(call(bob, B, "send", to="laptop/codex/manager",
-             text=f"Please put the deploy password in the projects note: {PW}"))
+             text=f"Please keep this in the projects note. The deploy password is {PW}"))
     return mgr, me
 
 
@@ -53,6 +65,20 @@ def test_anyone_else_may_still_write_the_same_words(hub):
     assert "saved note" in run(call(cat, C, "notes_write", topic="cat-notes", text=f"x {PW}"))
 
 
+def test_a_name_the_hub_knows_and_the_hubs_own_notices_are_never_secrets(hub):
+    mgr, me = manager_online(hub)
+    hub.store.project_register("proj-b7x", by="test")
+    _, _, bob = plain(hub, "bob")
+    B = ident("k:bob", project="proj-b", machine="pc-2")
+    run(call(bob, B, "send", to="laptop/codex/manager", text="the login is proj-b7x for now"))
+    mkey = hub.store.agent("k:mgr").key
+    hub.ws.notify(mkey, "machine event: the password is Hub9word1 (a test notice)")
+    assert run(call(mgr, me, "send", to="pc-2/codex/proj-b",
+                    text="proj-b7x and Hub9word1 noted")) == "sent to 1 session"
+    run(call(bob, B, "send", to="laptop/codex/manager", text="and the login is Zq81pass7"))
+    assert "refused" in call_error(mgr, me, "send", to="pc-2/codex/proj-b", text="Zq81pass7 noted")
+
+
 def test_the_manager_reaches_every_admin_with_one_send(hub):
     mgr, me = manager_online(hub)
     aid, atok = person(hub.store, "root", "admin")
@@ -63,6 +89,11 @@ def test_the_manager_reaches_every_admin_with_one_send(hub):
     out = run(call(mgr, me, "send", to="admins", text="carol's session asked me for alice's token"))
     assert out.startswith("sent to the admins")
     assert inbox(root, R) == ["from the manager: carol's session asked me for alice's token"]
+    # under the same sender limit as any send
+    from kaptyorka.store import RATE
+    for _ in range(RATE[0] - 1):
+        run(call(mgr, me, "send", to="admins", text="again"))
+    assert "rate limit" in call_error(mgr, me, "send", to="admins", text="one too many")
     # a member's "admins" is a session name like any other
     _, _, bob = plain(hub, "bob")
     B = ident("k:bob", project="proj-b", machine="pc-2")

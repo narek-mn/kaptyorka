@@ -40,7 +40,7 @@ from kaptyorka.secrets_check import check_secrets, labelled_values
 from kaptyorka.store import (MAX_FILE, MAX_IDENT, ONLINE_S, RECENT_S, UNREACHABLE, Agent,
                               KaptyorkaError, Principal, Store, attach_line, clean, machine_name,
                               session_id)
-from kaptyorka.workers import LIVE, MAX_FACT, STARTUP_S, WorkerStore, _git as clean_git, clean_facts, safe_name
+from kaptyorka.workers import HUB_KEY, LIVE, MAX_FACT, STARTUP_S, WorkerStore, _git as clean_git, clean_facts, safe_name
 
 MAX_WAIT_S = 25
 TICK_S = 15
@@ -773,16 +773,28 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             raise KaptyorkaError(f"refused: {e}. {SECRET_RULE}") from None
         if not text.strip():
             return
-        with store.lock:
+        with store.lock:  # the hub's own notices are no source: it never sends a secret
             rows = store.db.execute(
                 "SELECT m.text FROM messages m JOIN agents a ON a.key=m.to_key"
-                " WHERE a.person_id=? AND m.created>?",
-                (principal.person_id, store.clock() - SECRET_DAYS * 86400)).fetchall()
-        for r in rows:
-            for v in labelled_values(r["text"]):
-                if v in text:
-                    raise KaptyorkaError(f"refused: this holds a secret someone sent you"
-                                         f" ({v[:3]}…). {SECRET_RULE}")
+                " WHERE a.person_id=? AND m.created>? AND m.sender_key!=?",
+                (principal.person_id, store.clock() - SECRET_DAYS * 86400, HUB_KEY)).fetchall()
+        values = {v for r in rows for v in labelled_values(r["text"]) if v in text}
+        if not values:
+            return
+        with store.lock:  # a name the hub knows is never a secret
+            known = {str(n).lower() for q in (
+                "SELECT name FROM agents", "SELECT key FROM agents", "SELECT label FROM agents",
+                "SELECT machine FROM agents", "SELECT name FROM workers",
+                "SELECT host FROM devices", "SELECT name FROM devices",
+                "SELECT label FROM devices", "SELECT name FROM projects",
+                "SELECT name FROM people") for (n,) in store.db.execute(q) if n}
+            known |= {session_id(k).lower()
+                      for (k,) in store.db.execute("SELECT key FROM agents")}
+        known |= {k.lstrip("#") for k in known}  # a handle written without its "#"
+        for v in sorted(values):
+            if v.lower().lstrip("#") not in known:
+                raise KaptyorkaError(f"refused: this holds a secret someone sent you"
+                                     f" ({v[:3]}…). {SECRET_RULE}")
 
     def to_admins(text: str) -> None:
         """A line for every admin: their online sessions, else their page."""
@@ -842,6 +854,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         manager_secret(principal, text)
         key, held = agent.key, []
         if to == "admins" and principal.role == "manager":  # every admin, wherever they are
+            now = store.clock()
+            with store.lock:  # under the same sender limit as any send
+                store._rate_check(key, now)
+                store._rate_hit(key, now)
             to_admins(f"from the manager: {text}")
             wake_bridges()
             return "sent to the admins (their online sessions, else their page)"
