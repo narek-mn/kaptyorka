@@ -6,7 +6,9 @@ kaptyorka installs a small `opencode` wrapper in ~/.local/bin, ahead of the real
 PATH, that adds `--port 0`; where it cannot, the older shell alias does it for new terminals.
 V2: one shared background service, found through its service.json; the TUI is only a client
 of it. Its `/hub` and hub indicator come from a TUI plugin (TUI_V2), since only the TUI can
-show anything and knows which session is open.
+show anything and knows which session is open. The same plugin notes that session in
+~/.kaptyorka/opencode-open/<TUI pid>.json, which the bridge lists: the service's session list
+alone cannot tell two windows in one folder apart, nor a resumed old session from a stale one.
 
 Checked against OpenCode's own source (github.com/sst/opencode, tags v1.19.6 and v2.3.2):
 - V2 service registration: packages/client/src/effect/service.ts:142-148 (url, pid, password;
@@ -185,7 +187,9 @@ TUI_V2 = """\
 // %(mark)s: /hub and the hub indicator in OpenCode 2's terminal UI. Written by
 // `kaptyorka join`; `kaptyorka leave` removes it.
 import { execFile } from "node:child_process";
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 const KAPTYORKA = %(exe)s;
+const OPEN = %(open)s;  // the bridge reads <this>/<pid>.json: which session this window shows
 const LABEL = { on: "hub", off: "hub off", lost: "hub \\u2717" };
 const run = (args, sessionID, cwd, ms) => new Promise((resolve) => {
   try {
@@ -221,6 +225,31 @@ export default {
         variant: !r.ok ? "error" : /off the hub/.test(line) ? "warning" : "success" });
       if (solid) refresh(sid);
     };
+    // Which session this window shows, for the bridge: OpenCode lists sessions but not which
+    // window has which open, so two windows in one folder would look like one.
+    const mine = OPEN + "/" + process.pid + ".json";
+    let wrote = null;
+    const note = () => {
+      let sid = "";
+      try {
+        const r = ctx.ui.router.current();
+        if (r && r.type === "session") sid = r.sessionID;
+        if (sid && ctx.data.session.root) sid = ctx.data.session.root(sid) || sid;  // a subagent's chat
+      } catch {}
+      if (sid === wrote) return;
+      try {
+        mkdirSync(OPEN, { recursive: true, mode: 0o700 });
+        writeFileSync(mine + ".tmp", JSON.stringify({ session: sid, directory: sid ? where(sid) : "" }));
+        renameSync(mine + ".tmp", mine);
+        wrote = sid;
+      } catch {}
+    };
+    const drop = () => { try { unlinkSync(mine); } catch {} };
+    note();
+    const watch = setInterval(note, 2000);
+    if (watch.unref) watch.unref();
+    process.on("exit", drop);
+    const stop = () => { clearInterval(watch); process.off("exit", drop); drop(); };
     ctx.keymap.layer(() => ({
       mode: "global",
       commands: [{
@@ -244,12 +273,13 @@ export default {
     } catch {}
     if (!solid || !solid.createElement || !solid.insert || !solid.effect || !solid.setProp) {
       solid = null;  // no OpenTUI for plugins here: a new chat says whether it is on the hub
-      return ctx.data.on("session.created", (event) => {
+      const off = ctx.data.on("session.created", (event) => {
         const info = event.data || {};
         const route = ctx.ui.router.current();
         if (!info.parentID && route.type === "session" && route.sessionID === info.sessionID)
           hub(info.sessionID, []);
       });
+      return () => { off(); stop(); };
     }
     const text = ctx.theme && ctx.theme.text;
     const color = (word) => !text ? undefined : word === "on" ? text.feedback.success.base
@@ -275,7 +305,7 @@ export default {
       },
     });
     const timer = setInterval(() => { if (shown) refresh(shown); }, 15000);
-    return () => clearInterval(timer);
+    return () => { clearInterval(timer); stop(); };
   },
 };
 """
@@ -333,18 +363,65 @@ def _v2_call(svc: Dict[str, str], method: str, path: str, body: Optional[dict] =
         return e.code, None
 
 
-def _v2_newest(svc: Dict[str, str], pid: int, cwd: str) -> Optional[str]:
-    """Like _newest, for a V2 TUI: its folder's newest top-level session since it started."""
+def _v2_newest(svc: Dict[str, str], pid: int, cwd: str,
+               skip: frozenset = frozenset()) -> Optional[str]:
+    """Like _newest, for a V2 TUI: its folder's newest top-level session since it started (not
+    one in skip, the keys other windows have open). Only a guess: kaptyorka's TUI plugin says
+    exactly (_opened); this is for a window that has no note yet. Same response in OpenCode
+    v2.2.5 and v2.3.2: {"data": [...], "cursor": ...}, each with id, parentID for a subagent,
+    location.directory, time.created/updated (ms), plus fields not used here."""
     since = _started_ms(pid)
     status, data = _v2_call(svc, "GET", "/api/session?" + urllib.parse.urlencode(
         {"directory": cwd, "limit": 20, "order": "desc"}))
     rows = data.get("data") if status == 200 and isinstance(data, dict) else None
-    here = [s for s in rows or [] if not s.get("parentID")
+    here = [s for s in rows or [] if not s.get("parentID") and f"opencode:{s.get('id')}" not in skip
             and (s.get("location") or {}).get("directory", cwd) == cwd
             and s.get("time", {}).get("updated", 0) >= since]
     if not here:
         return None
     return "opencode:" + max(here, key=lambda s: s.get("time", {}).get("updated", 0))["id"]
+
+
+def open_dir() -> Path:
+    """Where kaptyorka's V2 TUI plugin notes the session each window shows: <pid>.json."""
+    from kaptyorka import paths
+
+    return paths.home() / "opencode-open"
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except (OSError, OverflowError):
+        return False
+    return True
+
+
+def _opened() -> Dict[int, Optional[Dict[str, str]]]:
+    """pid -> {"session", "directory"} that running V2 TUI shows, from the TUI plugin's notes
+    (None while the window shows no chat). A note whose process is gone, or older than the
+    process with its pid (a reused pid), is removed."""
+    out: Dict[int, Optional[Dict[str, str]]] = {}
+    try:
+        notes = list(open_dir().glob("*.json"))
+    except OSError:
+        return out
+    for f in notes:
+        try:
+            pid = int(f.stem)
+            if not _alive(pid) or f.stat().st_mtime * 1000 < _started_ms(pid) - 1000:
+                f.unlink()
+                continue
+            data = json.loads(f.read_text())
+        except (OSError, ValueError, IndexError, StopIteration, subprocess.SubprocessError):
+            continue  # half written, or the window just closed
+        sid = data.get("session") if isinstance(data, dict) else None
+        d = data.get("directory") if isinstance(data, dict) else None
+        out[pid] = ({"session": sid, "directory": d} if valid_id(sid) and isinstance(d, str) and d
+                    else None)
+    return out
 
 
 def _tuis() -> List[int]:
@@ -630,10 +707,19 @@ class OpenCodeAdapter:
         from kaptyorka.identity import proc_cwd
 
         out, seen = [], set()
+        opened = _opened()  # what each window shows, as its TUI plugin says: exact, idle or not
+        for _, note in sorted(opened.items()):
+            key = f"opencode:{note['session']}" if note else ""
+            if key and key not in seen:
+                seen.add(key)
+                cwd = note["directory"]
+                out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), "", cwd=cwd))
         for pid in _tuis():
-            try:
+            if pid in opened:
+                continue
+            try:  # no note (a TUI started before the plugin had it): guess from its folder
                 cwd = proc_cwd(pid)
-                key = _v2_newest(svc, pid, cwd)
+                key = _v2_newest(svc, pid, cwd, frozenset(seen))
             except (OSError, ValueError, TypeError, KeyError, StopIteration, IndexError,
                     AttributeError, http.client.HTTPException, subprocess.SubprocessError):
                 continue  # TUI just exited, or the service is restarting
@@ -792,7 +878,8 @@ class OpenCodeAdapter:
 
     def _write_tui(self, kaptyorka: str) -> List[str]:
         f = self.tui_plugin()
-        text = TUI_V2 % {"mark": TUI_MARK, "exe": json.dumps(kaptyorka)}
+        text = TUI_V2 % {"mark": TUI_MARK, "exe": json.dumps(kaptyorka),
+                         "open": json.dumps(str(open_dir()))}
         try:
             old = f.read_text(errors="replace") if f.exists() else None
             others = f.parent.is_dir() and any(p.name != "tui.js" for p in f.parent.iterdir())
