@@ -81,6 +81,8 @@ class Bridge:
         self.pending: Dict[str, tuple] = {}  # worker -> (order, launch result, monotonic start)
         self._sessions: list = []  # the session objects of the last heartbeat
         self._sessions_at = time.time()  # when they were read
+        self._facts_seq = 0  # the number of the last facts build (machine events count builds)
+        self._infra_scope: Optional[str] = None  # the hub's machine_facts: "team", "hub" or None
         self.stop = threading.Event()
         self._problems: Dict[str, Optional[str]] = {}
         self.pending_confirm = False  # a new token is saved but the hub has not confirmed it
@@ -129,6 +131,17 @@ class Bridge:
         current = None if self._skills_version is None else \
             skills_sync.applied_version(paths.home()) == self._skills_version
         new = {**identity.facts(), **facts.machine(self.adapters, self.runner, skills_current=current), "git": repos}
+        # the hub's machine events count each build once: a new number per build
+        self._facts_seq += 1
+        new["seq"] = self._facts_seq
+        # only for a team machine or the hub's own computer (the hub says which); a personal
+        # laptop sends nothing more. The address only for a team machine
+        scope = self._infra_scope
+        if scope in ("team", "hub"):
+            try:
+                new.update(facts.infra(self.cfg["hub"], with_ip=scope == "team"))
+            except Exception as e:  # never stops the heartbeat
+                self._report("infra", f"reading machine facts failed: {e}")
         try:  # use per OS user: numbers only; never stops the heartbeat
             new["use"] = self._usage.read()
         except Exception as e:
@@ -270,6 +283,9 @@ class Bridge:
         if self.hub and ask != self._gpu_queue_ask:  # a lost answer keeps the last ask
             self._gpu_queue_ask = ask
             self._facts_at = None  # switched on, changed or off: read it next beat
+        if self.hub and self.hub.get("machine_facts") != self._infra_scope:  # kept when lost
+            self._infra_scope = self.hub.get("machine_facts")
+            self._facts_at = None
         self._sessions, self._sessions_at = objs, time.time()
         self._refresh_name()
         self._report("heartbeat", None if status in (200, 204)

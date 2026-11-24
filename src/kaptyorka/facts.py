@@ -2,6 +2,7 @@
 import getpass
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ VERSION_TTL_S = 600
 LOGGED_OUT_TTL_S = 60  # a "not logged in" is checked again soon: the person may log in
 COMMANDS = {"claude-code": "claude", "opencode": "opencode", "codex": "codex", "cursor": "cursor-agent"}
 _cache: Dict[Tuple[str, str], Tuple[float, object]] = {}
+_jetpack_seen: Dict[str, tuple] = {}  # dpkg status path: ((mtime, size), version)
 
 
 def _cached(key: Tuple[str, str], ttl: float, make: Callable[[], object]):
@@ -137,6 +139,85 @@ def machine(adapters: list, run=subprocess.run, platform: str = sys.platform,
             "hooks_ok": hooks_ok, "version": __version__,
             "logins": _logins(installed, run),
             "harness": harness(adapters, Path.home(), skills_current)}
+
+
+def _read(path: str, limit: int = 4096) -> str:
+    try:
+        with open(path, "rb") as f:
+            return f.read(limit).decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def os_release(root: str = "") -> str:
+    """PRETTY_NAME from /etc/os-release, such as "Ubuntu 22.04.5 LTS"; "" when unknown."""
+    for line in _read(root + "/etc/os-release").splitlines():
+        if line.startswith("PRETTY_NAME="):
+            return line.split("=", 1)[1].strip().strip('"')[:100]
+    return ""
+
+
+def l4t(root: str = "") -> str:
+    """A Jetson's L4T release from /etc/nv_tegra_release ("# R36 (release), REVISION: 4.3, ..."
+    gives "R36.4.3"); "" on any other machine."""
+    head = _read(root + "/etc/nv_tegra_release", 512)
+    major = re.search(r"#\s*R(\d+)", head)
+    rev = re.search(r"REVISION:\s*([\d.]+)", head)
+    return f"R{major.group(1)}.{rev.group(1)}" if major and rev else ""
+
+
+def jetpack(root: str = "") -> str:
+    """The installed nvidia-jetpack package's version ("6.2+b77" gives "6.2"), from dpkg's own
+    status file: no command run, and read again only when that file changed. "" when the
+    package is not installed."""
+    path = root + "/var/lib/dpkg/status"
+    try:
+        st = os.stat(path)
+        hit = _jetpack_seen.get(path)
+        if hit is not None and hit[0] == (st.st_mtime, st.st_size):
+            return str(hit[1])
+        with open(path, "rb") as f:
+            text = f.read(32 * 1024 * 1024).decode("utf-8", "replace")
+    except OSError:
+        return ""
+    m = re.search(r"^Package: nvidia-jetpack\n(?:[^\n]+\n)*?Version: ([^\s+~-]+)", text, re.M)
+    found = m.group(1)[:20] if m else ""
+    _jetpack_seen[path] = ((st.st_mtime, st.st_size), found)
+    return found
+
+
+def boot_time(root: str = "") -> Optional[int]:
+    """When the machine last booted (Linux /proc/stat btime, seconds); None when unknown."""
+    m = re.search(r"^btime (\d+)$", _read(root + "/proc/stat", 1 << 16), re.M)
+    return int(m.group(1)) if m else None
+
+
+def primary_ip(hub_url: str) -> str:
+    """The address this machine reaches the hub from: a UDP socket "connected" to the hub picks
+    the route; no packet is sent. "" when unknown."""
+    import socket
+    from urllib.parse import urlparse
+    host = urlparse(hub_url).hostname or ""
+    if not host:
+        return ""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((host, 9))
+            return s.getsockname()[0]
+    except OSError:
+        return ""
+
+
+def infra(hub_url: str, with_ip: bool) -> dict:
+    """What a team machine (or the hub's own machine) adds for the hub's machine events:
+    OS release, Jetson L4T and JetPack, kernel, boot time, and for a team machine its address.
+    Empty values are left out."""
+    import platform
+    tegra = l4t()
+    out = {"os": os_release(), "l4t": tegra, "jetpack": jetpack() if tegra else "",
+           "kernel": platform.release()[:100], "boot": boot_time(),
+           "ip": primary_ip(hub_url) if with_ip else ""}
+    return {k: v for k, v in out.items() if v}
 
 
 def _learned() -> Dict[str, str]:

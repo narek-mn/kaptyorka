@@ -2543,6 +2543,22 @@ class Store:
         self.db.execute("INSERT INTO notes (topic, text, author, time, project) VALUES (?,?,?,?,?)",
                         (topic, text, author, self.clock(), project))
 
+    def note_section(self, topic: str, header: str, lines: List[str], cap: int,
+                     author: str) -> None:
+        """Add lines to the section under `header` at the end of a team note, keeping its last
+        `cap` lines; everything above the header stays as it is (machine_events.py)."""
+        if not lines:
+            return
+        with self.lock:
+            row = self.db.execute("SELECT text FROM notes WHERE topic=? AND project IS NULL AND"
+                                  " deleted_at IS NULL ORDER BY id DESC", (topic,)).fetchone()
+            text = row["text"] if row else ""
+            head, _, tail = text.partition(header)
+            kept = [x for x in tail.splitlines() if x.strip()] + list(lines)
+            body = head.rstrip()
+            self._note(topic, (body + "\n\n" if body else "") + header + "\n"
+                       + "\n".join(kept[-cap:]) + "\n", author)
+
     def notes_list(self, principal: Optional[Principal] = None,
                    project: Optional[str] = None) -> List[dict]:
         """Latest note of each topic on the team board, or with `project`, that project's."""

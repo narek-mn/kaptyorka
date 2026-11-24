@@ -1,0 +1,335 @@
+"""Machine events (machine_events.py): what a team machine's bridge confirms becomes one dated
+line in the team note `machines` and one message to the manager. A fake clock throughout."""
+import time
+from types import SimpleNamespace
+
+import pytest
+
+import kaptyorka
+from helpers import call, person, run
+from test_hub_manager import HOST, clock, hub, inbox, manager_online  # noqa: F401 (fixtures)
+from kaptyorka import facts as facts_mod
+from kaptyorka import http
+from kaptyorka import machine_events as me
+from kaptyorka.bridge import Bridge
+from kaptyorka.workers import clean_facts
+
+BASE = {"os": "Ubuntu 22.04.5 LTS", "l4t": "R36.4.3", "jetpack": "6.2", "kernel": "5.15.148-tegra",
+        "boot": 1_000, "ip": "10.0.0.7", "tools": {"claude-code": "2.1.329"}}
+
+
+KEEP: list = []  # the manager's session, kept online by each heartbeat a test sends
+
+
+@pytest.fixture(autouse=True)
+def _keep():
+    KEEP.clear()
+
+
+def online(hub):
+    mgr, who = manager_online(hub)
+    KEEP[:] = [mgr, who]
+    return mgr, who
+
+
+def team(hub, name, host=None, os_user="lab"):
+    """A team machine joined just now; its first heartbeat not sent yet."""
+    _, code = hub.store.team_machine_add(name, "test")
+    token, _ = hub.store.invite_redeem(code, host or name, host=host or name, os_user=os_user)
+    return SimpleNamespace(token=token, host=host or name, os_user=os_user, seq=0)
+
+
+def again(hub, d):
+    """The same team machine joins again as a new device (a reinstall: new invite, same host)."""
+    pid = hub.store.authenticate(d.token).person_id
+    token, _ = hub.store.invite_redeem(hub.store.invite_create(pid), d.host, host=d.host,
+                                       os_user=d.os_user)
+    return SimpleNamespace(token=token, host=d.host, os_user=d.os_user, seq=0)
+
+
+def beat(hub, d, new_build=True, **changes):
+    if KEEP:
+        stay(*KEEP)
+    if new_build:
+        d.seq += 1
+    f = {"host": d.host, "os_user": d.os_user, "version": kaptyorka.__version__, "seq": d.seq,
+         **BASE, **changes}
+    body = {"machine": d.host, "sessions": [], "tools": [], "facts": f}
+    status, answer = http.request("POST", hub.url + "/bridge/heartbeat", d.token, body)
+    assert status == 200
+    return answer
+
+
+def events(mgr, who):
+    """The machine events the manager got since the last look (reading keeps it online)."""
+    return [t[len("machine event: "):t.index(". Follow your machine-events rule")]
+            for t in inbox(mgr, who) if t.startswith("machine event: ")]
+
+
+def note(hub):
+    n = hub.store.notes_read("machines")
+    return "" if n is None else n.text
+
+
+def event_lines(hub):
+    text = note(hub)
+    return text.split(me.NOTE_HEADER, 1)[1].strip().splitlines() if me.NOTE_HEADER in text else []
+
+
+def stay(mgr, who):
+    run(call(mgr, who, "status", text="watching"))  # the manager's session stays online
+
+
+def test_a_new_team_machine_and_one_line_per_event(hub, clock):
+    mgr, who = online(hub)
+    d = team(hub, "jet-1")
+    assert beat(hub, d)["machine_facts"] == "team"
+    assert events(mgr, who) == ["jet-1: new machine joined"]
+    day = time.strftime("%Y-%m-%d %H:%M", time.localtime(clock[0]))
+    assert event_lines(hub) == [f"- {day} jet-1: new machine joined"]
+    beat(hub, d)
+    assert events(mgr, who) == [] and len(event_lines(hub)) == 1  # once
+
+
+def test_a_change_counts_after_three_builds_in_a_row(hub, clock):
+    mgr, who = online(hub)
+    d = team(hub, "jet-1")
+    beat(hub, d)
+    events(mgr, who)
+    for _ in range(4):  # the same build sent again counts once
+        clock[0] += 10
+        beat(hub, d, new_build=False, kernel="6.8.0-tegra")
+    beat(hub, d, kernel="6.8.0-tegra")
+    clock[0] += 60
+    beat(hub, d, kernel="6.8.0-tegra")
+    assert events(mgr, who) == []  # two builds: not yet
+    clock[0] += 60
+    beat(hub, d, kernel="6.8.0-tegra", tools={"claude-code": "2.1.331"})
+    assert events(mgr, who) == ["jet-1: kernel 5.15.148-tegra -> 6.8.0-tegra"]
+    for _ in range(2):
+        clock[0] += 60
+        beat(hub, d, kernel="6.8.0-tegra", tools={"claude-code": "2.1.331"})
+    assert events(mgr, who) == ["jet-1: claude-code 2.1.329 -> 2.1.331"]
+
+
+def test_a_value_that_flips_back_records_nothing(hub, clock):
+    mgr, who = online(hub)
+    d = team(hub, "jet-1")
+    beat(hub, d)
+    events(mgr, who)
+    for ip in ("10.0.0.9", "10.0.0.9", "10.0.0.7", "10.0.0.9", "10.0.0.9", "10.0.0.7"):
+        clock[0] += 60
+        beat(hub, d, ip=ip)
+    assert events(mgr, who) == []
+    assert event_lines(hub) == [event_lines(hub)[0]]  # only the join
+
+
+def test_reboot_hostname_and_several_changes_in_one_line(hub, clock):
+    mgr, who = online(hub)
+    d = team(hub, "jet-1")
+    beat(hub, d)
+    events(mgr, who)
+    boot = 1_000_000 + 3600
+    for _ in range(3):
+        clock[0] += 60
+        beat(hub, d, boot=boot, os="Ubuntu 24.04.1 LTS")
+    assert events(mgr, who) == [f"jet-1: rebooted at {me.hm(boot)}; OS Ubuntu 22.04.5 LTS ->"
+                                " Ubuntu 24.04.1 LTS"]
+    d.host = "jet-one"
+    for _ in range(3):
+        clock[0] += 60
+        beat(hub, d, boot=boot, os="Ubuntu 24.04.1 LTS")
+    assert events(mgr, who) == ["jet-one: hostname jet-1 -> jet-one"]
+
+
+def test_offline_after_ten_minutes_and_back(hub, clock):
+    mgr, who = online(hub)
+    d = team(hub, "jet-1")
+    beat(hub, d)
+    events(mgr, who)
+    gone = clock[0]
+    clock[0] += me.OFFLINE_S + me.GROUP_S - 1
+    stay(mgr, who)
+    hub.tick()
+    assert events(mgr, who) == []  # not yet: others may still join the group
+    clock[0] += 2
+    stay(mgr, who)
+    hub.tick()
+    hub.tick()
+    assert events(mgr, who) == [f"jet-1: offline since {me.hm(gone)}"]
+    clock[0] += 3 * 3600
+    beat(hub, d)
+    assert events(mgr, who) == [f"jet-1: back online after 3 h (offline since {me.hm(gone)})"]
+    assert [x.split(" ", 3)[3] for x in event_lines(hub)] == [
+        "jet-1: new machine joined", f"jet-1: offline since {me.hm(gone)}",
+        f"jet-1: back online after 3 h (offline since {me.hm(gone)})"]
+
+
+def test_machines_going_offline_together_make_one_event(hub, clock):
+    mgr, who = online(hub)
+    ds = [team(hub, f"jet-{i}") for i in (1, 2, 3, 4)]
+    start = clock[0]
+    for i, d in enumerate(ds[:3]):  # silent from start, start+60, start+120
+        clock[0] = start + 60 * i
+        beat(hub, d)
+    clock[0] = start + 1200
+    beat(hub, ds[3])  # still reporting: not in the group
+    events(mgr, who)
+    clock[0] = start + me.OFFLINE_S + me.GROUP_S
+    beat(hub, ds[3])
+    stay(mgr, who)
+    hub.tick()
+    assert events(mgr, who) == [f"jet-1, jet-2, jet-3 went offline within 2 min (since"
+                                f" {me.hm(start)}): likely network or power"]
+
+
+def test_a_reinstall_joins_again_as_new_and_reports_the_new_versions(hub, clock):
+    mgr, who = online(hub)
+    d = team(hub, "jet-1")
+    beat(hub, d)
+    gone = clock[0]
+    clock[0] += 3600
+    stay(mgr, who)
+    hub.tick()
+    events(mgr, who)  # offline since
+    clock[0] += 4 * 3600  # reflashed: JetPack 7, its old token gone with the home folder
+    n = again(hub, d)
+    new = {"l4t": "R38.2.1", "jetpack": "7.2.1", "kernel": "6.8.12-tegra", "boot": 2_000}
+    beat(hub, n, **new)
+    assert events(mgr, who) == [f"jet-1: joined again as a new device after being offline since"
+                                f" {me.hm(gone)}"]
+    for _ in range(2):
+        clock[0] += 60
+        beat(hub, n, **new)
+    assert events(mgr, who) == ["jet-1: JetPack 6.2 -> 7.2.1; L4T R36.4.3 -> R38.2.1;"
+                                " kernel 5.15.148-tegra -> 6.8.12-tegra"]
+    clock[0] += 3600
+    beat(hub, n, **new)
+    stay(mgr, who)
+    hub.tick()  # the replaced device never goes offline again
+    assert events(mgr, who) == []
+
+
+def test_another_account_on_the_same_machine(hub, clock):
+    mgr, who = online(hub)
+    d = team(hub, "jet-1")
+    beat(hub, d)
+    events(mgr, who)
+    pid = hub.store.authenticate(d.token).person_id
+    token, _ = hub.store.invite_redeem(hub.store.invite_create(pid), "jet-1", host="jet-1",
+                                       os_user="ci")
+    beat(hub, SimpleNamespace(token=token, host="jet-1", os_user="ci", seq=0))
+    assert events(mgr, who) == ["jet-1: another account joined (ci)"]
+
+
+def test_personal_laptops_make_no_events(hub, clock):
+    mgr, who = online(hub)
+    pid, _ = person(hub.store, "bob")
+    token, _ = hub.store.invite_redeem(hub.store.invite_create(pid), "laptop", host="laptop",
+                                       os_user="bob")
+    d = SimpleNamespace(token=token, host="laptop", os_user="bob", seq=0)
+    assert beat(hub, d)["machine_facts"] is None  # it sends nothing more
+    clock[0] += 3600
+    stay(mgr, who)
+    hub.tick()
+    beat(hub, d, kernel="6.9")
+    assert events(mgr, who) == [] and event_lines(hub) == []
+
+
+def test_the_hub_machine_goes_offline_but_never_joins(hub, clock):
+    mgr, who = online(hub)
+    pid, _ = person(hub.store, "root", "admin")
+    token, _ = hub.store.invite_redeem(hub.store.invite_create(pid), HOST, host=HOST,
+                                       os_user="root")
+    d = SimpleNamespace(token=token, host=HOST, os_user="root", seq=0)
+    assert beat(hub, d)["machine_facts"] == "hub"  # no address asked for
+    assert events(mgr, who) == []
+    for _ in range(3):
+        clock[0] += 60
+        beat(hub, d, ip="10.9.9.9")
+    assert events(mgr, who) == []  # its address is not tracked
+    gone = clock[0]
+    clock[0] += me.OFFLINE_S + me.GROUP_S
+    stay(mgr, who)
+    hub.tick()
+    assert events(mgr, who) == [f"{HOST}: offline since {me.hm(gone)}"]
+
+
+def test_the_note_keeps_its_text_and_the_last_fifty_lines(hub, clock):
+    pid, token = person(hub.store, "root", "admin")
+    hub.store.notes_write_from_web("root", "machines", "# Machines\n\n- jet-1: the lab Jetson")
+    m = me.MachineEvents(hub.store, lambda: HOST)
+    m.write_note([f"jet-1: event {i}" for i in range(30)], clock[0])
+    m.write_note([f"jet-1: event {i}" for i in range(30, 55)], clock[0])
+    text = note(hub)
+    assert text.startswith("# Machines\n\n- jet-1: the lab Jetson\n\n" + me.NOTE_HEADER)
+    lines = event_lines(hub)
+    assert len(lines) == me.NOTE_CAP and lines[0].endswith("event 5") and lines[-1].endswith("event 54")
+    assert hub.store.notes_read("machines").author == "hub"
+
+
+def test_switched_off_manager_still_gets_the_note(hub, clock):
+    d = team(hub, "jet-1")
+    beat(hub, d)
+    assert len(event_lines(hub)) == 1
+    with hub.store.lock:
+        assert hub.store.db.execute("SELECT COUNT(*) FROM messages WHERE text LIKE"
+                                    " 'machine event:%'").fetchone()[0] == 0
+
+
+# ---------- the bridge's side ----------
+
+def test_clean_facts_keeps_the_new_facts_and_refuses_a_bad_address():
+    got = clean_facts({**BASE, "seq": 4, "ip": "10.0.0.7"})
+    assert {k: got[k] for k in ("os", "l4t", "jetpack", "kernel", "boot", "ip", "seq")} == {
+        "os": BASE["os"], "l4t": "R36.4.3", "jetpack": "6.2", "kernel": BASE["kernel"],
+        "boot": 1000, "ip": "10.0.0.7", "seq": 4}
+    assert "ip" not in clean_facts({"ip": "10.0.0.7; rm -rf /"})
+    assert "boot" not in clean_facts({"boot": True})
+
+
+def test_reading_os_l4t_jetpack_and_boot(tmp_path):
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "os-release").write_text('NAME="Ubuntu"\nPRETTY_NAME="Ubuntu 22.04.5 LTS"\n')
+    (tmp_path / "etc" / "nv_tegra_release").write_text(
+        "# R36 (release), REVISION: 4.3, GCID: 38968081, BOARD: generic, EABI: aarch64\n")
+    (tmp_path / "var" / "lib" / "dpkg").mkdir(parents=True)
+    (tmp_path / "var" / "lib" / "dpkg" / "status").write_text(
+        "Package: zlib1g\nVersion: 1:1.2.11\n\nPackage: nvidia-jetpack\nStatus: install ok\n"
+        "Architecture: arm64\nVersion: 6.2+b77\n\n")
+    (tmp_path / "proc").mkdir()
+    (tmp_path / "proc" / "stat").write_text("cpu  1 2 3\nbtime 1795420989\nprocesses 9\n")
+    root = str(tmp_path)
+    assert facts_mod.os_release(root) == "Ubuntu 22.04.5 LTS"
+    assert facts_mod.l4t(root) == "R36.4.3"
+    assert facts_mod.jetpack(root) == "6.2"
+    assert facts_mod.boot_time(root) == 1795420989
+    empty = str(tmp_path / "none")
+    assert (facts_mod.l4t(empty), facts_mod.jetpack(empty), facts_mod.boot_time(empty)) == \
+        ("", "", None)
+
+
+def test_bridge_sends_machine_facts_only_when_the_hub_asks(monkeypatch, tmp_path):
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path))
+    asked = []
+    monkeypatch.setattr(facts_mod, "infra",
+                        lambda hub_url, with_ip: asked.append(with_ip) or {"kernel": "k"})
+    b = Bridge({"hub": "http://h", "token": "t", "machine": "m"}, [], lambda *_: None)
+    b._build_facts([])
+    assert "kernel" not in b._facts and b._facts["seq"] == 1 and asked == []
+    b._infra_scope = "team"
+    b._build_facts([])
+    assert b._facts["kernel"] == "k" and b._facts["seq"] == 2 and asked == [True]
+    b._infra_scope = "hub"
+    b._build_facts([])
+    assert asked == [True, False]  # the hub's own computer: no address
+
+
+def test_a_hub_that_was_down_does_not_call_every_machine_offline(hub, clock):
+    d = team(hub, "jet-1")
+    beat(hub, d)
+    clock[0] += 3600  # the hub was down for an hour; it starts again
+    m = me.MachineEvents(hub.store, lambda: HOST)
+    assert m.tick(clock[0]) == []
+    clock[0] += me.OFFLINE_S + me.GROUP_S
+    assert len(m.tick(clock[0])) == 1  # still silent after the hub is back: offline

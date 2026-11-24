@@ -23,7 +23,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from kaptyorka import __version__, admin_ops, brief, identity, knowledge, manager, paths, signin, stuck, usage
+from kaptyorka import __version__, admin_ops, brief, identity, knowledge, machine_events, manager, paths, signin, stuck, usage
 from kaptyorka.gitlab import GitLabError, GitLabSource
 from kaptyorka import overnight as overnight_mod
 from kaptyorka import rules as rules_mod
@@ -239,6 +239,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     # sessions in overnight mode, per bridge device, as its last heartbeat said: their bridge
     # wakes them when stuck, so the hub does not as well
     night: dict = {"by_device": {}, "keys": set()}
+    mev = machine_events.MachineEvents(store, lambda: identity.facts()["host"])
 
     def principal_of(headers: Mapping) -> Principal:
         """The caller's principal from its bearer token (the Auth middleware already let it in)."""
@@ -562,6 +563,18 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     tell(key, stuck.manager_text(a.name, a.machine, person, ep, a.key,
                                                  a.background, git, again=stage == "again"))
 
+    def machine_news(events: List[str], now: float) -> None:
+        """Confirmed machine events: one dated line each in the team note `machines`, and one
+        message each to the manager (none while it is switched off)."""
+        if not events:
+            return
+        mev.write_note(events, now)
+        key = manager_to_wake()
+        for text in events:
+            store.log_add("hub", "machine", text[:500])
+            if key is not None:
+                tell(key, machine_events.manager_text(text))
+
     def tick() -> None:
         """Move workers on; deliver what the bosses hear; keep the manager alive."""
         now = store.clock()
@@ -573,6 +586,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             stuck_tick(now)
         except Exception as e:  # a stuck check must never stop the workers' clock
             print(f"kaptyorka: stuck check failed: {e}", flush=True)
+        try:
+            machine_news(mev.tick(now), now)
+        except Exception as e:  # nor may a machine event
+            print(f"kaptyorka: machine events failed: {e}", flush=True)
         try:
             manager_tick(now)
         except Exception as e:  # the manager must never stop the workers' clock
@@ -1117,6 +1134,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                             body.get("folders") if isinstance(body.get("folders"), dict) else {})
             except Exception as e:
                 print(f"memory: git facts skipped: {e}", file=sys.stderr, flush=True)
+        if own and isinstance(facts, dict):
+            try:  # machine events are a bonus: they must not fail the heartbeat
+                machine_news(mev.observe(principal.device_id, clean_facts(facts), store.clock()),
+                             store.clock())
+            except Exception as e:
+                print(f"kaptyorka: machine events failed: {e}", file=sys.stderr, flush=True)
         return JSONResponse({"version": __version__,
                              "auto_update": own and ws.auto_update(principal.device_id),
                              "projects": [] if principal.legacy else
@@ -1129,7 +1152,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                              "skills_version": rs.skills_version(),
                              # its computer's GPU queue, read by one bridge per computer
                              "gpu_queue": ws.gpu_queue_ask(principal.device_id, store.clock())
-                             if own else None})
+                             if own else None,
+                             # "team" or "hub": send the machine facts its events need
+                             "machine_facts": mev.scope(principal.device_id) if own else None})
 
     @server.custom_route("/bridge/join-team", methods=["POST"])
     @_bad_request

@@ -200,10 +200,37 @@ or close it yourself, and never send more than these two messages per stuck sess
 """
 
 
+# Machine events and message delivery (their own section). machine_events.py
+MACHINES_SECTION = """## Machine events
+
+- The hub may send you "machine event: ...": a team machine (or the hub's own computer) went \
+offline, came back, rebooted, changed its OS, JetPack, kernel, hostname, address or agent tool \
+versions, joined again as a new device (a reinstall), or is new. Several machines that went \
+offline together come as one event. The hub has already written one dated line for it under \
+"Machine events" in the `machines` team note; every line there is confirmed by the machine \
+itself.
+- Warn the sessions working on that machine in one short message each (`who` shows them): what \
+changed and what it may break for them (homes wiped, a CI runner gone, tools to reinstall).
+- Tidy the `machines` note: bring its description of that machine up to date. Leave the hub's \
+event lines as they are.
+- Add a reason or a result (such as "CI runner set up again") only after a session tells you \
+the work is done. Never write plans or intentions ("will reinstall") into the notes.
+
+## When a message did not arrive
+
+- Sessions on team machines that share a project need no door to message each other.
+- When someone asks why a message did not arrive, first check whether the target session was \
+online (`who`) and whether the message was pushed to it (on the page the sender's message \
+says Delivered or Not sent; an offline session gets it only when it is back), and say what \
+you found. Talk about doors only when both were fine and the sender still may not reach that \
+session.
+"""
+
+
 def claude_md(rules_text: str) -> str:
     return (rules.rules_text(rules_text) or "No team rules yet.") + "\n\n# Manager\n\n" \
         + MANAGER_SECTION + "\n" + OLD_VERSION_SECTION + "\n" + OVERNIGHT_SECTION + "\n" \
-        + STUCK_SECTION
+        + STUCK_SECTION + "\n" + MACHINES_SECTION
 
 
 def ensure_schema(db) -> None:

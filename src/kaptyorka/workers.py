@@ -1,5 +1,6 @@
 """Workers: sessions a person asks the hub to start on one of their machines. Kept out of
 store.py; a WorkerStore shares the Store's database, lock and clock."""
+import ipaddress
 import json
 import math
 import re
@@ -234,6 +235,19 @@ def clean_facts(facts: dict) -> dict:
         out["gpu_queue"] = q
     if facts.get("update_failed") in paths.UPDATE_REASONS:  # a fixed reason, never raw text
         out["update_failed"] = facts["update_failed"]
+    # machine events (machine_events.py): a team machine's or the hub machine's own facts
+    for key in ("os", "l4t", "jetpack", "kernel"):
+        if _cut(facts.get(key)) is not None:
+            out[key] = _cut(facts[key])[:100]
+    for key in ("boot", "seq"):
+        v = facts.get(key)
+        if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+            out[key] = v
+    if isinstance(facts.get("ip"), str):
+        try:
+            out["ip"] = str(ipaddress.ip_address(facts["ip"]))
+        except ValueError:
+            pass
     return out
 
 
