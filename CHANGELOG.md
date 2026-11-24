@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.9.31
+## 0.9.32 (unreleased)
+
+- **OpenCode 2 sessions stay on the hub while their window is open.** The bridge guessed each OpenCode 2 window's session as the newest chat in the window's folder updated since the window started. That missed a chat reopened with `-s`, `-c` or the session list (its last update was older than the window), a window started as `opencode <folder>` from another folder, and the second of two windows in one folder. Such a session was seen only for 30 seconds after each of its own kaptyorka tool calls, so a message sent later waited for its next turn instead of being pushed, and names flipped between `proj-a` and `proj-a-2`. Now kaptyorka's TUI plugin writes which chat each window shows to `~/.kaptyorka/opencode-open/<pid>.json` (when it changes; removed when OpenCode quits), and the bridge lists exactly those, idle or not. A window started before this update still gets the old guess until it is restarted. Checked with real OpenCode 2.2.5 and 2.3.2 windows in a sandbox (two windows in one folder, resumed chats, `opencode <folder>`, quit and kill); the session list's response is the same in both versions.
 
 - **A busy machine no longer shows live sessions offline for a moment.** The bridge rebuilt its machine facts (each tool's login check, machine use, git state) once a minute inside the loop that reports sessions; on a loaded machine that took long enough to push a session report past the hub's 30-second online window. The minute rebuild now runs beside the report; the first build and one the hub asks for still run at once. This was the intermittent slow-test failure.
 - **Overnight mode no longer turns on from a subagent's report.** Claude Code hands a session its subagents' reports, background task notices and other sessions' messages as prompts, before the transcript says who sent them; a report that named overnight mode turned it on. These texts never count as the person now.
