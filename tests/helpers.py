@@ -249,3 +249,52 @@ class FakeGitLabOAuth:
     def close(self):
         self.server.shutdown()
         self.server.server_close()
+
+
+# ---- real Claude Code sessions in slow tests ----
+
+# A background session cannot ask for permission: a command outside its allow list waits
+# forever. Models look around first (`pwd && ls -la && test -e x`), and a compound command needs
+# every part allowed, so the read-only commands are always allowed; a test adds what it needs.
+READ_ONLY_TOOLS = ("Bash(pwd)", "Bash(pwd *)", "Bash(ls)", "Bash(ls *)", "Bash(cat *)",
+                   "Bash(head *)", "Bash(tail *)", "Bash(test *)", "Bash(echo *)",
+                   "Bash(wc *)", "Bash(grep *)", "Read", "Glob", "Grep", "LS")
+
+
+def allowed_tools(*extra: str) -> str:
+    """`--allowedTools=...` for a real `claude --bg` in a slow test: READ_ONLY_TOOLS plus extra."""
+    return "--allowedTools=" + ",".join((*READ_ONLY_TOOLS, *extra))
+
+
+def transcript_dir(folder, home=None):
+    """The folder Claude Code keeps a session's transcripts in for a session started in
+    `folder`: ~/.claude/projects/<absolute path, every character but letters and digits as ->."""
+    import re
+    from pathlib import Path
+
+    path = str(Path(folder).resolve())
+    return (Path(home) if home else Path.home()) / ".claude" / "projects" / re.sub(
+        r"[^A-Za-z0-9]", "-", path)
+
+
+def remove_transcripts(folder, home=None) -> None:
+    """Remove the transcripts of sessions started in `folder` or in a folder inside it."""
+    import shutil
+
+    d = transcript_dir(folder, home)
+    for p in d.parent.glob(d.name + "*"):
+        if p.name == d.name or p.name.startswith(d.name + "-"):
+            shutil.rmtree(p, ignore_errors=True)
+
+
+def scratch_dir(prefix: str):
+    """A throwaway folder beside the repository, for a real `claude --bg` (Claude Code refuses
+    an untrusted folder, and /tmp is not trusted; beside the repo inherits its parent's trust),
+    also from a git worktree under .claude/worktrees, which Claude Code does not trust."""
+    import tempfile
+    from pathlib import Path
+
+    base = Path(__file__).resolve().parents[1]
+    while ".claude" in base.parts:
+        base = base.parent
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=base.parent))

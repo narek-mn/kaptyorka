@@ -5,7 +5,6 @@ import json
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -14,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from helpers import call, person, run
+from helpers import call, person, remove_transcripts, run, scratch_dir
 from kaptyorka import bridge as bridge_mod
 from kaptyorka import identity
 from kaptyorka.adapters.claude import ClaudeAdapter
@@ -46,8 +45,7 @@ def _scratch_folder() -> Path:
     # Claude Code refuses --bg in an untrusted folder, and /tmp is not trusted; a throwaway
     # folder beside the repo inherits the trust of its parent (never the repo itself). Not a
     # git repo: `git init` makes it a project root of its own, which is untrusted again.
-    return Path(tempfile.mkdtemp(prefix=".kaptyorka-worker-",
-                                 dir=Path(__file__).resolve().parents[2]))
+    return scratch_dir(".kaptyorka-worker-")
 
 
 def _jobs(folder: Path) -> list:
@@ -134,12 +132,8 @@ def test_claude_worker_round_trip(hub, tmp_path, monkeypatch):
                 _quiet(["claude", step, job])
         # never stop the scope: it can hold Claude Code's shared supervisor, and with it every
         # other background session of this account; `claude stop` above ended the worker
+        remove_transcripts(folder, real_home)
         shutil.rmtree(folder, ignore_errors=True)
-        # the transcript folder Claude Code made for it: ~/.claude/projects/<path with - for / .>
-        tag = folder.name.lstrip(".")
-        for p in (real_home / ".claude" / "projects").glob(f"*{tag}"):
-            if p.name.endswith(f"--{tag}"):
-                shutil.rmtree(p, ignore_errors=True)
 
 
 @pytest.mark.slow

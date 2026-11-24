@@ -4,12 +4,12 @@ import json
 import re
 import shutil
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
 import pytest
 
+from helpers import allowed_tools, remove_transcripts, scratch_dir
 from kaptyorka.adapters.claude import ClaudeAdapter
 
 NAME = "kaptyorka-slow"
@@ -32,12 +32,11 @@ def _session_for(cwd: Path):
 def test_real_session_receives_push():
     # Claude Code refuses --bg in an untrusted folder, and /tmp is not trusted; a throwaway
     # folder beside the repo inherits the trust of its parent (never the repo itself).
-    project = Path(tempfile.mkdtemp(prefix=".kaptyorka-slow-",
-                                    dir=Path(__file__).resolve().parents[2]))
+    project = scratch_dir(".kaptyorka-slow-")
     ids = []
     try:
         r = subprocess.run(["claude", "--bg", "-n", NAME, "--model", "haiku",
-                            "--permission-mode", "acceptEdits",
+                            "--permission-mode", "acceptEdits", allowed_tools("Write", "Edit"),
                             "Wait. When a message arrives, do what it says."],
                            cwd=project, capture_output=True, text=True, timeout=60)
         ids = re.findall(r"backgrounded · ([0-9a-f]+)", r.stdout)
@@ -60,4 +59,5 @@ def test_real_session_receives_push():
             for step in ("stop", "rm"):
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     subprocess.run(["claude", step, target], capture_output=True, timeout=60)
+        remove_transcripts(project)
         shutil.rmtree(project, ignore_errors=True)

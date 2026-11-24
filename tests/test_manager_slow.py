@@ -6,7 +6,6 @@ import json
 import shutil
 import socket
 import subprocess
-import tempfile
 import threading
 import time
 import urllib.request
@@ -17,7 +16,7 @@ import pytest
 
 import kaptyorka
 from conftest import start_hub
-from helpers import call, person, run
+from helpers import call, person, remove_transcripts, run, scratch_dir
 from kaptyorka import bridge as bridge_mod
 from kaptyorka import identity, manager, rules
 from kaptyorka.adapters.claude import ClaudeAdapter
@@ -65,7 +64,7 @@ def test_real_manager_session(monkeypatch):
     # root's trust, which a parent folder's trust does not give; a throwaway folder beside
     # the repo, outside any repo, inherits the trust of its parent, as the hub machine's
     # ~/.kaptyorka/manager does.
-    khome = Path(tempfile.mkdtemp(prefix=".kaptyorka-manager-slow-", dir=REPO.parent))
+    khome = scratch_dir(".kaptyorka-manager-slow-")
     monkeypatch.setenv("KAPTYORKA_HOME", str(khome))
     monkeypatch.setenv("ANTHROPIC_MODEL", "haiku")
     monkeypatch.setattr(bridge_mod, "WAIT_S", 2)
@@ -166,6 +165,5 @@ def test_real_manager_session(monkeypatch):
         _quiet(["tmux", "kill-session", "-t", "=kaptyorka-manager"], 30)
         stop()
         store.close()
+        remove_transcripts(khome, real_home)
         shutil.rmtree(khome, ignore_errors=True)
-        for p in (real_home / ".claude" / "projects").glob(f"*{khome.name}*"):
-            shutil.rmtree(p, ignore_errors=True)
