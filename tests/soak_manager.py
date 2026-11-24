@@ -45,6 +45,45 @@ STEP_S = 15
 ANSWER_S = 180
 
 
+# The sandbox runs `claude` on a copy of this user's Claude Code login. The copy and the
+# original share one refresh token: when the access token runs out, both renew at the same
+# moment and whichever loses is logged out. Seen in a run: the sandbox's manager printed "Login
+# expired"; had the sandbox won, the user's own sessions would have been logged out instead.
+# So a run never starts when the login renews before it would end, and a run whose copy lost
+# stops at once (nothing it measures after that counts).
+LOGIN_MARGIN_S = 10 * 60
+
+
+class LoginLost(Exception):
+    """The sandbox's copy of the Claude Code login stopped working."""
+
+
+def login_left(path: "Path | None" = None) -> "float | None":
+    """Seconds until this user's Claude Code login (the one the sandbox copies) renews; None
+    when unknown."""
+    try:
+        d = json.loads((path or Path.home() / ".claude" / ".credentials.json").read_text())
+        return float(d["claudeAiOauth"]["expiresAt"]) / 1000 - time.time()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def login_guard(run_s: float) -> None:
+    """Exit before the sandbox starts when the login renews within run_s + LOGIN_MARGIN_S."""
+    left = login_left()
+    if left is not None and left < run_s + LOGIN_MARGIN_S:
+        at = time.strftime("%H:%M", time.localtime(time.time() + max(left, 0) + 60))
+        sys.exit(f"your Claude Code login renews in {max(left, 0) / 60:.0f} min, before this run"
+                 " would end: the sandbox's copy of it would race your own sessions for the"
+                 " renewal, and the loser is logged out. Run it again once it has renewed (after"
+                 f" {at}; any claude session renews it when it runs out).")
+
+
+def login_expired(pane: str) -> bool:
+    """The manager's screen says its login is gone."""
+    return "Please run /login" in pane or "Login expired" in pane
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -238,6 +277,10 @@ print(json.dumps({"root": root, "alice": alice, "bob": bob, "invite": code}))
         return sessions, procs
 
     def check(self) -> None:
+        pane = self.run(["tmux", "capture-pane", "-p", "-t", "=kaptyorka-manager"]).stdout or ""
+        if login_expired(pane):
+            raise LoginLost("the sandbox's Claude Code login expired: its copy lost the renewal"
+                            " race with your own sessions; run it again")
         w, a, crashes, launches = self.manager_rows()
         sessions, procs = self.managers_running()
         now = time.time()
@@ -365,6 +408,8 @@ print(json.dumps({"root": root, "alice": alice, "bob": bob, "invite": code}))
             want = 2 if "kill" in done else 1  # the start, and the one after the kill
             if launches != want:
                 self.fail(f"{launches} launches; expected {want}")
+        except LoginLost as e:
+            self.fail(f"stopped early: {e}")
         finally:
             self.cleanup()
         result = "PASS" if not self.failures else "FAIL"
@@ -399,6 +444,7 @@ def main() -> int:
     a = ap.parse_args()
     if getpass.getuser() == "root":
         sys.exit("run as your own user")
+    login_guard(a.minutes * 60 + 180)  # the soak, plus its install and setup
     return Soak(a.minutes, a.out, a.wheel).soak()
 
 

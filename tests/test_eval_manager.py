@@ -276,3 +276,18 @@ def test_login_left_reads_the_renewal_time_and_never_fails(tmp_path):
     f.write_text("{}")
     assert em.login_left(f) is None
     assert em.login_left(tmp_path / "none") is None
+
+
+def test_the_soak_and_the_eval_refuse_a_run_that_would_race_the_login_renewal(monkeypatch):
+    import pytest
+
+    import soak_manager
+    monkeypatch.setattr(soak_manager, "login_left", lambda path=None: 20 * 60.0)
+    with pytest.raises(SystemExit) as e:
+        soak_manager.login_guard(16 * 60)  # 16 + 10 margin > 20
+    assert "renews in 20 min" in str(e.value)
+    soak_manager.login_guard(5 * 60)  # 5 + 10 < 20: goes
+    monkeypatch.setattr(soak_manager, "login_left", lambda path=None: None)
+    soak_manager.login_guard(10 ** 6)  # unknown: goes
+    assert soak_manager.login_expired("● Login expired · Please run /login")
+    assert not soak_manager.login_expired("❯ check workers again")

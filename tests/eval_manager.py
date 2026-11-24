@@ -38,6 +38,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from soak_manager import LoginLost, login_expired, login_guard, login_left  # noqa: F401
+
 HERE = Path(__file__).resolve().parent
 TURN_S = 240  # the longest one manager turn may take
 QUIET_S = 10  # idle this long, with nothing left to deliver: the turn is over
@@ -607,22 +609,8 @@ CASES = [
 
 # ---------- the world: sandbox hub, team, fake sessions ----------
 
-LOGIN_MARGIN_S = 45 * 60  # a whole run, with --repeat 2, and some room
+EVAL_RUN_S = 20 * 60  # one round with setup; each --repeat round adds about 5
 
-
-class LoginLost(Exception):
-    """The sandbox's copy of the Claude Code login stopped working: no case after it counts."""
-
-
-def login_left(path: Optional[Path] = None) -> Optional[float]:
-    """Seconds until this user's Claude Code login (the one the sandbox copies) renews; None
-    when unknown. The copy and the original share one refresh token: whichever renews first
-    wins, the other is logged out (seen: the sandbox's manager said "Login expired")."""
-    try:
-        d = json.loads((path or Path.home() / ".claude" / ".credentials.json").read_text())
-        return float(d["claudeAiOauth"]["expiresAt"]) / 1000 - time.time()
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
 
 BASE_FACTS = {"os": "Ubuntu 22.04.5 LTS", "kernel": "5.15.148-tegra", "boot": 1_000,
               "ip": "10.0.0.7", "tools": {"claude-code": "2.1.329"}}
@@ -970,7 +958,7 @@ class World:
 
     def check_login(self) -> None:
         out = self.s.run(["tmux", "capture-pane", "-p", "-t", "=kaptyorka-manager"]).stdout or ""
-        if "Please run /login" in out or "Login expired" in out:
+        if login_expired(out):
             raise LoginLost("the sandbox's Claude Code login expired (its copy lost the"
                             " renewal race with your own sessions); run it again")
 
@@ -1111,12 +1099,7 @@ def main() -> int:
         soak.env.pop("ANTHROPIC_MODEL", None)
     results: List[dict] = []
     world, stopped = None, ""
-    left = login_left()
-    if left is not None and left < LOGIN_MARGIN_S:
-        at = time.strftime("%H:%M", time.localtime(time.time() + max(left, 0) + 60))
-        sys.exit(f"your Claude Code login renews in {left / 60:.0f} min: the sandbox's copy of it"
-                 " would race your own sessions for the renewal, and one of them is logged out."
-                 f" Run this again once it has renewed (after {at}).")
+    login_guard(EVAL_RUN_S + (a.repeat - 1) * 5 * 60)  # why: soak_manager.LOGIN_MARGIN_S
 
     def stop(*_):
         raise KeyboardInterrupt  # so the sandbox (hub, bridge, manager, login copy) is removed
