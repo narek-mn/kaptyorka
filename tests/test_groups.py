@@ -168,7 +168,7 @@ def test_door_closes_when_session_offline(store, team, clock):
     store.answer(old_knock(store, "a1", store.person_by_name("boss")["id"], "quick question"),
                  "x1", True)
     assert store.send("a1", "srv/codex/p", "q") == 1
-    clock.t += 31
+    clock.t += 601  # gone longer than a held send waits
     session(store, team["tokens"]["ann"], "a1", "pc")  # ann back, the admin gone
     store.online()
     assert store.doors_for("a1") == []
