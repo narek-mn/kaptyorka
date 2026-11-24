@@ -58,8 +58,9 @@ def test_manager_cannot_close_a_worker_it_did_not_approve(hub, clock):
 def test_workers_lists_the_ones_it_approved(hub, clock):
     mgr, me, _, bob_id, _ = started(hub)
     insert_worker(hub, "proj-a-w9", "up", bob_id, clock[0])
-    names = [w["name"] for w in run(call(mgr, me, "workers"))]
-    assert "proj-a-w1" in names and "proj-a-w9" not in names
+    rows = {w["name"]: w for w in run(call(mgr, me, "workers"))}
+    assert "proj-a-w1" in rows and "proj-a-w9" not in rows
+    assert rows["proj-a-w1"]["you_may_close"] is True  # it says so: no guessing from "manager"
 
 
 def test_rules_say_exactly_what_it_may_close():

@@ -1083,6 +1083,9 @@ class WorkerStore:
                 rows = self.db.execute(
                     "SELECT * FROM workers w WHERE w.boss_person=? OR " + APPROVED
                     + " ORDER BY w.created, w.name", (principal.person_id,)).fetchall()
+                # say which it may close, so it never reads its own decision as someone else's
+                return [{**self._dict(r), "you_may_close": not r["manager"]
+                         and r["boss_person"] != principal.person_id} for r in rows]
             else:
                 rows = self.db.execute("SELECT * FROM workers WHERE boss_person=?"
                                        " ORDER BY created, name",

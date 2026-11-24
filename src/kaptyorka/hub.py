@@ -1518,7 +1518,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @server.tool()
     @_tool_errors
     def workers(ctx: Context) -> List[dict]:
-        """Your workers (the admin: everyone's): name, project, host, state, attach line."""
+        """Your workers (the admin: everyone's): name, project, host, state, attach line. The
+        manager: the workers started on requests it decided, each with you_may_close."""
         agent, principal = caller(ctx)
         return own_workers(principal, foreign(principal, agent.person_id))
 
