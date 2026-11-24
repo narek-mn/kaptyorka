@@ -512,6 +512,10 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .warn-pop .wp-body { flex: 1; min-width: 0; }
 .warn-pop p { margin: 0; font-size: var(--fs-md); line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
 .warn-pop .wp-fix { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.warn-pop li.wp-wait { color: var(--accent); }
+.warn-pop li.wp-wait small { color: var(--faint); font-size: var(--fs-sm); }
+.warn-pop li.wp-wait .wp-fix { flex-wrap: wrap; }
+.warn-pop .wp-err { color: var(--risk); font-size: var(--fs-sm); margin-top: 4px; }
 .warn-pop .wp-fix .btn.icon { width: 28px; height: 28px; min-width: 28px; padding: 0; justify-content: center; }
 #log { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-6) 18px; }
 .day { display: flex; align-items: center; gap: var(--s-3); margin: 18px 0 6px; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--faint); }
@@ -2245,16 +2249,19 @@ a.p-main { color: inherit; text-decoration: none; }
   }
   /* the top bar's sign: the count, and the list when open */
   function renderWarnSign(rows, gone) {
-    var b = $("warn-ind"), n = rows.length;
+    var doors = isAdmin() ? feed.door_requests || [] : [];
+    var b = $("warn-ind"), n = rows.length + doors.length;
     b.hidden = !n;
     $("warn-n").textContent = String(n);
-    b.title = n + (n === 1 ? " problem stops" : " problems stop") + " agents working";
+    b.title = (rows.length ? rows.length + (rows.length === 1 ? " problem stops" : " problems stop") + " agents working" : "")
+      + (doors.length ? (rows.length ? "; " : "") + doors.length + " waiting for you" : "");
     b.setAttribute("aria-label", "Warnings: " + n);
     if (!n && warnPop) closeWarnPop();
-    if (!warnPop || !changed("warn-pop", [rows.map(function (w) { return [warnKey(w), w.text]; }), gone])) return;
+    if (!warnPop || !changed("warn-pop", [rows.map(function (w) { return [warnKey(w), w.text]; }), gone, doorKeys(doors)])) return;
     $("warn-pop-n").textContent = String(n);
     var list = $("warn-list");
     list.textContent = "";
+    doors.forEach(function (d) { list.appendChild(doorRow(d)); });
     rows.forEach(function (w) {
       var fix = warnFix(w), hid = gone.indexOf(warnKey(w)) >= 0;
       var again = hid ? button("Show again", "quiet", function () {
@@ -2264,6 +2271,22 @@ a.p-main { color: inherit; text-decoration: none; }
       list.appendChild(el("li", null, [icon("i-warn", 14), el("div", { "class": "wp-body" }, [el("p", { text: warnText(w) }),
         fix || again ? el("div", { "class": "wp-fix" }, (fix ? warnCopy(fix) : []).concat([again])) : null])]));
     });
+  }
+  /* door requests: "Waiting for you" in the warnings list, one line with Allow and Deny */
+  function doorKeys(doors) { return doors.map(function (d) { return d.id; }).join(","); }
+  function doorRow(d) {
+    var err = el("p", { "class": "wp-err" });
+    err.hidden = true;
+    function go(body, b) {
+      b.setAttribute("aria-busy", "true");
+      api("/api/connects/" + d.id, body).catch(function (e) { b.removeAttribute("aria-busy"); err.hidden = false; err.textContent = e.message; });
+    }
+    var two = button("Allow these two sessions", "primary", function () { go({ approve: true }, two); });
+    var ppl = button("Allow the two people, 7 days", "", function () { go({ approve: true, how: "people" }, ppl); });
+    var no = button("Deny", "", function () { go({ approve: false }, no); });
+    return el("li", { "class": "wp-wait" }, [icon("i-person", 14), el("div", { "class": "wp-body" }, [
+      el("small", { text: "Waiting for you" }), el("p", { text: d.line.replace(/ Answer with door_decide.*$/, "") }),
+      el("div", { "class": "wp-fix" }, [two, ppl, no]), err])]);
   }
   function openWarnPop() {
     warnPop = true;
