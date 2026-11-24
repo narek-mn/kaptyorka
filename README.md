@@ -356,13 +356,24 @@ Nobody has to remember these commands. At the start of each session, kaptyorka g
 - **Off (`/hub off`):** only that it is off and `/hub on` brings it back.
 - **Team machine:** the hub's brief, plus: this is a team machine, so this session is on the hub (as a coordinator in a personal folder), and `/hub off` takes only this session off.
 
+Where a tool shows no hub indicator of its own (Codex, Cursor, OpenCode), the start text begins with the state in plain words: `Hub: ON for proj-a`, `Hub: ON as a coordinator (no project)`, `Hub: OFF (personal folder)` or `Hub: OFF (switched off for this session; /hub on brings it back)`. OpenCode gets it with each request.
+
+### Hub commands suggested from the work
+
+Nobody has to know the commands either. At each prompt, Claude Code's and Codex's prompt hooks (the ones that get the prompt's text) may add one line for the agent, at most once per session for each target, decided on the machine with no model call and no network:
+
+- **Off the hub in a personal folder** (not after `/hub off`, never on a team machine): the prompt names a team project, a team machine or a teammate. The agent suggests once `/hub team <project>` (a project you have a role in) or `/hub team`, and never switches by itself.
+- **On the hub**, the prompt asks about another session's or a teammate's work ("ask the session on jetson-1", "what is bob doing"): the agent is pointed to `who` and `send`. It asks to run or continue work on a team machine ("run the training on jetson-1"): to `work(project, task, machine=...)`.
+
+Names match as whole words, case-insensitive, 3 characters or more: the team projects from the bridge's `team.json`, and the teammates and team machines you can see on the hub, which the hub indicator's background refresh keeps in `~/.kaptyorka/hub-state.json`. OpenCode's and Cursor's prompt hooks do not get the prompt's text, so there it stays the start guide's instruction alone. Overnight work needs nothing new: overnight mode already reacts to it.
+
 Codex says `$hub` instead of `/hub`. It arrives through each tool's own user-level hook, never a file in your project: Claude Code's `SessionStart` hook, Codex's `SessionStart` hook (`additionalContext`), OpenCode's plugin (its system text, with every request) and Cursor's `sessionStart` hook in `~/.cursor/hooks.json` (`additional_context`). Cursor has no start brief from the hub, so a team folder there gets only the `/hub off` line.
 
 ## Keep a session off the hub
 
 A joined machine shows every session of a team project on the hub. To keep one session to yourself:
 
-- In the session, type `/hub off` (in Codex: `$hub off`). It disappears from the hub at once. `/hub on` brings it back (within 10 seconds). `/hub` says whether this session is on or off.
+- In the session, type `/hub off` (in Codex: `$hub off`). It disappears from the hub at once. `/hub on` brings it back (within 10 seconds). `/hub` says whether this session is on or off, as what and for which project, and the commands that make sense now (`/hub off`, `who` and `send` when on; `/hub team <project>`, naming your projects, in a personal folder).
 - Or, in Claude Code only, start it off: `KAPTYORKA_HUB=off claude`. Nothing about it ever reaches the hub. `/hub on` still brings it back.
 
 What off means:
@@ -390,7 +401,7 @@ Every tool runs the same `kaptyorka hub [on|off]` for its own session, so the an
 | Codex | `$hub` (a skill in `skills/hub`): Codex has no custom slash commands since custom prompts were removed. The prompt hook answers `$hub` before the model sees it and blocks the prompt | The hook's `session_id` (the thread id) | A line at session start (`systemMessage` of the start hook) and after each `$hub`. Codex's status line and terminal title take only built-in items |
 | Cursor | `/hub` (a skill in `~/.cursor/skills/hub`). The `beforeSubmitPrompt` hook answers it and stops the prompt (`user_message`) | The folder (`cursor:<machine>:<folder>`), as for the rest of Cursor | Only after each `/hub`: Cursor's hooks cannot show anything at session start and it has no status line for them |
 
-Codex and Cursor need their hooks working for `/hub`: Codex asks to approve them once with `/hooks`. When the hook does not run, the skill tells the agent to say so. `kaptyorka doctor` checks, per tool, that the command and the indicator are installed (`tool: <tool> /hub`); `--fix` puts them back.
+Codex and Cursor need their hooks working for `/hub`: Codex asks to approve them once with `/hooks`. When the hook does not run, the skill tells the agent to say so. `kaptyorka doctor` checks, per tool, that the command and the indicator are installed (`tool: <tool> /hub`); `--fix` puts them back, and so does every bridge start (so `kaptyorka update` too), also for a status line you set after joining. The bridge reports it for Claude Code and OpenCode in its machine facts (`indicator_ok`), so a missing one shows as a machine warning ("claude-code hub indicator missing"); that stays when the status line is of a kind kaptyorka does not wrap.
 
 ## The hub in your status line
 

@@ -184,7 +184,7 @@ def test_opencode_prompt_brief_carries_the_reminder_without_blocking(hub, home, 
     _signal(hub, "opencode:o1", "opencode")
     for _ in range(2):  # a reminder repeats until the note is written
         hook.main("opencode", "prompt")
-        assert capsys.readouterr().out.startswith("You did work in proj-a (done)")
+        assert capsys.readouterr().out.startswith("Hub: ON for proj-a\nYou did work in proj-a (done)")
     with hub.store.lock:
         assert hub.store.db.execute("SELECT blocked_at FROM done_checks WHERE key='opencode:o1'"
                                     ).fetchone()[0] is None

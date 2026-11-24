@@ -435,17 +435,30 @@ def _join(cfg: dict, key: str, pid: int, project: str) -> Tuple[int, str]:
 
 
 def _team_note(key: str, cwd: str, line: str, note: str = "") -> str:
-    """An "on" line, unless the folder keeps the session off the hub anyway. A session that
-    joined the team (/hub team) says how it joined."""
+    """An "on" line, unless the folder keeps the session off the hub anyway: on or off, as
+    what, for which project, and the commands that make sense now. A session that joined the
+    team (/hub team) says how it joined."""
     from kaptyorka import optin
     from kaptyorka.identity import project_of
 
+    hub = _where(key)
+    reach = "the agent reaches the team with who and send"
     project = project_of(cwd) if cwd else ""
     joined = optin.describe(optin.effective(key, project, cwd))
+    if joined and optin.get(key) is not None:
+        return f"{joined}{note}. {hub} team off leaves the team; {reach}"
     if joined:
-        return joined + (optin.TEAM_MACHINE if optin.get(key) is None else "") + note
+        return f"{joined}{optin.TEAM_MACHINE}{note}. {hub} off takes this session off; {reach}"
     why = personal(project, cwd, key) if project else ""
-    return f"this session stays off the hub: {why}" if why else line
+    if why == paths.NOT_TEAM:
+        mine = load_mine()
+        yours = f" (yours: {', '.join(mine)})" if mine else ""
+        return (f"this session stays off the hub: {why} {hub} team <project> puts it on for one"
+                f" project{yours}; {hub} team, as a coordinator across projects")
+    if why:
+        return f"this session stays off the hub: {why}"
+    named = f". Project {paths.team_name(project)}" if project else ""
+    return f"{line}{named}; {hub} off takes it off; {reach}"
 
 
 def _tool_pid(key: str, environ: Mapping = os.environ) -> int:

@@ -112,7 +112,7 @@ def test_off_hides_from_everyone_and_on_brings_it_back(team, alice_box, home, pr
     assert offhub.command(["on"], env)[0] == 0
     bridge.heartbeat()
     assert visible(team, "claude:s1")["admin"] is True
-    assert offhub.command([], env) == (0, "this session is on the hub")
+    assert offhub.command([], env) == (0, "this session is on the hub. Project proj-a; /hub off takes it off; the agent reaches the team with who and send")
 
 
 def test_off_session_sends_nothing_after_the_hub_dropped_it(team, alice_box, home, procs,  # noqa: F811

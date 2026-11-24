@@ -141,7 +141,7 @@ def test_the_start_text_says_it_is_on_and_how_to_go_off(lab, monkeypatch):
     out = json.loads(hook._run("codex", "start", json.dumps({"session_id": "t1", "cwd": "/w/diary"}),
                                run=lambda *a, **k: type("R", (), {"stdout": ""})()))
     text = out["hookSpecificOutput"]["additionalContext"]
-    assert text.startswith("TEAM BRIEF")
+    assert text.startswith("Hub: ON as a coordinator (no project)\nTEAM BRIEF")
     assert "team machine" in text and "$hub off" in text and "this session" in text
     assert unquote(calls[0][1]["X-Kaptyorka-Project"]) == COORD  # never the folder's name
     line = guide.on_hub("claude:s1", "proj-a", False)

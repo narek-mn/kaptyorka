@@ -291,7 +291,7 @@ def test_hooks_send_nothing_in_a_personal_folder(home, monkeypatch):
     stdin = json.dumps({"session_id": "s1", "cwd": "/w/diary"})
     out = json.loads(hook._run("codex", "start", stdin))  # only the local guide (guide.py)
     assert out["hookSpecificOutput"]["additionalContext"].startswith(
-        "kaptyorka hub: this folder is personal")
+        "Hub: OFF (personal folder)\nkaptyorka hub: this folder is personal")
     assert hook._run("codex", "prompt", stdin) == ""
     assert calls == []
     stdin = json.dumps({"session_id": "s1", "cwd": "/w/proj-a"})
