@@ -122,7 +122,8 @@ class Launcher:
             exe = shutil.which("claude") or "claude"
             # `--tools=` as one element: the variadic `--tools x` would take the first message.
             # Agent: the manager's own subagents get no more tools than it has (checked on
-            # Claude Code 2.1.329: ToolSearch and the kaptyorka tools only)
+            # 2.1.329; on 2.1.331 by tests/test_manager_slow.py: no Read for it or a subagent).
+            # --no-chrome: Claude in Chrome is built in, so --strict-mcp-config keeps its tools
             # the model and effort the hub pins (manager.MODELS, EFFORTS); none from an older hub
             pinned = []
             for flag, value in (("--model", order.get("model")), ("--effort", order.get("effort"))):
@@ -133,7 +134,8 @@ class Launcher:
             return ["tmux", "new-session", "-d", "-s", MANAGER_TMUX, "-c", folder,
                     exe, "-n", name, *pinned, "--settings", str(base / paths.MANAGER_SETTINGS),
                     "--strict-mcp-config", "--mcp-config", str(base / paths.MANAGER_MCP),
-                    "--setting-sources", "project,local", "--tools=ToolSearch,Agent", first]
+                    "--setting-sources", "project,local", "--tools=ToolSearch,Agent",
+                    "--no-chrome", first]
         resume = order.get("resume")
         if resume is not None:
             resume = _plain(resume, "resume id")

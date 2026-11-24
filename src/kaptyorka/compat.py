@@ -54,7 +54,7 @@ DEPS: Tuple[Dep, ...] = (
     Dep("claude.version", "claude-code", "`claude --version` prints `X.Y.Z (Claude Code)`",
         "the tool version in machine facts", "`claude --version` output changed",
         "version unknown", True),
-    Dep("claude.cli", "claude-code", "`claude --help` lists --bg, -n, --settings, --resume, stop, rm, agents",
+    Dep("claude.cli", "claude-code", "`claude --help` lists --bg, -n, --settings, --resume, --no-chrome, stop, rm, agents",
         "workers (launch, close)", "`claude --help` no longer lists --bg, stop or rm",
         "Claude Code workers fail to start or stop", True),
     Dep("claude.auth", "claude-code", "`claude auth status` prints JSON with a boolean loggedIn",
@@ -215,7 +215,7 @@ def p_claude_cli(ctx: Ctx):
     if code != 0 or not out.strip():
         return UNKNOWN, out.strip()[:200]
     want = {"--bg": r"--bg\b", "-n, --name": r"-n, --name\b", "--settings": r"--settings\b",
-            "--resume": r"--resume\b", "stop": r"^\s+stop\b", "rm": r"^\s+rm\b", "agents": r"^\s+agents\b"}
+            "--resume": r"--resume\b", "--no-chrome": r"--no-chrome\b", "stop": r"^\s+stop\b", "rm": r"^\s+rm\b", "agents": r"^\s+agents\b"}
     missing = [k for k, rx in want.items() if not re.search(rx, out, re.M)]
     return (BROKEN, "missing " + ", ".join(missing)) if missing else (OK, "")
 

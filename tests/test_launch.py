@@ -312,7 +312,7 @@ def test_manager_command_runs_on_its_own_settings_and_mcp_config(launcher, monke
                     "/usr/bin/claude", "-n", "manager", "--settings", f"{m}/settings.json",
                     "--strict-mcp-config", "--mcp-config", f"{m}/mcp.json",
                     "--setting-sources", "project,local", "--tools=ToolSearch,Agent",
-                    FIRST + "fix the tests"]
+                    "--no-chrome", FIRST + "fix the tests"]
     assert "--bg" not in argv and "--dangerously-skip-permissions" not in argv
     assert "--resume" not in argv
     with pytest.raises(LaunchError, match="no manager support"):

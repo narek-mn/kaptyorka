@@ -25,6 +25,7 @@ Options:
   -n, --name <name>                     Set a display name for this session
   -r, --resume [value]                  Resume a conversation by session ID or
   --settings <file-or-json>             Settings file or JSON string to load
+  --no-chrome                           Turn off Claude in Chrome
 Commands:
   agents                                List background sessions
   rm <id>                               If it's safe, remove a background session
@@ -128,7 +129,7 @@ def test_a_changed_claude_install_names_each_broken_internal(home, tmp_path):
                                "claude.version"]
     lines = compat.report(res)
     assert "claude.cli: `claude --help` no longer lists --bg, stop or rm (Claude Code workers fail to" \
-           " start or stop): missing --bg, -n, --name, --settings, --resume, stop, rm, agents" in lines[2]
+           " start or stop): missing --bg, -n, --name, --settings, --resume, --no-chrome, stop, rm, agents" in lines[2]
 
 
 @pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="needs /proc")
