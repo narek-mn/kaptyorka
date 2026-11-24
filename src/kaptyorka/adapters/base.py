@@ -32,6 +32,11 @@ class Session:
     background: bool = False  # a background job (claude --bg), not a terminal session
     title: str = ""  # Claude Code's own title for the session (/rename, else its automatic one)
     idle_s: Optional[float] = None  # seconds since the session last did anything; None: unknown
+    # stuck measures (stuck.py), Claude Code on Linux only; None: unknown. write_s: seconds since
+    # the session itself last wrote (messages delivered to it do not count); tasks: its live
+    # background tasks, [{"id", "silent_s", "command"}]
+    write_s: Optional[float] = None
+    tasks: Optional[list] = None
 
 
 class DeliveryError(Exception):

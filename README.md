@@ -120,7 +120,7 @@ The link joins one machine. If your human gives you a hub address and a token in
 | Tool | Messages | What `join` changes | Restart |
 |---|---|---|---|
 | Claude Code | push | Adds the `kaptyorka` MCP server (user scope), seven hooks (start, prompt, stop, and four that only act in overnight mode: tool calls, permission prompts, API errors, session end) and the hub field in the status line (see "The hub in your status line") in `~/.claude/settings.json`, and the `/hub` command in `~/.claude/commands/hub.md`. | Open sessions, once |
-| OpenCode | push | Adds the MCP server, a plugin and the `/hub` command (`commands/hub.md`) in `~/.config/opencode`. OpenCode 1: its TUI runs the local server the bridge pushes through only when started with `--port` (OpenCode 1.19 reads `server.port` in `opencode.json` only for `opencode serve` and `web`), so kaptyorka writes a small `opencode` wrapper to `~/.local/bin` that adds `--port 0` to the TUI (never to subcommands, `--mini` or a port you gave), when that folder comes before the real `opencode` on a login shell's PATH. Otherwise it falls back to `alias opencode='opencode --port 0'` in your shell rc file. The bridge checks this again each time it starts, and `kaptyorka leave` removes both. `kaptyorka doctor` fails "opencode server" while an OpenCode window runs without its server: close it and start it again from a new terminal (`--fix` never closes it). OpenCode 2: no wrapper or alias (it removes old ones); messages go through its background service, and `/hub` comes from a TUI plugin in `plugins/kaptyorka-hub/tui.js` instead of `commands/hub.md`. `kaptyorka doctor` fails "opencode server" while OpenCode 2 runs without that service (`--standalone`, or the service disabled): run `opencode service start` and restart it. Session ids must look like OpenCode's own (`ses_...`); a push the bridge could not make shows as **Not delivered** on the page, with a short reason on hover (the full error stays in the bridge log), until the session reads it. The login check reads `~/.local/share/opencode/auth.json` and `opencode auth list` (credentials or provider environment variables); finding none counts as unknown, never as not logged in, since OpenCode also runs free and local models. | New terminal, then OpenCode (OpenCode 2: its background service too) |
+| OpenCode | push | Adds the MCP server, a plugin and the `/hub` command (`commands/hub.md`) in `~/.config/opencode`. OpenCode 1: its TUI runs the local server the bridge pushes through only when started with `--port` (OpenCode 1.19 reads `server.port` in `opencode.json` only for `opencode serve` and `web`), so kaptyorka writes a small `opencode` wrapper to `~/.local/bin` that adds `--port 0` to the TUI (never to subcommands, `--mini` or a port you gave), when that folder comes before the real `opencode` on a login shell's PATH. Otherwise it falls back to `alias opencode='opencode --port 0'` in your shell rc file. The bridge checks this again each time it starts, and `kaptyorka leave` removes both. `kaptyorka doctor` fails "opencode server" while an OpenCode window runs without its server: close it and start it again from a new terminal (`--fix` never closes it). OpenCode 2: no wrapper or alias (it removes old ones); messages go through its background service, and `/hub` comes from a TUI plugin in `plugins/kaptyorka-hub/tui.js` instead of `commands/hub.md`; that plugin also notes which chat each window shows (`~/.kaptyorka/opencode-open/<pid>.json`), so the bridge lists every open window's session, idle or reopened. `kaptyorka doctor` fails "opencode server" while OpenCode 2 runs without that service (`--standalone`, or the service disabled): run `opencode service start` and restart it. Session ids must look like OpenCode's own (`ses_...`); a push the bridge could not make shows as **Not delivered** on the page, with a short reason on hover (the full error stays in the bridge log), until the session reads it. The login check reads `~/.local/share/opencode/auth.json` and `opencode auth list` (credentials or provider environment variables); finding none counts as unknown, never as not logged in, since OpenCode also runs free and local models. | New terminal, then OpenCode (OpenCode 2: its background service too) |
 | Codex | push (not yet verified, needs a Codex login) | Adds hooks, the MCP server and the `$hub` skill (`skills/hub`) in the Codex config folder. Adds `alias codex='codex --remote unix://'`. The bridge keeps `codex app-server daemon` running. | New terminal, then Codex |
 | Cursor | pull only | Adds the MCP server, hooks and the `/hub` skill (`skills/hub`) in `~/.cursor`. Messages arrive at the end of each agent turn and after tool calls. | Restart the app |
 
@@ -268,10 +268,26 @@ A script or program that does these things inside it is not caught: the hook see
 | It crashed | `claude --resume` in a tmux session, at most twice a night (the bridge does this) |
 | A usage limit or an API error | Claude Code's own wait first; otherwise the bridge sends "continue" (every 30 minutes for a usage limit, 5 for other errors) for at most 6 hours |
 | Plan mode | Warned at turn-on: edits wait for a person there |
+| Its only pending work is a background task that printed nothing for 30 minutes | The bridge asks it once to check the task and stop it if it is stuck (see "Stuck sessions") |
 
 **The morning report** lists what was done, the decisions made for you, what was skipped and needs your yes, rule clashes and events. It is saved in `~/.kaptyorka/overnight/reports/`. For a team session it also goes to your own page on the hub; a rule clash goes to the hub as a short fixed-text event (project, rule title, class), and the manager tells you once. A personal session sends nothing to the hub. Everything is kept in `~/.kaptyorka/overnight/`, readable by you only, with secrets dropped.
 
 **Tools.** Claude Code only. Codex, Cursor and OpenCode: not yet (`/hub overnight` and `kaptyorka doctor` say so). The crash restart and the "continue" after a wait need the bridge, so a machine that never joined a hub gets the night rules and the report, but no restart.
+
+## Stuck sessions
+
+A session can sit for hours doing nothing while the page says it works: a background task that never ends (a wait loop that matches itself, a command waiting for input) keeps it waiting for a notice that never comes. kaptyorka notices two cases (Claude Code; the research is in `docs/superpowers/specs/2026-11-24-stuck-sessions.md`):
+
+- **A silent background task**: the session's turn is over, and a background task it started has printed nothing for 30 minutes.
+- **Busy with no new step**: the session is busy and has written nothing to its transcript (or its subagents' transcripts) for 30 minutes. A foreground command is capped at 10 minutes, so a working session always writes sooner.
+
+Two steps per stuck episode, each once. At 30 minutes the hub asks the session itself, naming the task and its command, to check it and stop it if it is stuck (a session whose turn is over reads the message at once; a busy one only after its current step). At 60 minutes, if nothing changed, the hub tells its person (their other online sessions, else their page), a worker's boss, and the manager, with how to stop it (`claude stop <id>` on that machine for a background session); the manager follows up with the session and hears it once more 30 minutes later if it is still stuck. An episode ends when the task prints, ends, the session writes again, or it goes idle; the hub's own message does not count as writing. An idle session is never stuck, and a session in overnight mode is asked by its own bridge instead of the hub.
+
+On the page a session whose turn is over while a background task runs shows **Background task** instead of **Working**; a stuck one shows an amber **Silent 1 h** (its task) or **Stuck 2 h** (busy with no new step).
+
+![Stuck sessions on Home](docs/screens/stuck.png)
+
+The bridge measures and the hub judges; nothing is judged for a bridge older than 0.9.32 or a tool other than Claude Code. **Linux only**: background tasks are found through `/proc` (the session's child shells and their output files); macOS gets the busy-with-no-new-step check only.
 
 ## Workers
 
@@ -326,6 +342,10 @@ Sometimes a session in another folder works for the team: a coordinator on your 
 - Nothing of the folder goes to the hub, even then: no folder name, no path, no git activity, no file list. Only the session itself, under the project it chose.
 - The choice is kept per session on this machine (`~/.kaptyorka/team/`), so it survives a restart of the kaptyorka tools in that session, and ends with the session. Other sessions in the same folder stay personal.
 
+### Team machines: every session is on the hub
+
+On a team machine (an account the hub counts as shared: a team machine, or a device marked shared) every session is on the hub by itself, in any folder and any tool, so nobody has to remember `/hub team`. In a folder that is no team project it joins as a coordinator, exactly as `/hub team` does: nothing of its folder leaves the machine. `/hub off` (Codex: `$hub off`) takes one session off; the next session starts on again (Cursor's choice is per folder, so there it stays off until `/hub on`). The bridge saves what the hub says about the account in `~/.kaptyorka/team.json` with each heartbeat; before its first answer, and on personal machines, nothing changes. The start guide says so in one line.
+
 ### The hub guide at session start
 
 Nobody has to remember these commands. At the start of each session, kaptyorka gives the agent a short guide (at most 500 characters), built on your machine from that session's own state; nothing about the folder or the session goes to the hub for it.
@@ -334,6 +354,7 @@ Nobody has to remember these commands. At the start of each session, kaptyorka g
 - **Team project folder:** the hub's own start brief, plus one line: for private work here, `/hub off`.
 - **Coordinator:** the hub's brief, plus: name a project for notes and work.
 - **Off (`/hub off`):** only that it is off and `/hub on` brings it back.
+- **Team machine:** the hub's brief, plus: this is a team machine, so this session is on the hub (as a coordinator in a personal folder), and `/hub off` takes only this session off.
 
 Codex says `$hub` instead of `/hub`. It arrives through each tool's own user-level hook, never a file in your project: Claude Code's `SessionStart` hook, Codex's `SessionStart` hook (`additionalContext`), OpenCode's plugin (its system text, with every request) and Cursor's `sessionStart` hook in `~/.cursor/hooks.json` (`additional_context`). Cursor has no start brief from the hub, so a team folder there gets only the `/hub off` line.
 
@@ -695,6 +716,7 @@ src/kaptyorka/
   bridge.py     per-machine bridge: reports sessions, pushes messages, starts workers
   workers.py    hub side of workers: states, linking, adopt, close
   usage.py      machine use per OS user (CPU, memory, GPU) and the "heavy" rule
+  stuck.py      stuck sessions: the rule, its two stages and their texts
   connects.py   connection requests made before 0.9.11: the admin decides
   memory.py     state notes, git activity and the done check
   rules.py      team rules, skills, proposals and conflicts in the hub

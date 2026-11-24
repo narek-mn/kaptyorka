@@ -51,6 +51,15 @@ def off(key: str) -> str:
 def on_hub(key: str, project: str, joined: bool) -> str:
     """The one local line added to the hub's start brief."""
     hub = _command(key)
+    from kaptyorka import offhub
+
+    if offhub.shared_machine():
+        what = "folder" if key.startswith("cursor:") else "session"
+        role = " as a coordinator (no project): name a project for notes and work" \
+            if project == paths.COORDINATOR else ""
+        return (f"{HEAD}this is a team machine, so this {what} is on the hub{role}. Every"
+                f" session here is, in any folder. To take only this {what} off the hub:"
+                f" {hub} off ({hub} on brings it back).")
     if project == paths.COORDINATOR:
         return (f"{HEAD}this session is a coordinator (no project): name a project for notes"
                 f" and work. {hub} team off leaves the team.")

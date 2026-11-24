@@ -284,3 +284,31 @@ def test_admin_mine_by_machine_and_everyone(tmp_path):
     finally:
         stop()
         store.close()
+
+
+def test_stuck_and_background_task_chips_in_groups(team):
+    """A stuck session in a group and a session waiting on a background task under a machine
+    header keep their chips; the stuck chat's line shows once."""
+    store, url, _ = team
+    with chrome() as page:
+        page.call("Page.addScriptToEvaluateOnNewDocument", source=FAKE)
+        page.go(url)
+        page.wait('!!document.querySelector("#agents .wt-head")')
+        page.js('fetch("/api/feed", { headers: { Authorization: "Bearer " + localStorage.getItem("kaptyorka.token") } })'
+                '.then(r => r.json()).then(f => { window.__base = f; })')
+        page.wait("!!window.__base")
+        page.js("""window.__script = n => {
+          const f = JSON.parse(JSON.stringify(window.__base));
+          const b1 = f.agents.find(a => a.label === "api-dev"), b4 = f.agents.find(a => a.label === "migrations");
+          b1.stuck = { kind: "busy", s: 7300 };
+          b4.activity = "shell";
+          return f; }""")
+        page.wait(f'{row("api-dev")}.textContent.includes("Stuck 2 h")')
+        assert page.js(f'!!{row("api-dev")}.closest(".wt-rows")')
+        assert page.js(f'{row("migrations")}.textContent').endswith("Background task")
+        assert page.js(f'{row("migrations")}.closest(".bg-rows").id') == "g-m_bob_box-2"  # under its machine, not Idle
+        page.js(f'{row("api-dev")}.click()')
+        page.wait('!!document.querySelector("#log .working")')
+        time.sleep(4.5)  # two polls
+        assert page.js('document.querySelectorAll("#log .working").length') == 1
+        assert page.js('document.querySelector("#log .working .what").textContent').startswith("looks stuck")

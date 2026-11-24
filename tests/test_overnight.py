@@ -534,3 +534,45 @@ def test_guarded_form_is_ours_for_install_leave_and_doctor(home):
     assert doctor.tool_configured(a, home)
     a.unconfigure()
     assert "hooks" not in json.loads((home / ".claude" / "settings.json").read_text())
+
+
+@pytest.mark.parametrize("prompt", [
+    "turn on overnight mode and continue until I'm back tomorrow",
+    "work on this overnight",
+    "keep going while I sleep",
+    "have the parser done by morning",
+    "overnight task: fix the flaky test",
+])
+def test_asks_for_tonight_trigger(prompt):
+    assert overnight.triggered(prompt)
+
+
+@pytest.mark.parametrize("prompt", [
+    "today the session must give me the overnight task results, but it just ran one shell all"
+    " night",
+    "show me the overnight task results",
+    "where is the overnight report?",
+    "summarize the output of the overnight run",
+    "what did you do last night?",
+    "this morning the overnight run was stuck",
+    "the overnight task failed, why?",
+])
+def test_words_about_a_past_night_do_not_trigger(prompt):
+    assert not overnight.triggered(prompt)
+
+
+def test_a_past_night_and_a_new_ask_still_triggers():
+    assert overnight.triggered("last night went fine; work on the docs overnight too")
+
+
+def test_report_shows_only_the_current_night(home):
+    old = on()
+    overnight.note("s1", "done", "an old night's work", old["started"] + 60)
+    overnight.finish("s1", "you are back", old["started"] + 600, post=lambda *a: None)
+    later = old["started"] + 86400
+    st = overnight.turn_on("s1", "proj-a", "/w/proj-a", False, "k", "box-1", "new task", "",
+                           now=later)
+    overnight.note("s1", "done", "tonight's work", later + 60)
+    text = overnight.report("s1", st, "finished", later + 3600)
+    assert "tonight's work" in text
+    assert "old night" not in text and text.count("overnight mode on") == 1

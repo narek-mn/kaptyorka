@@ -8,6 +8,11 @@ path, no git facts. The hub checks the person's role first (POST /bridge/join-te
 
 State: ~/.kaptyorka/team/<quoted session key>: {"project", "pid", "start"}. It ends with the
 session's process: a file whose process has ended (or whose pid was reused) is removed.
+
+On a team machine (the hub says its account is shared) every session is on the hub without
+asking: one in a folder that is no team project counts as a coordinator, as if it had typed
+`/hub team` (auto). Nothing is saved for it, so each new session starts on again; /hub off
+still takes one session off (offhub).
 """
 import json
 import os
@@ -106,11 +111,35 @@ def joined() -> List[Tuple[str, str]]:
     return out
 
 
+TEAM_MACHINE = "; this is a team machine, so every session here is on the hub"
+
+
+def auto(key: str, project: str, cwd: str) -> bool:
+    """A team machine's session in a folder that is no team project: on the hub as a
+    coordinator by itself. Never the manager's folder or the hub's workers (on the hub as they
+    are), and not before the bridge saved the hub's team list."""
+    from kaptyorka import offhub
+
+    if project == paths.COORDINATOR or paths.in_manager_folder(cwd) or not offhub.shared_machine():
+        return False
+    team, keep = offhub.load_team()
+    return team is not None and key not in keep and paths.team_name(project) not in team
+
+
+def effective(key: str, project: str, cwd: str) -> Optional[str]:
+    """What get() says, or paths.COORDINATOR when auto() puts the session on the hub."""
+    joined = get(key)
+    if joined is None and auto(key, project, cwd):
+        return paths.COORDINATOR
+    return joined
+
+
 def apply(ident):
-    """The identity as the hub sees it: a joined session carries its chosen project."""
+    """The identity as the hub sees it: a joined session carries its chosen project, a team
+    machine's session in a personal folder is a coordinator."""
     if ident is None:
         return None
-    project = get(ident.key)
+    project = effective(ident.key, ident.project, ident.cwd)
     return ident if project is None else replace(ident, project=project)
 
 
@@ -130,13 +159,16 @@ def command(key: str) -> str:
 def join(cfg: dict, key: str, pid: int, project: str) -> Tuple[bool, str]:
     """Ask the hub, then save the choice. project "" joins as a coordinator, "off" leaves.
     (ok, the line to show)."""
-    from kaptyorka import http
+    from kaptyorka import http, offhub
 
     project = (project or "").strip()
     if project.lower() == "off":
         was = clear(key)
         if was:
             tell_gone(cfg, key)
+        if not was and offhub.shared_machine():
+            return True, (f"this is a team machine: every session here is on the hub; {command(key)}"
+                          " off takes this session off")
         return True, ("this session left the team: it is back to this folder's own rules"
                       if was else "this session had not joined the team")
     if not cfg.get("hub") or not cfg.get("token"):

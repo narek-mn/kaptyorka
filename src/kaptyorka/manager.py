@@ -183,9 +183,27 @@ their page `web:<name>`. Add nothing, and do not ask them to change the rule.
 """
 
 
+# Stuck sessions (its own section, kept apart from MANAGER_SECTION). stuck.py
+STUCK_SECTION = """## Stuck sessions
+
+- The hub may send you "stuck session: ...": a session's background task has printed nothing \
+for an hour, or a busy session has written nothing for an hour. The hub asked the session to \
+check half an hour earlier and has told its person (and a worker's boss) already.
+- Message the session with `send`: ask what it waits for and whether that task is still \
+needed. A session whose turn is over reads it at once; a busy one only after its current step.
+- Look at the git facts in the notice: commits since then, or new uncommitted changes, mean \
+it is working; the same branch and last commit mean nothing moved.
+- If it answers with a good reason, leave it and tell its person in one line. If it does not \
+answer, or nothing changed when the hub tells you "still stuck" half an hour later, tell its \
+person plainly that it is stuck and how to stop it (the notice gives the command). Never stop \
+or close it yourself, and never send more than these two messages per stuck session.
+"""
+
+
 def claude_md(rules_text: str) -> str:
     return (rules.rules_text(rules_text) or "No team rules yet.") + "\n\n# Manager\n\n" \
-        + MANAGER_SECTION + "\n" + OLD_VERSION_SECTION + "\n" + OVERNIGHT_SECTION
+        + MANAGER_SECTION + "\n" + OLD_VERSION_SECTION + "\n" + OVERNIGHT_SECTION + "\n" \
+        + STUCK_SECTION
 
 
 def ensure_schema(db) -> None:

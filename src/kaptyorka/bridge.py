@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import __version__, facts, http, identity, offhub, optin, orders, overnight, paths, repos, skills_sync, usage
+from kaptyorka import __version__, facts, http, identity, offhub, optin, orders, overnight, paths, repos, skills_sync, stuck, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES, Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
@@ -80,6 +80,7 @@ class Bridge:
         self.seen_ids: Dict[int, dict] = self._load_seen()
         self.pending: Dict[str, tuple] = {}  # worker -> (order, launch result, monotonic start)
         self._sessions: list = []  # the session objects of the last heartbeat
+        self._sessions_at = time.time()  # when they were read
         self.stop = threading.Event()
         self._problems: Dict[str, Optional[str]] = {}
         self.pending_confirm = False  # a new token is saved but the hub has not confirmed it
@@ -193,10 +194,11 @@ class Bridge:
         # the help a refused call gets names only registered projects of this person
         mine = sorted(m for m in mine if isinstance(m, str) and new[0] is not None
                       and m in new[0]) if isinstance(mine, list) else None
+        shared = answer.get("shared") is True  # a team machine: every session goes on the hub
         if new != self._list or mine != self._mine or found != self._repos \
-                or not (paths.home() / offhub.TEAM).exists():
+                or shared != offhub.shared_machine() or not (paths.home() / offhub.TEAM).exists():
             self._list, self._mine, self._repos = new, mine, found
-            offhub.save_team(*new, mine, found)  # for this machine's shims and hooks
+            offhub.save_team(*new, mine, found, shared)  # for this machine's shims and hooks
 
     def heartbeat(self, again: bool = True) -> None:
         offhub.clean()
@@ -220,7 +222,9 @@ class Bridge:
             its folder's name or, when that is no team project, its git remote."""
             if s.key not in joined:
                 project = repos.resolve(s.project, s.cwd, team, self._repos) if s.cwd else s.project
-                return s if project == s.project else replace(s, project=project)
+                if not optin.auto(s.key, project, s.cwd):
+                    return s if project == s.project else replace(s, project=project)
+                joined[s.key] = paths.COORDINATOR  # a team machine: every session is on the hub
             coordinator = joined[s.key] == paths.COORDINATOR
             return replace(s, project=joined[s.key], cwd="",
                            label=s.label or (optin.LABEL if coordinator else ""))
@@ -269,7 +273,7 @@ class Bridge:
         if self.hub and ask != self._gpu_queue_ask:  # a lost answer keeps the last ask
             self._gpu_queue_ask = ask
             self._facts_at = None  # switched on, changed or off: read it next beat
-        self._sessions = objs
+        self._sessions, self._sessions_at = objs, time.time()
         self._refresh_name()
         self._report("heartbeat", None if status in (200, 204)
                      else f"hub answered {status} to heartbeat" + _said(status, answer))
@@ -637,10 +641,18 @@ class Bridge:
             if r.returncode:
                 return False, "restart failed (tmux said no)"
             return True, "restarted with claude --resume in tmux"
+        def silent(sid: str):
+            """stuck.find on the last heartbeat's sessions, its ages moved to now: one silence
+            keeps one start even while heartbeats fail and the list grows old."""
+            s = next((s for s in self._sessions if s.key == f"claude:{sid}"), None)
+            ep = None if s is None else stuck.find(s.activity, s.write_s, s.tasks)
+            if ep is not None:
+                ep["age"] += max(0.0, time.time() - self._sessions_at)
+            return ep
         try:
             overnight.watch(lambda sid: offhub.session(sid, claude.home) is not None,
                             lambda sid, text: claude.deliver(f"claude:{sid}", text),
-                            resume, overnight.finish)
+                            resume, overnight.finish, silent=silent)
         except Exception as e:
             self.log(f"overnight watch failed: {e}")
 

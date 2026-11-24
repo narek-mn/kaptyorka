@@ -1401,6 +1401,14 @@ a.p-main { color: inherit; text-decoration: none; }
     var h = Math.floor(s / 3600);
     return h < 48 ? "idle " + h + " hours" : "idle " + Math.floor(s / 86400) + " days";
   }
+  /* how long a stuck session has been silent (stuck.py), coarse for a chip: "45 min", "1 h", "5 h" */
+  function spanText(s) {
+    var m = Math.floor(s / 60);
+    return m < 60 ? m + " min" : Math.floor(m / 60) + " h";
+  }
+  function stuckText(st) {
+    return (st.kind === "task" ? "background task silent " : "no new step for ") + spanText(st.s);
+  }
 
   /* the admin's hover detail: what the session's tool has loaded */
   function harness(h) {
@@ -1459,9 +1467,11 @@ a.p-main { color: inherit; text-decoration: none; }
                  isAdmin() ? harness(a.harness) : null].filter(Boolean).join("\n");
       /* a hidden project: the row goes by the session's handle, which also tells two apart */
       var k = hidden(a) ? a.id : a.name;
-      var idle = a.worker ? "" : idleText(a.idle_s);  /* first on the grey line: never cut off */
+      /* first on the grey line: never cut off. A session still busy or waiting on a task (a
+         stuck one too) is not idle, however old its last write: it stays in sight */
+      var idle = a.worker || (a.activity && a.activity !== "idle") ? "" : idleText(a.idle_s);
       list.push({ key: k, name: rowName(a, shortName(a.name)), online: true, idle: idle,
-                  sub: (idle ? idle + " \u00b7 " : "") + (a.title && !a.label && !hidden(a) ? shortName(a.name) + " \u00b7 " : "") + (a.where || a.machine), to: k, bg: !!a.background, tool: a.tool, act: a.activity || "",
+                  sub: (idle ? idle + " \u00b7 " : "") + (a.title && !a.label && !hidden(a) ? shortName(a.name) + " \u00b7 " : "") + (a.where || a.machine), to: k, bg: !!a.background, tool: a.tool, act: a.activity || "", stuck: a.stuck || null,
                   who: !a.mine && (isAdmin() || hidden(a)) ? a.person : null, ro: !a.mine && a.writable === false,
                   sess: true, mine: !!a.mine, note: a.status || "", where: a.where || a.machine, agent: a.tool === "claude-code" ? "Claude" : "the agent", team: !!a.team && !hidden(a), owner: a.team ? String(a.person || "").replace(/ \(team\)$/, "") : a.person || "",
                   tip: hidden(a) ? a.person + "'s session in a project you have no role in" : tip });
@@ -1815,6 +1825,18 @@ a.p-main { color: inherit; text-decoration: none; }
     if (e.state) return chip(e.state, e.state === "starting" ? "active" : "idle", "n");
     var bg = e.bg ? el("span", { "class": "bg-lead" + (e.online ? " on" : ""), title: "background job" }, [icon("i-clock", 12)]) : null;
     if (!e.online) return chip("Offline", "idle", null, bg);
+    var c;
+    if (e.stuck) {  /* amber: silent for half an hour or more, the hub has asked it to check */
+      c = chip((e.stuck.kind === "task" ? "Silent " : "Stuck ") + spanText(e.stuck.s), "warn", null, bg);
+      c.title = (e.stuck.kind === "task" ? "Waiting on a background task that has printed nothing for "
+                                          : "Busy with no new step for ") + spanText(e.stuck.s);
+      return c;
+    }
+    if (e.act === "shell") {  /* its turn is over; a background task it started still runs */
+      c = chip("Background task", "active", null, bg);
+      c.title = "Waiting on a background task";
+      return c;
+    }
     if (WAITING[e.act]) return chip("Waiting", "active", null, bg);
     if (e.act && e.act !== "idle") return chip("Working", "active", null, bg);
     return bg;
@@ -2103,6 +2125,8 @@ a.p-main { color: inherit; text-decoration: none; }
     if (conv === "mgr" && !a && ["starting", "up"].indexOf(feed.manager) >= 0) return { what: "waking the manager\u2026", cls: "waking" };
     if (!a || !a.activity || a.activity === "idle") return null;
     if (WAITING[a.activity]) return { who: e.name || "manager", what: WAITING[a.activity], cls: "waiting" };
+    if (a.stuck) return { who: e.name || "manager", what: "looks stuck: " + stuckText(a.stuck), cls: "waiting" };
+    if (a.activity === "shell") return { who: e.name || "manager", what: "is waiting on a background task", cls: "waiting" };
     return { who: e.name || "manager", what: a.activity === "busy" ? "is working" : a.activity, more: a.status || "", cls: "busy" };
   }
   function renderWorking(all) {

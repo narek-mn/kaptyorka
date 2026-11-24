@@ -182,7 +182,9 @@ def test_idle_sessions_fold_at_the_end(hub):
     assert code.index('foldGroup(box, "bg", ') < code.index('foldGroup(box, "idle", ')
     assert 'shown.filter(function (e) { return !e.bg && !e.idle; })' in code
     assert 'shown.filter(function (e) { return e.sess && !e.bg && e.idle; })' in code
-    assert 'var idle = a.worker ? "" : idleText(a.idle_s);' in html
+    # a session still busy or waiting on a background task never folds away (a stuck one)
+    assert 'var idle = a.worker || (a.activity && a.activity !== "idle") ? "" : idleText(a.idle_s);' \
+        in html
     assert 'store(function (s) { return s.getItem("kaptyorka.idle-open"); }) === "1"' in html
     assert 'sub: (idle ? idle + " \\u00b7 " : "") + (a.title' in html  # first on the grey line
 

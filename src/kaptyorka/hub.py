@@ -23,7 +23,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from kaptyorka import __version__, admin_ops, brief, identity, knowledge, manager, paths, signin, usage
+from kaptyorka import __version__, admin_ops, brief, identity, knowledge, manager, paths, signin, stuck, usage
 from kaptyorka.gitlab import GitLabError, GitLabSource
 from kaptyorka import overnight as overnight_mod
 from kaptyorka import rules as rules_mod
@@ -237,6 +237,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     decide_lock = threading.Lock()
     work_decide_lock = threading.Lock()  # one decision per request, even when two race
     started = {"first": True}  # the first tick closes a manager left running while off
+    # sessions in overnight mode, per bridge device, as its last heartbeat said: their bridge
+    # wakes them when stuck, so the hub does not as well
+    night: dict = {"by_device": {}, "keys": set()}
 
     def principal_of(headers: Mapping) -> Principal:
         """The caller's principal from its bearer token (the Auth middleware already let it in)."""
@@ -513,6 +516,53 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         mm.record_launch(now)
         wake_bridges()
 
+    def stuck_tick(now: float) -> None:
+        """Stuck sessions (stuck.py), each stage once per episode: at WAKE_S the session itself
+        (not one in overnight mode: its bridge wakes it), at TELL_S its person's online
+        sessions (else their page) and a worker's boss, plus the manager, which hears it once
+        more AGAIN_S later. An episode is one silence: its start is a steady hub time."""
+        online = store.online()
+        live = ws.live_keys()
+        names = {p["id"]: p["name"] for p in store.people()}
+        mid = mm.person_id()
+        for a in online:
+            ep = stuck.of_agent(a, now)
+            if ep is None:
+                continue
+            task = ep.get("task", {}).get("id", "")
+            episode = f"stuck:{a.key}:{ep['kind']}:{task}:{int(now - ep['age'])}"
+            if a.key not in night["keys"] and mm.push_once(episode + ":wake", now):
+                tell(a.key, stuck.wake_text(ep))
+            if ep["age"] < stuck.TELL_S:
+                continue
+            person = names.get(a.person_id, "")
+            if mm.push_once(episode + ":tell", now):
+                if a.person_id is not None and a.person_id == mid:
+                    to = [f"web:{n}" for n in admin_ops.admins(store)]  # the manager's own
+                else:
+                    to = [b.key for b in online if b.person_id == a.person_id and b.key != a.key
+                          and b.key not in live and a.person_id is not None] \
+                        or ([f"web:{person}"] if person else [])
+                boss = ws.boss_key(live[a.key]) if a.key in live else None
+                if boss and boss != a.key and boss not in to and ws.session_online(boss, now):
+                    to.append(boss)
+                text = stuck.people_text(a.name, a.machine, ep, a.key, a.background)
+                for k in to:
+                    tell(k, text)
+                store.log_add("hub", "stuck", f"{a.name}: {ep['kind']} {stuck.span(ep['age'])}")
+            if a.person_id is not None and a.person_id == mid:
+                continue  # the manager is not told about itself
+            key = manager_to_wake()
+            if key is None or key == a.key:
+                continue
+            git = (ws.facts(a.device_id).get("git") or {}).get(a.cwd) \
+                if a.device_id is not None and a.cwd else None
+            for stage, after in (("manager", stuck.TELL_S),
+                                 ("again", stuck.TELL_S + stuck.AGAIN_S)):
+                if ep["age"] >= after and mm.push_once(f"{episode}:{stage}", now):
+                    tell(key, stuck.manager_text(a.name, a.machine, person, ep, a.key,
+                                                 a.background, git, again=stage == "again"))
+
     def tick() -> None:
         """Move workers on; deliver what the bosses hear; keep the manager alive."""
         now = store.clock()
@@ -520,6 +570,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             tell(to_key, text)
         if ws.ordered:  # a worker whose boss session ended is being closed
             wake_bridges()
+        try:
+            stuck_tick(now)
+        except Exception as e:  # a stuck check must never stop the workers' clock
+            print(f"kaptyorka: stuck check failed: {e}", flush=True)
         try:
             manager_tick(now)
         except Exception as e:  # the manager must never stop the workers' clock
@@ -1053,6 +1107,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             ws.bridge_seen(principal.device_id, [str(s.get("key")) for s in body["sessions"]],
                            [t for t in tools if isinstance(t, str)] if isinstance(tools, list)
                            else [], body.get("overnight"))
+            if isinstance(body.get("overnight"), list):
+                night["by_device"][principal.device_id] = {str(k) for k in body["overnight"]}
+                night["keys"] = set().union(*night["by_device"].values())
         if own and (isinstance(facts, dict) or isinstance(body.get("folders"), dict)):
             ws.facts_seen(principal.device_id, facts, body.get("folders"))
             try:  # history is a bonus: a bad git payload must not fail the heartbeat
