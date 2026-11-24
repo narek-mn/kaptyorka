@@ -30,6 +30,13 @@ REQUEST_TTL_S = 3600
 REMIND_AFTER_S = 86400
 WEEKLY_S = 7 * 86400
 PUSH_KEEP_S = 30 * 86400
+TASKS_AFTER = 15  # messages handled since its task list was saved: remind it to save
+TASKS_EVERY_S = 7200  # or this long since the last save
+TASKS_NUDGE_KEY = "manager_tasks_nudged_at"
+TASKS_LINE = 'save your task list now (state_write("manager", text))'
+TASKS_FIRST_MAX = 6000  # characters of the saved task list the launch's first message carries
+PEOPLE_FIRST_S = 120  # a routine digest waits while a person's message to the manager is this young
+PEOPLE_FIRST_MAX_S = 300  # and never longer than this after it was due
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS work_requests (
@@ -44,6 +51,14 @@ CREATE TABLE IF NOT EXISTS manager_pushes (
 
 MANAGER_SECTION = """You are the team's manager session. You run under the account `manager`, \
 started and kept alive by the hub. You are not a coder and you do not work on projects.
+
+## Your task list: save it, or it is lost
+
+Your conversation can end or be compacted at any time; only the saved list survives. Keep \
+every open task in it, one short block per person: what was promised, who waits for what, \
+relays not yet passed on. Save it with `state_write("manager", text)` (any text; only you can \
+read it) whenever a task opens or ends, and when a notice says "save your task list now". \
+A new run gets it in its first message; read it again any time with `state("manager")`.
 
 ## What the hub sends you, and what to do
 
@@ -99,10 +114,6 @@ session to start it with `work`, so a worker runs on their machine.
 `log(500)` review): give each one to a subagent with the Agent tool, one subagent per job, \
 and pick its model on purpose (a small fast one for merging text, a stronger one for the \
 review). A subagent has your tools and no others. You stay free for messages meanwhile.
-- Keep an open-tasks list, one short block per person, in your own state note: \
-`state_write("manager", text)` with the five headings, the tasks under Where it stands. \
-Read it with `state("manager")` when you start, and update it when a task opens or ends. \
-Only you can read it.
 
 ## Your limits
 
@@ -233,10 +244,29 @@ session.
 """
 
 
+COMPACT_SECTION = """# Compact instructions
+
+When the conversation is compacted, keep: every open promise and to whom it was made, who \
+waits for what (requests, answers, decisions), and relays you have not passed on yet, each \
+with the person or session and the request id. Then save your task list with \
+`state_write("manager", text)`.
+"""
+
+
 def claude_md(rules_text: str) -> str:
     return (rules.rules_text(rules_text) or "No team rules yet.") + "\n\n# Manager\n\n" \
         + MANAGER_SECTION + "\n" + OLD_VERSION_SECTION + "\n" + OVERNIGHT_SECTION + "\n" \
-        + STUCK_SECTION + "\n" + MACHINES_SECTION
+        + STUCK_SECTION + "\n" + MACHINES_SECTION + "\n" + COMPACT_SECTION
+
+
+def first_message(base: str, tasks: Optional[str]) -> str:
+    """The launch's first message: `base`, then the task list the last run saved."""
+    if not tasks or not tasks.strip():
+        return base
+    tasks = tasks.strip()
+    if len(tasks) > TASKS_FIRST_MAX:
+        tasks = tasks[:TASKS_FIRST_MAX] + '\n[cut; read the rest with state("manager")]'
+    return f"{base}\n\nYour task list as the last run saved it:\n\n{tasks}"
 
 
 def ensure_schema(db) -> None:
@@ -718,6 +748,12 @@ class ManagerStore:
 
     # deduped pushes
 
+    def pushed(self, key: str) -> bool:
+        """push_once(key) ran before (with no ttl: it never pushes again)."""
+        with self.lock:
+            return self.db.execute("SELECT 1 FROM manager_pushes WHERE key=?",
+                                   (key,)).fetchone() is not None
+
     def push_once(self, key: str, now: float, ttl_s: Optional[float] = None) -> bool:
         with self.lock:
             row = self.db.execute("SELECT time FROM manager_pushes WHERE key=?",
@@ -732,6 +768,84 @@ class ManagerStore:
         with self.lock:
             return self.db.execute("DELETE FROM manager_pushes WHERE time<?",
                                    (now - PUSH_KEEP_S,)).rowcount
+
+    # its task list (its own state note) and its load
+
+    def tasks(self) -> Tuple[Optional[str], Optional[float]]:
+        """The manager's task list as last saved (state note of project `manager`), and when."""
+        with self.lock:
+            row = self.db.execute(
+                "SELECT text, time FROM notes WHERE topic='state' AND project=?"
+                " AND deleted_at IS NULL ORDER BY id DESC LIMIT 1", (PERSON,)).fetchone()
+        return (None, None) if row is None else (row["text"], row["time"])
+
+    def _asks(self, since: float) -> list:
+        """Lock held. Messages people and sessions (not the hub) sent the manager since
+        `since`, each with the time of the manager's next message back to that sender, if any."""
+        return self.db.execute(
+            "SELECT m.created, m.sender_key, (SELECT MIN(r.created) FROM messages r"
+            " WHERE r.sender_key IN (SELECT a.key FROM agents a JOIN people p ON p.id=a.person_id"
+            "  WHERE p.name=? AND p.role='manager') AND r.to_key=m.sender_key"
+            "  AND r.created>=m.created) AS answered"
+            " FROM messages m WHERE m.created>? AND m.sender_key NOT LIKE 'hub:%'"
+            " AND m.to_key IN (SELECT a.key FROM agents a JOIN people p ON p.id=a.person_id"
+            "  WHERE p.name=? AND p.role='manager')", (PERSON, since, PERSON)).fetchall()
+
+    def tasks_nudge(self, now: float) -> str:
+        """One line for the next notice to the manager when its task list is due a save:
+        TASKS_AFTER messages since the last save (or the last such line), or TASKS_EVERY_S.
+        Empty when not due; once it is given, it counts again from now."""
+        _, saved = self.tasks()
+        told = self.stamp(TASKS_NUDGE_KEY)
+        since = max(saved or 0.0, told or 0.0)
+        if not since:  # never saved nor reminded: count from now
+            self.set_stamp(TASKS_NUDGE_KEY, now)
+            return ""
+        with self.lock:
+            n = len(self._asks(since))
+        if n < TASKS_AFTER and now - since < TASKS_EVERY_S:
+            return ""
+        self.set_stamp(TASKS_NUDGE_KEY, now)
+        return f"\n\n{TASKS_LINE}"
+
+    def person_waiting(self, now: float) -> bool:
+        """A person or session wrote to the manager less than PEOPLE_FIRST_S ago, and it has
+        not answered them yet."""
+        with self.lock:
+            return any(r["answered"] is None for r in self._asks(now - PEOPLE_FIRST_S))
+
+    def load(self, now: float) -> dict:
+        """The manager's load for the admin: messages to it in the last hour, the median reply
+        time of those answered (seconds, None without one), how many of the last day wait for
+        an answer now, and when its task list was last saved."""
+        with self.lock:
+            day = self._asks(now - 86400)
+        hour = [r for r in day if r["created"] > now - 3600]
+        waits = sorted(r["answered"] - r["created"] for r in hour if r["answered"] is not None)
+        median = None
+        if waits:
+            mid = len(waits) // 2
+            median = waits[mid] if len(waits) % 2 else (waits[mid - 1] + waits[mid]) / 2
+        return {"hour": len(hour), "median_s": median,
+                "waiting": sum(1 for r in day if r["answered"] is None),
+                "saved": self.tasks()[1]}
+
+
+def load_line(load: dict, now: float) -> str:
+    """The manager's load in one line, as the page and `kaptyorka status` show it."""
+    reply = "no replies" if load["median_s"] is None else f"median reply {_span(load['median_s'])}"
+    saved = "never" if load["saved"] is None else _span(now - load["saved"]) + " ago"
+    return (f"{load['hour']} messages in the last hour, {reply}, {load['waiting']} waiting;"
+            f" task list saved {saved}")
+
+
+def _span(s: float) -> str:
+    s = int(s)
+    if s < 120:
+        return f"{s} s"
+    if s < 7200:
+        return f"{s // 60} min"
+    return f"{s // 3600} h"
 
 
 def prune(store: Store, now: float) -> int:

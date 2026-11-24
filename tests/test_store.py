@@ -324,7 +324,7 @@ def test_offline_label_match(store, clock):
     beat(store, "o", "x", "box")
     with store.lock:
         store.db.execute("UPDATE agents SET person_id=? WHERE key='m'", (mgr,))
-    clock.t += 31  # both offline
+    clock.t += 601  # both gone longer than a held send waits for
     assert store.send_from_web("alice", "manager", "hi") == 1
     assert store.messages()[0].to == "pc/claude-code/manager"
     with pytest.raises(KaptyorkaError, match="no session named box"):

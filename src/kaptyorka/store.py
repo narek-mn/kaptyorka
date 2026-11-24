@@ -15,6 +15,7 @@ from kaptyorka import paths, stuck
 from kaptyorka.secrets_check import TEXT_TYPES, check_secrets
 
 ONLINE_S = 30
+RECENT_S = 600  # send to a session gone this long still holds the message for it
 MANAGER_ACCOUNT = "manager"  # manager.PERSON; that module imports this one
 LEASE_S = 60
 MAX_TEXT = 32_000
@@ -1605,7 +1606,10 @@ class Store:
 
     # messages
 
-    def send(self, sender_key: str, to: str, text: str, file_id: Optional[int] = None) -> int:
+    def send(self, sender_key: str, to: str, text: str, file_id: Optional[int] = None,
+             held: Optional[list] = None) -> int:
+        """`held`, when given, gets (name, seconds since last seen) for each target that is
+        not online now: the message waits for its next report."""
         check_secrets(text)
         with self.lock:
             now = self.clock()
@@ -1632,10 +1636,19 @@ class Store:
                           and self._reply_door(sender_key, sp, t, now)]
             n = self._insert(sender_key, sender["name"], targets, text, now, file_id)
             self._rate_hit(sender_key, now)
+            if held is not None and to != "all":
+                held += self._held(targets, now)
             who = self._person_name(sp) if opened else ""
         for other in opened:
             self.log_add(who, "door_open", f"{sender['name']} <-> {other}")
         return n
+
+    @staticmethod
+    def _held(targets, now) -> list:
+        """(name, seconds since last seen) for each session target gone less than RECENT_S;
+        one gone longer (a name kept for its next session) reads as a plain send."""
+        return [(t["name"], int(now - t["last_seen"])) for t in targets
+                if not t["key"].startswith("web:") and ONLINE_S <= now - t["last_seen"] < RECENT_S]
 
     def _rate_check(self, key, now):
         count, window = RATE
@@ -1829,6 +1842,16 @@ class Store:
             online += [r for r in self._online_rows(now) if r["key"] not in seen
                        and self._answers(sender_key, viewer, r)]
         match = self._named(online, to, viewer)
+        if not match:  # a session seen in the last RECENT_S: held, it gets it when it reports
+            seen = {r["key"] for r in online}
+            off = self.db.execute("SELECT 1 FROM settings WHERE key='manager_enabled'"
+                                  " AND value='0'").fetchone() is not None
+            recent = [r for r in self.db.execute(
+                "SELECT * FROM agents WHERE last_seen > ? ORDER BY last_seen DESC",
+                (now - RECENT_S,)).fetchall() if r["key"] not in seen
+                and not (off and self._role_of(r["person_id"]) == "manager")
+                and (not limited or self._listed(viewer, r) or self._answers(sender_key, viewer, r))]
+            match = self._named(recent, to, viewer)
         match = match or [r for r in self.db.execute(
             "SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC LIMIT 1", (to,)).fetchall()
             if not limited or self._listed(viewer, r)]

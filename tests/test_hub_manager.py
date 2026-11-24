@@ -39,7 +39,7 @@ def hub(tmp_path, clock, monkeypatch):
     mm.set_enabled(False, "test")  # the start-up tick must not race the test; tests switch it on
     stop = start_hub(store, manager_url=URL)
     yield SimpleNamespace(url=f"http://127.0.0.1:{stop.port}", store=store, mm=mm,
-                          ws=WorkerStore(store), tick=stop.app.state.tick,
+                          ws=WorkerStore(store), tick=stop.app.state.tick, tell=stop.app.state.tell,
                           folder=tmp_path / "kh" / manager.DIR,
                           config=tmp_path / "kh" / manager.CONFIG)
     stop()
@@ -688,6 +688,10 @@ def test_knowledge_light_notice_on_a_project_note_and_a_finished_worker(hub, clo
                    principal=hub.store._person_principal(alice))
     clock[0] += 1
     hub.store.notes_write("k:alice", "state", "where it stands", "proj-a")
+    run(call(mgr, me, "inbox"))
+    hub.tick()  # it waits 5 minutes for more changes to bundle with
+    assert knowledge_texts(hub, mgr, me) == []
+    clock[0] += 300
     run(call(mgr, me, "inbox"))
     hub.tick()
     assert knowledge_texts(hub, mgr, me) == [

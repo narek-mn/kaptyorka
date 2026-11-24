@@ -1107,6 +1107,18 @@ def test_status_manager_off_is_ok(monkeypatch, home, capsys):
     assert capsys.readouterr().out.splitlines()[-2] == "manager: off"
 
 
+def test_status_shows_the_managers_load(monkeypatch, home, capsys):
+    _joined()
+    _hub_json()
+    _units(monkeypatch, bridge=True, hub=True)
+    load = "3 messages in the last hour, median reply 40 s, 1 waiting; task list saved 5 min ago"
+    monkeypatch.setattr(http, "request", lambda *a, **k: (200, {"manager_state": "up",
+                                                                "manager_load": load}))
+    assert entry_with_exit(["status"]) == 0
+    assert capsys.readouterr().out.splitlines()[-3:-1] == ["manager: running",
+                                                           "manager load: " + load]
+
+
 def test_status_token_refused(monkeypatch, home, capsys):
     _joined("http://10.0.0.9:8765")
     _units(monkeypatch, bridge=True)

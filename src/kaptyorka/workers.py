@@ -1307,10 +1307,11 @@ class WorkerStore:
 
     def send_via_manager(self, sender_key: str, to: str, text: str,
                          manager_pid: Optional[int],
-                         file_id: Optional[int] = None) -> Optional[int]:
+                         file_id: Optional[int] = None,
+                         held: Optional[list] = None) -> Optional[int]:
         """The manager needs no door: a send from its sessions, or to one of them, goes in
         without the door check. None when neither side is the manager (use store.send).
-        `file_id`: an attachment, checked as store.send checks it."""
+        `file_id`: an attachment, checked as store.send checks it. `held`: as store.send."""
         if manager_pid is None:
             return None
         st = self.store
@@ -1339,6 +1340,8 @@ class WorkerStore:
                     raise KaptyorkaError("that file is not yours")
             n = st._insert(sender_key, sender["name"], targets, text, now, file_id)
             st._rate_hit(sender_key, now)
+            if held is not None and to != "all":
+                held += st._held(targets, now)
             return n
 
     def send_web_via_manager(self, name: str, to: str, text: str, person_id: Optional[int],
