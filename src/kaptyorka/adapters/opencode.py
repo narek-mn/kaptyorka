@@ -73,6 +73,24 @@ for a in "$@"; do
 done
 exec "$real" --port 0 "$@"
 """
+LIMIT_JS = """\
+// A usage or rate limit stopped a session: `kaptyorka hook opencode failure` tells the hub
+// (session_end.py), once per session in 10 minutes. Only limits: an abort (Esc) is an error too.
+const LIMIT = /usage limit|rate.?limit|quota|too many requests|429|insufficient.?(credit|balance)/i;
+const told = {};
+const limit = (sessionID, error, cwd) => {
+  let text = "";
+  try { text = typeof error === "string" ? error : JSON.stringify(error); } catch {}
+  if (!sessionID || !LIMIT.test(text) || Date.now() - (told[sessionID] || 0) < 600000) return;
+  told[sessionID] = Date.now();
+  try {
+    const child = execFile(KAPTYORKA, ["hook", "opencode", "failure"], { cwd, timeout: 4000,
+      env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } }, () => {});
+    child.stdin.end(JSON.stringify({ session_id: sessionID, cwd, error: "rate_limit",
+      error_details: text.slice(0, 600) }));
+  } catch {}
+};
+"""
 PLUGIN = """\
 // kaptyorka: adds the team brief to every OpenCode chat. Written by `kaptyorka join`.
 import { execFile } from "node:child_process";
@@ -81,15 +99,15 @@ const exec = promisify(execFile);
 const KAPTYORKA = %s;
 export const Kaptyorka = async ({ directory, client }) => {
   const brief = {};
-  const run = async (sessionID, args, ms = 4000) => {
+  const run = async (sessionID, args, ms = 4000, input = "") => {
     const p = exec(KAPTYORKA, args, { cwd: directory, timeout: ms,
       env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } });
-    p.child.stdin.end();
+    p.child.stdin.end(input);
     return (await p).stdout.trim();
   };
-  const hook = async (sessionID, event) => {
+  const hook = async (sessionID, event, prompt = "") => {  // the prompt's text: hub hints
     try {
-      return await run(sessionID, ["hook", "opencode", event]);
+      return await run(sessionID, ["hook", "opencode", event], 4000, JSON.stringify({ prompt }));
     } catch {
       return "";
     }
@@ -110,8 +128,9 @@ export const Kaptyorka = async ({ directory, client }) => {
     return line;
   };
   return {
-    "chat.message": async (input) => {
-      brief[input.sessionID] = await hook(input.sessionID, input.sessionID in brief ? "prompt" : "start");
+    "chat.message": async (input, output) => {
+      const text = ((output && output.parts) || []).filter((p) => p.type === "text").map((p) => p.text).join("\\n");
+      brief[input.sessionID] = await hook(input.sessionID, input.sessionID in brief ? "prompt" : "start", text);
     },
     "experimental.chat.system.transform": async (input, output) => {
       if (brief[input.sessionID]) output.system.push(brief[input.sessionID]);
@@ -125,11 +144,13 @@ export const Kaptyorka = async ({ directory, client }) => {
     event: async ({ event }) => {  // a new chat says whether it is on the hub
       const info = event.type === "session.created" ? event.properties.info : null;
       if (info && !info.parentID) await hub(info.id, []);
+      if (event.type === "session.error" && event.properties && event.properties.sessionID)
+        limit(event.properties.sessionID, event.properties.error, directory);
     },
   };
 };
 const SAY = "Tell the user the line above, word for word, and nothing else.";
-"""
+""" + LIMIT_JS
 COMMAND_MARK = "<!-- written by kaptyorka; it rewrites this file -->"
 COMMAND = f"""\
 ---
@@ -152,25 +173,29 @@ export default {
   setup: async (ctx) => {
     const brief = {};
     const directory = ctx.location.directory;
-    const hook = async (sessionID, event) => {
+    const hook = async (sessionID, event, prompt = "") => {  // the prompt's text: hub hints
       try {
         const run = exec(KAPTYORKA, ["hook", "opencode", event], { cwd: directory, timeout: 4000,
           env: { ...process.env, KAPTYORKA_OPENCODE_SESSION: sessionID } });
-        run.child.stdin.end();
+        run.child.stdin.end(JSON.stringify({ prompt }));
         return (await run).stdout.trim();
       } catch {
         return "";
       }
     };
     await ctx.session.hook("prompt", async (event) => {
-      brief[event.sessionID] = await hook(event.sessionID, event.sessionID in brief ? "prompt" : "start");
+      const p = event.prompt;
+      const text = typeof p === "string" ? p : (p && typeof p.text === "string" ? p.text : "");
+      brief[event.sessionID] = await hook(event.sessionID, event.sessionID in brief ? "prompt" : "start", text);
     });
     await ctx.session.hook("context", async (event) => {
       if (brief[event.sessionID]) event.system.push({ type: "text", text: brief[event.sessionID] });
     });
+    // OpenCode 2.3.2's `retry` hook gets each failed model call's error; its decision is kept
+    await ctx.session.hook("retry", async (event) => { limit(event.sessionID, event.error, directory); });
   },
 };
-"""
+""" + LIMIT_JS
 
 
 TUI_MARK = "kaptyorka-opencode-tui"
@@ -382,6 +407,31 @@ def _v2_newest(svc: Dict[str, str], pid: int, cwd: str,
     return "opencode:" + max(here, key=lambda s: s.get("time", {}).get("updated", 0))["id"]
 
 
+def activity(updated, busy: bool) -> "tuple[Optional[float], str, Optional[float]]":
+    """(idle_s, activity, write_s) of a session from its `time.updated` (ms) and whether a turn
+    runs. Checked on OpenCode 1.19.5 and 2.3.2: `updated` moves with each step of a turn (a
+    message, a tool starting or ending) and stays still while the session is idle and while
+    one tool runs long, so it is the session's own last write, like a Claude Code transcript's
+    last real line (stuck.py judges "busy with no new step" from it)."""
+    if isinstance(updated, bool) or not isinstance(updated, (int, float)) or updated <= 0:
+        return None, "busy" if busy else "", None
+    age = max(0.0, round(time.time() - updated / 1000, 1))
+    return age, "busy" if busy else "idle", age if busy else None
+
+
+def _v2_activity(svc: Dict[str, str], sid: str) -> "tuple[Optional[float], str, Optional[float]]":
+    """activity() for a V2 session: GET /api/session/:id has time.updated, and time.busy and
+    time.idle (ms; a turn runs while busy is later than idle), checked on 2.3.2."""
+    try:
+        status, data = _v2_call(svc, "GET", f"/api/session/{urllib.parse.quote(sid)}")
+        t = (data.get("data") or {}).get("time") or {} if status == 200 and isinstance(data, dict) else {}
+    except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException):
+        return None, "", None
+    busy, idle = t.get("busy"), t.get("idle")
+    running = isinstance(busy, (int, float)) and not (isinstance(idle, (int, float)) and idle >= busy)
+    return activity(t.get("updated"), running)
+
+
 def open_dir() -> Path:
     """Where kaptyorka's V2 TUI plugin notes the session each window shows: <pid>.json."""
     from kaptyorka import paths
@@ -590,7 +640,7 @@ def _list(pid: int, port: int, timeout: float = TIMEOUT_S) -> list:
     return data if status == 200 and isinstance(data, list) else []
 
 
-def _newest(pid: int, port: int, cwd: str) -> Optional[str]:
+def _newest_row(pid: int, port: int, cwd: str) -> Optional[dict]:
     """Most recently updated session in cwd since the TUI started; None before its first prompt.
 
     Sessions from earlier runs in the same folder are stored too; nobody sees those.
@@ -600,7 +650,20 @@ def _newest(pid: int, port: int, cwd: str) -> Optional[str]:
             and s.get("time", {}).get("updated", 0) >= since]
     if not here:
         return None
-    return "opencode:" + max(here, key=lambda s: s.get("time", {}).get("updated", 0))["id"]
+    return max(here, key=lambda s: s.get("time", {}).get("updated", 0))
+
+
+def _newest(pid: int, port: int, cwd: str) -> Optional[str]:
+    row = _newest_row(pid, port, cwd)
+    return "opencode:" + row["id"] if row else None
+
+
+def _busy(pid: int, port: int) -> set:
+    """V1: the ids GET /session/status names busy or retrying (it lists only those; 1.19.5)."""
+    status, data = _call(pid, port, "GET", "/session/status")
+    if status != 200 or not isinstance(data, dict):
+        return set()
+    return {k for k, v in data.items() if isinstance(v, dict) and v.get("type") in ("busy", "retry")}
 
 
 def session_key(pid: int, cwd: str) -> Optional[str]:
@@ -692,15 +755,19 @@ class OpenCodeAdapter:
         for pid, port in self.find_ports().items():
             try:
                 cwd = proc_cwd(pid)
-                key = _newest(pid, port, cwd)
+                row = _newest_row(pid, port, cwd)
+                busy = _busy(pid, port) if row else set()
             except NeedsPassword as e:
                 self._skip(e, port)
                 continue
             except (OSError, ValueError, TypeError, KeyError, StopIteration, IndexError,
                     http.client.HTTPException, subprocess.SubprocessError):
                 continue  # TUI just exited
-            if key:
-                out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), "", cwd=cwd))
+            if row:
+                idle_s, act, write_s = activity(row.get("time", {}).get("updated"), row["id"] in busy)
+                out.append(Session("opencode:" + row["id"], self.tool,
+                                   os.path.basename(cwd.rstrip("/")), act, cwd=cwd,
+                                   idle_s=idle_s, write_s=write_s))
         return out
 
     def _v2_sessions(self, svc: Dict[str, str]) -> List[Session]:
@@ -713,7 +780,7 @@ class OpenCodeAdapter:
             if key and key not in seen:
                 seen.add(key)
                 cwd = note["directory"]
-                out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), "", cwd=cwd))
+                out.append(self._v2_session(svc, key, cwd))
         for pid in _tuis():
             if pid in opened:
                 continue
@@ -725,8 +792,13 @@ class OpenCodeAdapter:
                 continue  # TUI just exited, or the service is restarting
             if key and key not in seen:
                 seen.add(key)
-                out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), "", cwd=cwd))
+                out.append(self._v2_session(svc, key, cwd))
         return out
+
+    def _v2_session(self, svc: Dict[str, str], key: str, cwd: str) -> Session:
+        idle_s, act, write_s = _v2_activity(svc, key.partition(":")[2])
+        return Session(key, self.tool, os.path.basename(cwd.rstrip("/")), act, cwd=cwd,
+                       idle_s=idle_s, write_s=write_s)
 
     def deliver(self, key: str, text: str) -> None:
         sid = key.partition(":")[2]

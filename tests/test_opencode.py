@@ -54,8 +54,9 @@ def test_deliver_unknown_session_raises(fake_opencode):
 def test_opencode_key_matches_shim_and_bridge(fake_opencode):
     key = identity.RESOLVERS["opencode"](os.getpid(), CWD)
     assert key == f"opencode:{NEWEST}"
-    assert adapter(fake_opencode).sessions() == [
-        Session(key, "opencode", os.path.basename(CWD), "", cwd=CWD)]
+    s, = adapter(fake_opencode).sessions()
+    assert (s.key, s.tool, s.project, s.cwd, s.activity) == (key, "opencode", os.path.basename(CWD),
+                                                              CWD, "idle")  # none busy
 
 
 def test_resolver_none_before_first_prompt(fake_opencode):
@@ -247,8 +248,8 @@ def fake_v2(monkeypatch):
 def test_v2_sessions_from_service(fake_v2):
     a = OpenCodeAdapter(find_ports=lambda: pytest.fail("no V1 port scan on V2"))
     assert a.sessions() == [Session("opencode:ses_v2new", "opencode", os.path.basename(CWD), "", cwd=CWD)]
-    method, path, _ = fake_v2.requests[-1]
-    assert method == "GET" and path.startswith("/api/session?") and "directory=" in path
+    assert any(m == "GET" and p.startswith("/api/session?") and "directory=" in p
+               for m, p, _ in fake_v2.requests)
 
 
 @pytest.fixture
@@ -348,3 +349,56 @@ def test_v2_deliver_refused_raises(fake_v2, monkeypatch):
         self.rfile.read(int(self.headers["Content-Length"])), self._send(404, b""))
     with pytest.raises(DeliveryError, match="HTTP 404"):
         OpenCodeAdapter().deliver("opencode:ses_x", "hi")
+
+
+def test_activity_from_time_updated_and_a_running_turn(monkeypatch):
+    """Checked on OpenCode 1.19.5 and 2.3.2: time.updated moves with each step of a turn and
+    stays still while idle or while one tool runs long."""
+    monkeypatch.setattr(opencode.time, "time", lambda: 10_000.0)
+    assert opencode.activity(9_000_000, False) == (1000.0, "idle", None)
+    assert opencode.activity(9_400_000, True) == (600.0, "busy", 600.0)
+    assert opencode.activity(None, True) == (None, "busy", None)
+    assert opencode.activity(True, False) == (None, "", None)
+
+
+def test_v2_activity_reads_busy_and_idle_times(monkeypatch):
+    monkeypatch.setattr(opencode.time, "time", lambda: 10_000.0)
+    rows = {"busy": {"updated": 9_900_000, "busy": 9_800_000, "idle": 9_700_000},
+            "done": {"updated": 9_900_000, "busy": 9_800_000, "idle": 9_900_000},
+            "new": {"updated": 9_900_000}}
+    monkeypatch.setattr(opencode, "_v2_call", lambda svc, m, path: (
+        200, {"data": {"time": rows[path.rsplit("/", 1)[1]]}}))
+    assert opencode._v2_activity({}, "busy") == (100.0, "busy", 100.0)
+    assert opencode._v2_activity({}, "done") == (100.0, "idle", None)
+    assert opencode._v2_activity({}, "new") == (100.0, "idle", None)
+    monkeypatch.setattr(opencode, "_v2_call", lambda *a: (_ for _ in ()).throw(OSError("down")))
+    assert opencode._v2_activity({}, "busy") == (None, "", None)
+
+
+def test_plugin_tells_the_hub_of_a_usage_limit_once(tmp_path):
+    """The plugins' limit(): a usage or rate limit runs `kaptyorka hook opencode failure` with
+    its text on stdin, once per session in 10 minutes; an abort (Esc) says nothing."""
+    import shutil
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    got = tmp_path / "got.jsonl"
+    exe = tmp_path / "kaptyorka"
+    exe.write_text(f"#!/bin/sh\necho \"$KAPTYORKA_OPENCODE_SESSION $*\" >> {got}.args\n"
+                   f"cat >> {got}\necho >> {got}\n")
+    exe.chmod(0o755)
+    js = tmp_path / "t.mjs"
+    js.write_text('import { execFile } from "node:child_process";\n'
+                  f"const KAPTYORKA = {json.dumps(str(exe))};\n" + opencode.LIMIT_JS + """
+limit("ses_1", { name: "APIError", data: { message: "You have hit your usage limit. Resets at 7pm" } }, process.cwd());
+limit("ses_1", { name: "APIError", data: { message: "Rate limit exceeded" } }, process.cwd());
+limit("ses_2", { name: "MessageAbortedError", data: { message: "aborted" } }, process.cwd());
+setTimeout(() => {}, 1500);
+""")
+    r = subprocess.run([node, str(js)], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    sent = [json.loads(line) for line in got.read_text().splitlines() if line.strip()]
+    assert len(sent) == 1 and sent[0]["error"] == "rate_limit" and sent[0]["session_id"] == "ses_1"
+    assert "Resets at 7pm" in sent[0]["error_details"]
+    assert (tmp_path / "got.jsonl.args").read_text() == "ses_1 hook opencode failure\n"

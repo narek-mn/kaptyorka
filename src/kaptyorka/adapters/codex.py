@@ -196,6 +196,25 @@ def _idle(updated) -> Optional[float]:
     return max(0.0, time.time() - (updated / 1000 if updated > 1e11 else updated))
 
 
+def _activity(status) -> str:
+    """The thread's `status` (app-server protocol v2 ThreadStatus, codex rust-v0.166.0
+    app-server-protocol/src/protocol/v2/thread.rs:1697-1718): {"type": "idle"}, {"type":
+    "active", "activeFlags": [...]} (waiting on an approval or the user's input), "notLoaded",
+    "systemError". As kaptyorka's activity words: busy, waiting, idle, or "" when unknown."""
+    kind = status.get("type") if isinstance(status, dict) else status
+    if kind == "active":
+        return "waiting" if (status.get("activeFlags") or []) else "busy"
+    return "idle" if kind == "idle" else ""
+
+
+def _lineage(t: dict) -> "tuple[str, bool, bool]":
+    """(parent key, one-shot, started by another session or tool): a subagent's
+    `parentThreadId`, `source` "exec" for `codex exec` (thread_data.rs:32-44, 221-222)."""
+    parent = t.get("parentThreadId")
+    parent = f"codex:{parent}" if isinstance(parent, str) and parent else ""
+    return parent, t.get("source") == "exec", bool(parent)
+
+
 def session_key(pid: int, cwd: str) -> Optional[str]:
     """identity.RESOLVERS["codex"]: newest loaded thread in the shim's cwd (the MCP server's
     parent is the daemon, not the TUI, so the pid says nothing). None without a daemon."""
@@ -262,9 +281,16 @@ class CodexAdapter:
             self._start_daemon()  # the bridge keeps the daemon running
             return []
         self._state("up")
-        return [Session(f"codex:{t['id']}", self.tool, os.path.basename(t["cwd"].rstrip("/")), "", cwd=t["cwd"],
-                        idle_s=_idle(t.get("updatedAt")))
-                for t in threads]
+        live = {f"codex:{t['id']}" for t in threads}
+        out = []
+        for t in threads:
+            parent, oneshot, helper = _lineage(t)
+            # updatedAt is not judged as a last step (unverified during a long turn): no write_s
+            out.append(Session(f"codex:{t['id']}", self.tool, os.path.basename(t["cwd"].rstrip("/")),
+                               _activity(t.get("status")), cwd=t["cwd"],
+                               idle_s=_idle(t.get("updatedAt")), parent=parent, oneshot=oneshot,
+                               helper=helper, parent_gone=bool(parent) and parent not in live))
+        return out
 
     def deliver(self, key: str, text: str) -> None:
         tid = key.partition(":")[2]

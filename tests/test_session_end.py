@@ -64,6 +64,25 @@ def test_the_hook_reports_a_team_session_only(monkeypatch):
     assert kw["timeout"] == 1 and kw["headers"]["X-Kaptyorka-Key"] == "claude%3As1"
 
 
+
+def test_opencode_limit_is_reported_for_a_team_session(monkeypatch):
+    """OpenCode's plugin runs `kaptyorka hook opencode failure` with the error on stdin."""
+    sent = []
+    monkeypatch.setattr(hook.http, "request", lambda *a, **k: sent.append((a, k)))
+    monkeypatch.setattr(hook.paths, "load_config", lambda c: {"hub": "http://h", "token": "T",
+                                                              "machine": "box-1"})
+    monkeypatch.setattr(hook.offhub, "off", lambda key: False)
+    data = '{"session_id": "ses_1", "cwd": "/w/proj-a", "error": "rate_limit",' \
+        ' "error_details": "usage limit reached, resets 7pm"}'
+    monkeypatch.setattr(hook.offhub, "personal", lambda *a: "not a team project")
+    assert hook._run("opencode", "failure", data) == "" and sent == []
+    monkeypatch.setattr(hook.offhub, "personal", lambda *a: "")
+    assert hook._run("opencode", "failure", data) == ""
+    [(args, kw)] = sent
+    assert args[1] == "http://h/api/session-event" and args[3]["error"] == "rate_limit"
+    assert args[3]["resets_at"] is not None and kw["headers"]["X-Kaptyorka-Key"] == "opencode%3Ases_1"
+
+
 # the hub side
 
 @pytest.fixture

@@ -306,3 +306,15 @@ def test_hook_commands_quote_the_exe(home, codex_home, monkeypatch):
     data = json.loads((codex_home / "hooks.json").read_text())
     assert data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] == \
         "'/my dir/k' hook codex prompt"
+
+
+def test_thread_status_and_lineage_from_thread_read():
+    """codex rust-v0.166.0 app-server protocol: ThreadStatus, parentThreadId, source."""
+    assert codex._activity({"type": "idle"}) == "idle"
+    assert codex._activity({"type": "active", "activeFlags": []}) == "busy"
+    assert codex._activity({"type": "active", "activeFlags": ["waitingOnApproval"]}) == "waiting"
+    assert codex._activity("systemError") == "" and codex._activity(None) == ""
+    assert codex._lineage({"parentThreadId": "th-a", "source": {"subAgent": "x"}}) == \
+        ("codex:th-a", False, True)
+    assert codex._lineage({"source": "exec"}) == ("", True, False)
+    assert codex._lineage({"source": "cli"}) == ("", False, False)

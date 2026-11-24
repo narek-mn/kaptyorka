@@ -19,7 +19,8 @@ GIT_S = 1  # the stop hook's own git read, inside TIMEOUT_S
 # status line takes built-in items only, Cursor has none for hooks, OpenCode 1 only toasts, and
 # OpenCode 2's footer needs its Bun build)
 NO_INDICATOR = ("codex", "cursor", "opencode")
-PROMPT_TEXT = ("claude-code", "codex")  # prompt hooks that get the prompt's text (suggest.py)
+# prompt hooks that get the prompt's text (suggest.py); OpenCode's from kaptyorka's plugin
+PROMPT_TEXT = ("claude-code", "codex", "opencode")
 HUB_TEAM_S = 8  # `hub team ...` asks the hub to check the role (optin.JOIN_S) before it saves
 
 # (event, brief) -> what the tool expects on stdout
@@ -203,7 +204,31 @@ def _run(tool: str, event: str, stdin: str, run=subprocess.run) -> str:
         return ""
     if tool == "claude-code" and event in NIGHT_EVENTS + ("stop", "prompt"):
         return _with_night(event, data, run)
+    if tool == "opencode" and event == "failure":
+        _report_limit(tool, data)
+        return ""
     return _hub_run(tool, event, data, run)
+
+
+def _report_limit(tool: str, data: dict) -> None:
+    """OpenCode's plugin saw a usage or rate limit stop a session (its `session.error` on
+    OpenCode 1, its `retry` hook on 2): told to the hub like Claude Code's StopFailure
+    (session_end.py). Team sessions only, never one kept off the hub."""
+    try:
+        sid = str(data.get("session_id") or os.environ.get("KAPTYORKA_OPENCODE_SESSION") or "")
+        cwd = str(data.get("cwd") or os.getcwd())
+        cfg = paths.load_config(None)
+        body = session_end.event("failure", data)
+        if not sid or body is None or not cfg.get("hub") or not cfg.get("token"):
+            return
+        key = f"{tool}:{sid}"
+        ident = optin.apply(Identity(key, cfg.get("machine", ""), tool, project_of(cwd), cwd))
+        if offhub.personal(ident.project, cwd, key) or offhub.off(key):
+            return
+        http.request("POST", f"{cfg['hub']}/api/session-event", cfg["token"], body,
+                     headers=ident.headers(), timeout=2)
+    except Exception:
+        pass
 
 
 def _config(data: dict) -> dict:
