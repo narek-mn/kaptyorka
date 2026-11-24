@@ -108,7 +108,7 @@ def test_codex_personal_folder_start_gets_the_guide_with_its_state_line(joined, 
     assert out["systemMessage"] == line
     assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
     assert out["hookSpecificOutput"]["additionalContext"].startswith(
-        "kaptyorka hub: this folder is personal")
+        "Hub: OFF (personal folder)\nkaptyorka hub: this folder is personal")
     assert "$hub team <project>" in out["hookSpecificOutput"]["additionalContext"]
 
 
@@ -117,7 +117,8 @@ def test_opencode_personal_folder_gets_the_guide_with_each_request(joined, monke
     as_session(monkeypatch, "opencode:ses_1", "opencode", PERSONAL)
     for event in ("start", "prompt"):  # the plugin pushes the hook's text into system each time
         hook.main("opencode", event, "")
-        assert capsys.readouterr().out.startswith("kaptyorka hub: this folder is personal")
+        assert capsys.readouterr().out.startswith(
+            "Hub: OFF (personal folder)\nkaptyorka hub: this folder is personal")
 
 
 def test_cursor_personal_folder_session_start_gets_additional_context(joined, monkeypatch,
@@ -126,7 +127,8 @@ def test_cursor_personal_folder_session_start_gets_additional_context(joined, mo
     as_session(monkeypatch, f"cursor:box-1:{PERSONAL}", "cursor", PERSONAL)
     hook.main("cursor", "start", json.dumps({"workspace_roots": [PERSONAL]}))
     out = json.loads(capsys.readouterr().out)
-    assert out["additional_context"].startswith("kaptyorka hub: this folder is personal")
+    assert out["additional_context"].startswith(
+        "Hub: OFF (personal folder)\nkaptyorka hub: this folder is personal")
     hook.main("cursor", "stop", json.dumps({"workspace_roots": [PERSONAL]}))
     assert json.loads(capsys.readouterr().out) == {}
 
@@ -136,7 +138,9 @@ def test_off_in_a_personal_folder_says_only_its_line(joined, monkeypatch, capsys
     as_session(monkeypatch, "opencode:ses_1", "opencode", PERSONAL)
     offhub.switch_key("opencode:ses_1", True)
     hook.main("opencode", "start", "")
-    assert capsys.readouterr().out == "kaptyorka hub: this session is off the hub; /hub on brings it back.\n"
+    assert capsys.readouterr().out == (
+        "Hub: OFF (switched off for this session; /hub on brings it back)\n"
+        "kaptyorka hub: this session is off the hub; /hub on brings it back.\n")
 
 
 def test_no_team_list_from_an_older_hub_is_silent(home, monkeypatch, capsys):
@@ -173,7 +177,8 @@ def test_coordinator_start_gets_the_name_a_project_line(joined, monkeypatch, cap
     as_session(monkeypatch, "opencode:ses_1", "opencode", PERSONAL)
     hook.main("opencode", "start", "")
     out = capsys.readouterr().out
-    assert out.startswith("the brief\n\n") and "name a project for notes and work" in out
+    assert out.startswith("Hub: ON as a coordinator (no project)\nthe brief\n\n")
+    assert "name a project for notes and work" in out
     assert "this folder is personal" not in out
 
 
@@ -182,7 +187,8 @@ def test_cursor_team_folder_start_says_the_line_without_a_hub_call(joined, monke
     as_session(monkeypatch, f"cursor:box-1:{TEAM}", "cursor", TEAM)
     hook.main("cursor", "start", json.dumps({"workspace_roots": [TEAM]}))
     assert json.loads(capsys.readouterr().out) == {
-        "additional_context": guide.on_hub(f"cursor:box-1:{TEAM}", "proj-a", False)}
+        "additional_context": "Hub: ON for proj-a\n"
+        + guide.on_hub(f"cursor:box-1:{TEAM}", "proj-a", False)}
 
 
 # ---- Cursor's user-level sessionStart hook ----

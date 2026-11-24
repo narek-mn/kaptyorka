@@ -242,7 +242,9 @@ def test_hub_team_command(home, monkeypatch):
         1, "kaptyorka: you have no role in proj-b; your projects: proj-a")
     code, line = offhub.command(["team", "proj-a"], env)
     assert code == 0 and "project proj-a" in line and optin.get("claude:s1") == "proj-a"
-    assert offhub.command([], env) == (0, "this session is on the hub for project proj-a")
+    assert offhub.command([], env) == (0, "this session is on the hub for project proj-a."
+                                       " /hub team off leaves the team; the agent reaches the"
+                                       " team with who and send")
     code, line = offhub.command(["team"], env)
     assert code == 0 and "coordinator" in line and optin.get("claude:s1") == COORD
     code, line = offhub.command(["team", "off"], env)
@@ -273,8 +275,8 @@ def test_hub_team_in_opencode_codex_and_cursor(home, monkeypatch):
         assert offhub.command(["team", "proj-b"], env, cwd="/w/diary")[0] == 1
         code, line = offhub.command(["team", "proj-a"], env, cwd="/w/diary")
         assert code == 0 and "project proj-a" in line and optin.get(key) == "proj-a"
-        assert offhub.command([], env, cwd="/w/diary") == (
-            0, "this session is on the hub for project proj-a")
+        assert offhub.command([], env, cwd="/w/diary")[1].startswith(
+            "this session is on the hub for project proj-a. ")
         assert offhub.command(["team"], env, cwd="/w/diary")[0] == 0 and optin.get(key) == COORD
         code, line = offhub.command(["team", "off"], env, cwd="/w/diary")
         assert code == 0 and "left the team" in line and optin.get(key) is None

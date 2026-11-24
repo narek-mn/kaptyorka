@@ -10,11 +10,16 @@ import time
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import facts, guide, http, offhub, optin, overnight, paths
+from kaptyorka import facts, guide, http, offhub, optin, overnight, paths, suggest
 from kaptyorka.identity import Identity, identify, project_of
 
 TIMEOUT_S = 3
 GIT_S = 1  # the stop hook's own git read, inside TIMEOUT_S
+# tools that show no hub indicator of their own: the start text says the state first (Codex's
+# status line takes built-in items only, Cursor has none for hooks, OpenCode 1 only toasts, and
+# OpenCode 2's footer needs its Bun build)
+NO_INDICATOR = ("codex", "cursor", "opencode")
+PROMPT_TEXT = ("claude-code", "codex")  # prompt hooks that get the prompt's text (suggest.py)
 HUB_TEAM_S = 8  # `hub team ...` asks the hub to check the role (optin.JOIN_S) before it saves
 
 # (event, brief) -> what the tool expects on stdout
@@ -278,25 +283,36 @@ def _hub_run(tool: str, event: str, data: dict, run=subprocess.run) -> str:
         # rebuilt for every request, so there it comes with each prompt; Cursor's sessionStart
         # additional_context (adapters/cursor.py).
         guided = event == "start" or (tool == "opencode" and event == "prompt")
+        prompt = data.get("prompt") if event == "prompt" and tool in PROMPT_TEXT \
+            and isinstance(data.get("prompt"), str) else ""
         why = offhub.personal(ident.project, ident.cwd, ident.key)
+
+        def head(text: str, off: bool) -> str:
+            """The state in plain words first, where the tool shows no hub indicator."""
+            if not guided or tool not in NO_INDICATOR:
+                return text
+            return "\n".join(p for p in (guide.state(ident.key, ident.project, why, off), text) if p)
         if why:  # not a team project's folder: nothing is sent, only the guide is shown
-            text = ""
-            if guided and offhub.off(ident.key):
+            text, off = "", offhub.off(ident.key)
+            if guided and off:
                 text = guide.off(ident.key)
             elif guided and why == paths.NOT_TEAM:
                 text = guide.personal(ident.key, offhub.load_mine())
-            return _local(fmt, event, text, shown)
+            elif prompt and why == paths.NOT_TEAM and not off:  # never after /hub off
+                text = suggest.off_line(ident.key, prompt)
+            return _local(fmt, event, head(text, off), shown)
         if tool == "claude-code":
             sid = ident.key.split(":", 1)[1]
             found = offhub.session(sid) if event == "start" else None
             if found is not None:
                 offhub.started(sid, *found, os.environ)
         if offhub.off(ident.key):  # kept off the hub: nothing is sent, only its one line
-            return _local(fmt, event, guide.off(ident.key) if guided else "", shown)
+            return _local(fmt, event, head(guide.off(ident.key) if guided else "", True), shown)
         # joined with /hub team, or a team machine's coordinator: nothing of its folder is sent
         joined = optin.get(ident.key) is not None or ident.project == paths.COORDINATOR
         if tool == "cursor" and event == "start":  # its brief comes with tool calls, not here
-            return _local(fmt, event, guide.on_hub(ident.key, ident.project, joined), shown)
+            return _local(fmt, event, head(guide.on_hub(ident.key, ident.project, joined), False),
+                          shown)
 
         deadline = time.monotonic() + TIMEOUT_S  # one budget for all calls of this hook
 
@@ -323,7 +339,8 @@ def _hub_run(tool: str, event: str, data: dict, run=subprocess.run) -> str:
             brief = ""
         if brief and event == "start":
             brief += "\n\n" + guide.on_hub(ident.key, ident.project, joined)
-        brief = "\n\n".join(p for p in (reason, brief) if p)
+        hints = suggest.on_lines(ident.key, prompt) if prompt else ""
+        brief = "\n\n".join(p for p in (reason, head(brief, False) if brief else "", hints) if p)
         if shown:
             return json.dumps({**(json.loads(fmt(event, brief)) if brief else {}),
                                "systemMessage": shown})

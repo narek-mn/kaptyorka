@@ -123,6 +123,9 @@ def harness(adapters: list, home: Path, skills_current: Optional[bool] = False) 
     return out
 
 
+INDICATOR_TOOLS = ("claude-code", "opencode")  # Codex and Cursor have no place for one
+
+
 def machine(adapters: list, run=subprocess.run, platform: str = sys.platform,
             skills_current: Optional[bool] = False) -> dict:
     from kaptyorka import __version__
@@ -133,10 +136,14 @@ def machine(adapters: list, run=subprocess.run, platform: str = sys.platform,
         load = 0.0
     installed = [a for a in adapters if a.installed()]
     hooks_ok = {a.tool: doctor.tool_configured(a, getattr(a, "home", Path.home())) for a in installed}
+    # the hub indicator (and /hub) where the tool has a place for one; the bridge puts it back at
+    # start, so False means it could not (a status line of a kind kaptyorka does not wrap)
+    indicator_ok = {a.tool: doctor.hub_installed(a, getattr(a, "home", Path.home()))
+                    for a in installed if a.tool in INDICATOR_TOOLS and hooks_ok[a.tool]}
     return {"os_user": getpass.getuser(), "tmux": shutil.which("tmux") is not None,
             "load": load, "cpus": os.cpu_count() or 1,
             "tools": {a.tool: _tool_version(a.tool, run) for a in installed},
-            "hooks_ok": hooks_ok, "version": __version__,
+            "hooks_ok": hooks_ok, "indicator_ok": indicator_ok, "version": __version__,
             "logins": _logins(installed, run),
             "harness": harness(adapters, Path.home(), skills_current)}
 

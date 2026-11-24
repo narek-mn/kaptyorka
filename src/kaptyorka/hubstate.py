@@ -104,8 +104,15 @@ def refresh(timeout: float = 5) -> dict:
                 status, body = 0, None
             if status == 200 and isinstance(body, dict) and isinstance(body.get("agents"), list):
                 out["ok"] = True
-                out["ids"] = sorted({a["id"] for a in body["agents"]
-                                     if isinstance(a, dict) and isinstance(a.get("id"), str)})
+                rows = [a for a in body["agents"] if isinstance(a, dict)]
+                out["ids"] = sorted({a["id"] for a in rows if isinstance(a.get("id"), str)})
+                # who and where the person can see, for the prompt hook's suggestions (suggest.py)
+                out["people"] = sorted({a["person"] for a in rows if not a.get("mine")
+                                        and not a.get("team") and isinstance(a.get("person"), str)
+                                        and a["person"]})
+                out["machines"] = sorted({m for a in rows if a.get("team") for m in
+                                          (a.get("machine"), a.get("where"), a.get("person"))
+                                          if isinstance(m, str) and m})
         out["at"] = time.time()
         tmp = paths.home() / f".{CACHE}.{os.getpid()}.tmp"
         tmp.write_text(json.dumps(out))

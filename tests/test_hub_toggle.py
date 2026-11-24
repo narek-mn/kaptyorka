@@ -43,7 +43,7 @@ def test_session_key_comes_from_each_tool():
 # --- the command, for the tools without a Claude Code session file --------------------------
 
 def test_opencode_off_and_on(home):
-    assert offhub.command([], OC, cwd="/w/proj-a") == (0, "this session is on the hub")
+    assert offhub.command([], OC, cwd="/w/proj-a") == (0, "this session is on the hub. Project proj-a; /hub off takes it off; the agent reaches the team with who and send")
     code, line = offhub.command(["off"], OC, cwd="/w/proj-a")
     assert code == 0 and line.startswith("this session is now off the hub") and "/hub on" in line
     assert offhub.off("opencode:ses_1") and not offhub.off("opencode:ses_2")
@@ -84,9 +84,10 @@ def test_manager_stays_on(home, monkeypatch):
 @pytest.mark.team_only
 def test_a_personal_folder_says_it_stays_off(home):
     offhub.save_team({"proj-a"}, set())
-    assert offhub.command([], OC, cwd="/w/proj-a") == (0, "this session is on the hub")
+    assert offhub.command([], OC, cwd="/w/proj-a") == (0, "this session is on the hub. Project proj-a; /hub off takes it off; the agent reaches the team with who and send")
     code, line = offhub.command([], OC, cwd="/w/mine")
-    assert line == f"this session stays off the hub: {paths.NOT_TEAM}"
+    assert line == (f"this session stays off the hub: {paths.NOT_TEAM} /hub team <project> puts"
+                    " it on for one project; /hub team, as a coordinator across projects")
 
 
 def test_gone_told_and_clean_for_keyed_files(home, monkeypatch):
@@ -213,9 +214,10 @@ def test_codex_start_says_the_state(joined, monkeypatch, capsys):
     stdin = json.dumps({"session_id": "t-1", "cwd": "/w/proj-a"})
     hook.main("codex", "start", stdin, run=cli)
     out = json.loads(capsys.readouterr().out)
-    assert out["systemMessage"] == "this session is on the hub"
+    assert out["systemMessage"] == ("this session is on the hub. Project proj-a; $hub off takes it"
+                                    " off; the agent reaches the team with who and send")
     assert out["hookSpecificOutput"]["additionalContext"] == (
-        "the brief\n\nkaptyorka hub: for private work here, suggest $hub off: then nothing from"
+        "Hub: ON for proj-a\nthe brief\n\nkaptyorka hub: for private work here, suggest $hub off: then nothing from"
         " this session goes to the hub ($hub on brings it back).")
     offhub.switch_key("codex:t-1", True)
     monkeypatch.setattr(hook.http, "request", lambda *a, **k: pytest.fail("no hub call"))
@@ -223,6 +225,7 @@ def test_codex_start_says_the_state(joined, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out) == {
         "systemMessage": "this session is off the hub; type $hub on to come back",
         "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext":
+                               "Hub: OFF (switched off for this session; $hub on brings it back)\n"
                                "kaptyorka hub: this session is off the hub; $hub on brings it back."}}
 
 
@@ -265,7 +268,8 @@ def test_an_off_opencode_session_hook_says_only_its_line(joined, monkeypatch, ca
                         Identity("opencode:ses_1", machine, "opencode", "proj-a", "/w/proj-a"))
     monkeypatch.setattr(hook.http, "request", lambda *a, **k: pytest.fail("no hub call"))
     offhub.switch_key("opencode:ses_1", True)
-    line = "kaptyorka hub: this session is off the hub; /hub on brings it back.\n"
+    line = ("Hub: OFF (switched off for this session; /hub on brings it back)\n"
+            "kaptyorka hub: this session is off the hub; /hub on brings it back.\n")
     for event in ("start", "prompt"):  # OpenCode rebuilds its system text for each request
         hook.main("opencode", event, "")
         assert capsys.readouterr().out == line

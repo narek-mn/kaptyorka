@@ -43,6 +43,19 @@ def personal(key: str, mine: Optional[List[str]]) -> str:
     return text("")
 
 
+def state(key: str, project: str, why: str, off: bool) -> str:
+    """The first line where a tool shows no hub indicator: on or off, and as what."""
+    if off:
+        return f"Hub: OFF (switched off for this session; {_command(key)} on brings it back)"
+    if why == paths.NOT_TEAM:
+        return "Hub: OFF (personal folder)"
+    if why:
+        return "Hub: OFF (no team project list from the hub yet)"
+    if project == paths.COORDINATOR:
+        return "Hub: ON as a coordinator (no project)"
+    return f"Hub: ON for {paths.team_name(project)}"
+
+
 def off(key: str) -> str:
     what = "folder" if key.startswith("cursor:") else "session"
     return f"{HEAD}this {what} is off the hub; {_command(key)} on brings it back."

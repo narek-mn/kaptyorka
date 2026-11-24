@@ -219,7 +219,7 @@ def clean_facts(facts: dict) -> dict:
     cpus = facts.get("cpus")
     if isinstance(cpus, int) and not isinstance(cpus, bool):
         out["cpus"] = cpus
-    for key, kind in (("tools", _cut), ("hooks_ok", _bool), ("git", _git)):
+    for key, kind in (("tools", _cut), ("hooks_ok", _bool), ("indicator_ok", _bool), ("git", _git)):
         if key in facts:
             out[key] = _str_map(facts[key], kind)
     if isinstance(facts.get("harness"), dict):
@@ -1392,6 +1392,11 @@ class WorkerStore:
                 if ok is False:
                     add(rest, f"{tool} on {who} is set up but its kaptyorka hooks are missing",
                         f"{tool} hooks missing")
+            for tool, ok in (facts.get("indicator_ok") or {}).items():
+                if ok is False:
+                    add(rest, f"{tool} on {who} does not show whether its sessions are on the hub"
+                        " (the hub indicator or /hub is missing). Run `kaptyorka doctor --fix`"
+                        " there.", f"{tool} hub indicator missing")
             # one logged-in tool is enough; warn only when every tool that knows is logged out,
             # suggesting the login of the first such tool installed there
             known = {t: ok for t, ok in (facts.get("logins") or {}).items() if ok is not None}
