@@ -37,6 +37,13 @@ class Session:
     # background tasks, [{"id", "silent_s", "command"}]
     write_s: Optional[float] = None
     tasks: Optional[list] = None
+    # who started it (left.py), Claude Code only; "" / False when unknown. parent: the key of
+    # the session that started it; oneshot: a `claude -p` run; helper: started by another
+    # session or tool; parent_gone: its parent session no longer runs on this machine
+    parent: str = ""
+    oneshot: bool = False
+    helper: bool = False
+    parent_gone: bool = False
 
 
 class DeliveryError(Exception):

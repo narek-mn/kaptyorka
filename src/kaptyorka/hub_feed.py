@@ -54,6 +54,13 @@ def session_row(store: Store, a: Agent, principal: Principal, names: dict, now: 
     if mine:
         row["doors"] = [masked(store, principal, d, (("_side", "with"),))["with"] or d["person"]
                         for d in store.doors_for(a.key)]
+    if a.parent:  # started by another session (left.py): the page shows it under that one
+        row["parent"] = session_id(a.parent)
+        if a.parent_gone:
+            p = store.agent(a.parent)
+            row["left_by"] = (p.name if p is not None and visible(store, principal, p.person_id,
+                                                                  p.project)
+                              else "another session")
     return row
 
 
@@ -113,10 +120,11 @@ def feed(store: Store, principal: Principal, ws=None, cs=None) -> dict:
     doors = [masked(store, principal, d, (("_a", "a_session"), ("_b", "b_session")))
              for d in store.doors(sides=True) if admin or me in (d["a_person"], d["b_person"])]
     live = ws.live_keys() if ws is not None else None  # workers never fold into Idle
+    fresh = store.fresh_helpers(now)  # most end within seconds (left.py)
     out = {
         "agents": [session_row(store, a, principal, names, now, live, ws=ws, manager_id=mid)
                    for a in store.online()
-                   if store.listed(principal.person_id, a.key, a.person_id)],
+                   if a.key not in fresh and store.listed(principal.person_id, a.key, a.person_id)],
         "messages": [masked(store, principal, manager_sides(m, mid), (("_from", "sender"), ("_to", "to")))
                      for m in store.messages_for(principal, 500)],
         "notes": _notes(store, principal),

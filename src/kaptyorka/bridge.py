@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import __version__, facts, http, identity, offhub, optin, orders, overnight, paths, repos, skills_sync, stuck, usage
+from kaptyorka import __version__, facts, http, identity, left, offhub, optin, orders, overnight, paths, repos, skills_sync, stuck, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES, Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
@@ -100,6 +100,7 @@ class Bridge:
         self._skills_version: Optional[str] = None  # the hub's last skills_version; None until one comes
         self._updated_to = ""  # the hub version an update was last run for
         self._update_retry_at = 0.0
+        self._closed: List[str] = []  # left-behind sessions closed here, for the next beat
 
     def _report(self, area: str, problem: Optional[str]) -> None:
         """Log a problem once per area until that area succeeds (problem None) again."""
@@ -276,10 +277,15 @@ class Bridge:
                 "overnight": [s["key"] for s in sessions if self._overnight(s["key"])]}
         if gone:
             body["gone"] = gone
+        closed = list(self._closed)
+        if closed:
+            body["closed"] = closed
         status, answer = http.request("POST", self.cfg["hub"] + "/bridge/heartbeat",
                                       self.cfg["token"], body)
         if gone and status in (200, 204):
             offhub.told(gone)
+        if closed and status in (200, 204):
+            self._closed = [k for k in self._closed if k not in closed]
         self.hub = answer if status == 200 and isinstance(answer, dict) else {}
         self._learn_team(status, answer)
         v = self.hub.get("skills_version")
@@ -299,6 +305,7 @@ class Bridge:
                      else f"hub answered {status} to heartbeat" + _said(status, answer))
         self._sync_skills()
         self._check_pending(objs)
+        self._close_left(objs)
         if again and team is None and held and self._team()[0] is not None:
             self.heartbeat(again=False)  # the list came just now: report its sessions at once
 
@@ -458,6 +465,38 @@ class Bridge:
         return (f"the session did not show up within 2 minutes; check that {label} is logged in"
                 f" and trusts the folder {order.get('folder')} (open it there once);"
                 f" see ~/.kaptyorka/workers/{name}.log")
+
+    def _close_left(self, sessions: list) -> None:
+        """Close the sessions the hub asks to (left.py), each checked here again: a `claude
+        --bg` run another session started (via launch), its parent ended, idle over a day,
+        no worker of this machine, the manager or a session in overnight mode. `claude stop`
+        only: its transcript stays. Each one is logged, and the hub hears it next beat."""
+        ask = self.hub.get("close_left")
+        if not isinstance(ask, list) or not ask:
+            return
+        claude = next((a for a in self.adapters if a.prefix == "claude"), None)
+        launched = getattr(claude, "launched", set())
+        keep = set(self._team()[1])
+        by_key = {s.key: s for s in sessions}
+        for key in ask:
+            s = by_key.get(key) if isinstance(key, str) else None
+            if s is None or key not in launched or key in keep or key in self._closed \
+                    or not s.background or not s.parent_gone or s.idle_s is None \
+                    or s.idle_s <= left.IDLE_S or paths.in_manager_folder(s.cwd) \
+                    or self._overnight(key):
+                continue
+            try:
+                r = self.runner(["claude", "stop", left.short_id(key)], capture_output=True,
+                                text=True, timeout=30)
+                why = "" if r.returncode == 0 else ((r.stderr or "") + (r.stdout or "")).strip()
+            except (OSError, subprocess.TimeoutExpired) as e:
+                why = str(e) or "could not run claude stop"
+            if why:
+                self.log(f"closing left session {s.label or s.title or key} failed: {why[:200]}")
+                continue
+            self._closed.append(key)
+            self.log(f"closed left session {s.label or s.title or key}: started by a session that"
+                     f" ended, idle {int(s.idle_s // 3600)} h; its transcript is kept")
 
     def _check_pending(self, sessions: list) -> None:
         """Tell the hub each started worker's session key once it shows up, or that it never

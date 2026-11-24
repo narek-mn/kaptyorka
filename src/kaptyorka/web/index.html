@@ -1516,8 +1516,8 @@ a.p-main { color: inherit; text-decoration: none; }
       /* first on the grey line: never cut off. A session still busy or waiting on a task (a
          stuck one too) is not idle, however old its last write: it stays in sight */
       var idle = a.worker || (a.activity && a.activity !== "idle") ? "" : idleText(a.idle_s);
-      list.push({ key: k, name: rowName(a, shortName(a.name)), online: true, idle: idle,
-                  sub: (idle ? idle + " \u00b7 " : "") + (a.title && !a.label && !hidden(a) ? shortName(a.name) + " \u00b7 " : "") + (a.where || a.machine), to: k, bg: !!a.background, tool: a.tool, act: a.activity || "", stuck: a.stuck || null,
+      list.push({ key: k, name: rowName(a, shortName(a.name)), online: true, idle: idle, kid: a.id, parent: a.parent || "",
+                  sub: (idle ? idle + " \u00b7 " : "") + (a.left_by ? "left by " + a.left_by + " \u00b7 " : "") + (a.title && !a.label && !hidden(a) ? shortName(a.name) + " \u00b7 " : "") + (a.where || a.machine), to: k, bg: !!a.background, tool: a.tool, act: a.activity || "", stuck: a.stuck || null,
                   who: !a.mine && (isAdmin() || hidden(a)) ? a.person : null, ro: !a.mine && a.writable === false,
                   sess: true, mine: !!a.mine, note: a.status || "", where: a.where || a.machine, agent: a.tool === "claude-code" ? "Claude" : "the agent", team: !!a.team && !hidden(a), owner: a.team ? String(a.person || "").replace(/ \(team\)$/, "") : a.person || "",
                   tip: hidden(a) ? a.person + "'s session in a project you have no role in" : tip });
@@ -1588,6 +1588,7 @@ a.p-main { color: inherit; text-decoration: none; }
     var tops = shown.filter(function (e) { return e.key === "activity" || e.key === "mgr"; });
     tops.forEach(function (e) { box.appendChild(sessionRow(e)); });
     var placed = wtBlock(box, all || !isAdmin() ? null : shown);
+    kinBlock(box, shown, placed);
     shown = shown.filter(function (e) { return tops.indexOf(e) < 0 && !placed[e.key]; });
     /* forgotten sessions fold into Idle at the end; never the manager, a worker or a background job */
     var fg = shown.filter(function (e) { return !e.bg && !e.idle; });
@@ -1790,6 +1791,29 @@ a.p-main { color: inherit; text-decoration: none; }
                                   "aria-label": g.project + ", working together" }, kids));
     });
     return placed;
+  }
+  /* sessions another session started (left.py), under it on the rail Working together uses;
+     one whose starter ended stays in its own place and says "left by" on its grey line */
+  function kinBlock(box, shown, placed) {
+    var byId = {}, kids = {}, order = [];
+    shown.forEach(function (e) { if (e.sess && e.kid) byId[e.kid] = e; });
+    shown.forEach(function (e) {
+      var p = e.parent && byId[e.parent];
+      if (!p || p === e || placed[p.key] || placed[e.key] || p.key === "mgr") return;
+      if (!kids[p.key]) { kids[p.key] = []; order.push(p); }
+      kids[p.key].push(e);
+    });
+    order.forEach(function (p) {
+      placed[p.key] = 1;
+      var rows = [sessionRow(p)].concat(kids[p.key].map(function (e) {
+        placed[e.key] = 1;
+        var b = sessionRow(e);
+        b.classList.add("wt-sub");
+        return b;
+      }));
+      box.appendChild(el("div", { "class": "wt-rows", id: "kin-" + p.kid.replace(/[^A-Za-z0-9_-]/g, "_"), role: "group",
+                                  "aria-label": p.name + " and the sessions it started" }, rows));
+    });
   }
   /* a message passed inside a group: its rail lights once (a fresh class restarts the motion) */
   function wtPulse(live) {
