@@ -1195,7 +1195,7 @@ def watch(alive: Callable[[str], bool], deliver: Callable[[str, str], None], res
                 task = (ep.get("task") or {}).get("id", "")
                 woke = st.get("woke") if isinstance(st.get("woke"), dict) else {}
                 if not (woke.get("kind") == ep["kind"] and woke.get("task") == task
-                        and abs(float(woke.get("since", 0)) - since) < 5):
+                        and abs(float(woke.get("since", 0)) - since) < stuck.STEADY_S):
                     st = {**st, "woke": {"kind": ep["kind"], "task": task, "since": since}}
                     save(sid, st)
                     text = stuck.wake_text(ep)

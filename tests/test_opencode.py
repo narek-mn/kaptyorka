@@ -1,6 +1,9 @@
 import json
 import os
 import socket
+import subprocess
+import sys
+import time
 
 import pytest
 
@@ -180,7 +183,6 @@ def test_configure_v2_writes_default_export_plugin_and_drops_alias(home, monkeyp
 @pytest.mark.parametrize("version", [1, 2])
 def test_plugin_is_valid_javascript(home, monkeypatch, tmp_path, version):
     import shutil
-    import subprocess
 
     node = shutil.which("node")
     if not node:
@@ -194,7 +196,6 @@ def test_plugin_is_valid_javascript(home, monkeypatch, tmp_path, version):
 
 
 def test_major_reads_version(monkeypatch):
-    import subprocess
 
     out = {"stdout": "2.2.5\n"}
     monkeypatch.setattr(opencode, "major", REAL_MAJOR)
@@ -208,7 +209,6 @@ def test_major_reads_version(monkeypatch):
 
 
 def test_service_reads_service_json(tmp_path, monkeypatch):
-    import subprocess
 
     monkeypatch.setattr(opencode, "service", REAL_SERVICE)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
@@ -249,6 +249,91 @@ def test_v2_sessions_from_service(fake_v2):
     assert a.sessions() == [Session("opencode:ses_v2new", "opencode", os.path.basename(CWD), "", cwd=CWD)]
     method, path, _ = fake_v2.requests[-1]
     assert method == "GET" and path.startswith("/api/session?") and "directory=" in path
+
+
+@pytest.fixture
+def windows(fake_v2, monkeypatch):
+    """Running TUIs (pids) and the notes kaptyorka's TUI plugin writes for them."""
+
+    kids = [subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+            for _ in range(2)]
+    pids = [os.getpid()] + [k.pid for k in kids]
+    monkeypatch.setattr(opencode, "_tuis", lambda: pids)
+
+    def note(pid, sid, directory=CWD):
+        opencode.open_dir().mkdir(parents=True, exist_ok=True)
+        (opencode.open_dir() / f"{pid}.json").write_text(
+            json.dumps({"session": sid, "directory": directory}))
+
+    yield pids, note
+    for k in kids:
+        k.kill()
+        k.wait()
+
+
+def keys(a):
+    return [s.key for s in a.sessions()]
+
+
+def test_v2_two_windows_in_one_folder_are_two_sessions(windows):
+    (me, w1, w2), note = windows
+    note(w1, "ses_v2new")
+    note(w2, "ses_v2old")  # older than the other window's: the folder guess could never see it
+    a = OpenCodeAdapter()
+    # me has no note: guessed from the folder, never as a session another window has open
+    assert keys(a) == ["opencode:ses_v2new", "opencode:ses_v2old"]
+    note(me, "ses_v2stale")
+    assert sorted(keys(a)) == ["opencode:ses_v2new", "opencode:ses_v2old", "opencode:ses_v2stale"]
+
+
+def test_v2_resumed_old_session_is_listed_and_stays_while_idle(windows, tmp_path):
+    (me, w1, w2), note = windows
+    other = str(tmp_path / "proj-b")  # `opencode proj-b` from another folder
+    note(me, "ses_v2stale", other)  # last updated long before this window started
+    a = OpenCodeAdapter()
+    for _ in range(3):  # nothing happens in it: still listed, every time
+        got = [s for s in a.sessions() if s.key == "opencode:ses_v2stale"]
+        assert got == [Session("opencode:ses_v2stale", "opencode", "proj-b", "", cwd=other)]
+
+
+def test_v2_window_on_its_home_screen_lists_nothing_and_is_not_guessed(windows):
+    (me, w1, w2), note = windows
+    for pid in (me, w1, w2):
+        note(pid, "")
+    assert OpenCodeAdapter().sessions() == []
+
+
+def test_v2_note_of_a_closed_window_is_dropped(windows):
+
+    (me, w1, w2), note = windows
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait()
+    note(gone.pid, "ses_v2old")
+    note(me, "ses_v2new")
+    note(w1, "")
+    note(w2, "")
+    assert keys(OpenCodeAdapter()) == ["opencode:ses_v2new"]
+    assert not (opencode.open_dir() / f"{gone.pid}.json").exists()
+
+
+def test_v2_note_older_than_its_process_is_a_reused_pid(windows, monkeypatch):
+    (me, w1, w2), note = windows
+    note(w1, "ses_v2old")
+    note(w2, "")
+    note(me, "")
+    monkeypatch.setattr(opencode, "_started_ms", lambda pid: time.time() * 1000 + 60000)
+    assert OpenCodeAdapter().sessions() == []
+    assert not (opencode.open_dir() / f"{w1}.json").exists()
+
+
+def test_v2_2_session_list_shape(fake_v2, monkeypatch):
+    """OpenCode v2.2.5's GET /api/session, as a real 2.2.5 service answered it."""
+    fake_v2.sessions = {"data": [{
+        "id": "ses_v22", "projectID": "a743b0e7", "cost": 0,
+        "tokens": {"input": 4748, "output": 3, "reasoning": 13, "cache": {"read": 512, "write": 0}},
+        "outcome": "succeeded", "time": {"created": 60, "updated": 70, "busy": 61, "idle": 71},
+        "location": {"directory": CWD}}], "cursor": {"previous": "x", "next": "y"}}
+    assert keys(OpenCodeAdapter()) == ["opencode:ses_v22"]
 
 
 def test_v2_deliver_posts_prompt(fake_v2):

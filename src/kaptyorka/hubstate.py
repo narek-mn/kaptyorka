@@ -151,7 +151,8 @@ def state(session_id: str, cwd: str = "", now: Optional[float] = None,
         project = project_of(cwd) or project  # as the bridge names it (a copy by its git remote)
     from kaptyorka import optin
 
-    joined = optin.get(key)  # /hub team [project]: the hub checked it, the folder no longer decides
+    # /hub team [project] (the hub checked it) or a team machine: the folder no longer decides
+    joined = optin.effective(key, project, cwd)
     if joined is None and project and offhub.personal(project, cwd, key):
         return "off"
     cache = read_cache()

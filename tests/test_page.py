@@ -73,9 +73,10 @@ def test_home_warns_only_what_blocks(hub):
     html = page(hub)
     assert 'var rows = (isAdmin() ? fleet.warnings : feed.warnings || []).filter(function (w) { return w.blocks; });' in html
     assert 'id="warns"' in html and 'id="warn-banner"' not in html
-    assert 'JSON.stringify(group.map(nameOf).filter(function (n, i, all) { return all.indexOf(n) === i; }))' in html  # replaced, not grown
+    # one line over the chat, only for its own machine; the rest behind the top bar's sign
+    assert "var w = mine[0], fix = warnFix(w), more = rows.length - 1;" in html and 'id="warn-ind"' in html and 'id="warn-pop"' in html
     assert 'attrs.title = "A team machine: shared by the team" + (d.projects.length ?' in html
-    assert "run agents (no tool logged in)" in html and "kaptyorka.login-warn-dismissed" in html  # one line, its x kept here
+    assert "kaptyorka.warn-dismissed" in html and "#warns { flex: none; position: relative; z-index: 4; height: 0; }" in html  # no layout jump
 
 
 def test_home_names_a_session_by_its_title(hub):
@@ -327,7 +328,7 @@ def test_home_mine_and_everyone(hub):
     code = html[html.index("function homeAll()"):html.index("function lead(e) {")]
     assert "function inMine(e) { return !e.sess || e.mine || e.team; }" in code
     assert 'st.setItem("kaptyorka.home-scope", hScope)' in code and '"kaptyorka.home-groups"' in code
-    assert "var open = groupOpen[g.key] != null ? !!groupOpen[g.key] : g.own;" in code
+    assert "var open = groupOpen[g.key] != null ? !!groupOpen[g.key] : g.own || !!g.machine;" in code
     assert 'el("small", { text: String(g.rows.length) })' in code and "unseen ?" in code
 
 

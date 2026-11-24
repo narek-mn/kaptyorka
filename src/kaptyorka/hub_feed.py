@@ -3,6 +3,7 @@ from dataclasses import asdict
 from typing import Optional
 
 from kaptyorka import __version__, admin_ops, stuck
+from kaptyorka.hub_groups import feed_groups
 from kaptyorka.manager import ManagerStore
 from kaptyorka.store import PRIVATE, Agent, Principal, Store, machine_name, private_name, session_id
 
@@ -121,6 +122,7 @@ def feed(store: Store, principal: Principal, ws=None, cs=None) -> dict:
         "notes": _notes(store, principal),
         "knocks": knocks(store, principal) if admin else [],  # only the admin answers
         "doors": doors,
+        "groups": feed_groups(store, principal, mid),  # sessions working together
     }
     if not admin and ws is not None:  # only what blocks this person; the admin has /api/warnings
         out["warnings"] = [w for w in ws.warnings_for(principal, now, __version__)

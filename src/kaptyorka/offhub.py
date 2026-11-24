@@ -258,13 +258,15 @@ def clean() -> None:
 
 
 def save_team(team: Optional[set], keep: set, mine: Optional[list] = None,
-              repos: Optional[dict] = None) -> None:
+              repos: Optional[dict] = None, shared: bool = False) -> None:
     """The bridge saves the hub's list of team projects (None: the hub sent none), the keys
     of the workers it started, the team projects its person has a role in (for the help a
-    refused call gets) and the registered repos' fingerprints ({fingerprint: project}, see
-    repos.py), for the shims and hooks of this machine."""
+    refused call gets), the registered repos' fingerprints ({fingerprint: project}, see
+    repos.py) and whether this account is shared (a team machine: every session goes on the
+    hub, see optin.auto), for the shims and hooks of this machine."""
     body = {"team": None if team is None else sorted(team), "keep": sorted(keep),
-            "mine": None if mine is None else sorted(mine), "repos": repos or {}}
+            "mine": None if mine is None else sorted(mine), "repos": repos or {},
+            "shared": bool(shared)}
     try:
         tmp = paths.home() / f".{TEAM}.tmp"
         tmp.write_text(json.dumps(body))
@@ -285,6 +287,15 @@ def load_team() -> Tuple[Optional[set], set]:
     team, keep = st.get("team"), st.get("keep")
     return ({t for t in team if isinstance(t, str)} if isinstance(team, list) else None,
             {k for k in keep if isinstance(k, str)} if isinstance(keep, list) else set())
+
+
+def shared_machine() -> bool:
+    """Whether the hub last said this account is shared (a team machine), as the bridge saved
+    it; False when unknown."""
+    try:
+        return json.loads((paths.home() / TEAM).read_text()).get("shared") is True
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def load_repos() -> dict:
@@ -317,7 +328,7 @@ def personal(project: str, cwd: str = "", key: str = "") -> str:
     if project == paths.COORDINATOR:  # only a session that joined with /hub team says so
         from kaptyorka import optin
 
-        return "" if optin.get(key) == paths.COORDINATOR else paths.NOT_TEAM
+        return "" if optin.get(key) == paths.COORDINATOR or shared_machine() else paths.NOT_TEAM
     if not (paths.home() / TEAM).exists():
         return ""
     team, keep = load_team()
@@ -429,10 +440,10 @@ def _team_note(key: str, cwd: str, line: str, note: str = "") -> str:
     from kaptyorka import optin
     from kaptyorka.identity import project_of
 
-    joined = optin.describe(optin.get(key))
-    if joined:
-        return joined + note
     project = project_of(cwd) if cwd else ""
+    joined = optin.describe(optin.effective(key, project, cwd))
+    if joined:
+        return joined + (optin.TEAM_MACHINE if optin.get(key) is None else "") + note
     why = personal(project, cwd, key) if project else ""
     return f"this session stays off the hub: {why}" if why else line
 

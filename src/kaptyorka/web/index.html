@@ -415,6 +415,50 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .list .g-head .av { margin: -4px 0; }
 .list .g-head .chip { margin-left: 2px; }
 .list .bg-rows.enter .row { animation: bg-in var(--dur-2) var(--ease-out); }
+/* Working together: sessions that talk to each other (or a boss and its workers), at the top of
+   the list. A caption, then per group a title line that opens the group's conversation, and its
+   sessions joined by a rail through their badges (Slack's thread line, GitHub's job tree); a
+   worker sits one step in under its boss on an elbow. A message between them pulses the rail */
+.list .wt-cap { display: flex; align-items: center; gap: var(--s-2); margin-top: 10px; padding: 10px var(--s-4) 2px 20px; border-top: 1px solid var(--line);
+  font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--muted); }
+.list .wt-cap > svg { color: var(--faint); }
+.list .wt-head { display: flex; align-items: center; gap: 6px; width: calc(100% - 16px); min-height: var(--h-sm); margin: 4px var(--s-2) 0; padding: 4px 10px 4px 12px;
+  border: 1px solid transparent; border-radius: var(--radius); font-size: var(--fs-sm); color: var(--faint); text-align: left; white-space: nowrap; overflow: hidden;
+  transition: background-color var(--ease), color var(--ease), border-color var(--ease); }
+.list .wt-head:hover { background: var(--surface2); color: var(--muted); }
+.list .wt-head:active { background: var(--hover); }
+.list .wt-head:focus-visible { outline-offset: -2px; }
+.list .wt-head > svg { color: var(--faint); }
+.list .wt-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: var(--fw-semi); color: var(--ink); }
+.list .wt-head span { flex: none; }
+.list .wt-head.on { background: var(--raised); border-color: var(--line); box-shadow: inset 3px 0 var(--accent), var(--shadow-1); }
+.list .wt-head.on b { font-weight: var(--fw-bold); }
+.list .wt-rows { --rail: rgba(231, 228, 220, .26); position: relative; }
+.list .wt-rows .row::before { content: ""; position: absolute; left: 24px; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--rail); border-radius: 1px; }
+.list .wt-rows .row:first-child::before { top: 50%; }
+.list .wt-rows .row:last-child::before { bottom: 50%; }
+.list .wt-rows .row .lead { position: relative; z-index: 1; }
+.list .wt-rows .row.wt-sub { width: calc(100% - 44px); margin-left: 36px; }
+.list .wt-rows .row.wt-sub::before { left: -4px; }
+.list .wt-rows .row.wt-sub::after { content: ""; position: absolute; left: -5px; top: -2px; width: 16px; height: calc(50% + 1px);
+  border-left: 2px solid var(--rail); border-bottom: 2px solid var(--rail); border-bottom-left-radius: 8px; }
+.list .wt-rows .row.wt-sub:last-child::before { display: none; }
+.list .wt-rows.pulse .row::before, .list .wt-rows.pulse .row.wt-sub::after { animation: wt-pulse 1.1s var(--ease-out); }
+@keyframes wt-pulse { 0%, 100% { background-color: var(--rail); border-color: var(--rail); } 25% { background-color: var(--accent); border-color: var(--accent); } }
+.list .row.wt-other .name { font-weight: var(--fw-regular); font-style: italic; color: var(--faint); }
+.av-group { border-radius: var(--radius); color: var(--muted); }
+/* the open chat's partners: "Working with" and their names; a click opens one */
+.chat-with { display: flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; overflow: hidden; font-size: var(--fs-sm); color: var(--faint); white-space: nowrap; }
+.chat-with + #notices-toggle { margin-left: var(--s-2); }
+.chat-with > span:first-child { flex: none; }
+.chat-with .with { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 24px; max-width: 160px; padding: 0 9px 0 4px; border: 1px solid var(--line);
+  border-radius: var(--pill); font-size: var(--fs-sm); color: var(--ink); background: var(--surface);
+  transition: background-color var(--ease), border-color var(--ease); }
+.chat-with .with > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.chat-with button.with:hover { background: var(--surface2); border-color: var(--line-strong); }
+.chat-with button.with:active { background: var(--hover); }
+.chat-with .with .av { width: 18px; height: 18px; border: 0; background: none; }
+.chat-with .with.other { padding-left: 9px; border-style: dashed; color: var(--faint); font-style: italic; background: none; }
 .quiet-line { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-4) var(--s-3) 18px; font-size: var(--fs-sm); color: var(--faint); }
 .read-only { flex: none; display: flex; align-items: center; gap: var(--s-2); padding: 14px var(--s-6) 18px; border-top: 1px solid var(--line);
   background: var(--surface); font-size: var(--fs-sm); color: var(--muted); }
@@ -431,15 +475,44 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .chat-title small span:first-child { color: var(--muted); }
 #notices-toggle { margin-left: auto; }
 #notices-toggle small { color: var(--faint); font-size: var(--fs-xs); }
-/* a slim bar over the chat: only what stops someone working, and its command */
-#warns { flex: none; list-style: none; margin: 0; padding: 0; }
-#warns:empty { display: none; }
-#warns li { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 5px var(--s-4) 5px var(--s-6); font-size: var(--fs-md); color: var(--risk);
-  background: rgba(194, 148, 47, .09); border-bottom: 1px solid rgba(194, 148, 47, .35); animation: drop var(--dur-2) var(--ease-out); }
-#warns li > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#warns a { color: inherit; text-decoration: underline; }
-#warns code { flex: none; border-radius: var(--radius); max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; font: var(--fs-sm) var(--mono);
-  color: var(--ink); background: var(--bg); border: 1px solid var(--line); user-select: all; }
+/* warnings (Primer's single-line banner, one at a time; the rest behind a status indicator with
+   a popover, as Vercel and Linear do). Over the chat: one line at most, only for the open chat's
+   own machine. It floats over the top of the messages (no height of its own), so nothing moves
+   when it comes or goes */
+#warns { flex: none; position: relative; z-index: 4; height: 0; }
+.warn-line { position: absolute; top: var(--s-2); left: var(--s-6); right: var(--s-6); display: flex; align-items: center; gap: var(--s-2); height: 36px;
+  padding: 0 4px 0 12px; border: 1px solid rgba(194, 148, 47, .38); border-radius: var(--radius); font-size: var(--fs-md); color: var(--risk);
+  background: color-mix(in srgb, var(--risk) 9%, var(--surface)); box-shadow: var(--shadow-2); animation: drop var(--dur-2) var(--ease-out); }
+.warn-line > svg { flex: none; }
+.warn-line .warn-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warn-line code, .warn-pop code { flex: 0 1 auto; min-width: 0; border-radius: var(--radius); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px;
+  font: var(--fs-sm) var(--mono); color: var(--ink); background: var(--bg); border: 1px solid var(--line); user-select: all; }
+.warn-line code { max-width: 34%; }
+.warn-line .btn.icon { width: 28px; height: 28px; min-width: 28px; padding: 0; justify-content: center; color: var(--risk); border-color: transparent; background: none; }
+.warn-line .btn.icon:hover { background: rgba(194, 148, 47, .14); }
+.warn-more { flex: none; height: 28px; padding: 0 8px; border-radius: var(--radius); font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--risk); white-space: nowrap;
+  transition: background-color var(--ease); }
+.warn-more:hover { background: rgba(194, 148, 47, .14); }
+/* the top bar's warning sign: how many, a click lists them all in full */
+.warn-ind { display: flex; align-items: center; gap: 5px; height: 28px; margin: auto var(--s-2) auto 0; padding: 0 9px 0 8px; border: 1px solid rgba(194, 148, 47, .38);
+  border-radius: var(--pill); font-size: var(--fs-xs); font-weight: var(--fw-semi); color: var(--risk); background: rgba(194, 148, 47, .1);
+  transition: background-color var(--ease), border-color var(--ease); }
+.warn-ind:hover, .warn-ind[aria-expanded="true"] { border-color: var(--risk); background: rgba(194, 148, 47, .18); }
+.warn-pop { position: absolute; top: calc(100% + 2px); right: 0; z-index: 30; width: min(460px, calc(100vw - 32px)); max-height: min(70vh, 560px); overflow-y: auto;
+  border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--raised); box-shadow: var(--shadow-2); animation: drop var(--dur-2) var(--ease-out); }
+.warn-pop:focus { outline: none; }
+.warn-pop .wp-head { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) 14px; border-bottom: 1px solid var(--line); font-weight: var(--fw-semi); }
+.warn-pop .wp-head small { color: var(--faint); font-weight: var(--fw-regular); }
+.warn-pop .wp-head a { margin-left: auto; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--accent); text-decoration: none; }
+.warn-pop .wp-head a:hover { text-decoration: underline; }
+.warn-pop ul { list-style: none; margin: 0; padding: 0; }
+.warn-pop li { display: flex; gap: 10px; padding: var(--s-3) 14px; border-top: 1px solid var(--line-soft); color: var(--risk); }
+.warn-pop li:first-child { border-top: 0; }
+.warn-pop li > svg { margin-top: 3px; }
+.warn-pop .wp-body { flex: 1; min-width: 0; }
+.warn-pop p { margin: 0; font-size: var(--fs-md); line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
+.warn-pop .wp-fix { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.warn-pop .wp-fix .btn.icon { width: 28px; height: 28px; min-width: 28px; padding: 0; justify-content: center; }
 #log { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-6) 18px; }
 .day { display: flex; align-items: center; gap: var(--s-3); margin: 18px 0 6px; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--faint); }
 .day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
@@ -487,6 +560,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .working .dots i:nth-child(2) { animation-delay: .15s; }
 .working .dots i:nth-child(3) { animation-delay: .3s; }
 @keyframes dot { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+.working.kept { animation: none; }  /* drawn again after the chat redrew: it does not rise a second time */
 .chat .blank { color: var(--faint); }
 #log > .blank:only-child { height: 100%; min-height: 0; font-size: var(--fs-md); text-wrap: balance; }
 .access-pane { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-5) var(--s-6); animation: fade-in var(--dur-3) var(--ease-out); }
@@ -731,8 +805,12 @@ a.p-main { color: inherit; text-decoration: none; }
   #home.open .chat.enter { animation: slide-in var(--dur-3) var(--ease-out); }
   #home.open .chat.leave { animation: slide-out var(--dur-2) var(--ease-in) forwards; }
   .chat-head { gap: 10px; padding: 0 var(--s-3); }
-  #warns li { padding-left: var(--s-3); padding-right: var(--s-3); }
-  #warns li > span { white-space: normal; }
+  .chat-head:has(.chat-with:not([hidden])) { flex-wrap: wrap; height: auto; min-height: 58px; padding-top: 9px; padding-bottom: 8px; row-gap: 6px; }
+  .chat-with { order: 9; flex-basis: 100%; margin-left: 0; overflow-x: auto; scrollbar-width: none; }
+  .chat-with::-webkit-scrollbar { display: none; }
+  .warn-line { left: var(--s-3); right: var(--s-3); }
+  .warn-line code { display: none; }  /* the copy button still copies it */
+  .warn-pop { position: fixed; top: calc(var(--row) + 2px); left: var(--s-4); right: var(--s-4); width: auto; }
   #log { padding: 6px var(--s-4) 14px; }
   .access-pane { padding: var(--s-3) var(--s-4); }
   .compose { padding: var(--s-2) var(--s-3) var(--s-3); }
@@ -857,6 +935,8 @@ a.p-main { color: inherit; text-decoration: none; }
       <button class="tab" role="tab" data-view="home" id="tab-home"><svg width="16" height="16" aria-hidden="true"><use href="#i-home"/></svg>Home</button>
     </nav>
     <div class="viewer" id="viewer">
+      <button type="button" class="warn-ind" id="warn-ind" aria-expanded="false" aria-controls="warn-pop" aria-haspopup="dialog" hidden><svg width="13" height="13" aria-hidden="true"><use href="#i-warn"/></svg><span id="warn-n"></span></button>
+      <div class="warn-pop" id="warn-pop" role="dialog" aria-label="Warnings" tabindex="-1" hidden><div class="wp-head">Warnings <small id="warn-pop-n"></small><a href="#settings/machines" id="warn-machines">See machines</a></div><ul id="warn-list"></ul></div>
       <button type="button" class="acct" id="viewer-name" aria-label="Settings" title="Settings"><span class="av av-person sm" id="viewer-av" aria-hidden="true"></span><span id="viewer-label"></span><span class="count" id="n-acct" hidden></span></button>
     </div>
     <div class="live" id="live" title="Connecting"><i></i></div>
@@ -876,9 +956,10 @@ a.p-main { color: inherit; text-decoration: none; }
           <button type="button" class="btn small icon quiet back" id="chat-back" title="Back" aria-label="Back"><svg width="14" height="14"><use href="#i-back"/></svg></button>
           <span id="chat-lead"></span>
           <div class="chat-title"><b id="chat-name"></b><small id="chat-sub"></small></div>
+          <div class="chat-with" id="chat-with" hidden></div>
           <button type="button" class="btn small quiet" id="notices-toggle" aria-pressed="false" hidden></button>
         </div>
-        <ul id="warns" role="alert"></ul>
+        <div id="warns" hidden></div>
         <div id="log"></div>
         <div class="access-pane" id="access-pane" hidden>
         <div class="panel" id="my-access" hidden>
@@ -1403,7 +1484,7 @@ a.p-main { color: inherit; text-decoration: none; }
     Object.keys(people).sort().forEach(function (x) {
       list.push({ key: x, name: x.slice(1), icon: "i-person", sub: "", to: x.slice(1), tip: "On the web page" });
     });
-    if (!list.some(function (e) { return e.key === conv; }) && conv !== "activity" && conv.charAt(0) !== "@") {
+    if (!list.some(function (e) { return e.key === conv; }) && conv !== "activity" && conv.charAt(0) !== "@" && !isGrp(conv)) {
       list.push({ key: conv, name: labelOf(conv) || shortName(conv), online: false, sub: conv.split("/")[0], to: conv, tip: conv + "\noffline" });
     }
     list.forEach(function (e) { e.unread = e.read || e.off ? 0 : unread(msgs, e.key); });
@@ -1450,16 +1531,21 @@ a.p-main { color: inherit; text-decoration: none; }
     homeScope();
     var box = $("agents");
     if (pressing(box)) return;
-    if (!changed("sessions", [entries, conv, askOpen, phoneOpen || wide(), folds.bg.open, folds.bg.folded, folds.idle.open, folds.idle.folded, hScope, groupOpen, groupFolded])) return;
-    var focusKey = box.contains(document.activeElement) ? document.activeElement.getAttribute("data-key") : null;
-    box.textContent = "";
-    box.removeAttribute("aria-busy");
+    if (!changed("sessions", [entries, conv, askOpen, phoneOpen || wide(), folds.bg.open, folds.bg.folded, folds.idle.open, folds.idle.folded, hScope, groupOpen, groupFolded, wtSig()])) return;
+    var live = box;
+    box = document.createElement("div");  /* drawn aside, then matched onto the list by key (morph) */
+    live.removeAttribute("aria-busy");
     entryOf = {};
     entries.forEach(function (e) { entryOf[e.key] = e; });
     var all = homeAll(), shown = all || !isAdmin() ? entries : entries.filter(inMine);  /* a member: all they may see */
+    /* the Activity and manager lines, then Working together; its sessions are not listed again */
+    var tops = shown.filter(function (e) { return e.key === "activity" || e.key === "mgr"; });
+    tops.forEach(function (e) { box.appendChild(sessionRow(e)); });
+    var placed = wtBlock(box, all || !isAdmin() ? null : shown);
+    shown = shown.filter(function (e) { return tops.indexOf(e) < 0 && !placed[e.key]; });
     /* forgotten sessions fold into Idle at the end; never the manager, a worker or a background job */
     var fg = shown.filter(function (e) { return !e.bg && !e.idle; });
-    if (!all) fg.forEach(function (e) { box.appendChild(sessionRow(e)); });
+    if (!all) machineGroups(box, fg);
     else {
       fg.filter(function (e) { return !e.sess; }).forEach(function (e) { box.appendChild(sessionRow(e)); });
       var groups = {}, order = [];
@@ -1473,7 +1559,10 @@ a.p-main { color: inherit; text-decoration: none; }
     }
     foldGroup(box, "bg", shown.filter(function (e) { return e.bg; }));
     foldGroup(box, "idle", shown.filter(function (e) { return e.sess && !e.bg && e.idle; }));
-    if (focusKey) { var again = [].filter.call(box.querySelectorAll("[data-key]"), function (n) { return n.getAttribute("data-key") === focusKey; })[0]; if (again) again.focus(); }
+    var focusKey = live.contains(document.activeElement) ? document.activeElement.getAttribute("data-key") : null;
+    morph(live, box);
+    wtPulse(live);
+    if (focusKey && !live.contains(document.activeElement)) { var again = [].filter.call(live.querySelectorAll("[data-key]"), function (n) { return n.getAttribute("data-key") === focusKey; })[0]; if (again) again.focus(); }
   }
   /* Background or Idle (folds[k]): one header with count and unread, its rows when open */
   function foldGroup(box, k, list) {
@@ -1501,12 +1590,12 @@ a.p-main { color: inherit; text-decoration: none; }
   /* one person's (or team machine's) sessions under a header: count, unread, fold */
   function groupRows(box, g) {
     var hasConv = g.rows.some(function (e) { return e.key === conv; });
-    var open = groupOpen[g.key] != null ? !!groupOpen[g.key] : g.own;
+    var open = groupOpen[g.key] != null ? !!groupOpen[g.key] : g.own || !!g.machine;  /* a machine: open at first */
     if (!open && hasConv && groupFolded[g.key] !== conv) open = true;  /* the open chat stays in sight */
     var unseen = g.rows.reduce(function (n, e) { return n + e.unread; }, 0), id = "g-" + g.key.replace(/[^A-Za-z0-9_-]/g, "_");
     var head = el("button", { type: "button", "class": "bg-head g-head", "aria-expanded": open ? "true" : "false", "aria-controls": id, "data-key": "g:" + g.key,
-                              title: (g.team ? g.name + ", a team machine" : g.own ? "Your sessions" : g.name + "'s sessions") }, [
-      icon("i-chev", 12), avatar(g.team ? "machine" : "person", g.name, { size: "sm" }), g.own ? "You" : g.name,
+                              title: (g.team ? g.name + ", a team machine" : g.machine ? "Sessions on " + g.name : g.own ? "Your sessions" : g.name + "'s sessions") }, [
+      icon("i-chev", 12), avatar(g.team || g.machine ? "machine" : "person", g.name, { size: "sm" }), g.own && !g.machine ? "You" : g.name,
       g.team ? chip("Team", "active") : null, el("small", { text: String(g.rows.length) }),
       unseen ? el("span", { "class": "count", title: unseen + " unread", text: String(unseen) }) : null]);
     head.addEventListener("click", function () {
@@ -1516,11 +1605,214 @@ a.p-main { color: inherit; text-decoration: none; }
       renderSessions();
     });
     box.appendChild(head);
-    var rows = el("div", { "class": "bg-rows", id: id, role: "group", "aria-label": g.name }, open ? g.rows.map(function (e) { return sessionRow(e, true); }) : []);
+    var rows = el("div", { "class": "bg-rows", id: id, role: "group", "aria-label": g.name }, open ? g.rows.map(function (e) { return g.machine ? sessionRow(bare(e), e.team) : sessionRow(e, true); }) : []);
     rows.hidden = !open;
     box.appendChild(rows);
   }
+  /* the list without blinking: a row whose drawing did not change keeps its node, so nothing on
+     it restarts (dots, motion, hover); a list or fold keeps its node and is matched inside */
+  function ident(n) { return n.getAttribute("data-key") || n.id || null; }
+  function syncAttrs(old, f) {
+    [].slice.call(old.attributes).forEach(function (a) { if (!f.hasAttribute(a.name)) old.removeAttribute(a.name); });
+    [].forEach.call(f.attributes, function (a) { if (old.getAttribute(a.name) !== a.value) old.setAttribute(a.name, a.value); });
+  }
+  function morph(live, fresh) {
+    var pool = {}, kids = [].slice.call(fresh.children);
+    [].forEach.call(live.children, function (n) { var k = ident(n); if (k) pool[k] = n; });
+    kids.forEach(function (f, i) {
+      var k = ident(f), old = k ? pool[k] : null, use = f;
+      if (old) {
+        delete pool[k];
+        if (old.tagName === "DIV" && f.tagName === "DIV" && /\b(bg|wt)-rows\b/.test(f.className)) { syncAttrs(old, f); morph(old, f); use = old; }
+        else if (old.classList.contains("row") && old.outerHTML === f.outerHTML) use = old;
+      }
+      var at = live.children[i] || null;
+      if (use !== at) live.insertBefore(use, at);
+    });
+    while (live.children.length > kids.length) live.removeChild(live.lastElementChild);
+  }
+  /* a feed that lost a session for a poll or two (a missed heartbeat, a tool between calls):
+     the session stays where it was, as it was, for GRACE polls; then it goes. The same for a
+     group and for one session of a group. A session whose name changed keeps its open chat */
+  var GRACE = 2, kept = { agents: {}, order: [], groups: {}, gorder: [], members: {} };
+  var wt = { last: {}, pulse: {}, fresh: {}, seen: {} };  /* per group: last message id, when its rail pulsed; groups as last seen */
+  function keyOf(a) { return hidden(a) ? a.id : a.name; }
+  function renamed(was, now) {
+    if (conv === was) conv = now;
+    if (drafts[was] != null && drafts[now] == null) drafts[now] = drafts[was];
+    if (readMap && readMap[was] != null && readMap[now] == null) readMap[now] = readMap[was];
+  }
+  function steady(f) {
+    var byId = {}, out = (f.agents || []).slice();
+    out.forEach(function (a) { byId[a.id] = a; });
+    kept.order.forEach(function (id, i) {
+      var k = kept.agents[id], a = byId[id];
+      if (!k) return;
+      if (a) { if (keyOf(a) !== keyOf(k.a)) renamed(keyOf(k.a), keyOf(a)); return; }
+      if (++k.miss > GRACE) { delete kept.agents[id]; return; }
+      var prev = null;
+      for (var j = i - 1; j >= 0 && !prev; j--) prev = byId[kept.order[j]] || null;
+      out.splice(prev ? out.indexOf(prev) + 1 : 0, 0, k.a);
+      byId[id] = k.a;
+    });
+    out.forEach(function (a) { if (!kept.agents[a.id] || kept.agents[a.id].a !== a) kept.agents[a.id] = { a: a, miss: 0 }; });
+    kept.order = out.map(function (a) { return a.id; });
+    f.agents = out;
+    var gs = (f.groups || []).slice(), gid = {}, inNew = {};
+    gs.forEach(function (g) {
+      gid[g.id] = g;
+      g.members.forEach(function (m) { inNew[m.id] = 1; });
+      if (wt.last[g.id] != null && g.last_id > wt.last[g.id]) { wt.pulse[g.id] = Date.now(); wt.fresh[g.id] = 1; }
+      wt.last[g.id] = g.last_id;
+    });
+    gs.forEach(function (g) {  /* a session that left a group for one poll stays in it */
+      var old = kept.groups[g.id], have = {};
+      if (!old) return;
+      g.members.forEach(function (m) { have[m.id] = 1; });
+      old.g.members.forEach(function (m, i) {
+        var mk = g.id + " " + m.id;
+        if (have[m.id]) { delete kept.members[mk]; return; }
+        if (inNew[m.id] || !byId[m.id]) return;
+        kept.members[mk] = (kept.members[mk] || 0) + 1;
+        if (kept.members[mk] > GRACE) return;
+        g.members.splice(Math.min(i, g.members.length), 0, m);
+        inNew[m.id] = 1;
+      });
+    });
+    kept.gorder.forEach(function (id) {  /* a group gone for one poll stays */
+      var k = kept.groups[id];
+      if (!k || gid[id]) return;
+      if (++k.miss > GRACE) { delete kept.groups[id]; return; }
+      var g = Object.assign({}, k.g, { members: k.g.members.filter(function (m) { return byId[m.id] && !inNew[m.id]; }) });
+      if (!g.members.length) { delete kept.groups[id]; return; }
+      g.members.forEach(function (m) { inNew[m.id] = 1; });
+      gs.push(g); gid[id] = g; k.held = g;
+    });
+    gs.forEach(function (g) { if (!kept.groups[g.id] || kept.groups[g.id].held !== g) kept.groups[g.id] = { g: g, miss: 0 }; wt.seen[g.id] = g; });
+    /* groups keep their place: the first seen stays first */
+    kept.gorder = kept.gorder.filter(function (id) { return gid[id]; }).concat(gs.map(function (g) { return g.id; }).filter(function (id) { return kept.gorder.indexOf(id) < 0; }));
+    f.groups = kept.gorder.map(function (id) { return gid[id]; });
+    return f;
+  }
+  function agentById(id) { return feed.agents.filter(function (a) { return a.id === id; })[0] || null; }
+  function isGrp(k) { return typeof k === "string" && k.indexOf("grp:") === 0; }
+  function grpOf(k) {
+    var id = k.slice(4);
+    return (feed.groups || []).filter(function (g) { return g.id === id; })[0] || null;
+  }
+  function grpSize(g) { return g.members.length + (g.others || 0); }
+  function grpLine(g) { return grpSize(g) + " sessions"; }
+  function wtSig() {
+    return (feed.groups || []).map(function (g) { return [g.id, g.members, g.others, g.project, Math.floor(g.active_s / 60), wt.pulse[g.id] || 0]; });
+  }
+  /* Working together, under the manager: per group its title line (opens the group's chat)
+     and its sessions on one rail, a worker under its boss. `mine`: an admin's Mine, where a
+     group shows when one of its sessions is the admin's. Returns the keys it placed */
+  function wtBlock(box, mine) {
+    var placed = {}, drawn = 0;
+    (feed.groups || []).forEach(function (g) {
+      var rows = [];
+      g.members.forEach(function (m) {
+        var a = agentById(m.id), e = a ? entryOf[keyOf(a)] : null;
+        if (!e || placed[e.key] || e.key === "mgr") return;
+        var boss = m.boss && rows.some(function (r) { return r.id === m.boss; });
+        rows.push({ e: e, id: m.id, sub: boss });
+      });
+      if (!rows.length || rows.length + (g.others || 0) < 2) return;
+      if (mine && !rows.some(function (r) { return mine.indexOf(r.e) >= 0; })) return;
+      if (!drawn++) box.appendChild(el("div", { "class": "wt-cap", "data-key": "wt-cap" }, [icon("i-link", 12), "Working together"]));
+      rows.forEach(function (r) { placed[r.e.key] = 1; });
+      var k = "grp:" + g.id, on = conv === k && !askOpen && (phoneOpen || wide());
+      var head = el("button", { type: "button", "class": "wt-head" + (on ? " on" : ""), "data-key": k, "aria-current": on ? "true" : null,
+                                title: "What these sessions said to each other" }, [
+        icon("i-chat", 12), el("b", { text: g.project }), el("span", { text: "· " + grpLine(g) }),
+        el("span", { text: "· active " + ago(g.active_s) })]);
+      head.addEventListener("click", function () { select(k); loadGroupConv(); });
+      box.appendChild(head);
+      var kids = rows.map(function (r) {
+        var b = sessionRow(r.e);
+        if (r.sub) b.classList.add("wt-sub");
+        return b;
+      });
+      if (g.others) kids.push(el("div", { "class": "row off wt-other", "data-key": "wt-other:" + g.id, title: "A session you cannot see" }, [
+        el("span", { "class": "lead" }, [avatar("session", "?")]),
+        el("span", { "class": "meta" }, [el("span", { "class": "name", text: g.others === 1 ? "another session" : g.others + " other sessions" })])]));
+      var pulsing = Date.now() - (wt.pulse[g.id] || 0) < 1100;
+      box.appendChild(el("div", { "class": "wt-rows" + (pulsing ? " pulse" : ""), id: "wt-" + g.id.replace(/[^A-Za-z0-9_-]/g, "_"), role: "group",
+                                  "aria-label": g.project + ", working together" }, kids));
+    });
+    return placed;
+  }
+  /* a message passed inside a group: its rail lights once (a fresh class restarts the motion) */
+  function wtPulse(live) {
+    Object.keys(wt.fresh).forEach(function (id) {
+      var n = live.querySelector("#wt-" + id.replace(/[^A-Za-z0-9_-]/g, "_"));
+      if (!n) return;
+      n.classList.remove("pulse");
+      void n.offsetWidth;
+      n.classList.add("pulse");
+    });
+    wt.fresh = {};
+  }
+  /* a row under its machine's header: the grey line leaves out the machine it already names */
+  function bare(e) {
+    var w = e.where || "", s = e.sub || "";
+    return w && s.slice(-w.length) === w ? Object.assign({}, e, { sub: s.slice(0, -w.length).replace(/ \u00b7 $/, "") }) : e;
+  }
+  /* a member's list, and an admin's Mine: one foldable header per machine (account@computer,
+     a team machine tagged Team) when the sessions are on more than one */
+  function machineGroups(box, fg) {
+    var groups = {}, order = [], sess = fg.filter(function (e) { return e.sess; });
+    sess.forEach(function (e) {
+      var k = "m:" + (e.team ? "t:" : "") + (e.where || "");
+      if (!groups[k]) { groups[k] = { key: k, name: e.where || "?", team: e.team, machine: true, rows: [] }; order.push(groups[k]); }
+      groups[k].rows.push(e);
+    });
+    if (order.length < 2) { fg.forEach(function (e) { box.appendChild(sessionRow(e)); }); return; }
+    order.sort(function (a, b) { return (a.team - b.team) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0); });
+    order.forEach(function (g) { groupRows(box, g); });
+    fg.filter(function (e) { return !e.sess; }).forEach(function (e) { box.appendChild(sessionRow(e)); });
+  }
+  /* the open chat's partners in its group, as small names; a click opens one */
+  function renderWith() {
+    var box = $("chat-with"), g = null, k = conv;
+    if (!askOpen && !isGrp(k) && entryOf[k] && entryOf[k].sess) g = (feed.groups || []).filter(function (x) {
+      return x.members.some(function (m) { var a = agentById(m.id); return a && keyOf(a) === k; });
+    })[0] || null;
+    var partners = g ? g.members.map(function (m) { return agentById(m.id); }).filter(function (a) { return a && keyOf(a) !== k && entryOf[keyOf(a)]; }) : [];
+    if (!changed("chat-with", [k, askOpen, g && g.others, partners.map(function (a) { return [keyOf(a), entryOf[keyOf(a)].name, a.tool]; })])) return;
+    box.textContent = "";
+    box.hidden = !g;
+    if (!g) return;
+    box.appendChild(el("span", { text: "Working with" }));
+    partners.forEach(function (a) {
+      var e = entryOf[keyOf(a)];
+      var b = el("button", { type: "button", "class": "with", title: "Open " + e.name + (e.sub ? "\n" + e.sub : "") }, [
+        avatar("session", e.name, { tool: a.tool }), el("span", { text: e.name })]);
+      b.addEventListener("click", function () { select(e.key); });
+      box.appendChild(b);
+    });
+    if (g.others) box.appendChild(el("span", { "class": "with other", title: "A session you cannot see", text: g.others === 1 ? "another session" : g.others + " other sessions" }));
+  }
+  /* a group's chat: every message between its sessions, read only; kept when the group ends */
+  var grpMsgs = {}, grpJson = {};
+  function grpEntry(k) {
+    var id = k.slice(4), g = grpOf(k), last = g || wt.seen[id];
+    return { key: k, grp: true, icon: "grp", off: true, name: last ? last.project : "Working together",
+             sub: !last ? "" : g ? grpLine(g) + " · active " + ago(g.active_s) : "no longer working together" };
+  }
+  function loadGroupConv() {
+    if (!isGrp(conv)) return;
+    var id = conv.slice(4);
+    get("/api/groups/" + encodeURIComponent(id) + "/messages").then(function (r) {
+      var j = JSON.stringify(r.messages);
+      if (grpJson[id] === j) return;
+      grpJson[id] = j; grpMsgs[id] = r.messages;
+      if (conv === "grp:" + id && feed) renderMessages();
+    }, function () {});  /* the group ended: what it said stays on screen */
+  }
   function lead(e) {
+    if (e.grp) return el("span", { "class": "av av-group", "aria-hidden": "true" }, [icon("i-link", 14)]);
     if (e.key === "activity") return avatar("activity", e.name);
     if (e.key === "mgr") return avatar("manager", e.name, { dot: e.online ? true : null });
     if (e.icon === "i-person") return avatar("person", e.name);
@@ -1707,7 +1999,7 @@ a.p-main { color: inherit; text-decoration: none; }
     return m.toMgr[0] || sessionKey(m.to[0]) === "mgr" ? "manager" : labelOf(m.toId[0] || m.to[0]) || shortName(m.to[0]) || "—";
   }
   function renderChat() {
-    var e = entryOf[conv] || { name: shortName(conv), sub: "" }, act = conv === "activity";
+    var e = (isGrp(conv) ? grpEntry(conv) : entryOf[conv]) || { name: shortName(conv), sub: "" }, act = conv === "activity";
     if (!changed("chat-head", [e, conv, askOpen, phoneOpen])) return;  /* the same head: leave it, no flicker */
     var head = $("chat-lead");
     head.textContent = "";
@@ -1744,7 +2036,7 @@ a.p-main { color: inherit; text-decoration: none; }
     var stick = jump || log.scrollHeight - log.scrollTop - log.clientHeight < 60, top = log.scrollTop;
     log.textContent = "";
     var act = conv === "activity";
-    var all = fold(feed.messages).filter(function (m) { return inConv(m, conv); });
+    var all = isGrp(conv) ? fold(grpMsgs[conv.slice(4)] || []) : fold(feed.messages).filter(function (m) { return inConv(m, conv); });
     var notices = all.filter(notice).length;
     var shown = all.filter(function (m) { return !act || showNotices || !notice(m); });
     var day = null, last = null, group = null, mineLast = null;
@@ -1761,7 +2053,7 @@ a.p-main { color: inherit; text-decoration: none; }
         return;
       }
       var p = parties(m), between = p.every(function (x) { return x === ME || x === conv; });
-      var to = act || !between ? toName(m) : null, k = m.sender + "\n" + (to || "");
+      var to = (isGrp(conv) ? !grpOf(conv) || grpSize(grpOf(conv)) > 2 : act || !between) ? toName(m) : null, k = m.sender + "\n" + (to || "");
       if (!last || last.k !== k || m.created - last.t > 300) {
         group = el("div", { "class": "group" + (p[0] === ME ? " mine" : "") + (m.id > before ? " new" : "") }, [el("div", { "class": "head" }, [
           senderBadge(m), el("b", { "class": p[0] === ME ? "mine" : null, text: senderName(m) }),
@@ -1824,7 +2116,7 @@ a.p-main { color: inherit; text-decoration: none; }
   var workEl = null;
   var WAITING = { permission_prompt: "is waiting for a permission", needs_input: "is waiting for an answer" };
   function working(all) {
-    if (conv === "activity" || askOpen || conv.charAt(0) === "@") return null;
+    if (conv === "activity" || askOpen || conv.charAt(0) === "@" || isGrp(conv)) return null;
     var said = all.filter(function (m) { return !notice(m); }).pop();
     var mineOut = outbox.some(function (o) { return o.conv === conv && o.state !== "failed"; });
     if (!mineOut && (!said || parties(said)[0] !== ME)) return null;
@@ -1839,12 +2131,13 @@ a.p-main { color: inherit; text-decoration: none; }
   }
   function renderWorking(all) {
     var log = $("log"), w = working(all || fold(feed.messages).filter(function (m) { return inConv(m, conv); }));
-    if (!changed("working", [w, conv]) && (workEl ? workEl.parentNode === log : !w)) return;
+    var again = !changed("working", [w, conv]);  /* the same line drawn again (the chat redrew): no second rise */
+    if (again && (workEl ? workEl.parentNode === log : !w)) return;
     if (workEl) workEl.remove();
     workEl = null;
     if (!w) return;
     var near = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
-    workEl = el("div", { "class": "working " + w.cls, role: "status" }, [
+    workEl = el("div", { "class": "working " + w.cls + (again ? " kept" : ""), role: "status" }, [
       w.cls === "waiting" ? null : el("span", { "class": "dots", "aria-hidden": "true" }, [el("i"), el("i"), el("i")]),
       w.who ? el("b", { text: w.who }) : null, el("span", { "class": "what", text: w.what }),
       w.more ? el("span", { "class": "more-act", title: w.more, text: "\u00b7 " + w.more }) : null]);
@@ -1898,45 +2191,101 @@ a.p-main { color: inherit; text-decoration: none; }
       entries = buildEntries(msgs);  /* the open chat is read now */
     } else renderWorking();
     renderSessions();
+    renderWith();
     renderWarns();
   }
 
-  /* over the chat: only what stops this person working, its command and a copy button */
+  /* what stops someone working (the hub's blocking warnings this viewer may see; a member only
+     their own). Over the chat: one line, only for the open chat's own machine, with its
+     command, Copy, "+N more" and a dismiss. Every warning in full under the top bar's warning
+     sign, a dismissed one too (Show again puts it back) */
+  var warnPop = false;
+  function warnKey(w) { return [w.host || "", w.os_user || "", w.short || w.text].join("|"); }
+  function warnText(w) { return w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, ""); }
+  function warnFix(w) { var m = /`([^`]+)`/.exec(w.text); return m ? m[1] : null; }
+  function warnGone() { return store(function (st) { return JSON.parse(st.getItem("kaptyorka.warn-dismissed") || "[]"); }) || []; }
+  function setWarnGone(list) { var j = JSON.stringify(list); store(function (st) { st.setItem("kaptyorka.warn-dismissed", j); }); }
+  /* the warnings about the machine the open chat's session runs on */
+  function chatWarns(rows) {
+    var cur = isGrp(conv) || askOpen ? null : conv === "mgr" ? feed.agents.filter(function (a) { return a.role === "manager"; })[0]
+      : feed.agents.filter(function (a) { return a.name === conv || a.id === conv; })[0];
+    if (!cur) return [];
+    return rows.filter(function (w) {
+      var n = w.os_user && w.host ? w.os_user + "@" + w.host : w.host;
+      return n === cur.where || n === cur.machine || w.host === cur.machine;
+    });
+  }
+  function warnCopy(fix) {
+    var code = el("code", { text: fix });
+    var b = button([icon("i-copy", 14)], "icon", function () { copyCode(code, b); }, { title: "Copy", "aria-label": "Copy " + fix });
+    return [code, b];
+  }
   function renderWarns() {
     var rows = (isAdmin() ? fleet.warnings : feed.warnings || []).filter(function (w) { return w.blocks; });
+    var gone = warnGone(), mine = chatWarns(rows).filter(function (w) { return gone.indexOf(warnKey(w)) < 0; });
+    renderWarnSign(rows, gone);
+    if (!changed("warns", [mine.map(function (w) { return [warnKey(w), w.text]; }), rows.length])) return;
     var box = $("warns");
-    var isLogin = function (w) { return /: no agent tool is logged in\./.test(w.text); };
-    var nameOf = function (w) { return w.text.split(": no agent tool")[0]; };
-    var dismissed = store(function (st) { return JSON.parse(st.getItem("kaptyorka.login-warn-dismissed") || "[]"); }) || [];
-    var login = rows.filter(isLogin), others = rows.filter(function (w) { return !isLogin(w); }), shown = others, group = [];
-    if (login.length < 2) shown = rows;
-    else {
-      /* the open chat's own account keeps its bar (with the login command); the rest is one line */
-      var cur = feed.agents.filter(function (a) { return a.name === conv || a.id === conv; })[0];
-      var own = cur ? login.filter(function (w) { return nameOf(w) === cur.where || nameOf(w) === cur.machine; }) : [];
-      group = login.filter(function (w) { return own.indexOf(w) < 0; });
-      shown = others.concat(own);
-      if (group.every(function (w) { return dismissed.indexOf(nameOf(w)) >= 0; })) group = [];
-    }
-    if (!changed("warns", [shown, group.map(nameOf)])) return;
     box.textContent = "";
-    shown.forEach(function (w) {
-      var fix = /`([^`]+)`/.exec(w.text), code = fix ? el("code", { text: fix[1] }) : null;
-      var copy = code ? button([icon("i-copy", 14)], "icon", function () { copyCode(code, copy); }, { title: "Copy" }) : null;
-      box.appendChild(el("li", { title: w.text }, [icon("i-warn", 14),
-        el("span", { text: w.text.replace(/\s*Run `[^`]+` there\.?/, "").replace(/\.$/, "") }), code, copy]));
-    });
-    if (group.length) {
-      var more = el("a", { href: "#settings/machines", text: "See machines" });
-      more.addEventListener("click", function () { mFilter = "all"; store(function (st) { st.setItem("kaptyorka.machines-filter", "all"); }); });
-      var x = button([icon("i-x", 14)], "icon", function () {
-        store(function (st) { st.setItem("kaptyorka.login-warn-dismissed", JSON.stringify(group.map(nameOf).filter(function (n, i, all) { return all.indexOf(n) === i; }))); });
-        seen.warns = null; renderWarns();
-      }, { title: "Dismiss", "aria-label": "Dismiss" });
-      box.appendChild(el("li", { "class": "login-group", title: group.map(nameOf).join("\n") }, [icon("i-warn", 14),
-        el("span", { text: group.length + (group.length === 1 ? " account can't" : " accounts can't") + " run agents (no tool logged in) \u00b7 " }, [more]), x]));
-    }
+    box.hidden = !mine.length;
+    if (!mine.length) return;
+    var w = mine[0], fix = warnFix(w), more = rows.length - 1;
+    var plus = more ? el("button", { type: "button", "class": "warn-more", "aria-controls": "warn-pop", title: "See all warnings", text: "+" + more + " more" }) : null;
+    if (plus) plus.addEventListener("click", function () { openWarnPop(); });
+    var x = button([icon("i-x", 14)], "icon", function () {
+      setWarnGone(warnGone().concat([warnKey(w)]));
+      seen.warns = null; seen["warn-pop"] = null; renderWarns();
+      $("warn-ind").focus();
+    }, { title: "Dismiss: it stays under the warning sign at the top", "aria-label": "Dismiss" });
+    box.appendChild(el("div", { "class": "warn-line", role: "alert", title: w.text }, [icon("i-warn", 14), el("span", { "class": "warn-text", text: warnText(w) })]
+      .concat(fix ? warnCopy(fix) : [], [plus, x])));
   }
+  /* the top bar's sign: the count, and the list when open */
+  function renderWarnSign(rows, gone) {
+    var b = $("warn-ind"), n = rows.length;
+    b.hidden = !n;
+    $("warn-n").textContent = String(n);
+    b.title = n + (n === 1 ? " problem stops" : " problems stop") + " agents working";
+    b.setAttribute("aria-label", "Warnings: " + n);
+    if (!n && warnPop) closeWarnPop();
+    if (!warnPop || !changed("warn-pop", [rows.map(function (w) { return [warnKey(w), w.text]; }), gone])) return;
+    $("warn-pop-n").textContent = String(n);
+    var list = $("warn-list");
+    list.textContent = "";
+    rows.forEach(function (w) {
+      var fix = warnFix(w), hid = gone.indexOf(warnKey(w)) >= 0;
+      var again = hid ? button("Show again", "quiet", function () {
+        setWarnGone(warnGone().filter(function (k) { return k !== warnKey(w); }));
+        seen.warns = null; seen["warn-pop"] = null; renderWarns();
+      }, { title: "Show it over its chat again" }) : null;
+      list.appendChild(el("li", null, [icon("i-warn", 14), el("div", { "class": "wp-body" }, [el("p", { text: warnText(w) }),
+        fix || again ? el("div", { "class": "wp-fix" }, (fix ? warnCopy(fix) : []).concat([again])) : null])]));
+    });
+  }
+  function openWarnPop() {
+    warnPop = true;
+    $("warn-pop").hidden = false;
+    $("warn-ind").setAttribute("aria-expanded", "true");
+    seen["warn-pop"] = null;
+    renderWarns();
+    $("warn-pop").focus();
+  }
+  function closeWarnPop() {
+    warnPop = false;
+    $("warn-pop").hidden = true;
+    $("warn-ind").setAttribute("aria-expanded", "false");
+  }
+  $("warn-ind").addEventListener("click", function () { if (warnPop) closeWarnPop(); else openWarnPop(); });
+  $("warn-machines").addEventListener("click", function () {
+    mFilter = "warnings"; store(function (st) { st.setItem("kaptyorka.machines-filter", "warnings"); });
+    closeWarnPop();
+  });
+  document.addEventListener("pointerdown", function (e) {
+    if (warnPop && !(e.target.closest && e.target.closest("#warn-pop, #warn-ind, .warn-more"))) closeWarnPop();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && warnPop) { closeWarnPop(); $("warn-ind").focus(); }
+  });
   function grow() { var t = $("text"); t.style.height = "48px"; t.style.height = Math.max(48, Math.min(t.scrollHeight + 2, 200)) + "px"; }
   function sendErr(msg) { $("send-err").hidden = !msg; $("send-err").textContent = msg || ""; }
   /* the chosen file as a chip "name · size ×" beside the message */
@@ -2668,8 +3017,9 @@ a.p-main { color: inherit; text-decoration: none; }
         clearTimeout(stop);
         if (text == null || !token) return;  /* signed out meanwhile */
         live(true);
-        feed = JSON.parse(text);
+        feed = steady(JSON.parse(text));
         render();
+        loadGroupConv();
         loadWarnings();
         loadProposals();
         if (inTeam()) loadGitlab();

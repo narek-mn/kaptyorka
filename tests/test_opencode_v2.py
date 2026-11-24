@@ -111,6 +111,7 @@ def test_v2_doctor_server_check(monkeypatch):
 
 HARNESS = r"""
 import { pathToFileURL } from "node:url";
+import { existsSync, readFileSync } from "node:fs";
 const [plugin, mode, dir] = process.argv.slice(2);
 const out = { toasts: [], slots: [], layers: [] };
 const handlers = {};
@@ -134,6 +135,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const mod = await import(pathToFileURL(plugin).href);
 out.id = mod.default.id;
 const cleanup = await mod.default.setup(ctx);
+const note = `${process.argv[5]}/${process.pid}.json`;
+out.note = JSON.parse(readFileSync(note, "utf8"));
 const cmd = out.layers.flatMap((l) => l.commands).find((c) => c.slash && c.slash.name === "hub");
 out.slash = cmd.slash;
 await cmd.run("off");
@@ -154,6 +157,7 @@ if (mode === "slot") {
 }
 out.slots = out.slots.map((s) => s.append);
 if (cleanup) await cleanup();
+out.noteAfter = existsSync(note);
 console.log(JSON.stringify(out));
 """
 
@@ -184,7 +188,8 @@ def run_plugin(tmp_path, mode):
     exe.chmod(0o755)
     plug = tmp_path / "plug"
     plug.mkdir()
-    (plug / "tui.js").write_text(opencode.TUI_V2 % {"mark": TUI_MARK, "exe": json.dumps(str(exe))})
+    (plug / "tui.js").write_text(opencode.TUI_V2 % {"mark": TUI_MARK, "exe": json.dumps(str(exe)),
+                                                    "open": json.dumps(str(tmp_path / "open"))})
     if mode == "slot":  # the module OpenCode's Bun build hands to plugins
         solid = plug / "node_modules" / "@opentui" / "solid"
         solid.mkdir(parents=True)
@@ -194,7 +199,7 @@ def run_plugin(tmp_path, mode):
     harness.write_text(HARNESS.replace('"SID"', json.dumps(SID)))
     work = tmp_path / "proj-a"
     work.mkdir()
-    r = subprocess.run([NODE, str(harness), str(plug / "tui.js"), mode, str(work)],
+    r = subprocess.run([NODE, str(harness), str(plug / "tui.js"), mode, str(work), str(tmp_path / "open")],
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     calls = log.read_text().splitlines() if log.exists() else []
@@ -221,6 +226,14 @@ def test_tui_plugin_indicator_in_the_prompt_footer(tmp_path):
     states = [c for c in calls if c.startswith("hub-state ")]
     assert states and states[0].startswith(f"hub-state {KEY} ")
     assert not any(c.startswith("hub|") for c in calls)  # the footer replaces the start toast
+
+
+@pytest.mark.parametrize("mode", ["toast", "slot"])
+def test_tui_plugin_notes_the_session_its_window_shows(tmp_path, mode):
+    """The bridge's exact answer to "which session does this window have open", while it runs."""
+    out, _, work = run_plugin(tmp_path, mode)
+    assert out["note"] == {"session": SID, "directory": work}
+    assert out["noteAfter"] is False  # the plugin unloaded (or OpenCode quit): the note goes
 
 
 # --- hub-state for an OpenCode session --------------------------------------------------------

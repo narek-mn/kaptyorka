@@ -207,10 +207,11 @@ class Bridge:
         # the help a refused call gets names only registered projects of this person
         mine = sorted(m for m in mine if isinstance(m, str) and new[0] is not None
                       and m in new[0]) if isinstance(mine, list) else None
+        shared = answer.get("shared") is True  # a team machine: every session goes on the hub
         if new != self._list or mine != self._mine or found != self._repos \
-                or not (paths.home() / offhub.TEAM).exists():
+                or shared != offhub.shared_machine() or not (paths.home() / offhub.TEAM).exists():
             self._list, self._mine, self._repos = new, mine, found
-            offhub.save_team(*new, mine, found)  # for this machine's shims and hooks
+            offhub.save_team(*new, mine, found, shared)  # for this machine's shims and hooks
 
     def heartbeat(self, again: bool = True) -> None:
         offhub.clean()
@@ -234,9 +235,13 @@ class Bridge:
             its folder's name or, when that is no team project, its git remote."""
             if s.key not in joined:
                 project = repos.resolve(s.project, s.cwd, team, self._repos) if s.cwd else s.project
-                return s if project == s.project else replace(s, project=project)
+                if not optin.auto(s.key, project, s.cwd):
+                    return s if project == s.project else replace(s, project=project)
+                joined[s.key] = paths.COORDINATOR  # a team machine: every session is on the hub
             coordinator = joined[s.key] == paths.COORDINATOR
-            return replace(s, project=joined[s.key], cwd="",
+            # a task's command usually names paths: only its id and silence go
+            tasks = None if s.tasks is None else [{**t, "command": ""} for t in s.tasks]
+            return replace(s, project=joined[s.key], cwd="", tasks=tasks,
                            label=s.label or (optin.LABEL if coordinator else ""))
         sessions, tools, objs, shown, held = [], [], [], [], False
         for a in self.adapters:
