@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import __version__, facts, http, identity, left, offhub, optin, orders, overnight, paths, repos, skills_sync, stuck, usage
+from kaptyorka import __version__, compat, facts, http, identity, left, offhub, optin, orders, overnight, paths, repos, skills_sync, stuck, usage
 from kaptyorka.adapters.base import LOGIN_COMMANDS, TOOL_NAMES, Adapter, write_atomic
 from kaptyorka.launch import LaunchError, Launcher
 
@@ -143,6 +143,10 @@ class Bridge:
                 new.update(facts.infra(self.cfg["hub"], with_ip=scope == "team"))
             except Exception as e:  # never stops the heartbeat
                 self._report("infra", f"reading machine facts failed: {e}")
+        try:  # the agent tools' undocumented internals still as kaptyorka reads them (compat.py)
+            new.update(compat.facts(new.get("tools") or {}, compat.Ctx(Path.home(), self.runner)))
+        except Exception as e:
+            self._report("compat", f"checking the agent tools' internals failed: {e}")
         try:  # use per OS user: numbers only; never stops the heartbeat
             new["use"] = self._usage.read()
             # free disk space; mount points only from a team machine or the hub's computer

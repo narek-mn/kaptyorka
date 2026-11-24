@@ -31,7 +31,7 @@ from kaptyorka.secrets_check import PATTERNS as SECRET_PATTERNS
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
-from kaptyorka import hub_groups, left, rollout
+from kaptyorka import compat, hub_groups, left, rollout
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
@@ -700,6 +700,13 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     tell(key, text)
         except Exception as e:  # nor may the rollout
             print(f"kaptyorka: rollout check failed: {e}", flush=True)
+        try:  # a Claude Code newer than the tested one: the admins, once per version
+            for text in compat.version_news(store, now):
+                store.log_add("hub", "compat", text[:500])
+                for name in admin_ops.admins(store):
+                    tell(f"web:{name}", text)
+        except Exception as e:
+            print(f"kaptyorka: compatibility news failed: {e}", flush=True)
 
     def to_admins(text: str) -> None:
         """A line for every admin: their online sessions, else their page."""
