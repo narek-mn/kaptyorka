@@ -34,6 +34,8 @@ TASKS_AFTER = 15  # messages handled since its task list was saved: remind it to
 TASKS_EVERY_S = 7200  # or this long since the last save
 TASKS_NUDGE_KEY = "manager_tasks_nudged_at"
 TASKS_LINE = 'save your task list now (state_write("manager", text))'
+LESSONS_MAX = 40  # lines of manager-lessons the first message carries, newest first
+LESSONS_TOPIC = "lessons"  # a note of project `manager`: only the manager reads it
 TASKS_FIRST_MAX = 6000  # characters of the saved task list the launch's first message carries
 PEOPLE_FIRST_S = 120  # a routine digest waits while a person's message to the manager is this young
 PEOPLE_FIRST_MAX_S = 300  # and never longer than this after it was due
@@ -282,20 +284,88 @@ with the person or session and the request id. Then save your task list with \
 """
 
 
-def claude_md(rules_text: str) -> str:
+# Tools the hub lists for everyone that refuse the manager: the admin's own.
+ADMIN_ONLY = {"knock": "ask another person's session to open a door",
+              "answer": "answer a knock", "door_decide": "decide a door request"}
+NOT_YOURS = {"join_team"}  # the shim's own, for sessions outside a team folder
+# What no tool of yours does, from the hub's access rules and the manager's launch.
+CANNOT = [
+    "edit the team rules (you file `propose_rule`), decide proposals or access requests",
+    "grant or revoke roles, add or remove people, machines or projects",
+    "run commands, read or edit files, or browse the web: your session has no such tools",
+    "close a worker the hub did not start on a request you decided",
+    "open a door when the asking session owns neither side, or for a team machine hidden "
+    "from one side (the hub files those for the admin)",
+    "resume a session on someone's own machine for another person",
+]
+
+
+def capabilities(tools) -> str:
+    """The "you can / you cannot" table from the hub's real tool list ((name, description)
+    pairs, as the hub has them at this launch) and its access rules."""
+    def first(desc: str) -> str:
+        line = " ".join((desc or "").split())
+        cut = line.find(". ")
+        return (line[:cut + 1] if cut > 0 else line)[:200]
+    can = [f"- `{n}`: {first(d)}" for n, d in sorted(tools) if n not in ADMIN_ONLY
+           and n not in NOT_YOURS]
+    cannot = [f"- `{n}`: {why}; the admin's only" for n, why in sorted(ADMIN_ONLY.items())
+              if n in {t[0] for t in tools}] + [f"- {c}" for c in CANNOT]
+    return ("## What you can and cannot do\n\n"
+            "The hub writes this list from its own tools at each launch and each update. Before "
+            "you tell anyone you cannot do something, check this list and load the tool with "
+            "ToolSearch; never promise what is under \"You cannot\".\n\nYou can:\n\n"
+            + "\n".join(can) + "\n\nYou cannot:\n\n" + "\n".join(cannot) + "\n")
+
+
+PLAYBOOKS_SECTION = """## Playbooks
+
+Step by step, for what comes up most.
+
+- A door: 1) Who asked, for which two sessions (`who`), and why? 2) `door_request(a, b, why, \
+asked_by=<asking session>)`, `size="people"` for days of work together. 3) Tell the asker in \
+one line: open (who was told), or waiting for the admin.
+- A message did not arrive: 1) Was the target online (`who`)? 2) Did the sender's message say \
+Delivered or Not sent on the page, or `held:` in the send's answer? 3) Say what you found; \
+talk about doors only when both were fine.
+- A stuck session: follow Stuck sessions above: one question to the session, then one plain \
+line to its person if nothing moved; never close it.
+- A machine event: warn the sessions on that machine in one line each, tidy the `machines` \
+note, and add a reason only once a session confirms the work is done.
+- A session others depend on stopped: 1) `resume_session(name, asked_by=...)`, or \
+`when="reset"` for a usage limit. 2) Else a fresh worker with the project note and the last 20 \
+messages. 3) Else an idle session of the same project, if the asker agrees.
+- A new machine joins: only with `kaptyorka join <link>` from a link the admin makes \
+(`kaptyorka invite`, or the page). Tell the person that, nothing else.
+- Disk space: read the machine's disk line in `machines`; for a full disk tell the people \
+working there in one line, and the admin for a team machine.
+"""
+
+
+def claude_md(rules_text: str, tools=()) -> str:
+    """The manager's CLAUDE.md. `tools`: the hub's (name, description) pairs; with them, the
+    capability table goes first after the team rules."""
+    table = capabilities(tools) + "\n" if tools else ""
     return (rules.rules_text(rules_text) or "No team rules yet.") + "\n\n# Manager\n\n" \
-        + MANAGER_SECTION + "\n" + OLD_VERSION_SECTION + "\n" + OVERNIGHT_SECTION + "\n" \
-        + STUCK_SECTION + "\n" + MACHINES_SECTION + "\n" + COMPACT_SECTION
+        + MANAGER_SECTION + "\n" + table + OLD_VERSION_SECTION + "\n" + OVERNIGHT_SECTION \
+        + "\n" + STUCK_SECTION + "\n" + MACHINES_SECTION + "\n" + PLAYBOOKS_SECTION + "\n" \
+        + COMPACT_SECTION
 
 
-def first_message(base: str, tasks: Optional[str]) -> str:
-    """The launch's first message: `base`, then the task list the last run saved."""
-    if not tasks or not tasks.strip():
-        return base
-    tasks = tasks.strip()
-    if len(tasks) > TASKS_FIRST_MAX:
-        tasks = tasks[:TASKS_FIRST_MAX] + '\n[cut; read the rest with state("manager")]'
-    return f"{base}\n\nYour task list as the last run saved it:\n\n{tasks}"
+def first_message(base: str, tasks: Optional[str], lessons: Optional[str] = None) -> str:
+    """The launch's first message: `base`, then the task list the last run saved, then the
+    lessons (manager-lessons), newest first, at most LESSONS_MAX lines."""
+    out = base
+    if tasks and tasks.strip():
+        tasks = tasks.strip()
+        if len(tasks) > TASKS_FIRST_MAX:
+            tasks = tasks[:TASKS_FIRST_MAX] + '\n[cut; read the rest with state("manager")]'
+        out += f"\n\nYour task list as the last run saved it:\n\n{tasks}"
+    lines = [ln for ln in (lessons or "").splitlines() if ln.strip()][:LESSONS_MAX]
+    if lines:
+        out += ("\n\nLessons from corrections people gave you (newest first); follow them:\n\n"
+                + "\n".join(lines))
+    return out
 
 
 def ensure_schema(db) -> None:
@@ -499,12 +569,12 @@ class ManagerStore:
         return token
 
     def write_files(self, dir: Path, hub_url: str, token: Optional[str], rules_text: str,
-                    config: Optional[Path] = None) -> None:
+                    config: Optional[Path] = None, tools=()) -> None:
         """CLAUDE.md in `dir`; with a token, the config (default paths.home()/CONFIG). The
         launch files are `write_launch_files`, checked on every tick."""
         dir = Path(dir)
         dir.mkdir(parents=True, exist_ok=True)
-        write_atomic(dir / "CLAUDE.md", claude_md(rules_text))
+        write_atomic(dir / "CLAUDE.md", claude_md(rules_text, tools))
         if token:
             cfg = {"hub": hub_url, "token": token,
                    "machine": f"{PERSON}@{self._host_of_account() or _host()}", "person": PERSON}
@@ -811,6 +881,34 @@ class ManagerStore:
                                    (now - PUSH_KEEP_S,)).rowcount
 
     # its task list (its own state note) and its load
+
+    def lessons(self) -> str:
+        """The manager-lessons note: one dated line per lesson, newest first."""
+        with self.lock:
+            row = self.db.execute(
+                "SELECT text FROM notes WHERE topic=? AND project=? AND deleted_at IS NULL"
+                " ORDER BY id DESC LIMIT 1", (LESSONS_TOPIC, PERSON)).fetchone()
+        return row["text"] if row else ""
+
+    def add_lesson(self, text: str, by: str) -> int:
+        """One lesson, a correction the manager accepted or the admin gave: a dated line at
+        the top of the note (no history kept in it beyond LESSONS_MAX * 2 lines). Returns how
+        many lessons there are."""
+        from datetime import datetime, timezone
+
+        from kaptyorka.secrets_check import check_secrets
+        from kaptyorka.store import KaptyorkaError, clean
+        line = clean(text, 300)
+        if not line:
+            raise KaptyorkaError("a lesson needs text")
+        check_secrets(line)
+        day = datetime.fromtimestamp(self.clock(), timezone.utc).strftime("%Y-%m-%d")
+        lines = [f"- {day} ({by}): {line}"] + [ln for ln in self.lessons().splitlines()
+                                              if ln.strip()][:LESSONS_MAX * 2 - 1]
+        with self.lock:
+            self.store._note(LESSONS_TOPIC, "\n".join(lines) + "\n", by, PERSON)
+        self.store.log_add(by, "lesson", line[:200])
+        return len(lines)
 
     def tasks(self) -> Tuple[Optional[str], Optional[float]]:
         """The manager's task list as last saved (state note of project `manager`), and when."""

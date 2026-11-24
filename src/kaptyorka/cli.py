@@ -783,6 +783,18 @@ def _people_revoke(args) -> int:
                      f"{args.device} of {args.name} is signed out")
 
 
+def _lesson(args) -> int:
+    if not args.text:
+        got = _admin_call("GET", "/api/lessons", None)
+        if got is None or got[0] != 200:
+            print(_problem(got) if got else "the hub did not answer", file=sys.stderr)
+            return 1
+        print(got[1] or "no lessons yet")
+        return 0
+    return _admin_do("POST", "/api/lessons", {"text": " ".join(args.text)},
+                     "lesson saved; the manager's next run starts with it")
+
+
 def _auto_doors(args) -> int:
     return _admin_do("POST", "/api/settings", {"auto_doors": args.state == "on"},
                      f"doors between sessions of one shared project open by themselves: {args.state}")
@@ -1332,6 +1344,10 @@ def entry() -> None:
                              " project count")]
     gl_rest[0].set_defaults(run=_gitlab_off)
     gl_rest[1].set_defaults(run=_gitlab_status)
+    ls = sub.add_parser("lesson", help="give the manager a lesson it keeps (a correction, one line);"
+                        " with no text, list its lessons")
+    ls.add_argument("text", nargs="*")
+    ls.set_defaults(run=_lesson)
     ad = sub.add_parser("auto-doors", help="let doors between two sessions of one shared project open by"
                         " themselves (on, the default) or go to the admin like other door requests (off)")
     ad.add_argument("state", choices=("on", "off"))

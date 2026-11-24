@@ -58,7 +58,7 @@ def test_readme_manager_section():
               "the failed-twice note at most once an hour", "the review once a week"]:
         assert s in m, s
     assert "Each item is sent once" not in m and "It can only knock" not in m
-    assert "The hub offers 29 tools" in r
+    assert "The hub offers 30 tools" in r
     assert "add `team-*/` to that repo's `.gitignore`." in r
 
 
