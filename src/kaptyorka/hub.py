@@ -31,7 +31,7 @@ from kaptyorka.secrets_check import PATTERNS as SECRET_PATTERNS
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
-from kaptyorka import compat, hub_groups, left, rollout
+from kaptyorka import compat, hub_groups, left, limits, rollout
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
@@ -560,6 +560,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             if admin is not None:  # every admin's page: any of them may be the one at hand
                 for name in admin_ops.admins(store):
                     tell(f"web:{name}", MANAGER_UNTRUSTED)
+        try:  # its account at its usage limit: wait for the reset, never a crash (limits.py)
+            if limits.manager_gate(store, mm, tell, admin_ops.admins(store), host, now):
+                return
+        except Exception as e:
+            print(f"kaptyorka: manager usage limit check failed: {e}", flush=True)
         if admin is not None and mm.failures_last_hour(now) >= 2 \
                 and mm.push_once("manager-failed", now, 3600):
             for name in admin_ops.admins(store):
@@ -677,6 +682,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         except Exception as e:  # nor may a machine event
             print(f"kaptyorka: machine events failed: {e}", flush=True)
         try:
+            limits.tick(store, now)
+        except Exception as e:
+            print(f"kaptyorka: usage limits check failed: {e}", flush=True)
+        try:
             left.tick(store, mm, ws.live_keys(), tell, now)
         except Exception as e:  # nor may the left-behind check
             print(f"kaptyorka: left sessions check failed: {e}", flush=True)
@@ -756,9 +765,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if n is None:
             n = store.send(key, to, text, file_id, held)
         wake_bridges()
+        wait = limits.waiting_line(store, mm, identity.facts()["host"], store.clock()) \
+            if limits.to_manager(store, mm, to) else ""
         if held:
             return "; ".join(held_line(name, s) for name, s in held)
-        return f"sent to {n} session" + ("" if n == 1 else "s")
+        return f"sent to {n} session" + ("" if n == 1 else "s") + (f"; {wait}" if wait else "")
 
     @server.tool()
     @_tool_errors
@@ -1253,6 +1264,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                  " role (or your own unregistered folder)")
         tool = clean(tool, MAX_IDENT) or "claude-code"
         usable, reasons = ws.candidates(principal, project, machine or None)
+        usable = limits.skip_limited(store, usable, reasons, tool, store.clock())
         chosen = ws.choose(usable, project, tool, store.clock(), principal.person_id)
         if chosen is None:
             return no_machine(project, machine or None, tool, usable, reasons)
@@ -1357,6 +1369,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             store.log_add("manager", "work_decide", f"request {request_id}: refused — {reason}")
             return note
         usable, reasons = ws.candidates_for(r["person_id"], project, machine)
+        usable = limits.skip_limited(store, usable, reasons, r["tool"], now)
         chosen = ws.choose(usable, project, r["tool"], now, r["person_id"])
         if chosen is None:
             raise KaptyorkaError(no_machine(project, machine, r["tool"], usable, reasons))
@@ -1456,8 +1469,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         _, principal = caller(ctx)
         if not (principal.is_admin() or principal.role == "manager"):
             raise KaptyorkaError("the machines list is for the admin and the manager")
+        at = limits.by_host(store, store.clock())
         return [{"host": h["host"], "online": h["online"], "team": bool(h["team"]),
-                 "kind": h["kind"], "use": h["use"], "disk": h["disk"]} for h in ws.overview()]
+                 "kind": h["kind"], "use": h["use"], "disk": h["disk"],
+                 **({"limits": at[h["host"]]} if h["host"] in at else {})} for h in ws.overview()]
 
     @server.tool()
     @_tool_errors
@@ -1528,6 +1543,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             if isinstance(body.get("overnight"), list):
                 night["by_device"][principal.device_id] = {str(k) for k in body["overnight"]}
                 night["keys"] = set().union(*night["by_device"].values())
+        if own and isinstance(facts, dict):  # this account's usage limits (limits.py)
+            limits.from_facts(store, str(facts.get("host") or ""), str(facts.get("os_user") or ""),
+                              facts.get("limits"), store.clock())
         if own and body.get("closed"):  # sessions it closed for us (left.py)
             left.closed(store, principal.device_id, body["closed"], principal.person_name)
         if own and (isinstance(facts, dict) or isinstance(body.get("folders"), dict)):
@@ -1736,6 +1754,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             store.db.execute("UPDATE agents SET stopped=?, stopped_at=?, resets_at=? WHERE key=?",
                              (error or f"end:{reason}", now, resets, key))
             team = store._is_team(row["person_id"])
+        limits.from_event(store, row, error, resets, now)  # its account shares the limit
         mkey = mm.session_key(now) if mm.enabled() else None
         if team and mkey is not None and (error or reason) and \
                 mm.push_once(f"stopped:{key}:{error or reason}", now, 3600):
@@ -1830,6 +1849,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         row = ws.by_name(manager.WORKER)
         running = row is not None and row["state"] in LIVE
         reason = "" if running else mm.launch_reason(now)
+        lim = limits.manager_limit(store, mm, identity.facts()["host"], now) if mm.enabled() else None
+        if lim is not None:  # its account is at its usage limit: it waits for the reset
+            return "waiting", limits.manager_words(lim), row
         if running:  # unattended or abandoned: the session is there, just nobody watching
             state = "starting" if row["state"] == "starting" else "up"
         elif not mm.enabled():
@@ -1844,8 +1866,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         principal = request.scope["state"]["principal"]
         load = {"manager_load": manager.load_line(mm.load(store.clock()), store.clock())} \
             if principal.role == "admin" else {}  # the manager's load: for the admin only
-        return JSONResponse({**feed(store, principal, ws, cs), "manager": manager_state()[0],
-                             **load})
+        state, why, _ = manager_state()
+        return JSONResponse({**feed(store, principal, ws, cs), "manager": state,
+                             **({"manager_why": why} if state == "waiting" else {}), **load})
 
     @server.custom_route("/api/groups/{gid}/messages", methods=["GET"])
     async def api_group_messages(request: Request) -> Response:
@@ -1937,6 +1960,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                         person_id=p.person_id, file_id=file_id)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
+        wait = limits.waiting_line(store, mm, identity.facts()["host"], store.clock()) \
+            if limits.to_manager(store, mm, str(body["to"])) else ""
+        lim = limits.manager_limit(store, mm, identity.facts()["host"], store.clock()) if wait else None
+        if lim is not None and mm.push_once(f"limit-told:{p.person_name}:{lim['since']!r}",
+                                            store.clock()):
+            tell(f"web:{p.person_name}", wait)  # once per person per wait
         wake_bridges()
         return JSONResponse({"sent": n})
 
@@ -2533,11 +2562,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     @server.custom_route("/api/team/machines", methods=["GET"])
     async def api_team_machines_list(request: Request) -> Response:
-        """The admin's Machines list (WorkerStore.overview)."""
+        """The admin's Machines list (WorkerStore.overview), with accounts at a usage limit."""
         denied = admin_only(request)
         if denied:
             return denied
-        return JSONResponse(ws.overview())
+        at = limits.by_host(store, store.clock())
+        return JSONResponse([{**h, "limits": at.get(h["host"], [])} for h in ws.overview()])
 
     @server.custom_route("/api/devices/{device_id:int}/move", methods=["POST"])
     @_bad_request

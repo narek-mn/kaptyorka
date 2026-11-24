@@ -227,6 +227,8 @@ def session_key(pid: int, cwd: str) -> Optional[str]:
     return f"codex:{here[0]['id']}" if here else None
 
 
+LIMITS_S = 300  # Codex's usage read asks its backend: at most every 5 minutes
+
 class CodexAdapter:
     tool = "codex"
     prefix = "codex"
@@ -291,6 +293,24 @@ class CodexAdapter:
                                idle_s=_idle(t.get("updatedAt")), parent=parent, oneshot=oneshot,
                                helper=helper, parent_gone=bool(parent) and parent not in live))
         return out
+
+    def account_limits(self) -> Optional[dict]:
+        """Codex's own usage read for this OS account's login (app-server
+        `account/rateLimits/read`, rust-v0.166.0 v2/account.rs:345-375, 694-788: rateLimits
+        with primary/secondary windows of usedPercent and resetsAt, ordinaryUsageAllowed), at
+        most every LIMITS_S; None without a daemon or an answer."""
+        now = time.monotonic()
+        last = getattr(self, "_limits", None)
+        if last is not None and now - last[0] < LIMITS_S:
+            return last[1]
+        got = None
+        try:
+            with Rpc(self.socket_path) as rpc:
+                got = rpc.call("account/rateLimits/read", {"excludeResetCreditDetails": True})
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RpcError):
+            got = None
+        self._limits = (now, got)
+        return got
 
     def deliver(self, key: str, text: str) -> None:
         tid = key.partition(":")[2]

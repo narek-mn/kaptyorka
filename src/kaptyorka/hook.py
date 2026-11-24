@@ -158,11 +158,16 @@ def _report_end(event: str, sid: str, data: dict, cfg: dict) -> None:
     try:
         body = session_end.event(event, data)
         cwd = str(data.get("cwd") or os.getcwd())
-        if body is None or paths.in_manager_folder(cwd):
+        if body is None:
             return
-        team, key, project = _night_team(sid, cwd, cfg)
-        if not team:
-            return
+        if paths.in_manager_folder(cwd):  # the manager itself: its usage limit (limits.py)
+            if not (cfg.get("hub") and cfg.get("token")):
+                return
+            key, project = f"claude:{sid}", "manager"
+        else:
+            team, key, project = _night_team(sid, cwd, cfg)
+            if not team:
+                return
         ident = Identity(key, cfg.get("machine", ""), "claude-code", project, cwd)
         http.request("POST", f"{cfg['hub']}/api/session-event", cfg["token"], body,
                      headers=ident.headers(), timeout=1)

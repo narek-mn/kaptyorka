@@ -369,14 +369,15 @@ def _status_of(cfg: dict) -> int:
         return 1
     state, why = _manager_word(hub, cfg["token"], got)
     if state is not None:
-        shown = {"up": "running", "blocked": f"blocked: {why}" if why else "blocked"}.get(state, state)
+        shown = {"up": "running", "blocked": f"blocked: {why}" if why else "blocked",
+                 "waiting": why or "waiting for its usage limit"}.get(state, state)
         pin = ""
         if isinstance(got[1], dict) and got[1].get("manager_model"):
             pin = f" (model {got[1]['manager_model']}, effort {got[1].get('manager_effort')})"
         print(f"manager: {shown}{pin}")
         if isinstance(got[1], dict) and got[1].get("manager_load"):
             print(f"manager load: {got[1]['manager_load']}")
-        ok = ok and state in ("up", "asleep", "starting", "off")  # asleep: an older hub
+        ok = ok and state in ("up", "asleep", "starting", "off", "waiting")  # asleep: an older hub
     return 0 if ok else 1
 
 

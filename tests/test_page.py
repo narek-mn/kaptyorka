@@ -317,7 +317,7 @@ def test_machines_grouped_with_filter_chips(hub):
 def test_one_name_for_a_machine(hub):
     html = page(hub)
     assert 'function machineName(d) { return d.label || (d.os_user && d.host ? d.os_user + "@" + d.host : d.name); }' in html
-    assert "+ (a.where || a.machine)," in html and "sub: mgr ? mgr.where || mgr.machine" in html
+    assert "+ (a.where || a.machine)," in html and ": mgr ? mgr.where || mgr.machine" in html
 
 
 def test_home_mine_and_everyone(hub):

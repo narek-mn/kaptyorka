@@ -309,6 +309,16 @@ Sessions pile up: a `claude --bg` helper another session started and forgot, a t
 
 None of this is documented by Claude Code. When a version drops the `derived-from` line or the notes, sessions just show as before (each on its own, nothing closed), and a slow test (`tests/test_left_slow.py`, real `claude`) fails, so the change is noticed.
 
+## Usage limits
+
+Sessions of one OS account on one computer share that account's login to an agent tool, and so its usage limit. kaptyorka treats the same computer, the same OS user and the same tool as one account (Claude Code keeps its login in the OS user's `~/.claude`, Codex in `~/.codex`).
+
+- **Marked.** An account is marked "at its usage limit until 19:30" when one of its sessions says so (Claude Code's StopFailure, OpenCode's plugin; the reset time when the error text names one), when the bridge reads it (the `rate_limits` that Claude Code hands its status line, documented for claude.ai subscribers, which `kaptyorka statusline` keeps in `~/.kaptyorka/limits.json`; Codex's own usage read, at most every 5 minutes), or when the manager's launch fails with a usage limit's text.
+- **Shown.** Machines (admin) shows an amber line per account at its limit; the manager's `machines` tool lists them.
+- **Work goes elsewhere.** A work request skips that account for that tool with a plain reason ("box-1 (u): at its Claude Code usage limit until 19:30; pick another machine or wait until 19:30").
+- **Cleared** at the reset time, when the bridge's next reading says the account is under its limits, or, with no reset time known (5 hours at most), once a session of that account wrote again.
+- **The manager** runs on one account on the hub machine. While that account is at its limit the hub does not relaunch it: `kaptyorka status` and the page's manager row say "waiting for its usage limit, resets 19:30" (amber **waiting**), every admin's page hears it once, messages to it wait, and whoever writes to it meanwhile gets one line: "the manager is at its usage limit until 19:30; your message waits". At the reset a manager still running is told to read its inbox; one that ended starts again. A run that ended or failed while its account was at its limit never counts as a crash, so no backoff follows.
+
 ## Workers
 
 A worker is an agent session that runs on another machine for you. Say "do this on the GPU box" and your agent calls `work`. Here is the story:
@@ -804,6 +814,7 @@ src/kaptyorka/
   usage.py      machine use per OS user (CPU, memory, GPU) and the "heavy" rule
   stuck.py      stuck sessions: the rule, its two stages and their texts
   left.py       sessions left behind: the daily line, "left by", the narrow auto-close
+  limits.py     usage limits per account; the manager waits for its reset
   connects.py   connection requests made before 0.9.11: the admin decides
   memory.py     state notes, git activity and the done check
   rules.py      team rules, skills, proposals and conflicts in the hub

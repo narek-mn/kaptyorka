@@ -147,6 +147,10 @@ DEPS: Tuple[Dep, ...] = (
         "thread/read `status` {type: idle | active, activeFlags}, parentThreadId, source",
         "working or idle, subagents under their parent", "thread status changed",
         "activity unknown", True),
+    Dep("codex.rate_limits", "codex",
+        "app-server account/rateLimits/read: rateLimits.primary/secondary {usedPercent,"
+        " resetsAt}, ordinaryUsageAllowed (rust-v0.166.0 v2/account.rs)",
+        "an account at its Codex usage limit", "", "", False, probed=False),
     Dep("codex.turn_start", "codex", "app-server turn/start {threadId, input} on a loaded thread",
         "push into a session", "", "", False, probed=False),
 )
