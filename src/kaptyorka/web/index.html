@@ -513,32 +513,76 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .warn-pop p { margin: 0; font-size: var(--fs-md); line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
 .warn-pop .wp-fix { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .warn-pop .wp-fix .btn.icon { width: 28px; height: 28px; min-width: 28px; padding: 0; justify-content: center; }
-#log { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-6) 18px; }
-.day { display: flex; align-items: center; gap: var(--s-3); margin: 18px 0 6px; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--faint); }
-.day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-.group { position: relative; padding: var(--s-2) 0 6px 40px; margin-top: 6px; }
-.group .head > .av { position: absolute; left: 0; top: 10px; }
-/* my own messages: a lightly tinted block */
-.group.mine { margin-left: -14px; padding-left: 52px; border-left: 2px solid var(--accent); border-radius: 0 var(--radius) var(--radius) 0;
-  background: rgba(218, 105, 71, .035); }
-.group.mine .head > .av { left: 12px; }
-.group .head { display: flex; align-items: baseline; gap: var(--s-2); min-width: 0; margin-bottom: 2px; }
-.group .head b { font-weight: var(--fw-bold); color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.group .head b.mine { color: var(--accent); }
+/* the chat reads like a document: one column of about 66 characters a line (Bringhurst's 45-75;
+   Baymard), 15 px text at 1.6 line height (WCAG 1.4.12), centred in a wide pane as ChatGPT and
+   Claude do; the pane may be wide, the lines are not. Name and time on one quiet line over a
+   sender's run of messages (Slack, Discord, GitHub comments), air between runs */
+#log { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-6) 22px; }
+.chat { --col: 640px; }  /* the reading column: 40 px of badges and 66ch of 15 px text; the write box matches it */
+#log > * { max-width: var(--col); margin-left: auto; margin-right: auto; }
+#log { font-size: var(--fs-lg); }
+.day { display: flex; align-items: center; gap: var(--s-3); margin: 26px auto 4px; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--faint); }
+.day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
+.group { position: relative; padding: 0 0 2px 40px; margin-top: 20px; }
+.day + .group { margin-top: 14px; }
+.group .head > .av { position: absolute; left: 0; top: 1px; }
+.group.mine .head > .av { opacity: .9; }
+.group .head { display: flex; align-items: baseline; gap: var(--s-2); min-width: 0; margin-bottom: 3px; font-size: var(--fs-base); line-height: 1.4; }
+.group .head b { font-weight: var(--fw-semi); color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group .head b.mine { color: var(--accent-hover); }
 .group .head .to { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
 .group .head .to span { overflow: hidden; text-overflow: ellipsis; }
 .group .head .to svg { color: var(--faint); }
 .group .head time, .msg.sys time { flex: none; font-size: var(--fs-sm); color: var(--faint); }
-.msg { padding: 1px 0; }
-.msg .text { max-width: 76ch; line-height: 1.55; }
+.msg { padding: 0; }
+.msg + .msg { margin-top: 10px; }
+.msg .text { max-width: 66ch; line-height: 1.6; }
 .msg .text.moving { overflow: hidden; transition: max-height var(--dur-3) var(--ease-out); }
 .new { animation: rise var(--dur-3) var(--ease-out); }
-.msg .text.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 12; overflow: hidden; }
-.msg .more { margin-top: var(--s-1); padding: 2px 0; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--accent); }
+/* over about 20 lines: folded, the last lines fading, Show more under it */
+.msg .text.clamp { max-height: 32em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 4.8em), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 4.8em), transparent); }
+.msg .more { margin-top: 2px; padding: 2px 0; font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--accent); }
 .msg .more:hover { text-decoration: underline; }
 .msg.sys { display: flex; align-items: baseline; gap: 10px; padding: 5px 0 5px 8px; font-size: var(--fs-sm); }
 .msg.sys > svg { align-self: center; color: var(--faint); }
-.msg.sys .text { color: var(--muted); min-width: 0; }
+.msg.sys .text { color: var(--muted); min-width: 0; line-height: 1.5; }
+/* markdown in a message, the safe part (see md()): quiet headings, real lists, code in
+   monospace that scrolls sideways with a copy button, tables that scroll on a phone */
+.text.md { white-space: normal; }
+.md p { margin: 0 0 .65em; }
+.md > :last-child { margin-bottom: 0; }
+.md .md-h { margin: 1em 0 .3em; font-weight: var(--fw-semi); color: var(--ink); line-height: 1.4; }
+.md .md-h1 { font-size: 1.07em; }
+.md > .md-h:first-child { margin-top: 0; }
+.md ul, .md ol { margin: 0 0 .65em; padding-left: 1.5em; }
+.md li + li { margin-top: .25em; }
+.md li > ul, .md li > ol { margin: .25em 0 0; }
+.md li::marker { color: var(--muted); }
+.md strong { font-weight: var(--fw-semi); color: var(--ink); }
+.md a { color: var(--accent-hover); text-decoration: underline; text-decoration-color: var(--accent-line); text-underline-offset: 2px; overflow-wrap: anywhere; }
+.md a:hover { text-decoration-color: currentColor; }
+.md code { font: .87em/1.3 var(--mono); padding: 0 .35em; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--surface2); color: var(--ink); overflow-wrap: anywhere; }
+.md blockquote { margin: 0 0 .65em; padding-left: 12px; border-left: 2px solid var(--line-strong); color: var(--muted); }
+.md hr { margin: .9em 0; border: 0; border-top: 1px solid var(--line); }
+.md-pre { position: relative; margin: .3em 0 .75em; }
+.md-pre pre { margin: 0; padding: 10px 44px 10px 12px; overflow-x: auto; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--surface);
+  font: 13px/1.55 var(--mono); color: var(--ink); white-space: pre; tab-size: 4; }
+.md-pre pre:focus-visible { outline: var(--ring); outline-offset: 1px; }
+.md-pre code { padding: 0; border: 0; background: none; font: inherit; overflow-wrap: normal; }
+.md-pre .md-copy { position: absolute; top: 5px; right: 5px; width: 28px; height: 28px; min-width: 28px; padding: 0; justify-content: center; opacity: 0;
+  background: var(--surface2); transition: opacity var(--ease), background-color var(--ease); }
+.md-pre:hover .md-copy, .md-pre .md-copy:focus-visible, .md-pre .md-copy.copied { opacity: 1; }
+@media (hover: none) { .md-pre .md-copy { opacity: 1; } }
+.md-table { margin: .3em 0 .75em; overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: var(--fs-base); line-height: 1.45; font-variant-numeric: tabular-nums; }
+.md th, .md td { padding: 6px 14px 6px 0; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: top; }
+.md th { font-weight: var(--fw-semi); color: var(--muted); border-bottom-color: var(--line); }
+/* new messages below while you read higher up: one button to jump down, never a jump */
+.jump-wrap { position: relative; height: 0; flex: none; z-index: 3; }
+.jump { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); gap: 6px; border-color: var(--line-strong); background: var(--raised); box-shadow: var(--shadow-2);
+  animation: rise var(--dur-2) var(--ease-out); }
+.jump > svg { transform: rotate(90deg); }
 /* my message on its way, and where it is: quiet, under the last one only */
 .msg.out .text, .msg.out .att-out { transition: opacity var(--dur-3); }
 .msg.out.sending .text, .msg.out.sending .att-out { opacity: .55; }
@@ -551,7 +595,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .tick button:hover { text-decoration: underline; }
 .tick .spin { width: 9px; height: 9px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: var(--round); animation: spin .7s linear infinite; }
 /* the session is working on my message: three dots, its name, what it says it does */
-.working { display: flex; align-items: center; gap: var(--s-2); min-width: 0; padding: var(--s-3) 0 2px 40px; font-size: var(--fs-md); color: var(--muted); animation: rise var(--dur-3) var(--ease-out); }
+.working { display: flex; align-items: center; gap: var(--s-2); min-width: 0; padding: var(--s-4) 0 2px 40px; font-size: var(--fs-md); color: var(--muted); animation: rise var(--dur-3) var(--ease-out); }
 .working b { font-weight: var(--fw-semi); color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
 .working .what { flex: none; }
 .working .more-act { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
@@ -565,7 +609,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 #log > .blank:only-child { height: 100%; min-height: 0; font-size: var(--fs-md); text-wrap: balance; }
 .access-pane { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-5) var(--s-6); animation: fade-in var(--dur-3) var(--ease-out); }
 .compose { flex: none; padding: var(--s-2) var(--s-6) var(--s-5); }
-.compose-box { display: flex; flex-direction: column; border: 1px solid var(--line-ctl); border-radius: var(--radius-lg); background: var(--surface);
+.compose-box { width: 100%; max-width: var(--col); margin: 0 auto; display: flex; flex-direction: column; border: 1px solid var(--line-ctl); border-radius: var(--radius-lg); background: var(--surface);
   box-shadow: var(--shadow-1); transition: border-color var(--ease), box-shadow var(--ease); }
 .compose-box:hover { border-color: var(--line-strong); }
 .compose-box:focus-within { border-color: var(--accent-line); box-shadow: 0 0 0 3px rgba(218, 105, 71, .14), var(--shadow-1); }
@@ -819,7 +863,7 @@ a.p-main { color: inherit; text-decoration: none; }
   .compose .file-chip { max-width: 55%; }
   .group { padding-left: 34px; }
   .group .head > .av { width: 24px; height: 24px; font-size: 9.5px; }
-  .group.mine { padding-left: 46px; }
+  .group.mine { padding-left: 34px; }
   .working { padding-left: 34px; }
   .chat > .err { padding: 0 var(--s-3) var(--s-2); }
   /* Team: the column uses the phone's width; a waiting line puts its answers under the words */
@@ -961,6 +1005,7 @@ a.p-main { color: inherit; text-decoration: none; }
         </div>
         <div id="warns" hidden></div>
         <div id="log"></div>
+        <div class="jump-wrap"><button type="button" class="btn small jump" id="jump" hidden><svg width="12" height="12" aria-hidden="true"><use href="#i-chev"/></svg>New messages</button></div>
         <div class="access-pane" id="access-pane" hidden>
         <div class="panel" id="my-access" hidden>
           <div class="phead">My access</div>
@@ -2034,6 +2079,93 @@ a.p-main { color: inherit; text-decoration: none; }
       (e.mine ? "your computer." : e.team ? "that computer." : "their computer.");
   }
   var BG_EMPTY = "No messages yet. This job works on its own; write to it below.";
+  /* message text as markdown, the safe part of it: paragraphs and line breaks, **bold**,
+     *italic*, `code`, fenced code (monospace, scrolls sideways, Copy), - and 1. lists, # headings
+     (toned down), > quotes, tables, and http/https links. Built from DOM nodes and text nodes
+     only: nothing the sender wrote is ever parsed as HTML, so no tag, script or javascript: link
+     can get in; no images. Anything else stays as the plain text it is */
+  var MD_LINK = /^https?:\/\/[^\s<>]+$/i;
+  function mdLink(href, label) {
+    if (!MD_LINK.test(href)) return document.createTextNode(label === href ? href : "[" + label + "](" + href + ")");
+    return el("a", { href: href, target: "_blank", rel: "noopener noreferrer nofollow", text: label });
+  }
+  var MD_INLINE = /(`+)([^`\n]|[^`\n][^\n]*?[^`\n])\1(?!`)|\[([^\]\n]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"*_`])|\*\*(?=\S)([^\n]*?\S)\*\*|(?<![\w\\])__(?=\S)([^\n]*?\S)__(?![\w])|(?<![\w*\\])\*(?=\S)([^*\n]*?\S)\*(?![\w*])|(?<![\w\\])_(?=\S)([^_\n]*?\S)_(?![\w])/g;
+  function mdInline(s, into) {
+    var at = 0, m;
+    var re = new RegExp(MD_INLINE.source, "g");  /* its own: a call inside a call keeps its place */
+    while ((m = re.exec(s))) {
+      if (m.index > at) into.appendChild(document.createTextNode(s.slice(at, m.index)));
+      if (m[1]) into.appendChild(el("code", { text: m[2] }));
+      else if (m[3]) into.appendChild(mdLink(m[4], m[3]));
+      else if (m[5]) into.appendChild(mdLink(m[5], m[5]));
+      else if (m[6] || m[7]) mdInline(m[6] || m[7], into.appendChild(el("strong")));
+      else mdInline(m[8] || m[9], into.appendChild(el("em")));
+      at = m.index + m[0].length;
+    }
+    if (at < s.length) into.appendChild(document.createTextNode(s.slice(at)));
+    return into;
+  }
+  function mdLines(lines, into) {  /* lines of a paragraph: one line break each */
+    lines.forEach(function (l, i) { if (i) into.appendChild(el("br")); mdInline(l, into); });
+    return into;
+  }
+  var MD_ITEM = /^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$/, MD_FENCE = /^\s*(```+|~~~+)\s*([\w+-]*)\s*$/, MD_RULE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+  function mdCells(l) { return l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(function (c) { return c.trim(); }); }
+  function mdCode(code, lang) {
+    var c = el("code", { text: code }), copy = button([icon("i-copy", 14)], "icon quiet md-copy", function () { copyCode(c, copy); }, { title: "Copy", "aria-label": "Copy code" });
+    return el("div", { "class": "md-pre" }, [el("pre", { tabindex: "0", "aria-label": lang ? lang + " code" : "code" }, [c]), copy]);
+  }
+  function md(text) {
+    var out = el("div", { "class": "text md" }), lines = String(text).replace(/\r\n?/g, "\n").split("\n"), i = 0, para = [];
+    function flush() { if (para.length) out.appendChild(mdLines(para, el("p"))); para = []; }
+    while (i < lines.length) {
+      var l = lines[i], f = MD_FENCE.exec(l), h, item;
+      if (f) {  /* fenced code: up to the closing fence, or the end */
+        flush();
+        var code = [], j = i + 1, close = f[1].charAt(0) === "`" ? /^\s*```+\s*$/ : /^\s*~~~+\s*$/;
+        while (j < lines.length && !close.test(lines[j])) code.push(lines[j++]);
+        out.appendChild(mdCode(code.join("\n"), f[2]));
+        i = j + 1;
+      } else if (!l.trim()) { flush(); i++; }
+      else if ((h = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(l))) {
+        flush();
+        out.appendChild(mdInline(h[2], el("div", { "class": "md-h md-h" + Math.min(h[1].length, 3), role: "heading", "aria-level": String(h[1].length) })));
+        i++;
+      } else if (/^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { flush(); out.appendChild(el("hr")); i++; }
+      else if (/^\s*\|/.test(l) && i + 1 < lines.length && MD_RULE.test(lines[i + 1]) && lines[i + 1].indexOf("-") >= 0) {
+        flush();
+        var heads = mdCells(l), aligns = mdCells(lines[i + 1]).map(function (c) { return /:$/.test(c) ? (/^:/.test(c) ? "center" : "right") : null; });
+        var row = function (cells, tag) { return el("tr", null, cells.map(function (c, k) { return mdInline(c, el(tag, aligns[k] ? { style: "text-align:" + aligns[k] } : null)); })); };
+        var body = [];
+        i += 2;
+        while (i < lines.length && /^\s*\|/.test(lines[i])) body.push(row(mdCells(lines[i++]), "td"));
+        out.appendChild(el("div", { "class": "md-table" }, [el("table", null, [el("thead", null, [row(heads, "th")]), el("tbody", null, body)])]));
+      } else if ((item = MD_ITEM.exec(l))) {
+        flush();
+        var ordered = /\d/.test(item[2]), list = el(ordered ? "ol" : "ul"), base = item[1].length, li = null;
+        if (ordered && parseInt(item[2], 10) !== 1) list.setAttribute("start", String(parseInt(item[2], 10)));
+        while (i < lines.length && lines[i].trim()) {
+          var it = MD_ITEM.exec(lines[i]);
+          if (it && it[1].length <= base + 1) {
+            li = mdInline(it[3], el("li"));
+            list.appendChild(li);
+          } else if (it && li) {  /* one step in: a list inside the item */
+            var sub = li.lastChild && /^(UL|OL)$/.test(li.lastChild.tagName) ? li.lastChild : li.appendChild(el(/\d/.test(it[2]) ? "ol" : "ul"));
+            sub.appendChild(mdInline(it[3], el("li")));
+          } else if (li) { li.appendChild(el("br")); mdInline(lines[i].trim(), li); }
+          i++;
+        }
+        out.appendChild(list);
+      } else if (/^\s*>/.test(l)) {
+        flush();
+        var quote = [];
+        while (i < lines.length && /^\s*>/.test(lines[i])) quote.push(lines[i++].replace(/^\s*>\s?/, ""));
+        out.appendChild(mdLines(quote, el("blockquote")));
+      } else { para.push(l); i++; }
+    }
+    flush();
+    return out;
+  }
   function renderMessages(jump) {
     var log = $("log");
     var stick = jump || log.scrollHeight - log.scrollTop - log.clientHeight < 60, top = log.scrollTop;
@@ -2043,6 +2175,7 @@ a.p-main { color: inherit; text-decoration: none; }
     var notices = all.filter(notice).length;
     var shown = all.filter(function (m) { return !act || showNotices || !notice(m); });
     var day = null, last = null, group = null, mineLast = null;
+    var newest = shown.length ? shown[shown.length - 1].id : null;  /* never folded */
     /* what this chat showed last time: newer messages come in with a short rise */
     var before = shownTo[conv] == null ? Infinity : shownTo[conv];
     shownTo[conv] = shown.reduce(function (n, m) { return Math.max(n, m.id); }, 0);
@@ -2064,11 +2197,11 @@ a.p-main { color: inherit; text-decoration: none; }
         log.appendChild(group);
       }
       last = { k: k, t: m.created };
-      var text = el("div", { "class": "text", text: m.text });
+      var text = md(m.text);
       var body = el("div", { "class": "msg" + (m.id > before && group.firstChild.nextSibling ? " new" : ""), "data-id": String(m.id), title: senderName(m) + " → " + toName(m) },
                     [text, m.file ? attachment(m.file) : null]);
       group.appendChild(body);
-      if (m.text.length > 900 || m.text.split("\n").length > 12) fold12(m, text, body);
+      if (m.id !== newest && (m.text.length > 1200 || m.text.split("\n").length > 18)) foldLong(m, text, body);
       mineLast = p[0] === ME ? { m: m, body: body } : null;
     });
     /* my messages the feed does not have yet: Sending, Sent, or Not sent with Retry */
@@ -2081,7 +2214,7 @@ a.p-main { color: inherit; text-decoration: none; }
         log.appendChild(group);
       }
       last = { k: k, t: o.created };
-      group.appendChild(el("div", { "class": "msg out " + o.state, "data-out": String(o.lid) }, [el("div", { "class": "text", text: o.text }),
+      group.appendChild(el("div", { "class": "msg out " + o.state, "data-out": String(o.lid) }, [md(o.text),
         o.sent ? el("span", { "class": "att-out" }, [icon("i-clip", 12), el("span", { text: o.sent.file.name })]) : null, sendMark(o)]));
     });
     /* only my last message, while nothing came after it: Sent, then Delivered once the session has it */
@@ -2097,6 +2230,9 @@ a.p-main { color: inherit; text-decoration: none; }
     workEl = null;
     renderWorking(all);
     if (stick) toBottom(); else log.scrollTop = top;
+    /* not at the bottom and something new came: a button to jump to it, never a jump */
+    if (!stick && before !== Infinity && shown.some(function (m) { return m.id > before; })) $("jump").hidden = false;
+    else if (stick) $("jump").hidden = true;
     markRead(all);
   }
   /* under my message: where it is, quietly */
@@ -2147,8 +2283,8 @@ a.p-main { color: inherit; text-decoration: none; }
     log.appendChild(workEl);
     if (near) toBottom();
   }
-  /* a very long message shows 12 lines and Show more */
-  function fold12(m, text, body) {
+  /* a very long message shows about 20 lines and Show more; open stays open while the page is */
+  function foldLong(m, text, body) {
     if (expanded[m.id]) { body.appendChild(moreBtn(m, "Show less")); return; }
     text.classList.add("clamp");
     if (text.scrollHeight > text.clientHeight + 2) body.appendChild(moreBtn(m, "Show more"));
@@ -2179,7 +2315,12 @@ a.p-main { color: inherit; text-decoration: none; }
   }
   function reduced() { return window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches; }
 
-  function toBottom() { var log = $("log"); log.scrollTop = log.scrollHeight; }
+  function toBottom() { var log = $("log"); log.scrollTop = log.scrollHeight; $("jump").hidden = true; }
+  $("jump").addEventListener("click", function () { toBottom(); $("text").focus({ preventScroll: true }); });
+  $("log").addEventListener("scroll", function () {
+    var log = $("log");
+    if (!$("jump").hidden && log.scrollHeight - log.scrollTop - log.clientHeight < 60) $("jump").hidden = true;
+  }, { passive: true });
   /* Home: all of it, for a chat change */
   function renderHome(jump) {
     var msgs = fold(feed.messages);
