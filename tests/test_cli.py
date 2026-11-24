@@ -48,7 +48,7 @@ def test_subcommands_listed(capsys):
     listed = out.split("positional arguments:")[1].split("options:")[0]
     names = [l.split()[0] for l in listed.splitlines()[2:] if l.startswith("    ") and l[4] != " "]
     assert names == ["start", "join", "leave", "stop", "update", "remove", "invite", "people", "invites", "grant",
-                     "revoke", "project", "gitlab", "manager-model", "lesson", "auto-doors", "manager-doors", "shared-token", "machine", "who", "status", "page", "doctor", "backup", "restore", "fleet", "login-copy", "rules"]
+                     "revoke", "project", "gitlab", "manager-model", "lesson", "auto-doors", "manager-doors", "shared-token", "machine", "who", "status", "page", "doctor", "backup", "restore", "tls", "fleet", "login-copy", "rules"]
     for hidden in ("serve", "mcp", "bridge", "hook"):
         assert hidden not in names
 

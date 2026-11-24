@@ -78,6 +78,20 @@ def masked(store: Store, principal: Principal, row: dict, sides) -> dict:
     return row
 
 
+def message_row(store: Store, principal: Principal, m: dict, manager_id: Optional[int]) -> dict:
+    """One message as the viewer may see it: the manager flags, a hidden side's name masked,
+    and `sender_id`/`to_id`, each session side's handle (session_id): the page keys chats by
+    it, so two sessions that swap or reuse a name never share one. A handle is the same
+    opaque one every session row already carries; the key is never sent."""
+    sid, tid = m.pop("_ids", ("", ""))
+    m = masked(store, principal, manager_sides(m, manager_id), (("_from", "sender"), ("_to", "to")))
+    if sid:
+        m.setdefault("sender_id", sid)
+    if tid:
+        m.setdefault("to_id", tid)
+    return m
+
+
 def manager_sides(m: dict, manager_id: Optional[int]) -> dict:
     """Mark a message from or to the manager's sessions, so the page keeps it in the manager's
     chat while the manager sleeps and its name is masked for a member."""
@@ -126,8 +140,7 @@ def feed(store: Store, principal: Principal, ws=None, cs=None) -> dict:
         "agents": [session_row(store, a, principal, names, now, live, ws=ws, manager_id=mid)
                    for a in store.online()
                    if a.key not in fresh and store.listed(principal.person_id, a.key, a.person_id)],
-        "messages": [masked(store, principal, manager_sides(m, mid), (("_from", "sender"), ("_to", "to")))
-                     for m in store.messages_for(principal, 500)],
+        "messages": [message_row(store, principal, m, mid) for m in store.messages_for(principal, 500)],
         "notes": _notes(store, principal),
         "knocks": knocks(store, principal) if admin else [],  # only the admin answers
         "doors": doors,
