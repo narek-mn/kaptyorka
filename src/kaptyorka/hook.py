@@ -240,6 +240,8 @@ def _with_night(event: str, data: dict, run) -> str:
     if event == "stop" and night is not None:
         return night
     out = _hub_run("claude-code", event, data, run)
+    if event == "stop" and not out:  # the hub's done check first: one block per stop
+        return _children_check(data)
     if event != "prompt" or not (context or line):
         return out
     body = {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext":
@@ -247,6 +249,46 @@ def _with_night(event: str, data: dict, run) -> str:
     if line:
         body["systemMessage"] = line
     return json.dumps(body)
+
+
+LEFT_STOP = "left_stop"  # per session: the children it was last asked about
+
+
+def _children_check(data: dict) -> str:
+    """A session that stops while `claude --bg` sessions it started still run is asked once
+    to stop them or say why they keep running (left.py): once per set of children, never
+    twice in one stop, never for the manager, a hub worker or one in overnight mode. The hub
+    closes its own workers. Local files only, well inside the hook's time."""
+    try:
+        sid = str(data.get("session_id") or "")
+        cwd = data.get("cwd") if isinstance(data.get("cwd"), str) else os.getcwd()
+        if not sid or data.get("stop_hook_active") is True or paths.in_manager_folder(cwd) \
+                or overnight.state(sid) is not None:
+            return ""
+        workers = offhub.load_team()[1]
+        if f"claude:{sid}" in workers:
+            return ""
+        from kaptyorka.adapters.claude import live_children
+        kids = [k for k in live_children(sid, os.environ.get("CLAUDE_CODE_CHILD_NOTES_DIR"))
+                if f"claude:{k[0]}" not in workers]
+        memo = paths.home() / LEFT_STOP / sid
+        seen = " ".join(sorted(k[0] for k in kids))
+        try:
+            if memo.read_text() == seen:
+                return ""
+        except OSError:
+            pass
+        if not kids:
+            memo.unlink(missing_ok=True)
+            return ""
+        memo.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        memo.write_text(seen)
+        names = ", ".join(f"{name} (`claude stop {k[:8]}`)" for k, name in kids)
+        return json.dumps({"decision": "block", "reason":
+                           f"You started {names}, still running: stop them or say in one line"
+                           " why they must keep running."})
+    except Exception:
+        return ""  # a hook must never disturb the tool
 
 
 def _hub_run(tool: str, event: str, data: dict, run=subprocess.run) -> str:

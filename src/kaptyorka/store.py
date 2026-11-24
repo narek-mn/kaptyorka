@@ -160,6 +160,12 @@ ADDED_COLUMNS = [
     # hub time of the device's last bridge heartbeat: online for a machine means this, never
     # any token use (a status line or a tool call also refresh last_used)
     ("devices", "bridge_seen", "REAL"),
+    # who started the session (left.py), from its bridge: the parent's key, a `claude -p` run,
+    # started by another session or tool, and whether that parent has ended
+    ("agents", "parent", "TEXT NOT NULL DEFAULT ''"),
+    ("agents", "oneshot", "INTEGER NOT NULL DEFAULT 0"),
+    ("agents", "helper", "INTEGER NOT NULL DEFAULT 0"),
+    ("agents", "parent_gone", "INTEGER NOT NULL DEFAULT 0"),
     ("agents", "stuck_acked", "TEXT"),
 ]
 
@@ -344,6 +350,10 @@ class Agent:
     tasks: Optional[list] = None  # its live background tasks (stuck.py); None: unknown
     stuck_ep: Optional[dict] = None  # the stuck check's episode (hub.py stuck_tick)
     stuck_acked: Tuple[str, ...] = ()  # task ids it answered for: never asked again
+    parent: str = ""  # the key of the session that started it (left.py); "" unknown or none
+    oneshot: bool = False  # a `claude -p` run
+    helper: bool = False  # started by another session or agent tool
+    parent_gone: bool = False  # its parent no longer runs on that machine
 
 
 @dataclass
@@ -1326,6 +1336,52 @@ class Store:
                             " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(days),))
         self.log_add(by, "settings", f"retention_days={days}")
 
+    def close_left(self) -> bool:
+        """Whether bridges may close sessions left behind (left.py); on unless switched off."""
+        with self.lock:
+            return self.db.execute("SELECT 1 FROM settings WHERE key='close_left' AND value='0'"
+                                   ).fetchone() is None
+
+    def set_close_left(self, on: bool, by: str) -> None:
+        if not isinstance(on, bool):
+            raise KaptyorkaError("close_left must be true or false")
+        with self.lock:
+            self.db.execute("INSERT INTO settings (key, value) VALUES ('close_left', ?)"
+                            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                            ("1" if on else "0",))
+        self.log_add(by, "settings", f"close_left={'on' if on else 'off'}")
+
+    def closed_add(self, person_id: Optional[int], machine: str, name: str) -> None:
+        """Remember a session a bridge closed (left.py) for its owner's next daily line."""
+        if person_id is None:
+            return
+        key = f"closed:{person_id}:{machine}"
+        with self.lock:
+            row = self.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            names = _json_or(row["value"], list) if row else []
+            names = (names if isinstance(names, list) else []) + [name]
+            self.db.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
+                            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                            (key, json.dumps(names[-50:])))
+
+    def closed_pending(self) -> List[tuple]:
+        """(person id, machine) of every owner with closed sessions not yet told."""
+        with self.lock:
+            out = []
+            for r in self.db.execute("SELECT key FROM settings WHERE substr(key, 1, 7)='closed:'"):
+                _, pid, machine = r["key"].split(":", 2)
+                if pid.isdigit():
+                    out.append((int(pid), machine))
+            return out
+
+    def closed_take(self, person_id: int, machine: str) -> List[str]:
+        key = f"closed:{person_id}:{machine}"
+        with self.lock:
+            row = self.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            self.db.execute("DELETE FROM settings WHERE key=?", (key,))
+        names = _json_or(row["value"], list) if row else []
+        return [str(n) for n in names] if isinstance(names, list) else []
+
     def prune(self, now: float) -> dict:
         """Delete old messages and their files, and unsent uploads older than a day.
         Notes, the log, requests, doors and knocks are never touched."""
@@ -1359,7 +1415,8 @@ class Store:
                      row["os_user"], row["host"], row["started"], row["cwd"], row["device_id"],
                      bool(row["background"]), row["title"], row["active"], row["wrote"],
                      _tasks_from(row["tasks"]), _json_or(row["stuck_ep"], dict),
-                     tuple(_json_or(row["stuck_acked"], list) or ()))
+                     tuple(_json_or(row["stuck_acked"], list) or ()), row["parent"] or "",
+                     bool(row["oneshot"]), bool(row["helper"]), bool(row["parent_gone"]))
 
     def _online_rows(self, now):
         return self.db.execute("SELECT * FROM agents WHERE last_seen > ? ORDER BY rowid",
@@ -1537,7 +1594,12 @@ class Store:
                      # absent (an older bridge) or unknown: never idle
                      "idle_s": _idle_s(s.get("idle_s")),
                      # absent or unknown: never stuck
-                     "write_s": _idle_s(s.get("write_s")), "tasks": _tasks_in(s.get("tasks"))}
+                     "write_s": _idle_s(s.get("write_s")), "tasks": _tasks_in(s.get("tasks")),
+                     # absent (an older bridge, another tool): left as it was
+                     "lineage": None if "parent" not in s else (
+                         clean(s.get("parent") if isinstance(s.get("parent"), str) else "",
+                               MAX_IDENT), s.get("oneshot") is True, s.get("helper") is True,
+                         s.get("parent_gone") is True)}
                     for s in sessions]
         host, os_user, version = (clean(facts.get(k), 80) for k in ("host", "os_user", "version"))
         logs: List[tuple] = []
@@ -1570,6 +1632,9 @@ class Store:
                 self.db.execute("UPDATE agents SET active=? WHERE key=?", (  # the latest only
                     None if s["idle_s"] is None else now - s["idle_s"], s["key"]))
                 self._stuck_measures(s, now)
+                if s["lineage"] is not None:
+                    self.db.execute("UPDATE agents SET parent=?, oneshot=?, helper=?, parent_gone=?"
+                                    " WHERE key=?", (*s["lineage"], s["key"]))
                 if not manager_held:  # the manager's own shim names its machine
                     self._machine_now(s["key"], machine, now)
                 if host:
@@ -1641,6 +1706,31 @@ class Store:
             now = self.clock()
             self._expire_doors(now)
             return [self._agent(r, now) for r in self._online_rows(now)]
+
+    def fresh_helpers(self, now: Optional[float] = None) -> set:
+        """Keys of online sessions another session or tool started (or `claude -p` runs) that
+        are under left.FRESH_S old and never sent or got a hub message: the page and `who`
+        do not list them yet (most end within seconds); the hub keeps their rows."""
+        from kaptyorka.left import FRESH_S
+
+        with self.lock:
+            now = self.clock() if now is None else now
+            return {r["key"] for r in self._online_rows(now)
+                    if (r["parent"] or r["oneshot"] or r["helper"])
+                    and now - (r["started"] or now) < FRESH_S
+                    and self.db.execute("SELECT 1 FROM messages WHERE sender_key=? OR to_key=?"
+                                        " LIMIT 1", (r["key"], r["key"])).fetchone() is None}
+
+    def offline_now(self, key: str) -> None:
+        """The session ended (its bridge closed it): offline at once, its row kept."""
+        with self.lock:
+            self.db.execute("UPDATE agents SET last_seen=MIN(last_seen, ?) WHERE key=?",
+                            (self.clock() - ONLINE_S, key))
+
+    def ever_messaged(self, key: str) -> bool:
+        with self.lock:
+            return self.db.execute("SELECT 1 FROM messages WHERE sender_key=? OR to_key=? LIMIT 1",
+                                   (key, key)).fetchone() is not None
 
     def agent(self, key: str) -> Optional[Agent]:
         with self.lock:

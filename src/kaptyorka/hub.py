@@ -32,6 +32,7 @@ from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
 from kaptyorka import hub_groups
+from kaptyorka import left
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
@@ -347,8 +348,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         mine = ws.by_key(agent.key) if agent.key in live else None
         boss = ws.boss_key(mine["name"]) if mine else None  # a worker sees its boss marked
         rows, mid = [], mm.person_id()
+        fresh = store.fresh_helpers(now)  # most end within seconds (left.py)
         for a in store.online():
-            if not store.listed(principal.person_id, a.key, a.person_id):
+            if a.key in fresh or not store.listed(principal.person_id, a.key, a.person_id):
                 continue
             row = {**session_row(store, a, principal, names, now, live, ws, mid),
                    "you": a.key == agent.key}
@@ -675,6 +677,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             mev.write_note(mev.tool_news(now), now)  # agent tool updates: the note only
         except Exception as e:  # nor may a machine event
             print(f"kaptyorka: machine events failed: {e}", flush=True)
+        try:
+            left.tick(store, mm, ws.live_keys(), tell, now)
+        except Exception as e:  # nor may the left-behind check
+            print(f"kaptyorka: left sessions check failed: {e}", flush=True)
         try:
             manager_tick(now)
         except Exception as e:  # the manager must never stop the workers' clock
@@ -1506,6 +1512,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             if isinstance(body.get("overnight"), list):
                 night["by_device"][principal.device_id] = {str(k) for k in body["overnight"]}
                 night["keys"] = set().union(*night["by_device"].values())
+        if own and body.get("closed"):  # sessions it closed for us (left.py)
+            left.closed(store, principal.device_id, body["closed"], principal.person_name)
         if own and (isinstance(facts, dict) or isinstance(body.get("folders"), dict)):
             ws.facts_seen(principal.device_id, facts, body.get("folders"))
             try:  # history is a bonus: a bad git payload must not fail the heartbeat
@@ -1520,7 +1528,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                              store.clock())
             except Exception as e:
                 print(f"kaptyorka: machine events failed: {e}", file=sys.stderr, flush=True)
+        # left behind (left.py): its bridge checks each again before it closes it
+        close = left.close_keys(store, principal.device_id, ws.live_keys(), mm.person_id(),
+                                store.clock()) if own else []
         return JSONResponse({"version": __version__,
+                             **({"close_left": close} if close else {}),
                              "auto_update": own and ws.auto_update(principal.device_id),
                              "projects": [] if principal.legacy else
                              [p["name"] for p in store.projects_for(principal)],
@@ -2005,7 +2017,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             "manager_enabled": mm.enabled(),
             "manager_state": state, "manager_reason": reason,
             "manager_error": (row["error"] or "") if row and row["state"] == "failed" else "",
-            "manager_load": manager.load_line(mm.load(store.clock()), store.clock())})
+            "manager_load": manager.load_line(mm.load(store.clock()), store.clock()),
+            "close_left": store.close_left()})
 
     @server.custom_route("/api/settings", methods=["POST"])
     @_bad_request
@@ -2019,16 +2032,19 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             for key in ("auto_doors", "manager_doors"):
                 if key in body:
                     store.set_auto_doors(body[key], by, key)
+            if "close_left" in body:
+                store.set_close_left(body["close_left"], by)
             if "manager_model" in body or "manager_effort" in body:
                 mm.set_model(body.get("manager_model"), body.get("manager_effort"), by)
-            if "retention_days" in body or not ({"auto_doors", "manager_doors", "manager_model",
-                                                 "manager_effort"} & set(body)):
+            if "retention_days" in body or not ({"auto_doors", "manager_doors", "close_left",
+                                                 "manager_model", "manager_effort"} & set(body)):
                 store.set_retention_days(body.get("retention_days"), by)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"retention_days": store.retention_days(),
                              "auto_doors": store.auto_doors(),
                              "manager_doors": store.manager_doors(),
+                             "close_left": store.close_left(),
                              "manager_model": mm.model(), "manager_effort": mm.effort()})
 
     @server.custom_route("/api/legacy", methods=["GET"])

@@ -296,6 +296,19 @@ On the page a session whose turn is over while a background task runs shows **Ba
 
 The bridge measures and the hub judges; nothing is judged for a bridge older than 0.9.32 or a tool other than Claude Code. **Linux only**: background tasks are found through `/proc` (the session's child shells and their output files); macOS gets the busy-with-no-new-step check only.
 
+## Sessions left behind
+
+Sessions pile up: a `claude --bg` helper another session started and forgot, a terminal left open for weeks. kaptyorka says so, and closes only the clearest case (Claude Code; the research is in `docs/superpowers/specs/2026-11-24-left-sessions.md`).
+
+- **Truthful idle time.** Claude Code writes to a session's transcript while nobody works (an away summary, a compaction while idle, title and mode lines), so the file's time is not when it last did something. The bridge now takes the newest line the person or the model wrote, and any subagent's work; hub messages and task notices delivered to it do not count. This feeds the **Idle** group on the page too. OpenCode sends no idle time (its `time.updated` did not move while a window sat idle), so its sessions are never in Idle or the daily line; Codex uses its thread's `updatedAt`, not checked against an idle thread.
+- **Who started it.** The bridge reads which session started a Claude Code session (Claude Code's `derived-from` line in the transcript, else the starter's child notes) and whether it is a `claude -p` run. On the page a session another one started sits under it on a rail, as workers do under their boss. A child or a `claude -p` run younger than 2 minutes that never sent or got a hub message is not listed on the page or in `who` (most end within seconds). A Claude Code session started by OpenCode, Codex or Cursor is marked by its parent process (Linux).
+- **The parent's Stop check.** A session that stops while `claude --bg` sessions it started still run is told once: "You started helper-1 (`claude stop 1a2b3c4d`), still running: stop them or say in one line why they must keep running." Once per set of children, never twice in one stop, after the done check, never for the manager, a hub worker or a session in overnight mode.
+- **Left by.** When the starter ends and its child keeps running, the child's grey line says **left by** and the starter's name, and its owner hears once: "Session `...` on box-1 was started by `...`, which has ended; it still runs. To stop it: `claude stop 1a2b3c4d` on box-1."
+- **The daily line.** Once a day per machine, each person hears in one line which of their sessions have done nothing for over a day ("2 sessions of yours on box-1 have done nothing for 3 days: ...; close them or leave them."), on their other online sessions, else their page; a team machine's go to the admins. A session working or running a background task is never in it.
+- **Auto-close, narrow.** Only a `claude --bg` session that another session started with `claude --bg`, whose starter has ended, that did nothing for over a day and never sent or got a hub message: the hub asks its bridge, which checks all of that again itself and runs `claude stop` (the transcript stays, so `claude --resume` still finds it), writes it to `bridge.log`, and the hub logs it and names it in the owner's next daily line. Never an interactive session, a hub worker or the manager. An admin turns it off with `POST /api/settings {"close_left": false}`.
+
+None of this is documented by Claude Code. When a version drops the `derived-from` line or the notes, sessions just show as before (each on its own, nothing closed), and a slow test (`tests/test_left_slow.py`, real `claude`) fails, so the change is noticed.
+
 ## Workers
 
 A worker is an agent session that runs on another machine for you. Say "do this on the GPU box" and your agent calls `work`. Here is the story:
@@ -774,6 +787,7 @@ src/kaptyorka/
   workers.py    hub side of workers: states, linking, adopt, close
   usage.py      machine use per OS user (CPU, memory, GPU) and the "heavy" rule
   stuck.py      stuck sessions: the rule, its two stages and their texts
+  left.py       sessions left behind: the daily line, "left by", the narrow auto-close
   connects.py   connection requests made before 0.9.11: the admin decides
   memory.py     state notes, git activity and the done check
   rules.py      team rules, skills, proposals and conflicts in the hub
