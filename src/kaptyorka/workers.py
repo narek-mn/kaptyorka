@@ -481,7 +481,7 @@ class WorkerStore:
         now = self.clock()
         with self.lock:
             devs = self.db.execute(
-                "SELECT d.id, d.name, d.label, d.host, d.os_user, d.bridge_seen, d.person_id,"
+                "SELECT d.id, d.name, d.label, d.host, d.os_user, d.bridge_seen, d.last_used, d.person_id,"
                 " p.name AS person, p.team, p.role FROM devices d JOIN people p ON p.id=d.person_id"
                 " WHERE d.revoked_at IS NULL AND d.legacy=0 AND d.expires IS NULL AND d.host!=''"
                 " AND p.removed_at IS NULL AND NOT (p.name=? AND p.role='manager')"
@@ -498,7 +498,7 @@ class WorkerStore:
                                  "name": machine_name(d["label"], d["os_user"], d["host"], d["name"]),
                                  "label": d["label"], "person": d["person"], "team": bool(d["team"]),
                                  "os_user": d["os_user"], "online": online,
-                                 "last_seen": d["bridge_seen"], "tools": d["tools"]})
+                                 "last_seen": d["bridge_seen"] or d["last_used"], "tools": d["tools"]})
         out = []
         for h in hosts.values():
             here = self.host_use(h["host"], now)
@@ -1394,7 +1394,8 @@ class WorkerStore:
                 out.append({"host": host, "os_user": user, "person": d["person"] or "",
                             "text": text, "short": short, "blocks": blocks, "device_id": d["id"],
                             "team": bool(d["team"]), **more})
-            gone = d["bridge_seen"] is not None and d["bridge_seen"] < now - OFFLINE_S
+            gone = (d["facts"] and d["bridge_seen"] is not None  # as before: only bridges with facts
+                    and d["bridge_seen"] < now - OFFLINE_S)
             if gone:
                 add(offline, f"bridge on {who} has been offline for"
                     f" {int((now - d['bridge_seen']) // 60)} minutes", "bridge offline", True)

@@ -580,7 +580,7 @@ def test_manager_waking_row(tmp_path, monkeypatch, w, h):
     host = ManagerStore(store)._host_of_account()  # the hub machine, as the hub set it up
     with store.lock:  # the admin's bridge there is up, so a message may wake the manager
         store.db.execute("INSERT INTO devices (person_id, name, token_hash, secret_hash, created,"
-                         " host, last_used) VALUES (?, 'hub-box', 'h', 's', ?, ?, ?)",
+                         " host, bridge_seen) VALUES (?, 'hub-box', 'h', 's', ?, ?, ?)",
                          (alice, time.time(), host, time.time()))
     try:
         with chrome(w, h) as page:
@@ -1056,9 +1056,9 @@ def test_account_page_add_machine_and_new_invite_link(tmp_path, w, h):
     store.grant_project("proj-b", bob, "read", "alice")
     store.device_add(bob, "bob@box-2")
     with store.lock:
-        store.db.execute("UPDATE devices SET name='bob@box-1', os_user='bob', last_used=? WHERE name='bob-laptop'",
+        store.db.execute("UPDATE devices SET name='bob@box-1', os_user='bob', bridge_seen=? WHERE name='bob-laptop'",
                          (store.clock(),))
-        store.db.execute("UPDATE devices SET os_user='bob', last_used=? WHERE name='bob@box-2'",
+        store.db.execute("UPDATE devices SET os_user='bob', bridge_seen=? WHERE name='bob@box-2'",
                          (store.clock() - 3 * 3600,))
     old = store.invite_create(bob, by="alice")
     base = f"http://127.0.0.1:{stop.port}"
@@ -1439,8 +1439,8 @@ def machines_demo(store):
             store.db.execute("UPDATE devices SET expires=? WHERE person_id=(SELECT id FROM people WHERE name=?)"
                              " AND host=''", (store.clock() + 3600, who))
         old = store.clock() - 2 * 86400
-        store.db.execute("UPDATE devices SET last_used=? WHERE id IN (?,?)", (old, team["jetson-2"].device_id, c.device_id))
-        store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (store.clock() - 3 * 3600, team["lab"].device_id))
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE id IN (?,?)", (old, team["jetson-2"].device_id, c.device_id))
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?", (store.clock() - 3 * 3600, team["lab"].device_id))
 
     def online():
         store.seen("a1", "box-1", "claude", "proj-a", principal=a)
@@ -1448,14 +1448,14 @@ def machines_demo(store):
         store.seen("b1", "box-1", "claude", "proj-a", principal=b)
         store.seen("j1", "jetson-1", "claude", "proj-a", principal=team["jetson-1"])
         with store.lock:  # lab and jetson-2 stay offline; their sessions only make them bob's
-            store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (store.clock(), team["jetson-1"].device_id))
+            store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?", (store.clock(), team["jetson-1"].device_id))
     online()
     for name, key in (("lab", "l1"), ("jetson-2", "j2")):
         store.seen(key, name, "claude", "proj-a", principal=team[name])
     with store.lock:
         store.db.execute("UPDATE agents SET last_seen=? WHERE key IN ('l1', 'j2')", (store.clock() - 3600,))
-        store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (store.clock() - 3 * 3600, team["lab"].device_id))
-        store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (store.clock() - 2 * 86400, team["jetson-2"].device_id))
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?", (store.clock() - 3 * 3600, team["lab"].device_id))
+        store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?", (store.clock() - 2 * 86400, team["jetson-2"].device_id))
     return {"alice": alice_t, "bob": bob_t, "carol": carol_t, "dave": dave_t}, online
 
 
