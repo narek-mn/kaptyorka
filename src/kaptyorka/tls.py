@@ -113,7 +113,8 @@ def make_certificate(names: List[str], ips: List[str], next_: bool = False,
                   "-out", str(ca), "-days", str(CA_DAYS), "-subj",
                   f"/CN=kaptyorka hub CA {socket.gethostname()[:40]}",
                   "-addext", "basicConstraints=critical,CA:TRUE",
-                  "-addext", "keyUsage=critical,keyCertSign,cRLSign"], run)
+                  "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+                  "-addext", "subjectKeyIdentifier=hash"], run)
         os.chmod(ca_key, 0o600)
     crt, key = files(next_)
     alt = ",".join([f"DNS:{n}" for n in dict.fromkeys(names) if n]
@@ -122,7 +123,8 @@ def make_certificate(names: List[str], ips: List[str], next_: bool = False,
         csr, ext = Path(tmp) / "hub.csr", Path(tmp) / "ext.cnf"
         ext.write_text(f"subjectAltName={alt}\nbasicConstraints=critical,CA:FALSE\n"
                        "keyUsage=critical,digitalSignature,keyEncipherment\n"
-                       "extendedKeyUsage=serverAuth\n")
+                       "extendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\n"
+                       "authorityKeyIdentifier=keyid:always\n")
         _openssl(["req", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(csr),
                   "-subj", f"/CN={(names or ['kaptyorka-hub'])[0][:60]}"], run)
         os.chmod(key, 0o600)

@@ -91,6 +91,15 @@ def test_the_certificate_is_signed_by_the_hub_ca_and_names_its_addresses(sandbox
         assert (tls.tls_dir() / f).stat().st_mode & 0o077 == 0
 
 
+def test_the_certificate_passes_strict_verification(sandbox):
+    """Python 3.13 turns VERIFY_X509_STRICT on by default (it wants the key identifiers);
+    set it here so every Python version runs the check."""
+    ctx = ssl.create_default_context(cafile=str(tls.tls_dir() / "ca.crt"))
+    ctx.verify_flags |= ssl.VERIFY_X509_STRICT
+    with urllib.request.urlopen(sandbox.https + "/", context=ctx, timeout=10) as r:
+        assert r.status == 200
+
+
 def test_pinned_calls_work_and_a_wrong_fingerprint_is_refused(sandbox):
     assert http.request("GET", sandbox.https + "/api/me", sandbox.token, pins=[sandbox.fp])[0] == 200
     with pytest.raises(http.HubCertMismatch) as e:
