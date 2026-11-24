@@ -363,7 +363,7 @@ Where a tool shows no hub indicator of its own (Codex, Cursor, OpenCode), the st
 
 ### Hub commands suggested from the work
 
-Nobody has to know the commands either. At each prompt, Claude Code's and Codex's prompt hooks (the ones that get the prompt's text) may add one line for the agent, at most once per session for each target, decided on the machine with no model call and no network:
+Nobody has to know the commands either. At each prompt, Claude Code's and Codex's prompt hooks (the ones that get the prompt's text) may add one line for the agent, at most once per session for each target, decided on the machine with no model call and no network. Only for what the person typed: a prompt the tool hands the session itself (a subagent's report, a background task's notice, another session's message, a hub message or knock pushed in) gets nothing, the same test the overnight trigger uses.
 
 - **Off the hub in a personal folder** (not after `/hub off`, never on a team machine): the prompt names a team project, a team machine or a teammate. The agent suggests once `/hub team <project>` (a project you have a role in) or `/hub team`, and never switches by itself.
 - **On the hub**, the prompt asks about another session's or a teammate's work ("ask the session on jetson-1", "what is bob doing"): the agent is pointed to `who` and `send`. It asks to run or continue work on a team machine ("run the training on jetson-1"): to `work(project, task, machine=...)`.

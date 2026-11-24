@@ -8,13 +8,15 @@ the hub-state cache (hubstate.refresh, from the hub's own feed).
   prompt names a team project, a team machine or a teammate: suggest /hub team [project].
 - On the hub, the prompt asks about another session's or teammate's work: who and send; it asks
   to run work on a team machine: work(project, task, machine=...).
-Names match as whole words, case-insensitive, 3 characters or more."""
+Names match as whole words, case-insensitive, 3 characters or more. Prompts the agent tool
+handed the session itself (a subagent's report, a task notice) get nothing."""
 import json
 import re
 import time
 from typing import Iterable, List, Optional
 
 from kaptyorka import offhub, paths
+from kaptyorka.overnight import typed
 
 FILE = "suggested.json"  # {session key: {"t": [targets told], "at": time}}
 KEEP_S = 30 * 86400
@@ -84,7 +86,7 @@ def _once(key: str, target: str) -> bool:
 def off_line(key: str, prompt: str) -> str:
     """For a session off the hub only because its folder is personal: one line when the prompt
     names a team project, team machine or teammate; "" otherwise."""
-    if not prompt or offhub.shared_machine():
+    if not prompt or not typed(prompt) or offhub.shared_machine():
         return ""
     team, _ = offhub.load_team()
     seen = _seen()
@@ -106,8 +108,9 @@ def off_line(key: str, prompt: str) -> str:
 
 def on_lines(key: str, prompt: str) -> str:
     """For a session on the hub: who/send when the prompt asks about another session's or a
-    teammate's work, work() when it asks to run work on a team machine; "" otherwise."""
-    if not prompt:
+    teammate's work, work() when it asks to run work on a team machine; "" otherwise. Never
+    for a prompt no person typed (a subagent's report, a task notice: overnight.typed)."""
+    if not prompt or not typed(prompt):
         return ""
     seen = _seen()
     lines = []

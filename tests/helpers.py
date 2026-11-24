@@ -277,14 +277,52 @@ def transcript_dir(folder, home=None):
         r"[^A-Za-z0-9]", "-", path)
 
 
+KEEP_FAILURES = 10  # failed slow tests whose transcripts are kept, newest first
+
+
 def remove_transcripts(folder, home=None) -> None:
-    """Remove the transcripts of sessions started in `folder` or in a folder inside it."""
+    """Remove the transcripts of sessions started in `folder` or in a folder inside it. Called
+    from a slow test's `finally`: when the test is failing (an exception on its way out), they
+    are copied first to $KAPTYORKA_TEST_KEEP (default ~/.cache/kaptyorka-test-failures)/
+    <test>-<time>/, the newest KEEP_FAILURES kept, and the path is printed with the failure."""
     import shutil
+    import sys
 
     d = transcript_dir(folder, home)
-    for p in d.parent.glob(d.name + "*"):
-        if p.name == d.name or p.name.startswith(d.name + "-"):
-            shutil.rmtree(p, ignore_errors=True)
+    found = [p for p in d.parent.glob(d.name + "*")
+             if p.name == d.name or p.name.startswith(d.name + "-")]
+    if found and sys.exc_info()[0] is not None:
+        line = f"slow test failed: its session transcripts are kept in {keep_failure(found)}"
+        print(line, flush=True)  # in the failure's captured output
+        print(line, file=sys.stderr, flush=True)
+    for p in found:
+        shutil.rmtree(p, ignore_errors=True)
+
+
+def keep_failure(folders):
+    """Copy `folders` into a new folder under the keep place, named after the running test and
+    the time; prune to the newest KEEP_FAILURES. Returns the new folder."""
+    import os
+    import re
+    import shutil
+    import time
+    from pathlib import Path
+
+    root = Path(os.environ.get("KAPTYORKA_TEST_KEEP")
+                or Path.home() / ".cache" / "kaptyorka-test-failures")
+    test = os.environ.get("PYTEST_CURRENT_TEST", "test").split(" ")[0].split("::")[-1]
+    base = f"{re.sub(r'[^A-Za-z0-9_.-]', '-', test)}-{time.strftime('%Y%m%d-%H%M%S')}"
+    dest, n = root / base, 2
+    while dest.exists():
+        dest, n = root / f"{base}-{n}", n + 1
+    dest.mkdir(parents=True)
+    for p in folders:
+        shutil.copytree(p, dest / p.name, symlinks=True)
+    old = sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime,
+                 reverse=True)
+    for p in old[KEEP_FAILURES:]:
+        shutil.rmtree(p, ignore_errors=True)
+    return dest
 
 
 def scratch_dir(prefix: str):
