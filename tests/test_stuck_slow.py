@@ -66,7 +66,7 @@ def test_a_silent_background_task_is_found_and_the_session_woken(tmp_path, monke
                                         os_user="u")
     cfg = {"hub": f"http://127.0.0.1:{stop.port}", "token": token, "secret": secret,
            "machine": "box-1"}
-    khome.mkdir()
+    khome.mkdir(exist_ok=True)
     (khome / "config.json").write_text(json.dumps(cfg))
     (khome / "folders.json").write_text(json.dumps({"proj-a": str(repo)}))
     lines = []
