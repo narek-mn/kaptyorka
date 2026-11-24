@@ -143,6 +143,11 @@ ADDED_COLUMNS = [
     # NULL: the bridge did not say
     ("agents", "wrote", "REAL"),
     ("agents", "tasks", "TEXT"),
+    # the stuck check's own state (hub.py stuck_tick): the episode it is in, as JSON {"kind",
+    # "task", "woke", "told", "again"} (hub times), and the task ids this session has seen and
+    # answered for, never asked about again while the session lives
+    ("agents", "stuck_ep", "TEXT"),
+    ("agents", "stuck_acked", "TEXT"),
 ]
 
 
@@ -199,6 +204,17 @@ def _tasks_in(value) -> Optional[list]:
                         "command": clean(t.get("command") if isinstance(t.get("command"), str)
                                          else "", 120)})
     return out
+
+
+def _json_or(text, kind):
+    """A JSON column of type `kind`, or None."""
+    if not text:
+        return None
+    try:
+        got = json.loads(text)
+    except ValueError:
+        return None
+    return got if isinstance(got, kind) else None
 
 
 def _tasks_from(text) -> Optional[list]:
@@ -313,6 +329,8 @@ class Agent:
     active: Optional[float] = None  # hub time of its last activity; None: unknown
     wrote: Optional[float] = None  # hub time of its own last write (stuck.py); None: unknown
     tasks: Optional[list] = None  # its live background tasks (stuck.py); None: unknown
+    stuck_ep: Optional[dict] = None  # the stuck check's episode (hub.py stuck_tick)
+    stuck_acked: Tuple[str, ...] = ()  # task ids it answered for: never asked again
 
 
 @dataclass
@@ -1294,7 +1312,8 @@ class Store:
                      now - row["last_seen"] < ONLINE_S, row["label"], row["person_id"],
                      row["os_user"], row["host"], row["started"], row["cwd"], row["device_id"],
                      bool(row["background"]), row["title"], row["active"], row["wrote"],
-                     _tasks_from(row["tasks"]))
+                     _tasks_from(row["tasks"]), _json_or(row["stuck_ep"], dict),
+                     tuple(_json_or(row["stuck_acked"], list) or ()))
 
     def _online_rows(self, now):
         return self.db.execute("SELECT * FROM agents WHERE last_seen > ? ORDER BY rowid",
@@ -1307,6 +1326,14 @@ class Store:
         while name in taken:
             name, n = f"{base}-{n}", n + 1
         return name
+
+    def stuck_save(self, key: str, ep: Optional[dict], acked) -> None:
+        """The stuck check's state for one session, kept in the store: a hub restart neither
+        forgets an episode nor sends one of its stages again."""
+        with self.lock:
+            self.db.execute("UPDATE agents SET stuck_ep=?, stuck_acked=? WHERE key=?",
+                            (None if ep is None else json.dumps(ep),
+                             json.dumps(sorted(acked)) if acked else None, key))
 
     def _stuck_measures(self, s: dict, now: float) -> None:
         """Keep the bridge's write and task silences as hub times, steady while unchanged, so

@@ -47,6 +47,22 @@ def test_command_of_a_background_shell():
     assert stuck.command_of(["/bin/bash", "-c", WRAPPER]) == \
         "while pgrep -f run_suite.sh >/dev/null; do sleep 10; done; ./next.sh"
     assert stuck.command_of(["/bin/bash", "-c", "plain"]) == "plain"
+    # a multi-line command, and one with its own `< /dev/null` and quotes (Claude Code 2.1.33x)
+    multi = WRAPPER.replace("while pgrep -f run_suite.sh >/dev/null; do sleep 10; done; ./next.sh",
+                            "O=~/x.txt; { echo \"=== FAST\";\n  make test < /dev/null; } > $O")
+    assert stuck.command_of(["/bin/bash", "-c", multi]) == \
+        "O=~/x.txt; { echo \"=== FAST\";\n  make test < /dev/null; } > $O"
+    quoted = WRAPPER.replace("'while pgrep -f run_suite.sh >/dev/null; do sleep 10; done; ./next.sh'",
+                             "'awk '\"'\"'{print $1}'\"'\"' log'")
+    assert stuck.command_of(["/bin/bash", "-c", quoted]) == "awk '{print $1}' log"
+    # an older wrapper with no `< /dev/null` after the command
+    older = ("source /home/u/.claude/shell-snapshots/snapshot-bash-9.sh && eval 'npm run dev'"
+             " && pwd -P >| /tmp/claude-2-cwd")
+    assert stuck.command_of(["/bin/bash", "-c", older]) == "npm run dev"
+    # a wrapper that cannot be read: no command, never the wrapper with its home path
+    assert stuck.command_of(["/bin/bash", "-c", "source /home/u/.claude/shell-snapshots/s.sh"
+                             " 2>/dev/null || true && run 'it"]) == ""
+    assert stuck.command_of(["/bin/bash", "-c", "source x && eval 'unclosed"]) == ""
     assert stuck.safe_command("x" * 300).endswith("...") and len(stuck.safe_command("x" * 300)) == 100
     assert stuck.safe_command("curl -H 'token: ghp_" + "a" * 36 + "'") == ""
 
@@ -60,22 +76,27 @@ def test_texts():
     ep = {"kind": "task", "age": 3600.0, "task": {"id": "b1", "command": "sleep 9"}}
     assert stuck.wake_text(ep).startswith(
         "kaptyorka: your background task b1 (`sleep 9`) has printed nothing for 1 h.")
-    text = stuck.people_text("box-1/claude-code/proj-a", "box-1", ep, "claude:abcdef12-3", True)
+    assert stuck.wake_text(ep).endswith(
+        "If it is meant to run (a server, a watcher), just say so in one line; you won't be asked"
+        " about this task again.")
+    text = stuck.people_text("box-1/claude-code/proj-a", "box-1", ep, "claude:abcdef12-3", True,
+                             1800)
     assert text == ("Session box-1/claude-code/proj-a on box-1 looks stuck: its background task"
-                    " b1 (`sleep 9`) has printed nothing for 1 h. A message reaches it, so it was"
-                    " asked to check 30 min ago and nothing changed. To stop it:"
+                    " b1 (`sleep 9`) has printed nothing for 1 h. A message reaches it, yet it has"
+                    " not answered the hub's question 30 min ago. To stop it:"
                     " `claude stop abcdef12` on box-1.")
     bare = {"kind": "task", "age": 2100.0, "task": {"id": "b1", "command": ""}}  # a coordinator's
     assert stuck.wake_text(bare).startswith(
         "kaptyorka: your background task b1 has printed nothing for 35 min. Check")
     assert "its background task b1 has printed nothing for 35 min. A message" in \
-        stuck.people_text("n", "box-1", bare, "claude:abcdef12", True)
+        stuck.people_text("n", "box-1", bare, "claude:abcdef12", True, 1800)
     busy = {"kind": "busy", "age": 3600.0}
-    assert "only after its current step ends" in stuck.people_text("n", "box-1", busy, "k:x", False)
-    assert stuck.people_text("n", "box-1", busy, "k:x", False).endswith("press Esc.")
-    m = stuck.manager_text("n", "box-1", "alice", ep, "claude:abcdef12", True,
+    busy_text = stuck.people_text("n", "box-1", busy, "k:x", False, 1800)
+    assert "only after its current step ends" in busy_text and busy_text.endswith("press Esc.")
+    m = stuck.manager_text("n", "box-1", "alice", ep, "claude:abcdef12", True, 3600,
                            {"branch": "main", "subject": "add x", "dirty": False}, again=True)
     assert m.startswith("stuck session: n of alice on box-1 is still stuck:")
+    assert "It was asked to check 1 h ago and has not answered; alice was told." in m
     assert 'Git in its folder: branch main, last commit "add x", nothing uncommitted.' in m
 
 
@@ -142,10 +163,17 @@ def test_sessions_report_measures_only_while_busy(tmp_path, monkeypatch):
 
 # ---------- the hub ----------
 
-def task_beat(hub, b, key, silent_s, activity="shell", background=True, write_s=0, extra=None):
+H = 3600
+
+
+def task_beat(hub, b, key, silent_s, activity="shell", background=True, write_s=None,
+              extra=None, tasks=None):
+    """One heartbeat: `key` with one background task silent `silent_s` (None: no task); the
+    session itself silent as long as its task unless `write_s` says otherwise."""
     s = {"key": key, "tool": "claude-code", "project": "proj-a", "cwd": "/w/proj-a",
-         "activity": activity, "background": background, "write_s": write_s,
-         "tasks": [] if silent_s is None else
+         "activity": activity, "background": background,
+         "write_s": (silent_s or 0) if write_s is None else write_s,
+         "tasks": tasks if tasks is not None else [] if silent_s is None else
          [{"id": "bq1", "silent_s": silent_s, "command": "while pgrep -f x; do sleep 10; done"}]}
     other = {"key": "claude:other", "tool": "claude-code", "project": "proj-a",
              "cwd": "/w/proj-a", "activity": "idle"}
@@ -160,120 +188,135 @@ def hub_sent(hub):
                                      "kaptyorka: this session", "stuck session:"))]
 
 
-def test_hub_wakes_then_tells_once_per_episode(hub, clock):
+def setup(hub):
     hub.store.project_register("proj-a", by="test")
     a_id, _ = member(hub, "alice")
     mgr, me = manager_online(hub)
-    b = bridge(hub, a_id)
-    key = "claude:abcdef12-0000"
-    task_beat(hub, b, key, stuck.WAKE_S - 20)
-    hub.tick()
-    assert hub_sent(hub) == []
-    clock[0] += 25
-    task_beat(hub, b, key, stuck.WAKE_S + 5)
-    hub.tick()
-    [(to, text)] = hub_sent(hub)
-    assert to == key and text.startswith("kaptyorka: your background task bq1")
-    clock[0] += 20
-    task_beat(hub, b, key, stuck.WAKE_S + 25)
-    hub.tick()
-    assert len(hub_sent(hub)) == 1  # once per episode
-    row = agent_row(hub.store.agent(key), clock[0])
-    assert row["stuck"] == {"kind": "task", "s": stuck.WAKE_S + 25}
+    return bridge(hub, a_id), mgr, me
 
-    clock[0] += stuck.TELL_S - stuck.WAKE_S
-    task_beat(hub, b, key, stuck.TELL_S + 25)
-    run(call(mgr, me, "inbox"))  # the manager stays online
+
+def step(hub, b, mgr, me, key, silent, **kw):
+    """A heartbeat, the manager still online, one tick: what the hub sent in that tick."""
+    n = len(hub_sent(hub))
+    task_beat(hub, b, key, silent, **kw)
+    run(call(mgr, me, "inbox"))
     hub.tick()
-    sent = hub_sent(hub)[1:]
-    assert [to for to, _ in sent] == ["claude:other", "k:mgr"]  # her other session, the manager
-    assert sent[0][1].startswith("Session ") and "`claude stop abcdef12` on box-1" in sent[0][1]
-    texts = [t for t in inbox(mgr, me) if t.startswith("stuck session:")]
-    assert len(texts) == 1 and "is stuck:" in texts[0]
+    return hub_sent(hub)[n:]
+
+
+def test_first_sight_of_an_old_silence_asks_only_and_stages_follow_the_real_wake(hub, clock):
+    b, mgr, me = setup(hub)
+    key = "claude:abcdef12-0000"
+    silent = 283 * H  # a task silent for 12 days when the hub first looks
+    sent = step(hub, b, mgr, me, key, silent)
+    assert [k for k, _ in sent] == [key]  # the question only: never two stages in one tick
+    assert sent[0][1].startswith("kaptyorka: your background task bq1 (`while pgrep -f x; do"
+                                 " sleep 10; done`) has printed nothing for 283 h.")
+    assert "If it is meant to run (a server, a watcher), just say so in one line; you won't be" \
+        " asked about this task again." in sent[0][1]
+    for _ in range(5):  # nothing more until half an hour after the question
+        clock[0] += 300
+        silent += 300
+        assert step(hub, b, mgr, me, key, silent) == []
+    clock[0] += 300
+    silent += 300
+    sent = step(hub, b, mgr, me, key, silent)
+    assert [k for k, _ in sent] == ["claude:other", "k:mgr"]  # her other session, the manager
+    assert "has not answered the hub's question 30 min ago" in sent[0][1]
+    assert "It was asked to check 30 min ago and has not answered" in sent[1][1]
+    assert "is stuck:" in sent[1][1] and "283 h" in sent[1][1]
+    clock[0] += stuck.AGAIN_S - 60
+    silent += stuck.AGAIN_S - 60
+    assert step(hub, b, mgr, me, key, silent) == []
     clock[0] += 60
-    task_beat(hub, b, key, stuck.TELL_S + 85)
-    run(call(mgr, me, "inbox"))
-    hub.tick()
-    assert not [t for t in inbox(mgr, me) if t.startswith("stuck session:")]
-    clock[0] += stuck.AGAIN_S
-    task_beat(hub, b, key, stuck.TELL_S + stuck.AGAIN_S + 85)
-    run(call(mgr, me, "inbox"))
-    hub.tick()
-    again = [t for t in inbox(mgr, me) if t.startswith("stuck session:")]
-    assert len(again) == 1 and "is still stuck:" in again[0]
-    n = len(hub_sent(hub))
-    clock[0] += 3600
-    task_beat(hub, b, key, stuck.TELL_S + stuck.AGAIN_S + 3685)
-    run(call(mgr, me, "inbox"))
-    hub.tick()
-    assert len(hub_sent(hub)) == n  # every stage once; the manager twice
-
-    # it printed: a new silence is a new episode, woken again after WAKE_S
-    clock[0] += 10
-    task_beat(hub, b, key, 0)
-    hub.tick()
-    assert agent_row(hub.store.agent(key), clock[0])["stuck"] is None
-    clock[0] += stuck.WAKE_S + 5
-    task_beat(hub, b, key, stuck.WAKE_S + 5)
-    hub.tick()
-    assert hub_sent(hub)[-1][0] == key and len(hub_sent(hub)) == n + 1
+    silent += 60
+    sent = step(hub, b, mgr, me, key, silent)
+    assert [k for k, _ in sent] == ["k:mgr"] and "is still stuck:" in sent[0][1]
+    assert "asked to check 1 h ago" in sent[0][1]
+    for _ in range(4):
+        clock[0] += H
+        silent += H
+        assert step(hub, b, mgr, me, key, silent) == []  # every stage once
 
 
-def test_late_heartbeats_and_a_hub_restart_keep_one_episode(hub, clock):
-    """The bridge's measure lags the hub's clock by however late its heartbeat lands: a beat
-    10 s late, or a 40 s gap (a hub restart), is still the same silence, told once."""
-    hub.store.project_register("proj-a", by="test")
-    a_id, _ = member(hub, "alice")
-    mgr, me = manager_online(hub)
-    b = bridge(hub, a_id)
+def test_a_hub_restart_mid_episode_sends_nothing_again(hub, clock):
+    from kaptyorka.hub import build_app
+    from test_hub_manager import URL
+    b, mgr, me = setup(hub)
     key = "claude:abcdef12-0000"
-    task_beat(hub, b, key, stuck.WAKE_S + 5)
-    hub.tick()
-    assert len(hub_sent(hub)) == 1
-    silent = stuck.WAKE_S + 5
-    for late in (10, 0, 10, 3, 10):  # each beat 20 s later on the hub, measured `late` s early
-        clock[0] += 20
-        silent += 20
-        task_beat(hub, b, key, silent - late)
-        hub.tick()
-    clock[0] += 40  # no heartbeat for 40 s
-    silent += 40
-    task_beat(hub, b, key, silent - 10)
-    hub.tick()
-    assert len(hub_sent(hub)) == 1  # the wake, once
-    clock[0] += stuck.TELL_S - stuck.WAKE_S
-    silent += stuck.TELL_S - stuck.WAKE_S
-    task_beat(hub, b, key, silent)
+    silent = 2 * H
+    step(hub, b, mgr, me, key, silent)
+    woke = hub.store.agent(key).stuck_ep["woke"]
+    restarted = build_app(hub.store, manager_url=URL).state.tick
+    clock[0] += 60
+    task_beat(hub, b, key, silent + 60)
     run(call(mgr, me, "inbox"))
-    hub.tick()
     n = len(hub_sent(hub))
-    told = [t for t in inbox(mgr, me) if t.startswith("stuck session:")]
-    for late in (10, 0, 10):
+    restarted()
+    assert len(hub_sent(hub)) == n  # the question is not asked again
+    assert hub.store.agent(key).stuck_ep["woke"] == woke
+    clock[0] += stuck.TELL_S
+    task_beat(hub, b, key, silent + 60 + stuck.TELL_S)
+    run(call(mgr, me, "inbox"))
+    restarted()
+    restarted()
+    sent = hub_sent(hub)[n:]
+    assert [k for k, _ in sent] == ["claude:other", "k:mgr"]  # the next stage, once, on time
+    assert "has not answered the hub's question 31 min ago" in sent[0][1]
+
+
+def test_a_session_that_answers_is_never_asked_about_that_task_again(hub, clock):
+    b, mgr, me = setup(hub)
+    key = "claude:abcdef12-0000"
+    silent = 5 * H
+    assert len(step(hub, b, mgr, me, key, silent)) == 1  # asked
+    clock[0] += 120
+    silent += 120
+    # it ran a turn: "that is the dev server, meant to run"
+    assert step(hub, b, mgr, me, key, silent, write_s=30) == []
+    a = hub.store.agent(key)
+    assert a.stuck_acked == ("bq1",) and a.stuck_ep is None
+    assert agent_row(a, clock[0])["stuck"] is None  # the page shows "Background task" only
+    for _ in range(12):  # it sleeps again, its server silent for six more hours: no nagging
+        clock[0] += 1800
+        silent += 1800
+        assert step(hub, b, mgr, me, key, silent) == []
+    clock[0] += 30
+    assert step(hub, b, mgr, me, key, 0) == []  # it printed, then a new long silence
+    clock[0] += 3 * H
+    assert step(hub, b, mgr, me, key, 3 * H) == []  # still the same task: never again
+    # another task of the same session, silent: that one is asked about
+    other = [{"id": "bq1", "silent_s": 3 * H + 10, "command": "server"},
+             {"id": "bz9", "silent_s": stuck.WAKE_S + 5, "command": "make wait"}]
+    clock[0] += 10
+    sent = step(hub, b, mgr, me, key, 3 * H + 10, tasks=other)
+    assert len(sent) == 1 and sent[0][1].startswith("kaptyorka: your background task bz9")
+
+
+def test_an_ack_ends_with_its_task(hub, clock):
+    b, mgr, me = setup(hub)
+    key = "claude:abcdef12-0000"
+    step(hub, b, mgr, me, key, 2 * H)
+    clock[0] += 60
+    step(hub, b, mgr, me, key, 2 * H + 60, write_s=10)
+    assert hub.store.agent(key).stuck_acked == ("bq1",)
+    clock[0] += 10
+    step(hub, b, mgr, me, key, None, write_s=0)  # the task ended
+    assert hub.store.agent(key).stuck_acked == ()
+
+
+def test_late_heartbeats_keep_one_episode(hub, clock):
+    """The bridge's measure lags the hub's clock by however late its heartbeat lands: still
+    the same silence, asked once."""
+    b, mgr, me = setup(hub)
+    key = "claude:abcdef12-0000"
+    silent = stuck.WAKE_S + 5
+    step(hub, b, mgr, me, key, silent)
+    for late in (10, 0, 10, 3, 10, 40):
         clock[0] += 20
         silent += 20
-        task_beat(hub, b, key, silent - late)
-        hub.tick()
-        told += [t for t in inbox(mgr, me) if t.startswith("stuck session:")]
-    assert n == 3 and len(hub_sent(hub)) == n  # wake, person, manager: once each, not again per late beat
-    assert len(told) == 1  # the manager too
-
-
-def test_a_task_that_prints_now_and_then_starts_a_new_silence(tmp_path):
-    t = [1000.0]
-    store = Store(tmp_path / "h.db", clock=lambda: t[0])
-    person(store, "alice")
-
-    def out(silent):
-        store.heartbeat("box-1", [{"key": "k1", "tool": "claude-code", "project": "p",
-                                   "activity": "shell",
-                                   "tasks": [{"id": "b1", "silent_s": silent, "command": "c"}]}])
-        return store.agent("k1").tasks[0]["out"]
-    assert out(0) == 1000.0
-    t[0] += 30
-    assert out(0) == 1000.0  # printed 30 s later: within the tolerance, the start stays
-    t[0] += 40
-    assert out(0) == 1070.0  # it keeps printing: the start moves on, never stays stuck
-    store.close()
+        step(hub, b, mgr, me, key, silent - late, write_s=silent)
+    assert len(hub_sent(hub)) == 1
 
 
 def test_hub_judges_nothing_for_idle_old_or_overnight_sessions(hub, clock):
@@ -294,22 +337,21 @@ def test_hub_judges_nothing_for_idle_old_or_overnight_sessions(hub, clock):
     assert hub_sent(hub) == []
 
 
-def test_busy_without_writes_counts_our_own_message_out(hub, clock):
-    hub.store.project_register("proj-a", by="test")
-    a_id, _ = member(hub, "alice")
-    b = bridge(hub, a_id)
+def test_busy_without_writes_first_sight_asks_only_and_a_write_ends_it(hub, clock):
+    b, mgr, me = setup(hub)
     key = "claude:b1"
-    task_beat(hub, b, key, None, activity="busy", background=False, write_s=stuck.WAKE_S + 1)
-    hub.tick()
-    [(to, text)] = hub_sent(hub)
-    assert to == key and text.startswith("kaptyorka: this session has been busy for 30 min")
-    # the bridge's write_s skips the delivered message, so the silence and its start stay
-    clock[0] += stuck.TELL_S - stuck.WAKE_S
-    task_beat(hub, b, key, None, activity="busy", background=False,
-              write_s=stuck.TELL_S + 1)
-    hub.tick()
-    to_other = [t for k, t in hub_sent(hub) if k == "claude:other"]
-    assert len(to_other) == 1 and "press Esc" in to_other[0]
+    sent = step(hub, b, mgr, me, key, None, activity="busy", background=False,
+                write_s=45 * 60)
+    assert [k for k, _ in sent] == [key]
+    assert sent[0][1].startswith("kaptyorka: this session has been busy for 45 min")
+    clock[0] += stuck.TELL_S  # the delivered question is no write: the silence stays
+    sent = step(hub, b, mgr, me, key, None, activity="busy", background=False,
+                write_s=45 * 60 + stuck.TELL_S)
+    assert [k for k, _ in sent] == ["claude:other", "k:mgr"] and "press Esc" in sent[0][1]
+    clock[0] += 60
+    assert step(hub, b, mgr, me, key, None, activity="busy", background=False,
+                write_s=5) == []  # it wrote: the episode is over
+    assert hub.store.agent(key).stuck_ep is None
 
 
 def test_a_worker_s_boss_hears_it(hub, clock):
@@ -319,15 +361,38 @@ def test_a_worker_s_boss_hears_it(hub, clock):
     b = start_worker(hub, alice)
     key, boss = "claude:w1", BOSS["key"]
     assert hub.ws.boss_key("proj-a-w1") == boss
+
+    def beat(silent):
+        s = {"key": key, "tool": "claude-code", "project": "proj-a", "cwd": "/w/proj-a",
+             "activity": "shell", "background": True, "write_s": silent,
+             "tasks": [{"id": "bq1", "silent_s": silent, "command": "x"}]}
+        assert heartbeat(hub, b.token, "box-1", [s])[0] == 200
+        run(call(alice[1], BOSS, "inbox"))  # the boss session stays online
+        hub.tick()
     clock[0] += 1
-    s = {"key": key, "tool": "claude-code", "project": "proj-a", "cwd": "/w/proj-a",
-         "activity": "shell", "background": True, "write_s": 0,
-         "tasks": [{"id": "bq1", "silent_s": stuck.TELL_S + 1, "command": "x"}]}
-    assert heartbeat(hub, b.token, "box-1", [s])[0] == 200
-    run(call(alice[1], BOSS, "inbox"))  # the boss session stays online
-    hub.tick()
+    beat(H)
+    clock[0] += stuck.TELL_S
+    beat(H + stuck.TELL_S)
     told = [k for k, t in hub_sent(hub) if t.startswith("Session ")]
     assert told == [boss]  # alice's one other session is the boss: told once
+
+
+def test_a_task_that_prints_now_and_then_starts_a_new_silence(tmp_path):
+    t = [1000.0]
+    store = Store(tmp_path / "h.db", clock=lambda: t[0])
+    person(store, "alice")
+
+    def out(silent):
+        store.heartbeat("box-1", [{"key": "k1", "tool": "claude-code", "project": "p",
+                                   "activity": "shell",
+                                   "tasks": [{"id": "b1", "silent_s": silent, "command": "c"}]}])
+        return store.agent("k1").tasks[0]["out"]
+    assert out(0) == 1000.0
+    t[0] += 30
+    assert out(0) == 1000.0  # printed 30 s later: within the tolerance, the start stays
+    t[0] += 40
+    assert out(0) == 1070.0  # it keeps printing: the start moves on, never stays stuck
+    store.close()
 
 
 def test_store_keeps_one_start_per_silence(tmp_path):

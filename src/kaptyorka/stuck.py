@@ -1,21 +1,24 @@
 """Stuck sessions: a background task that prints nothing, or a busy session that writes nothing.
 docs/superpowers/specs/2026-11-24-stuck-sessions.md
 
-Two stages per episode. After WAKE_S the session itself is asked to check (a message reaches a
-session whose turn is over at once; a busy one reads it after its current tool call). After
-TELL_S its person, its boss (for a worker) and the manager hear it; the manager once more
-AGAIN_S later. An episode ends when the task prints, ends, the session writes again, or goes
-idle. The bridge measures (Claude Code on Linux only); the hub judges. Nothing is judged when a
-measure is missing."""
+A silence of WAKE_S or more is an episode. Its stages are timed from when the hub noticed it,
+never from the silence's age, one stage per tick at most: first the session itself is asked to
+check (a message reaches a session whose turn is over at once; a busy one reads it after its
+current tool call). A session that then writes anything has seen it: that task is acknowledged
+(a server or a watcher meant to run) and never asked about again while the session lives.
+Only a session that did not answer within TELL_S of the wake is reported to its person, its
+boss (for a worker) and the manager; the manager once more AGAIN_S later. An episode ends when
+the task prints or ends, the session writes again (busy), or it goes idle. The bridge measures
+(Claude Code on Linux only); the hub judges. Nothing is judged when a measure is missing."""
 import re
 import shlex
 from typing import List, Optional
 
 from kaptyorka.secrets_check import PATTERNS
 
-WAKE_S = 1800
-TELL_S = 3600
-AGAIN_S = 1800
+WAKE_S = 1800  # silent this long: an episode, and the session is asked
+TELL_S = 1800  # no answer this long after the wake: its person, boss and the manager hear it
+AGAIN_S = 1800  # still stuck this long after that: the manager once more
 COMMAND_CAP = 100
 # a re-measured silence start this close to the kept one is the same silence: a heartbeat that
 # lands late, a slow read or a hub restart shifts it by seconds; the thresholds are half an hour
@@ -30,15 +33,21 @@ def safe_command(text: str) -> str:
 
 
 def command_of(argv: List[str]) -> str:
-    """The command a Claude Code background shell runs: its wrapper is
-    `bash -c "source <snapshot> ... && eval '<command>' < /dev/null && pwd -P >| ..."`."""
+    """The command a Claude Code background shell runs. Its wrapper (2.1.33x) is
+    `bash -c "source <snapshot> 2>/dev/null || true && ... && eval '<command>' < /dev/null &&
+    pwd -P >| ..."`: the command is the one shell word after `eval`, read as the shell would,
+    whatever follows it. "" when a wrapper cannot be read: it names the home folder."""
     script = argv[-1] if argv else ""
-    m = re.search(r"&& eval (.+?) < /dev/null(?: &&|$)", script, re.S)
+    m = re.search(r"(?:^|&&|;|\|\|)\s*eval\s+", script)
     if m:
+        lex = shlex.shlex(script[m.end():], posix=True)
+        lex.whitespace_split, lex.commenters = True, ""
         try:
-            return shlex.split(m.group(1))[0]
-        except (ValueError, IndexError):
-            pass
+            return next(iter(lex))
+        except (ValueError, StopIteration):
+            return ""
+    if "shell-snapshots" in script or re.match(r"\s*source\s", script):
+        return ""
     return script
 
 
@@ -64,9 +73,10 @@ def of_agent(a, now: float) -> Optional[dict]:
     also carries "start", the silence's kept hub time, so its key never moves with `now`."""
     if not a.online:
         return None
+    acked = set(getattr(a, "stuck_acked", ()) or ())  # it said these are meant to run
     tasks = None if a.tasks is None else [
         {"id": t["id"], "silent_s": now - t["out"], "command": t.get("command", ""),
-         "out": t["out"]} for t in a.tasks]
+         "out": t["out"]} for t in a.tasks if t["id"] not in acked]
     ep = find(a.activity, None if a.wrote is None else now - a.wrote, tasks)
     if ep is not None:
         ep["start"] = ep["task"]["out"] if ep["kind"] == "task" else a.wrote
@@ -98,7 +108,8 @@ def wake_text(ep: dict) -> str:
                 + (f" (`{cmd}`)" if cmd else "")
                 + f" has printed nothing for {span(ep['age'])}. Check whether it is stuck (a"
                 " wait loop that never ends, a command waiting for input). If it is, stop it"
-                " and go on with the work; if it is fine, say in one line what it waits for.")
+                " and go on with the work. If it is meant to run (a server, a watcher), just say"
+                " so in one line; you won't be asked about this task again.")
     return (f"kaptyorka: this session has been busy for {span(ep['age'])} without a new step."
             " If a command or tool is hung, stop it and go on with the work.")
 
@@ -112,14 +123,16 @@ def stop_hint(key: str, background: bool, machine: str, kind: str) -> str:
     return "To stop it: open the session and press Esc."
 
 
-def people_text(name: str, machine: str, ep: dict, key: str, background: bool) -> str:
-    """To the session's person and its boss, at TELL_S."""
-    lands = ("A message reaches it, so it was asked to check"
+def people_text(name: str, machine: str, ep: dict, key: str, background: bool,
+                asked_s: float) -> str:
+    """To the session's person and its boss, TELL_S after the wake went unanswered; asked_s:
+    seconds since the hub's wake really went out."""
+    lands = ("A message reaches it, yet it has not answered the hub's question"
              if ep["kind"] == "task" else
-             "A message reaches it only after its current step ends; it was asked to check")
+             "A message reaches it only after its current step ends; it has written nothing"
+             " since the hub's question")
     return (f"Session {name} on {machine} looks stuck: {_what(ep)}. {lands}"
-            f" {span(ep['age'] - WAKE_S)} ago and nothing changed. "
-            + stop_hint(key, background, machine, ep["kind"]))
+            f" {span(asked_s)} ago. " + stop_hint(key, background, machine, ep["kind"]))
 
 
 def git_line(git: Optional[dict]) -> str:
@@ -132,9 +145,9 @@ def git_line(git: Optional[dict]) -> str:
 
 
 def manager_text(name: str, machine: str, person: str, ep: dict, key: str, background: bool,
-                 git: Optional[dict] = None, again: bool = False) -> str:
+                 asked_s: float, git: Optional[dict] = None, again: bool = False) -> str:
     head = "still stuck" if again else "stuck"
     told = f"{person} was told" if person else "nobody could be told"
     return (f"stuck session: {name} of {person or 'nobody'} on {machine} is {head}: {_what(ep)}."
-            f" It was asked to check {span(ep['age'] - WAKE_S)} ago; {told}.{git_line(git)} "
-            + stop_hint(key, background, machine, ep["kind"]))
+            f" It was asked to check {span(asked_s)} ago and has not answered; {told}."
+            f"{git_line(git)} " + stop_hint(key, background, machine, ep["kind"]))

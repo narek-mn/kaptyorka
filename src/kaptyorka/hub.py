@@ -520,51 +520,75 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         wake_bridges()
 
     def stuck_tick(now: float) -> None:
-        """Stuck sessions (stuck.py), each stage once per episode: at WAKE_S the session itself
-        (not one in overnight mode: its bridge wakes it), at TELL_S its person's online
-        sessions (else their page) and a worker's boss, plus the manager, which hears it once
-        more AGAIN_S later. An episode is one silence: its start is a steady hub time."""
+        """Stuck sessions (stuck.py). An episode is one silence (its start a steady hub time);
+        its stages run from when the hub first saw it, one per tick, each once, and the state
+        is kept in the store so a restart sends nothing again: the session itself is asked
+        (not one in overnight mode: its bridge asks); a task session that writes after that
+        has seen its task and is never asked about it again; one that stays silent TELL_S
+        after the question is reported to its person, a worker's boss and the manager, and
+        the manager hears it once more AGAIN_S later."""
         online = store.online()
         live = ws.live_keys()
         names = {p["id"]: p["name"] for p in store.people()}
         mid = mm.person_id()
         for a in online:
-            ep = stuck.of_agent(a, now)
+            st, acked = a.stuck_ep, set(a.stuck_acked)
+            if a.tasks is not None:
+                acked &= {t["id"] for t in a.tasks}  # a task that ended needs no answer kept
+            # it wrote after the hub asked: it has seen its task, which is meant to run
+            if st and st.get("kind") == "task" and a.wrote is not None \
+                    and a.wrote > float(st.get("woke") or 0) + 1:
+                acked.add(str(st.get("task")))
+                st = None
+            ep = stuck.of_agent(replace(a, stuck_acked=tuple(acked)), now)
+            same = ep is not None and st is not None and st.get("kind") == ep["kind"] \
+                and st.get("task") == ep.get("task", {}).get("id", "") \
+                and abs(float(st.get("start") or 0) - float(ep["start"] or 0)) < stuck.STEADY_S
             if ep is None:
-                continue
-            task = ep.get("task", {}).get("id", "")
-            episode = f"stuck:{a.key}:{ep['kind']}:{task}:{round(ep['start'])}"
-            if a.key not in night["keys"] and mm.push_once(episode + ":wake", now):
-                tell(a.key, stuck.wake_text(ep))
-            if ep["age"] < stuck.TELL_S:
-                continue
-            person = names.get(a.person_id, "")
-            if mm.push_once(episode + ":tell", now):
-                if a.person_id is not None and a.person_id == mid:
-                    to = [f"web:{n}" for n in admin_ops.admins(store)]  # the manager's own
-                else:
-                    to = [b.key for b in online if b.person_id == a.person_id and b.key != a.key
-                          and b.key not in live and a.person_id is not None] \
-                        or ([f"web:{person}"] if person else [])
-                boss = ws.boss_key(live[a.key]) if a.key in live else None
-                if boss and boss != a.key and boss not in to and ws.session_online(boss, now):
-                    to.append(boss)
-                text = stuck.people_text(a.name, a.machine, ep, a.key, a.background)
-                for k in to:
-                    tell(k, text)
-                store.log_add("hub", "stuck", f"{a.name}: {ep['kind']} {stuck.span(ep['age'])}")
+                st = None
+            elif not same:  # first sight, however old the silence: only the question
+                st = {"kind": ep["kind"], "task": ep.get("task", {}).get("id", ""),
+                      "start": ep["start"], "woke": now, "told": None, "again": None}
+                if a.key not in night["keys"]:  # overnight mode: its own bridge asks
+                    tell(a.key, stuck.wake_text(ep))
+            elif st.get("told") is None:
+                if now - float(st["woke"]) >= stuck.TELL_S:
+                    st = {**st, "told": now}
+                    stuck_report(a, ep, now, float(st["woke"]), online, live, names, mid, False)
+            elif st.get("again") is None and now - float(st["told"]) >= stuck.AGAIN_S:
+                st = {**st, "again": now}
+                stuck_report(a, ep, now, float(st["woke"]), online, live, names, mid, True)
+            if st != a.stuck_ep or tuple(sorted(acked)) != tuple(sorted(a.stuck_acked)):
+                store.stuck_save(a.key, st, acked)
+
+    def stuck_report(a, ep: dict, now: float, woke: float, online, live, names, mid,
+                     again: bool) -> None:
+        """A wake the session did not answer: its person's online sessions (else their page)
+        and a worker's boss hear it once, the manager twice (`again`: the second time)."""
+        person, asked_s = names.get(a.person_id, ""), now - woke
+        if not again:
             if a.person_id is not None and a.person_id == mid:
-                continue  # the manager is not told about itself
-            key = manager_to_wake()
-            if key is None or key == a.key:
-                continue
-            git = (ws.facts(a.device_id).get("git") or {}).get(a.cwd) \
-                if a.device_id is not None and a.cwd else None
-            for stage, after in (("manager", stuck.TELL_S),
-                                 ("again", stuck.TELL_S + stuck.AGAIN_S)):
-                if ep["age"] >= after and mm.push_once(f"{episode}:{stage}", now):
-                    tell(key, stuck.manager_text(a.name, a.machine, person, ep, a.key,
-                                                 a.background, git, again=stage == "again"))
+                to = [f"web:{n}" for n in admin_ops.admins(store)]  # the manager's own
+            else:
+                to = [b.key for b in online if b.person_id == a.person_id and b.key != a.key
+                      and b.key not in live and a.person_id is not None] \
+                    or ([f"web:{person}"] if person else [])
+            boss = ws.boss_key(live[a.key]) if a.key in live else None
+            if boss and boss != a.key and boss not in to and ws.session_online(boss, now):
+                to.append(boss)
+            text = stuck.people_text(a.name, a.machine, ep, a.key, a.background, asked_s)
+            for k in to:
+                tell(k, text)
+            store.log_add("hub", "stuck", f"{a.name}: {ep['kind']} {stuck.span(ep['age'])}")
+        if a.person_id is not None and a.person_id == mid:
+            return  # the manager is not told about itself
+        key = manager_to_wake()
+        if key is None or key == a.key:
+            return
+        git = (ws.facts(a.device_id).get("git") or {}).get(a.cwd) \
+            if a.device_id is not None and a.cwd else None
+        tell(key, stuck.manager_text(a.name, a.machine, person, ep, a.key, a.background,
+                                     asked_s, git, again=again))
 
     def machine_news(events: List[str], now: float) -> None:
         """Confirmed machine events: one dated line each in the team note `machines`, and one
