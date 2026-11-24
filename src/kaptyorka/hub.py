@@ -23,7 +23,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from kaptyorka import __version__, admin_ops, brief, identity, knowledge, machine_events, manager, paths, signin, stuck, usage
+from kaptyorka import __version__, admin_ops, brief, identity, knowledge, machine_events, manager, paths, session_end, signin, stuck, usage
 from kaptyorka.gitlab import GitLabError, GitLabSource
 from kaptyorka import overnight as overnight_mod
 from kaptyorka import rules as rules_mod
@@ -38,7 +38,9 @@ from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
 from kaptyorka.memory import MemoryStore, check_state
 from kaptyorka.secrets_check import check_secrets
-from kaptyorka.store import MAX_FILE, MAX_IDENT, Agent, KaptyorkaError, Principal, Store, attach_line, clean, machine_name
+from kaptyorka.store import (MAX_FILE, MAX_IDENT, ONLINE_S, RECENT_S, UNREACHABLE, Agent,
+                              KaptyorkaError, Principal, Store, attach_line, clean, machine_name,
+                              session_id)
 from kaptyorka.workers import LIVE, MAX_FACT, STARTUP_S, WorkerStore, _git as clean_git, clean_facts, safe_name
 
 MAX_WAIT_S = 25
@@ -244,6 +246,7 @@ def _tool_errors(fn):
     return wrapper
 
 
+AUTO_DOORS_KEY = "auto_doors_told_id"  # the last door_open log row the admin heard of
 MANAGER_FIRST = ("You are the team's manager session; follow the team rules and manager"
                  " instructions in your system prompt and wait for the hub's messages.")
 MANAGER_FAILED = ("the manager session failed to start twice; see"
@@ -679,7 +682,43 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             manager_tick(now)
         except Exception as e:  # the manager must never stop the workers' clock
             print(f"kaptyorka: manager tick failed: {e}", flush=True)
+        try:
+            doors_tick(now)
+        except Exception as e:
+            print(f"kaptyorka: door requests failed: {e}", flush=True)
+        try:
+            resumes_tick(now)
+        except Exception as e:
+            print(f"kaptyorka: session resumes failed: {e}", flush=True)
         store.legacy_auto_off(now)
+
+    def to_admins(text: str) -> None:
+        """A line for every admin: their online sessions, else their page."""
+        now = store.clock()
+        for name in admin_ops.admins(store):
+            with store.lock:
+                keys = [r["key"] for r in store.db.execute(
+                    "SELECT a.key FROM agents a JOIN people p ON p.id=a.person_id WHERE p.name=?"
+                    " AND a.last_seen>? ORDER BY a.last_seen DESC", (name, now - ONLINE_S))]
+            for key in keys or [f"web:{name}"]:
+                tell(key, text)
+
+    def doors_tick(now: float) -> None:
+        """An hour-old door request reminds the admin once; the doors that opened by
+        themselves (same project) reach the admin's page as one line, 5 minutes after the
+        first, like the other routine notices."""
+        for line in cs.due_reminders(now):
+            to_admins(line)
+        since = mm.stamp(AUTO_DOORS_KEY) or 0  # the last log row told (an id)
+        rows = [r for r in store.log(200) if r["kind"] == "door_open" and r["id"] > since
+                and ("(auto: same project" in r["detail"] or "(by manager for " in r["detail"])]
+        if not rows or min(r["time"] for r in rows) > now - knowledge.LIGHT_WAIT_S:
+            return
+        mm.set_stamp(AUTO_DOORS_KEY, max(r["id"] for r in rows))
+        listed = "; ".join(r["detail"] for r in reversed(rows))
+        for name in admin_ops.admins(store):
+            tell(f"web:{name}", f"Doors opened without you: {listed}. Turn these off with"
+                                " kaptyorka auto-doors off or kaptyorka manager-doors off.")
 
     @server.tool()
     @_tool_errors
@@ -699,8 +738,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             n = store.send(key, to, text, file_id, held)
         wake_bridges()
         if held:
-            return "; ".join(f"held: {name} was last seen {_ago(s)} ago; it gets the message"
-                             " when it next reports" for name, s in held)
+            return "; ".join(held_line(name, s) for name, s in held)
         return f"sent to {n} session" + ("" if n == 1 else "s")
 
     @server.tool()
@@ -721,6 +759,198 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         store.answer(knock_id, me(ctx).key, answer == "yes")
         wake_bridges()
         return "door open" if answer == "yes" else "knock declined"
+
+    def _door_side(to: str, viewer: Principal, own: bool) -> str:
+        """The session key `to` names (name, label or #id, seen in the last RECENT_S). `own`:
+        only the viewer's sessions. A member names any other session only exactly, and an
+        unknown or hidden one gets the same answer, so nothing is learned from it."""
+        with store.lock:
+            now = store.clock()
+            rows = store.db.execute("SELECT * FROM agents WHERE last_seen>? ORDER BY last_seen"
+                                    " DESC", (now - RECENT_S,)).fetchall()
+            limited = viewer.role not in ("admin", "manager")
+            if own:
+                rows = [r for r in rows if r["person_id"] == viewer.person_id]
+            elif limited:
+                rows = [r for r in rows if r["person_id"] == viewer.person_id
+                        or not (store._is_team(r["person_id"])
+                                and store._hidden(r["person_id"], viewer.person_id))]
+                rows = [r for r in rows if r["name"] == to or session_id(r["key"]) == to
+                        or (r["person_id"] == viewer.person_id
+                            and r["label"].lower() == to.lower() and r["label"])]
+            try:
+                match = store._named(rows, to, None if limited else viewer.person_id)
+            except KaptyorkaError:
+                match = []
+        if len(match) != 1:
+            raise KaptyorkaError(UNREACHABLE.format(to=to) if limited else
+                                 f"no session named {to} seen in the last 10 minutes")
+        return match[0]["key"]
+
+    def _last_asker(manager_key: str) -> Optional[str]:
+        """The session that last wrote to the manager (not the hub, not a page), within 10
+        minutes."""
+        with store.lock:
+            row = store.db.execute(
+                "SELECT sender_key FROM messages WHERE to_key=? AND sender_key NOT LIKE 'hub:%'"
+                " AND sender_key NOT LIKE 'web:%' AND created>? ORDER BY id DESC LIMIT 1",
+                (manager_key, store.clock() - RECENT_S)).fetchone()
+        return row["sender_key"] if row else None
+
+    @server.tool()
+    @_tool_errors
+    def door_request(a: str, b: str, why: str, ctx: Context, asked_by: str = "",
+                     size: str = "sessions") -> str:
+        """A door between two sessions of different people (names or #ids as in who). The
+        manager: for a teammate who asked it, a session of the person of a or b; it opens at
+        once (asked_by: that session's name or #id, default the last session that wrote to
+        you; size "sessions" or "people" for 7 days). Anything else waits for the admin. A
+        member's session: for one of its own sessions (a: "" for this one); two sessions of one
+        shared project get their door at once, the rest waits for the admin."""
+        agent, principal = caller(ctx)
+        if principal.legacy:
+            raise KaptyorkaError(OWN_TOKEN)
+        manager_asks = principal.role == "manager"
+        a_key = agent.key if (not a and not manager_asks) else \
+            _door_side(a, principal, own=not (manager_asks or principal.is_admin()))
+        b_key = _door_side(b, principal, own=False)
+        asker = None
+        if manager_asks:
+            asker = _door_side(asked_by, principal, own=False) if asked_by \
+                else _last_asker(agent.key)
+        out = cs.file(a_key, b_key, why, principal, agent.key, asker, size)
+        wake_bridges()
+        if out["kind"] == "auto":
+            return (f"door open between {out['a']} and {out['b']}: same project"
+                    f" {out['project']}; both sessions were told")
+        if out["kind"] == "opened":
+            return (f"door open between {out['a']} and {out['b']}"
+                    + (" for the two people, 7 days" if out["size"] == "people" else "")
+                    + f", for {out['asker']}; both sessions were told, the admin hears it later")
+        if out["kind"] == "pending":
+            return f"door request #{out['id']} for these two already waits for the admin"
+        to_admins(out["line"])
+        return (f"door request #{out['id']} filed; it waits for the admin, who allows or denies"
+                " it. Both sides hear the answer.")
+
+    def held_line(name: str, s: int) -> str:
+        """A held send's answer; why the session stopped, when its hook said so."""
+        with store.lock:
+            r = store.db.execute("SELECT * FROM agents WHERE name=? ORDER BY last_seen DESC"
+                                 " LIMIT 1", (name,)).fetchone()
+            why = stopped_why(r) if r is not None else ""
+        if not why or why.endswith(" is gone"):
+            why = f"{name} was last seen {_ago(s)} ago"
+        return f"held: {why}; it gets the message when it next reports"
+
+    def stopped_rows(viewer: Principal, asker_pid: Optional[int]) -> List[dict]:
+        """Lock held. Sessions gone within the last day that the manager may resume for this
+        asker: on a team machine, or the asker's own."""
+        now = store.clock()
+        return [r for r in store.db.execute(
+            "SELECT * FROM agents WHERE last_seen<=? AND last_seen>? AND device_id IS NOT NULL"
+            " ORDER BY last_seen DESC", (now - ONLINE_S, now - 86400)).fetchall()
+            if r["person_id"] is not None and (store._is_team(r["person_id"])
+                                               or r["person_id"] == asker_pid)
+            and r["tool"] in ("claude-code", "codex") and r["cwd"]]
+
+    def stopped_why(r) -> str:
+        """Lock held. Why it stopped, when its own hook said so at the end of its life."""
+        if r["stopped"] and r["stopped_at"] and r["stopped_at"] >= r["last_seen"] - 120:
+            error = "" if r["stopped"].startswith("end:") else r["stopped"]
+            return session_end.line(r["name"], error, r["stopped"][4:] if not error else "",
+                                    r["resets_at"])
+        return f"{r['name']} is gone"
+
+    def launch_resume(key: str, boss_key: str) -> str:
+        """Resume the gone session `key` in its folder as a worker of `boss_key`."""
+        with store.lock:
+            r = store.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
+            d = store.db.execute("SELECT * FROM devices WHERE id=? AND revoked_at IS NULL",
+                                 (r["device_id"],)).fetchone() if r else None
+            who = store._person_principal(r["person_id"]) if r else None
+        if r is None or d is None or who is None:
+            raise KaptyorkaError("that session's machine is gone")
+        if d["bridge_seen"] is None or d["bridge_seen"] <= store.clock() - ONLINE_S:
+            raise KaptyorkaError(f"the bridge on {d['host']} is offline; it cannot resume"
+                                 f" {r['name']} now")
+        device = {"device_id": d["id"], "host": d["host"], "os_user": d["os_user"],
+                  "folder": r["cwd"]}
+        w = ws.create(who, r["project"], f"continue where session {r['name']} stopped", device,
+                      r["tool"], boss_key, key.split(":", 1)[1], False)
+        wake_bridges()
+        return f"resuming {r['name']} on {w['host']} as `{w['name']}`"
+
+    @server.tool()
+    @_tool_errors
+    def resume_session(name: str, ctx: Context, asked_by: str = "", when: str = "now") -> str:
+        """Manager only: resume a session that ended (its id, machine and folder from the hub),
+        as a worker of the asking session (asked_by: its name or #id, default the last session
+        that wrote to you). Only a session on a team machine or on the asker's own machines.
+        when: "now", or "reset" to wait for its usage limit to reset."""
+        agent, principal = caller(ctx)
+        if principal.role != "manager":
+            raise KaptyorkaError("only the manager resumes sessions")
+        if when not in ("now", "reset"):
+            raise KaptyorkaError('when is "now" or "reset"')
+        boss = _door_side(asked_by, principal, own=False) if asked_by else _last_asker(agent.key)
+        if boss is None:
+            raise KaptyorkaError("say who asked, in asked_by (a session that wrote to you)")
+        with store.lock:
+            asker_pid = store.db.execute("SELECT person_id FROM agents WHERE key=?",
+                                         (boss,)).fetchone()["person_id"]
+            rows = stopped_rows(principal, asker_pid)
+            match = store._named(rows, name, principal.person_id)
+            gone = "; ".join(stopped_why(r) for r in rows[:8])
+            why = stopped_why(match[0]) if match else ""
+        if not match:
+            raise KaptyorkaError(f"no ended session named {name} you may resume for this asker"
+                                 + (f"; ended in the last day: {gone}" if gone else ""))
+        r = match[0]
+        if when == "reset":
+            if not r["resets_at"]:
+                raise KaptyorkaError(f"{why}; no reset time is known, resume it now or later")
+            with store.lock:
+                store.db.execute("UPDATE agents SET resume_at=?, resume_boss=? WHERE key=?",
+                                 (r["resets_at"], boss, r["key"]))
+            return f"{why}; it is resumed then, as a worker of the asker"
+        return f"{why}; " + launch_resume(r["key"], boss)
+
+    def resumes_tick(now: float) -> None:
+        """Sessions the manager asked to resume at their usage limit's reset."""
+        with store.lock:
+            due = store.db.execute("SELECT key, resume_boss, name, last_seen FROM agents WHERE"
+                                   " resume_at IS NOT NULL AND resume_at<=?", (now,)).fetchall()
+            for r in due:
+                store.db.execute("UPDATE agents SET resume_at=NULL WHERE key=?", (r["key"],))
+        mkey = mm.session_key(now) if mm.enabled() else None
+        for r in due:
+            if r["last_seen"] > now - ONLINE_S:
+                continue  # it is back by itself
+            try:
+                text = launch_resume(r["key"], r["resume_boss"])
+            except KaptyorkaError as e:
+                text = f"could not resume {r['name']} at its reset: {e}"
+            for to in {r["resume_boss"], mkey} - {None}:
+                tell(to, text)
+
+    @server.tool()
+    @_tool_errors
+    def door_decide(request_id: int, how: str, ctx: Context, reason: str = "") -> str:
+        """Admin only: answer a door request. how: "sessions" (a door between the two
+        sessions), "people" (between the two people, for 7 days) or "deny"."""
+        _, principal = caller(ctx)
+        if not principal.is_admin():
+            raise KaptyorkaError("only the admin decides door requests")
+        if how not in ("sessions", "people", "deny"):
+            raise KaptyorkaError('how is "sessions", "people" or "deny"')
+        out = cs.decide(request_id, principal, how != "deny", reason,
+                        how if how != "deny" else "sessions")
+        wake_bridges()
+        return {"approved": f"door request #{request_id}: allowed ({how})",
+                "denied": f"door request #{request_id}: denied",
+                "offline": f"door request #{request_id}: a session was gone 10 minutes, so no"
+                           " door was opened; the request is closed"}[out]
 
     @server.tool()
     @_tool_errors
@@ -1430,6 +1660,41 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return JSONResponse({"ok": True})
         return PlainTextResponse("kind must be report or clash", status_code=400)
 
+    @server.custom_route("/api/session-event", methods=["POST"])
+    @_bad_request
+    async def api_session_event(request: Request) -> Response:
+        """A team session's own hook says why it stopped (session_end.py): a usage limit with
+        its reset time, an API error, or its end. Kept on its agents row; never marks it seen.
+        A team machine's session that others depend on: the manager hears it in one line."""
+        try:
+            principal = principal_of(request.headers)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
+        key = unquote(request.headers.get("x-kaptyorka-key") or "")
+        body = await request.json()
+        kind = body.get("kind")
+        if kind not in ("failure", "end"):
+            return PlainTextResponse("kind must be failure or end", status_code=400)
+        error = clean(str(body.get("error") or ""), 40) if kind == "failure" else ""
+        reason = "" if kind == "failure" else clean(str(body.get("reason") or "other"), 40)
+        resets = body.get("resets_at") if error == "rate_limit" else None
+        now = store.clock()
+        if not isinstance(resets, (int, float)) or not now < resets < now + 7 * 86400:
+            resets = None
+        with store.lock:
+            row = store.db.execute("SELECT * FROM agents WHERE key=?", (key,)).fetchone()
+            if row is None or row["person_id"] != principal.person_id:
+                return PlainTextResponse("no such session", status_code=400)
+            store.db.execute("UPDATE agents SET stopped=?, stopped_at=?, resets_at=? WHERE key=?",
+                             (error or f"end:{reason}", now, resets, key))
+            team = store._is_team(row["person_id"])
+        mkey = mm.session_key(now) if mm.enabled() else None
+        if team and mkey is not None and (error or reason) and \
+                mm.push_once(f"stopped:{key}:{error or reason}", now, 3600):
+            tell(mkey, session_end.line(row["name"], error, reason, resets)
+                 + f"; resume it with resume_session(\"{row['name']}\") when someone needs it")
+        return JSONResponse({"ok": True})
+
     @server.custom_route("/api/done-check", methods=["GET"])
     async def api_done_check(request: Request) -> Response:
         try:
@@ -1715,7 +1980,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return denied
         state, reason, row = manager_state()
         return JSONResponse({
-            "retention_days": store.retention_days(), "manager_enabled": mm.enabled(),
+            "retention_days": store.retention_days(), "auto_doors": store.auto_doors(),
+            "manager_doors": store.manager_doors(),
+            "manager_enabled": mm.enabled(),
             "manager_state": state, "manager_reason": reason,
             "manager_error": (row["error"] or "") if row and row["state"] == "failed" else "",
             "manager_load": manager.load_line(mm.load(store.clock()), store.clock()),
@@ -1730,13 +1997,19 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         body = await request.json()
         by = request.scope["state"]["principal"].person_name
         try:
-            if "retention_days" in body or "close_left" not in body:
-                store.set_retention_days(body.get("retention_days"), by)
+            for key in ("auto_doors", "manager_doors"):
+                if key in body:
+                    store.set_auto_doors(body[key], by, key)
             if "close_left" in body:
                 store.set_close_left(body["close_left"], by)
+            if "retention_days" in body \
+                    or not ({"auto_doors", "manager_doors", "close_left"} & set(body)):
+                store.set_retention_days(body.get("retention_days"), by)
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"retention_days": store.retention_days(),
+                             "auto_doors": store.auto_doors(),
+                             "manager_doors": store.manager_doors(),
                              "close_left": store.close_left()})
 
     @server.custom_route("/api/legacy", methods=["GET"])
@@ -2320,7 +2593,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             raise ValueError("approve must be true or false")
         try:
             out = cs.decide(request.path_params["cid"], request.scope["state"]["principal"],
-                            body["approve"], str(body.get("reason") or ""))
+                            body["approve"], str(body.get("reason") or ""),
+                            "people" if body.get("how") == "people" else "sessions")
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         wake_bridges()

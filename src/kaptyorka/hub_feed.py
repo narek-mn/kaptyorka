@@ -19,10 +19,11 @@ def agent_row(a: Agent, now: float) -> dict:
 
 
 def visible(store: Store, principal: Principal, person_id, project: str) -> bool:
-    """Your own sessions show in full. An unregistered folder is only a name two people can
-    share by chance, so another person's session shows its project only when it is a
-    registered project you have a role in."""
-    return person_id == principal.person_id or \
+    """Your own sessions show in full, and every session to the manager (it routes work and
+    resumes sessions, so it needs their projects). An unregistered folder is only a name two
+    people can share by chance, so another person's session shows its project only when it
+    is a registered project you have a role in."""
+    return person_id == principal.person_id or principal.role == "manager" or \
         store.project_role(project, principal.person_id) is not None
 
 
@@ -155,6 +156,8 @@ def feed(store: Store, principal: Principal, ws=None, cs=None) -> dict:
                          for p in store.projects_for(principal) if not p.get("archived")],
             "archived_projects": [p for p in store.projects_for(principal) if p.get("archived")],
             "log": [{**r, "sentence": admin_ops.log_sentence(r)} for r in store.log(200)],
-            "settings": {"retention_days": store.retention_days()},
+            "settings": {"retention_days": store.retention_days(), "auto_doors": store.auto_doors(),
+                         "manager_doors": store.manager_doors()},
+            "door_requests": cs.door_requests() if cs else [],  # the top bar's "Waiting for you"
         })
     return out

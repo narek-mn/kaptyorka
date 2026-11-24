@@ -125,7 +125,7 @@ def test_feed_admin_extras(app):
     proj = next(p for p in f["projects"] if p["name"] == "proj")
     assert proj["members"] == [{"person": "ann", "role": "write"}]
     assert f["log"][0]["kind"] == "door_open" and len(f["log"]) <= 200
-    assert f["settings"] == {"retention_days": 180}
+    assert f["settings"] == {"retention_days": 180, "auto_doors": True, "manager_doors": True}
     assert len(f["doors"]) == 1
     # a member sees the door too: it is theirs
     assert len(get(app, "ann", "/api/feed")["doors"]) == 1
@@ -287,9 +287,9 @@ def test_agent_reply_to_page_needs_door(app):
     with pytest.raises(KaptyorkaError, match="no session named boss that you can reach; to"
                                              " reach someone else, message the manager"):
         s.send(b1.key, "boss", "cold message")
-    # the page's door is a session door: it closes when the session goes offline
+    # the page's door is a session door: it closes when the session is gone 10 minutes
     with s.lock:
-        s.db.execute("UPDATE agents SET last_seen=last_seen-100 WHERE key='a1'")
+        s.db.execute("UPDATE agents SET last_seen=last_seen-700 WHERE key='a1'")
     s.expire_doors(s.clock())
     online(app, "ann", "a1", "pc")
     with pytest.raises(KaptyorkaError, match="no session named boss that you can reach"):

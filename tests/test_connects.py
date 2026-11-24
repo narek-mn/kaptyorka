@@ -171,7 +171,7 @@ def test_offline_at_approval_opens_no_door(team):
     t = team
     cid = pending(t)
     with t.store.lock:
-        t.store.db.execute("UPDATE agents SET last_seen=last_seen-100 WHERE key='b1'")
+        t.store.db.execute("UPDATE agents SET last_seen=last_seen-700 WHERE key='b1'")
     status, body = post(t, "admin", f"/api/connects/{cid}", {"approve": True})
     assert status == 409 and "no door was opened" in body
     assert t.store.doors() == []

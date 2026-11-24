@@ -112,6 +112,15 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 # columns added after 0.1: an older database gets them by ALTER TABLE when it is opened
 ADDED_COLUMNS = [
+    ("agents", "stopped", "TEXT NOT NULL DEFAULT ''"),  # session_end: error, or "end:<reason>"
+    ("agents", "stopped_at", "REAL"),
+    ("agents", "resets_at", "REAL"),  # its usage limit resets then (when its text said)
+    ("agents", "resume_at", "REAL"),  # the manager asked to resume it then (resume_session)
+    ("agents", "resume_boss", "TEXT NOT NULL DEFAULT ''"),
+    ("doors", "expires_at", "REAL"),  # a group door the admin allowed for a while; NULL: no end
+    ("connects", "asked_by", "TEXT NOT NULL DEFAULT ''"),  # door requests: who wanted it
+    ("connects", "filed_by", "TEXT NOT NULL DEFAULT ''"),  # the manager or the member's session
+    ("connects", "reminded_at", "REAL"),
     ("agents", "label", "TEXT NOT NULL DEFAULT ''"),
     ("agents", "title", "TEXT NOT NULL DEFAULT ''"),
     ("agents", "person_id", "INTEGER"),
@@ -1293,6 +1302,32 @@ class Store:
     def retention_s(self) -> int:
         return self.retention_days() * 86400
 
+    def auto_doors(self) -> bool:
+        """Doors open by themselves between two sessions of one shared project (connects.py);
+        on unless the admin turned it off."""
+        with self.lock:
+            row = self.db.execute("SELECT value FROM settings WHERE key='auto_doors'").fetchone()
+        return row is None or row["value"] != "0"
+
+    def manager_doors(self) -> bool:
+        """The manager opens a door itself for a teammate's own request (connects.py); on
+        unless the admin turned it off."""
+        with self.lock:
+            row = self.db.execute("SELECT value FROM settings WHERE key='manager_doors'").fetchone()
+        return row is None or row["value"] != "0"
+
+    def set_auto_doors(self, on: bool, by: str, key: str = "auto_doors") -> None:
+        """`key`: auto_doors or manager_doors."""
+        if key not in ("auto_doors", "manager_doors"):
+            raise KaptyorkaError("no such setting")
+        if not isinstance(on, bool):
+            raise KaptyorkaError(f"{key} must be true or false")
+        with self.lock:
+            self.db.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
+                            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                            (key, "1" if on else "0"))
+        self.log_add(by, "settings", f"{key}={'on' if on else 'off'}")
+
     def set_retention_days(self, days: int, by: str) -> None:
         if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 3650:
             raise KaptyorkaError("retention_days must be a whole number from 1 to 3650")
@@ -2350,13 +2385,17 @@ class Store:
             return s is not None and t is not None and self._may_message(s, t)
 
     def _expire_doors(self, now):
-        """A session door lasts while both sessions are online (a person's page counts as
-        always online)."""
+        """A session door lasts while both sessions are around: it closes once either has been
+        gone RECENT_S, the window a held send waits for too, so a session that drops for a
+        few minutes keeps its door (a person's page counts as always there). A group door
+        with an end closes at it."""
         self.db.execute(
             "UPDATE doors SET closed_at=? WHERE closed_at IS NULL AND scope='session' AND"
             " ((a_key NOT LIKE 'web:%' AND a_key NOT IN (SELECT key FROM agents WHERE last_seen > ?))"
             " OR (b_key NOT LIKE 'web:%' AND b_key NOT IN (SELECT key FROM agents WHERE last_seen > ?)))",
-            (now, now - ONLINE_S, now - ONLINE_S))
+            (now, now - RECENT_S, now - RECENT_S))
+        self.db.execute("UPDATE doors SET closed_at=? WHERE closed_at IS NULL AND scope='group'"
+                        " AND expires_at IS NOT NULL AND expires_at<=?", (now, now))
 
     def expire_doors(self, now: float) -> None:
         with self.lock:
@@ -2605,17 +2644,24 @@ class Store:
         self.log_add(by_person, "door_open", f"group #{did} {a} <-> {b}")
         return did
 
-    def _open_group(self, a_person, b_person, by_id, now) -> int:
-        """The open group door between two people, opened now if there is none."""
+    def _open_group(self, a_person, b_person, by_id, now, expires_at=None) -> int:
+        """The open group door between two people, opened now if there is none. `expires_at`:
+        it closes then (None: never). An open door with a later end, or none, is kept; an
+        earlier end moves out to `expires_at`."""
         have = self.db.execute(
-            "SELECT id FROM doors WHERE closed_at IS NULL AND scope='group' AND"
+            "SELECT id, expires_at FROM doors WHERE closed_at IS NULL AND scope='group' AND"
             " ((a_person=? AND b_person=?) OR (a_person=? AND b_person=?))",
             (a_person, b_person, b_person, a_person)).fetchone()
         if have is not None:
+            if have["expires_at"] is not None and (expires_at is None
+                                                   or expires_at > have["expires_at"]):
+                self.db.execute("UPDATE doors SET expires_at=? WHERE id=?",
+                                (expires_at, have["id"]))
             return have["id"]
         return self.db.execute(
-            "INSERT INTO doors (a_key, a_person, b_key, b_person, scope, opened_at, opened_by)"
-            " VALUES ('',?,'',?,'group',?,?)", (a_person, b_person, now, by_id)).lastrowid
+            "INSERT INTO doors (a_key, a_person, b_key, b_person, scope, opened_at, opened_by,"
+            " expires_at) VALUES ('',?,'',?,'group',?,?,?)",
+            (a_person, b_person, now, by_id, expires_at)).lastrowid
 
     def close_door(self, door_id: int, by_person: str) -> None:
         """Close one door by id. Admin only (checked by the hub)."""

@@ -58,7 +58,7 @@ def test_readme_manager_section():
               "the failed-twice note at most once an hour", "the review once a week"]:
         assert s in m, s
     assert "Each item is sent once" not in m and "It can only knock" not in m
-    assert "The hub offers 26 tools" in r
+    assert "The hub offers 29 tools" in r
     assert "add `team-*/` to that repo's `.gitignore`." in r
 
 
@@ -69,7 +69,7 @@ def test_readme_people_and_access_short_with_commands():
     for word in ["Waiting for you", "Add person", "New invite link", "Remove", "Ask for access", "Ask for",
                  "request_access", "Register again", "Archived", "7 days", "(removed)",
                  "the first person to join from a machine owns it", "switches itself off once no machine has used it for 7 days",
-                 "a session door closes by itself when either session goes offline"]:
+                 "a session door closes by itself when either session has been gone 10 minutes"]:
         assert word.lower() in people.lower(), word
     commands = r.split("## Commands", 1)[1].split("\n## ", 1)[0]
     for c in ["kaptyorka invites", "kaptyorka people role", "kaptyorka people remove", "kaptyorka people revoke",

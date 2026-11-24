@@ -10,7 +10,7 @@ import time
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
-from kaptyorka import facts, guide, http, offhub, optin, overnight, paths, suggest
+from kaptyorka import facts, guide, http, offhub, optin, overnight, paths, session_end, suggest
 from kaptyorka.identity import Identity, identify, project_of
 
 TIMEOUT_S = 3
@@ -151,6 +151,24 @@ def _night_prompt(data: dict, cfg: dict) -> "tuple[str, str]":
             "kaptyorka: overnight mode is on for this task. To stop it: /hub overnight off")
 
 
+def _report_end(event: str, sid: str, data: dict, cfg: dict) -> None:
+    """A team session's usage limit, API error or end, to the hub (session_end.py). Never
+    from a personal folder, never waits long (SessionEnd hooks get about 1.5 s)."""
+    try:
+        body = session_end.event(event, data)
+        cwd = str(data.get("cwd") or os.getcwd())
+        if body is None or paths.in_manager_folder(cwd):
+            return
+        team, key, project = _night_team(sid, cwd, cfg)
+        if not team:
+            return
+        ident = Identity(key, cfg.get("machine", ""), "claude-code", project, cwd)
+        http.request("POST", f"{cfg['hub']}/api/session-event", cfg["token"], body,
+                     headers=ident.headers(), timeout=1)
+    except Exception:
+        pass
+
+
 def _night(event: str, data: dict, cfg: dict) -> Optional[str]:
     """Claude Code's overnight events; None when overnight mode has nothing to say."""
     sid = str(data.get("session_id") or "")
@@ -162,9 +180,11 @@ def _night(event: str, data: dict, cfg: dict) -> Optional[str]:
         return overnight.on_permission(sid, data, overnight.finish)
     if event == "failure":
         overnight.on_failure(sid, data)
+        _report_end(event, sid, data, cfg)
         return ""
     if event == "end":
         overnight.on_end(sid, data, overnight.finish)
+        _report_end(event, sid, data, cfg)
         return ""
     if event == "stop":
         return overnight.on_stop(sid, data, overnight.finish)
