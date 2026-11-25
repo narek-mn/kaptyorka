@@ -332,7 +332,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .av-manager { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
 .av-person { --t: var(--t0); background: color-mix(in srgb, var(--t) 26%, var(--surface)); border-color: color-mix(in srgb, var(--t) 45%, transparent);
   color: color-mix(in srgb, var(--t) 50%, var(--ink)); }
-.tint-1 { --t: var(--t1); } .tint-2 { --t: var(--t2); } .tint-3 { --t: var(--t3); } .tint-4 { --t: var(--t4); } .tint-5 { --t: var(--t5); }
+.tint-0 { --t: var(--t0); } .tint-1 { --t: var(--t1); } .tint-2 { --t: var(--t2); } .tint-3 { --t: var(--t3); } .tint-4 { --t: var(--t4); } .tint-5 { --t: var(--t5); }
 .av > .dot { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border: 2px solid var(--surface); transition: border-color var(--ease); }
 .list .row:hover .av > .dot { border-color: var(--surface2); }
 .list .row.on .av > .dot { border-color: var(--raised); }
@@ -2410,7 +2410,9 @@ a.p-main { color: inherit; text-decoration: none; }
     var all = isGrp(conv) ? fold(grpMsgs[conv.slice(4)] || []) : fold(feed.messages).filter(function (m) { return inConv(m, conv); });
     var notices = all.filter(notice).length;
     var shown = all.filter(function (m) { return !act || showNotices || !notice(m); });
-    var day = null, last = null, group = null, mineLast = null, firstFrom = null;
+    var day = null, last = null, group = null, mineLast = null;
+    /* a chat of just two sessions: the same one is on the left whatever part of it is loaded */
+    var leftOf = isGrp(conv) && grpOf(conv) ? grpOf(conv).members.map(function (x) { return String(x.id); }).sort()[0] : null;
     var many = act || conv === "mgr" || (isGrp(conv) && (!grpOf(conv) || grpSize(grpOf(conv)) > 2));
     var newest = shown.length ? shown[shown.length - 1].id : null;  /* never folded */
     /* what this chat showed last time: newer messages come in with a short rise */
@@ -2430,10 +2432,9 @@ a.p-main { color: inherit; text-decoration: none; }
       var p = parties(m), away = p.slice(1).some(function (x) { return x !== ME && x !== conv; });
       var to = (isGrp(conv) ? !grpOf(conv) || grpSize(grpOf(conv)) > 2 : act || away) ? toName(m) : null, k = m.sender + "\n" + (to || "");
       /* the side: mine on the right. In a session's own chat whoever else writes to it, and in a
-         chat of just two sessions the second one, sits on the right too, in a neutral tone;
+         chat of just two sessions one of them (always the same one), sits on the right too, in a neutral tone;
          in a chat of many (the manager's, Activity, a group) everyone else is on the left */
-      if (firstFrom === null) firstFrom = p[0];
-      var mine = p[0] === ME, side = mine ? " mine" : many ? "" : (isGrp(conv) ? p[0] !== firstFrom : conv.charAt(0) !== "@" && p[0] !== conv) ? " peer" : "";
+      var mine = p[0] === ME, side = mine ? " mine" : many ? "" : (isGrp(conv) ? String(p[0]) !== leftOf : conv.charAt(0) !== "@" && p[0] !== conv) ? " peer" : "";
       if (!last || last.k !== k || m.created - last.t > 300) {
         var s = sideOf(m.sender, m.fromId, m.web, m.fromMgr);
         /* my own run has no name or badge; only the receiver, where the chat holds more than one */

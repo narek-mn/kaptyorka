@@ -325,3 +325,26 @@ def test_stuck_and_background_task_chips_in_groups(team):
         time.sleep(4.5)  # two polls
         assert page.js('document.querySelectorAll("#log .working").length') == 1
         assert page.js('document.querySelector("#log .working .what").textContent').startswith("looks stuck")
+
+
+def test_two_session_chat_keeps_its_sides(team):
+    """A chat of just two sessions: the same session is on the left however much of the
+    conversation is loaded (also when its older messages are gone and the other one speaks first)."""
+    store, url, _ = team
+    both(store, "b3", "b4", ago=60)  # ui-review and migrations: a group of two
+    sides = ('[...document.querySelectorAll("#log .group")].map(g => g.querySelector(".head b").textContent + ":" +'
+             ' (g.classList.contains("peer") ? "right" : "left"))')
+    with chrome() as page:
+        page.go(url)
+        rows = '[...document.querySelectorAll("#agents .wt-rows")].find(r => r.textContent.includes("ui-review"))'
+        page.wait(f'!!({rows})')
+        page.js(f'(({rows}).parentElement.querySelector(".wt-head") || ({rows}).previousElementSibling).click()')
+        page.wait('document.querySelectorAll("#log .group").length >= 8')
+        full = page.js(sides)
+        assert len(set(full)) == 2 and {x.split(":")[1] for x in full} == {"left", "right"}, full
+        # the hub now gives the chat without its first message: the other session speaks first
+        page.js("""(() => { const f = window.fetch; window.fetch = (u, o) => f(u, o).then(r => !/\\/api\\/groups\\/.*\\/messages/.test(String(u)) ? r :
+          r.json().then(d => new Response(JSON.stringify(Object.assign(d, { messages: d.messages.slice(1) })), { status: 200 }))); })()""")
+        page.wait(f'{sides}.length === {len(full) - 1}', timeout=20)
+        cut = page.js(sides)
+        assert cut == full[1:] and cut[0] != full[0], (full, cut)

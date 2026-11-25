@@ -138,6 +138,11 @@ def test_two_sides(hub):
             # the receiver only where it is not the manager itself; my two in a row are one run
             assert page.js('[...document.querySelectorAll("#log .head .to .to-n")].map(t => t.textContent)') == ["api-dev", "bob", "parser-tests"]
             assert page.js('Math.max(...[...document.querySelectorAll("#log .group.mine")].map(g => g.querySelectorAll(".msg").length))') == 2
+            # every one of the six name colours is a colour of its own, none the plain ink
+            tints = page.js('(() => { const h = document.querySelector("#log .head"), ink = getComputedStyle(document.querySelector("#log .to-n > b")).color;'
+                            ' return [0, 1, 2, 3, 4, 5].map(i => { const b = document.createElement("b"); b.className = "tint-" + i; h.appendChild(b);'
+                            ' const c = getComputedStyle(b).color; b.remove(); return c === ink ? null : c; }); })()')
+            assert all(tints) and len(set(tints)) == 6, tints
             tick = 'document.querySelector("#log .group.mine .msg:last-child .tick")'
             assert page.wait(f'{tick}?.textContent') == "No answer yet"
             assert page.js(f'Math.round({tick}.getBoundingClientRect().right) === Math.round({tick}.closest(".group").getBoundingClientRect().right)')
