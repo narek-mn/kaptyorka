@@ -304,7 +304,8 @@ def test_v2_resumed_old_session_is_listed_and_stays_while_idle(windows, tmp_path
     a = OpenCodeAdapter()
     for _ in range(3):  # nothing happens in it: still listed, every time
         got = [s for s in a.sessions() if s.key == "opencode:ses_v2stale"]
-        assert got == [Session("opencode:ses_v2stale", "opencode", "proj-b", "", cwd=other)]
+        assert got == [Session("opencode:ses_v2stale", "opencode", "proj-b", "", cwd=other,
+                               closable=True)]  # its window is proven: the page may close it
 
 
 def test_v2_window_on_its_home_screen_lists_nothing_and_is_not_guessed(windows):
@@ -393,6 +394,77 @@ def test_v2_note_older_than_its_process_is_a_reused_pid(windows, monkeypatch):
     monkeypatch.setattr(opencode, "_started_ms", lambda pid: time.time() * 1000 + 60000)
     assert OpenCodeAdapter().sessions() == []
     assert not (opencode.open_dir() / f"{w1}.json").exists()
+
+
+def closable(a):
+    return {s.key: s.closable for s in a.sessions()}
+
+
+def test_v2_end_terminates_only_the_window_proven_to_show_it(windows):
+    """The page's close: SIGTERM to the window whose note names the session, nothing else."""
+    (me, w1, w2), note = windows
+    note(me, "")
+    note(w1, "ses_v2old")
+    note(w2, "ses_v2stale")
+    a = OpenCodeAdapter()
+    assert closable(a) == {"opencode:ses_v2old": True, "opencode:ses_v2stale": True}
+    a.end("opencode:ses_v2old")
+    assert opencode._ended(w1) and not opencode._ended(w2) and not opencode._ended(me)
+    assert "opencode:ses_v2old" not in keys(a)  # gone from the list at once
+
+
+def test_v2_end_refuses_what_no_window_here_shows(windows, recent, monkeypatch):
+    """An app's session (no process here), a note of a process that is not a TUI (the service),
+    and a made-up key: refused, nothing signalled, never reported closed."""
+    (me, w1, w2), note = windows
+    note(me, "")
+    note(w1, "")
+    note(w2, "ses_v2old")
+    monkeypatch.setattr(opencode, "_tuis", lambda: [me, w1])  # w2 is the service, say
+    a = OpenCodeAdapter()
+    got = closable(a)
+    assert got["opencode:ses_v2new"] is False and got["opencode:ses_v2old"] is False
+    for key in ("opencode:ses_v2new", "opencode:ses_v2old", "opencode:../x", "opencode:"):
+        with pytest.raises(ValueError):
+            a.end(key)
+    assert not any(opencode._ended(p) for p in (me, w1, w2))
+
+
+def test_v2_end_says_so_when_the_window_does_not_exit(windows, monkeypatch):
+    (me, w1, w2), note = windows
+    stubborn = subprocess.Popen([sys.executable, "-c", "import signal, time; signal.signal("
+                                 "signal.SIGTERM, signal.SIG_IGN); print('ok', flush=True);"
+                                 " time.sleep(60)"], stdout=subprocess.PIPE)
+    try:
+        stubborn.stdout.readline()  # its handler is set
+        monkeypatch.setattr(opencode, "_tuis", lambda: [me, w1, w2, stubborn.pid])
+        monkeypatch.setattr(opencode, "EXIT_WAIT_S", 0.3)
+        note(stubborn.pid, "ses_v2old")
+        with pytest.raises(ValueError, match="did not exit"):
+            OpenCodeAdapter().end("opencode:ses_v2old")
+    finally:
+        stubborn.kill()
+        stubborn.wait()
+
+
+def test_v1_end_terminates_the_tui_whose_server_shows_it(fake_opencode, monkeypatch):
+    """V1: the TUI's own server's newest session since it started; never an `opencode serve`."""
+    monkeypatch.setattr(opencode, "service", lambda: None)
+    tui = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    serve = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "serve"])
+    try:
+        a = OpenCodeAdapter(find_ports=lambda: {serve.pid: fake_opencode.port,
+                                                tui.pid: fake_opencode.port})
+        assert [(s.key, s.closable) for s in a.sessions()] == [
+            (f"opencode:{NEWEST}", False), (f"opencode:{NEWEST}", True)]
+        with pytest.raises(ValueError):
+            a.end(f"opencode:{OLDER}")  # not what any window shows now
+        a.end(f"opencode:{NEWEST}")
+        assert tui.wait(timeout=5) == -15 and serve.poll() is None
+    finally:
+        for p in (tui, serve):
+            p.kill()
+            p.wait()
 
 
 def test_v2_2_session_list_shape(fake_v2, monkeypatch):

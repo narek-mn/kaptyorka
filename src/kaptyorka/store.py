@@ -167,6 +167,9 @@ ADDED_COLUMNS = [
     ("agents", "helper", "INTEGER NOT NULL DEFAULT 0"),
     ("agents", "parent_gone", "INTEGER NOT NULL DEFAULT 0"),
     ("agents", "stuck_acked", "TEXT"),
+    # its bridge can end it from the page (left.py), as that bridge says each beat; an older
+    # bridge never says, so never
+    ("agents", "closable", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -359,6 +362,7 @@ class Agent:
     oneshot: bool = False  # a `claude -p` run
     helper: bool = False  # started by another session or agent tool
     parent_gone: bool = False  # its parent no longer runs on that machine
+    closable: bool = False  # its bridge says it can end it (left.py; Claude Code's by tool)
 
 
 @dataclass
@@ -1390,7 +1394,8 @@ class Store:
                      bool(row["background"]), row["title"], row["active"], row["wrote"],
                      _tasks_from(row["tasks"]), _json_or(row["stuck_ep"], dict),
                      tuple(_json_or(row["stuck_acked"], list) or ()), row["parent"] or "",
-                     bool(row["oneshot"]), bool(row["helper"]), bool(row["parent_gone"]))
+                     bool(row["oneshot"]), bool(row["helper"]), bool(row["parent_gone"]),
+                     bool(row["closable"]))
 
     def _online_rows(self, now):
         return self.db.execute("SELECT * FROM agents WHERE last_seen > ? ORDER BY rowid",
@@ -1573,7 +1578,9 @@ class Store:
                      "lineage": None if "parent" not in s else (
                          clean(s.get("parent") if isinstance(s.get("parent"), str) else "",
                                MAX_IDENT), s.get("oneshot") is True, s.get("helper") is True,
-                         s.get("parent_gone") is True)}
+                         s.get("parent_gone") is True),
+                     # absent (an older bridge): not closable
+                     "closable": s.get("closable") is True}
                     for s in sessions]
         host, os_user, version = (clean(facts.get(k), 80) for k in ("host", "os_user", "version"))
         logs: List[tuple] = []
@@ -1609,6 +1616,8 @@ class Store:
                 if s["lineage"] is not None:
                     self.db.execute("UPDATE agents SET parent=?, oneshot=?, helper=?, parent_gone=?"
                                     " WHERE key=?", (*s["lineage"], s["key"]))
+                self.db.execute("UPDATE agents SET closable=? WHERE key=?",
+                                (int(s["closable"]), s["key"]))
                 if not manager_held:  # the manager's own shim names its machine
                     self._machine_now(s["key"], machine, now)
                 if host:

@@ -18,7 +18,8 @@ FRESH_S = 120  # a child or `claude -p` run younger than this, with no hub messa
 IDLE_S = 86400  # done nothing for this long: in the Idle group; closed with no question
 CLOSE_WAIT_S = 180  # no answer from its bridge this long: the page says so, Close comes back
 SHOWN_S = 600  # a refusal stays on its row this long
-CLOSABLE_TOOLS = ("claude-code",)  # the tools whose sessions a bridge can end from outside
+CLOSABLE_TOOLS = ("claude-code",)  # the tools whose every session a bridge can end from outside
+# OpenCode: only a session its bridge reports `closable` (open in a terminal window there)
 
 
 def short_id(key: str) -> str:
@@ -61,7 +62,8 @@ def closed(store, device_id: int, keys, by: str) -> None:
 def refused(principal, a, live, mid: Optional[int], night) -> Optional[str]:
     """Why this viewer may not close this online session from the page; None: they may. Only
     their own sessions, or any for an admin; never the manager, a hub worker (it has its own
-    close), a session in overnight mode or a tool its bridge cannot end."""
+    close), a session in overnight mode or one its bridge cannot end (an OpenCode session only when
+    its bridge reports it `closable`)."""
     if principal.legacy or not (principal.is_admin() or a.person_id == principal.person_id):
         return "no such session"
     if mid is not None and a.person_id == mid:
@@ -70,7 +72,10 @@ def refused(principal, a, live, mid: Optional[int], night) -> Optional[str]:
         return "a hub worker: close it with its own close"
     if a.key in night:
         return "overnight mode is on in that session"
-    if a.tool not in CLOSABLE_TOOLS or a.device_id is None:
+    if a.device_id is None or (a.tool not in CLOSABLE_TOOLS and not a.closable):
+        if a.tool == "opencode":
+            return ("only an OpenCode session open in a terminal window on its machine can be"
+                    " closed from the page")
         return "this tool's sessions cannot be closed from the page"
     return None
 

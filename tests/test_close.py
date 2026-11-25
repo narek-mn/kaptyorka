@@ -123,6 +123,23 @@ def test_manager_worker_overnight_and_other_tools_are_refused(hub):
     assert asked(hub, mb, [row("claude:m1")]) == []
 
 
+def test_an_opencode_session_is_closable_only_when_its_bridge_says_so(hub):
+    """OpenCode: × only for a session open in a terminal window there (its bridge's `closable`);
+    an app's session, or one from an older bridge that never says, gets none."""
+    s = setup(hub)
+    win = {**row("opencode:ses_win", tool="opencode"), "closable": True}
+    app = row("opencode:ses_app", tool="opencode")
+    heartbeat(hub, s.b.token, "box-1", [row("claude:i1"), win, app])
+    assert feed_row(hub, s.alice, "opencode:ses_win")["close"] == "now"
+    assert "close" not in feed_row(hub, s.alice, "opencode:ses_app")
+    status, text = close(hub, s.alice, "opencode:ses_app")
+    assert status == 409 and "terminal window" in text
+    assert close(hub, s.alice, "opencode:ses_win")[0] == 202
+    # its window closed meanwhile: the next beat says not closable, and the × goes
+    heartbeat(hub, s.b.token, "box-1", [row("claude:i1"), {**win, "closable": False}])
+    assert "close" not in feed_row(hub, s.alice, "opencode:ses_win")
+
+
 def test_a_refusal_shows_on_the_row_and_close_comes_back(hub, clock):
     s = setup(hub)
     close(hub, s.alice, "claude:i1")
@@ -194,6 +211,25 @@ def test_the_bridge_checks_again_then_ends_it(tmp_path, monkeypatch):
         "claude:m1": "the manager is never closed from here", "claude:gone": ""}
     b._close_asked([sess("claude:i1")])
     assert claude.ended == ["claude:i1", "claude:conf"]  # once, until the hub has the answer
+
+
+def test_the_bridge_ends_an_opencode_session_only_when_closable(tmp_path, monkeypatch):
+    class OpenEnder(Ender):
+        prefix, tool = "opencode", "opencode"
+
+    claude, oc = Ender(), OpenEnder()
+    monkeypatch.setenv("KAPTYORKA_HOME", str(tmp_path / "kh"))
+    (tmp_path / "kh").mkdir(exist_ok=True)
+    b = bridge_mod.Bridge({"hub": "http://127.0.0.1:9", "token": "t", "machine": "box-1"},
+                          [claude, oc], lambda line: None)
+    b.hub = {"close_asked": [{"key": k, "confirmed": True}
+                             for k in ("opencode:ses_w", "opencode:ses_a", "claude:i1")]}
+    win = Session("opencode:ses_w", "opencode", "proj-a", "idle", cwd="/w/proj-a", closable=True)
+    app = Session("opencode:ses_a", "opencode", "proj-a", "idle", cwd="/w/proj-a")
+    b._close_asked([win, app, sess("claude:i1")])
+    assert oc.ended == ["opencode:ses_w"] and claude.ended == ["claude:i1"]
+    assert b._close_done == {"opencode:ses_w": "", "claude:i1": "",
+                             "opencode:ses_a": "this tool's sessions cannot be closed from the page"}
 
 
 linux_proc = pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="needs /proc")

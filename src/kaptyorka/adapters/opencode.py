@@ -38,12 +38,14 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -51,6 +53,7 @@ from kaptyorka.adapters.base import (DeliveryError, Session, add_alias, login_ou
                                      remove_alias, write_atomic)
 
 TIMEOUT_S = 5
+EXIT_WAIT_S = 5  # end(): how long a signalled window has to exit before "not closed"
 V2_LOGIN_TIMEOUT_S = 15  # `auth list --standalone` starts a private server first
 ALIAS = "alias opencode='opencode --port 0'"
 SESSION_ID = re.compile(r"^ses_[A-Za-z0-9]+$")  # OpenCode's own ids: "ses_" + base62
@@ -608,9 +611,9 @@ def _closed_since() -> Dict[str, float]:
 
 def _opened() -> Dict[int, Optional[Dict[str, str]]]:
     """pid -> {"session", "directory"} that running V2 TUI shows, from the TUI plugin's notes
-    (None while the window shows no chat). A note whose process is gone, or older than the
-    process with its pid (a reused pid), is removed, and the sessions windows let go of are
-    recorded (_note_closed), so a closed window's chat does not stay as an app's."""
+    (None while the window shows no chat). A note whose process is gone (or a zombie), or
+    older than the process with its pid (a reused pid), is removed, and the sessions windows
+    let go of are recorded (_note_closed), so a closed window's chat does not stay as an app's."""
     out: Dict[int, Optional[Dict[str, str]]] = {}
     unread: set = set()
     try:
@@ -623,7 +626,7 @@ def _opened() -> Dict[int, Optional[Dict[str, str]]]:
         except ValueError:
             continue
         try:
-            if not _alive(pid) or f.stat().st_mtime * 1000 < _started_ms(pid) - 1000:
+            if _ended(pid) or f.stat().st_mtime * 1000 < _started_ms(pid) - 1000:
                 f.unlink()
                 continue
             data = json.loads(f.read_text())
@@ -636,6 +639,16 @@ def _opened() -> Dict[int, Optional[Dict[str, str]]]:
                     else None)
     _note_closed({str(pid): n["session"] for pid, n in out.items() if n}, unread)
     return out
+
+
+def _ended(pid: int) -> bool:
+    """The process is gone, or only a zombie its parent has not reaped yet (Linux)."""
+    if not _alive(pid):
+        return True
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z"
+    except (OSError, IndexError):
+        return False
 
 
 def _tuis() -> List[int]:
@@ -932,7 +945,7 @@ class OpenCodeAdapter:
                 out.append(Session("opencode:" + row["id"], self.tool,
                                    os.path.basename(cwd.rstrip("/")), act, cwd=cwd,
                                    title=session_title(row.get("title")),
-                                   idle_s=idle_s, write_s=write_s))
+                                   idle_s=idle_s, write_s=write_s, closable=not _is_service(pid)))
         return out
 
     def _v2_sessions(self, svc: Dict[str, str]) -> List[Session]:
@@ -940,13 +953,15 @@ class OpenCodeAdapter:
 
         out, seen = [], set()
         opened = _opened()  # what each window shows, as its TUI plugin says: exact, idle or not
-        for _, note in sorted(opened.items()):
+        tuis = _tuis()
+        for pid, note in sorted(opened.items()):
             key = f"opencode:{note['session']}" if note else ""
             if key and key not in seen:
                 seen.add(key)
                 cwd = note["directory"]
-                out.append(self._v2_session(svc, key, cwd))
-        for pid in _tuis():
+                # its window proven (end()): closable; a guessed or an app's session is not
+                out.append(replace(self._v2_session(svc, key, cwd), closable=pid in tuis))
+        for pid in tuis:
             if pid in opened:
                 continue
             try:  # no note (a TUI started before the plugin had it): guess from its folder
@@ -972,6 +987,55 @@ class OpenCodeAdapter:
         (idle_s, act, write_s), title = _v2_info(svc, key.partition(":")[2])
         return Session(key, self.tool, os.path.basename(cwd.rstrip("/")), act, cwd=cwd,
                        title=title, idle_s=idle_s, write_s=write_s)
+
+    def _windows(self, sid: str) -> List[int]:
+        """The pids of the terminal windows (TUIs) proven to show this session now. V2: a note
+        of kaptyorka's TUI plugin names it (_opened drops a dead or reused pid's note) and its
+        pid is an opencode process that is not the service. V1: a TUI's own server, not an
+        `opencode serve`, whose newest session since it started is this one."""
+        from kaptyorka.identity import proc_cwd
+
+        if service():
+            tuis = set(_tuis())
+            return sorted(pid for pid, note in _opened().items()
+                          if note and note["session"] == sid and pid in tuis)
+        out = []
+        for pid, port in self.find_ports().items():
+            try:
+                if _is_service(pid):
+                    continue
+                row = _newest_row(pid, port, proc_cwd(pid))
+            except (OSError, ValueError, TypeError, KeyError, StopIteration, IndexError,
+                    http.client.HTTPException, subprocess.SubprocessError, NeedsPassword):
+                continue
+            if row and row.get("id") == sid:
+                out.append(pid)
+        return out
+
+    def end(self, key: str) -> None:
+        """Close the terminal windows that show this session (the page's close, left.py): SIGTERM
+        to each window process proven to show it now (_windows), never the V2 service, then wait
+        up to EXIT_WAIT_S for them to exit. The chat stays in OpenCode's own store. Raises
+        ValueError when nothing was ended: not open in a window here (an app's session has no
+        process on this machine), or a window did not exit."""
+        sid = key.partition(":")[2]
+        if not valid_id(sid):
+            raise ValueError(f"not an OpenCode session id: {key}")
+        pids = self._windows(sid)
+        if not pids:
+            raise ValueError("not open in an OpenCode terminal window on this machine")
+        sent = []
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                sent.append(pid)
+            except ProcessLookupError:
+                continue  # it closed meanwhile
+        deadline = time.monotonic() + EXIT_WAIT_S
+        while any(not _ended(p) for p in sent) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if any(not _ended(p) for p in sent):
+            raise ValueError("its OpenCode window did not exit")
 
     def deliver(self, key: str, text: str) -> None:
         sid = key.partition(":")[2]

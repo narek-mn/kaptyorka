@@ -45,6 +45,9 @@ class Session:
     oneshot: bool = False
     helper: bool = False
     parent_gone: bool = False
+    # its adapter's end() can end it from outside (the page's close, left.py): OpenCode only, a
+    # session open in a terminal window of this machine; Claude Code's are closable by tool
+    closable: bool = False
 
 
 class DeliveryError(Exception):

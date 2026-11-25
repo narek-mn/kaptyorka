@@ -161,6 +161,12 @@ DEPS: Tuple[Dep, ...] = (
     Dep("opencode.tui_plugin", "opencode",
         "V2: a plugins/<dir>/tui.js TUI plugin (sst/opencode v2.3.2 packages/plugin/src/tui)",
         "/hub, the hub indicator, which session a window shows", "", "", True, probed=False),
+    Dep("opencode.sigterm", "opencode",
+        "SIGTERM to a TUI window's own opencode process (one process, no children): it exits,"
+        " the V2 service keeps running and keeps the chat (`opencode -s <id>` continues it, per"
+        " its --help); seen by hand on 2.4.1, V1 not checked",
+        "closing an OpenCode terminal window's session from the page", "", "", False,
+        probed=False),
     # Codex
     Dep("codex.version", "codex", "`codex --version` prints `codex-cli X.Y.Z`",
         "the tool version in machine facts", "`codex --version` output changed",

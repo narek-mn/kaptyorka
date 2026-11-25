@@ -529,11 +529,12 @@ class Bridge:
     def _close_asked(self, sessions: list) -> None:
         """End the sessions a person closed on the page (left.py), each checked here again:
         no worker of this machine, the manager or a session in overnight mode; one not
-        confirmed (closed as idle) must still be idle over a day. The hub hears next beat."""
+        confirmed (closed as idle) must still be idle over a day; its tool's adapter ends it
+        (Claude Code any session, OpenCode one it reports closable). The hub hears next beat."""
         ask = self.hub.get("close_asked")
         if not isinstance(ask, list):
             return
-        claude = next((a for a in self.adapters if a.prefix == "claude"), None)
+        enders = {a.tool: a for a in self.adapters if hasattr(a, "end")}
         keep = set(self._team()[1])
         by_key = {s.key: s for s in sessions}
         for item in ask:
@@ -549,7 +550,7 @@ class Bridge:
                 why = "the manager is never closed from here"
             elif self._overnight(key):
                 why = "overnight mode is on in that session"
-            elif claude is None or s.tool != claude.tool or not hasattr(claude, "end"):
+            elif s.tool not in enders or not (s.tool in left.CLOSABLE_TOOLS or s.closable):
                 why = "this tool's sessions cannot be closed from the page"
             elif item.get("confirmed") is not True and (
                     s.idle_s is None or s.idle_s <= left.IDLE_S
@@ -557,7 +558,7 @@ class Bridge:
                 why = "in use again, not closed"
             else:
                 try:
-                    claude.end(key)
+                    enders[s.tool].end(key)
                     why = ""
                 except (OSError, ValueError, subprocess.TimeoutExpired) as e:
                     why = str(e) or "could not end it"
