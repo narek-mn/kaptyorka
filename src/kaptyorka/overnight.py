@@ -70,13 +70,15 @@ PAST = re.compile(r"\blast night\b|\bthis morning\b|\byesterday\b|\ball night\b"
                   r"|\bover\s?-?night(?:\s+(?:task|run|job|work|mode))?\s+"
                   r"(?:was|were|did|didn't|ran|turned|went|stayed|got|had|has|failed|finished)\b",
                   re.I)
-ASK = re.compile(r"\b(?:turn|switch|put)\s+(?:on\s+)?overnight mode\b|\bovernight mode on\b"
+ASK = re.compile(r"\b(?:turn|switch|put)\s+(?:on\s+)?overnight mode\b(?!\s+off\b)"
+                 r"|^\s*(?:please\s+)?(?:turn\s+)?overnight mode on\b"
                  r"|^\s*overnight task\s*[:,.\-\u2013]"
                  r"|\bthis is an? overnight task\b|\bwork\b[^.?!\n]{0,20}\bwhole night\b"
                  r"|\b(?:do|work|run|fix|finish|continue|keep|handle|build|try)\b[^.?!\n]{0,60}"
                  r"\bwhile i(?:'m| am)?\s+(?:sleep|sleeping|asleep|away)\b"
                  r"|\b(?:do|work|run|fix|finish|continue|keep|handle|build|try)\b[^.?!\n]{0,60}"
-                 r"\bover\s?-?night\b(?!\s+(?:task|run|job|mode)?\s*(?:results?|reports?))",
+                 r"\bover\s?-?night\b(?=\s*(?:$|[,.!;)]|(?:please|too|again|tonight|on|for|and|while"
+                 r"|so|instead)\b))",
                  re.I | re.M)
 HUB_OVERNIGHT = re.compile(r"\s*/hub\s+overnight(?:\s+(on|off))?\s*", re.I)
 YES = re.compile(r"\s*(ok|okay|yes|yep|go|confirm(?:ed)?|fine|sounds good|good)[.!]*\s*", re.I)
@@ -808,7 +810,7 @@ def triggered(prompt: str) -> bool:
         if PAST.search(sent):
             continue
         for m in ASK.finditer(sent):
-            if not _NEGATED.search(sent[max(0, m.start() - 40):m.end()]):
+            if not _NEGATED.search(sent[max(sent.rfind(",", 0, m.start()) + 1, m.start() - 40):m.end()]):
                 return True
     return False
 
