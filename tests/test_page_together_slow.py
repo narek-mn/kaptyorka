@@ -154,7 +154,7 @@ def test_member_list_by_machine_and_working_together(team, tmp_path):
             assert page.js('document.getElementById("chat-name").textContent') == "proj-a"
             assert page.js('document.getElementById("chat-sub").textContent') == "3 sessions · active 2m ago"
             assert page.js('document.getElementById("compose").hidden') and page.js('document.getElementById("read-only").hidden')
-            heads = page.js('[...document.querySelectorAll("#log .group .head")].map(h => h.querySelector("b").textContent + ">" + (h.querySelector(".to")?.textContent || ""))')[-5:]
+            heads = page.js('[...document.querySelectorAll("#log .group .head")].map(h => h.querySelector("b").textContent + ">" + (h.querySelector(".to .to-n")?.textContent || ""))')[-5:]
             assert heads == ["api-dev>trainer", "trainer>api-dev", "api-dev>parser-tests", "parser-tests>api-dev",
                              "trainer>api-dev"], heads
             assert "How is the run going?" not in page.js('document.getElementById("log").textContent')

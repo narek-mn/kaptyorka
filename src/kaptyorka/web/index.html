@@ -20,7 +20,7 @@
   --hover: #302d26;
   --ink: #e7e4dc;
   --muted: #aaa498;
-  --faint: #878377;  /* 4.5:1 on --bg, for the small grey text */
+  --faint: #9a9589;  /* the small grey text: 5.8:1 on --bg, 4.8:1 on a raised row */
   --line: rgba(231, 228, 220, 0.18);
   --line-soft: rgba(231, 228, 220, 0.07);
   --line-strong: rgba(231, 228, 220, 0.5);
@@ -44,6 +44,7 @@
   --fs-base: 14px;
   --fs-lg: 15px;
   --fs-xl: 18px;
+  --fs-read: 16px;  /* what people read: chat text and the write box (GitHub, Discord, Claude: 16 px) */
   --fw-regular: 400;
   --fw-medium: 500;
   --fw-semi: 600;
@@ -337,6 +338,15 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .list .row.on .av > .dot { border-color: var(--raised); }
 .chat-head .av > .dot { border-color: var(--bg); }
 
+/* the manager's chip: three dots that breathe while it works (the typing indicator of Slack and
+   iMessage, small), a dot that beats while it starts; still when nothing happens */
+.chip-dots { display: inline-flex; gap: 2px; }
+.chip-dots i { width: 4px; height: 4px; border-radius: var(--round); background: var(--accent); animation: dot 1.2s ease-in-out infinite; }
+.chip-dots i:nth-child(2) { animation-delay: .15s; }
+.chip-dots i:nth-child(3) { animation-delay: .3s; }
+.chip .dot.beat { background: var(--accent); animation: beat 1.4s ease-in-out infinite; }
+@keyframes beat { 0%, 100% { box-shadow: 0 0 0 0 rgba(218, 105, 71, .55); } 60% { box-shadow: 0 0 0 4px rgba(218, 105, 71, 0); } }
+.chip.mgr-chip { text-transform: none; }
 /* status chips: a pill with a dot. Green is good, coral is active or working, grey is idle */
 .chip { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px 0 7px; border-radius: var(--pill);
   font-size: var(--fs-xs); font-weight: var(--fw-medium); line-height: 1; white-space: nowrap;
@@ -389,9 +399,9 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .list .row { position: relative; }
 .list .lead { width: 28px; display: flex; justify-content: center; flex: none; }
 .list .meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.list .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--fw-medium); color: var(--ink); }
+.list .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-lg); font-weight: var(--fw-medium); color: var(--ink); }
 .list .row.unread .name { font-weight: var(--fw-bold); }
-.list .subline { display: flex; gap: var(--s-2); min-width: 0; font-size: var(--fs-sm); color: var(--faint); white-space: nowrap; overflow: hidden; }
+.list .subline { display: flex; gap: var(--s-2); min-width: 0; font-size: var(--fs-md); color: var(--faint); white-space: nowrap; overflow: hidden; }
 .list .subline span { overflow: hidden; text-overflow: ellipsis; }
 .list .who { color: var(--muted); flex: none; }
 .list .count { flex: none; }
@@ -471,8 +481,8 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .chat-head { flex: none; display: flex; align-items: center; gap: var(--s-3); height: 58px; padding: 0 var(--s-6); border-bottom: 1px solid var(--line); }
 .chat-head #chat-lead { display: flex; }
 .chat-title { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.chat-title b { font-size: var(--fs-lg); font-weight: var(--fw-semi); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-title small { display: flex; align-items: center; gap: var(--s-2); margin-top: 2px; font-size: var(--fs-sm); color: var(--faint); overflow: hidden; white-space: nowrap; }
+.chat-title b { font-size: var(--fs-read); font-weight: var(--fw-bold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-title small { display: flex; align-items: center; gap: var(--s-2); margin-top: 2px; font-size: var(--fs-md); color: var(--faint); overflow: hidden; white-space: nowrap; }
 .chat-title small > span:not(.chip) + span:not(.chip) { padding-left: var(--s-2); border-left: 1px solid var(--line); }
 .chat-title small span:first-child { color: var(--muted); }
 #notices-toggle { margin-left: auto; }
@@ -519,61 +529,76 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .warn-pop li.wp-wait .wp-fix { flex-wrap: wrap; }
 .warn-pop .wp-err { color: var(--risk); font-size: var(--fs-sm); margin-top: 4px; }
 .warn-pop .wp-fix .btn.icon { width: 28px; height: 28px; min-width: 28px; padding: 0; justify-content: center; }
-/* the chat reads like a document: one column of about 66 characters a line (Bringhurst's 45-75;
-   Baymard), 15 px text at 1.6 line height (WCAG 1.4.12), centred in a wide pane as ChatGPT and
-   Claude do; the pane may be wide, the lines are not. Name and time on one quiet line over a
-   sender's run of messages (Slack, Discord, GitHub comments), air between runs */
-#log { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-6) 22px; }
-.chat { --col: 640px; }  /* the reading column: 40 px of badges and 66ch of 15 px text; the write box matches it */
+/* the chat reads like a document: 16 px text at 1.55 (GitHub's markdown body is 16/1.5, Discord
+   and Claude 16 px) in one column of about 75 characters a line (Bringhurst's 45-75, measured
+   on real sentences of Archivo, not on a row of capitals and digits), centred in a wide pane as
+   ChatGPT and Claude do. Name and time on one line over a sender's run of messages (Slack,
+   Discord); each later message of a run has its time in the gutter (Telegram shows a time on
+   every message), so where one long message ends and the next begins is never a guess */
+#log { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-6) var(--s-6); }
+.chat { --col: 552px; }  /* the reading column: 40 px of badges and 32em of 16 px text; the write box matches it */
 #log > * { max-width: var(--col); margin-left: auto; margin-right: auto; }
-#log { font-size: var(--fs-lg); }
-.day { display: flex; align-items: center; gap: var(--s-3); margin: 26px auto 4px; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--faint); }
-.day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
-.group { position: relative; padding: 0 0 2px 40px; margin-top: 20px; }
-.day + .group { margin-top: 14px; }
-.group .head > .av { position: absolute; left: 0; top: 1px; }
+#log { font-size: var(--fs-read); }
+.day { display: flex; align-items: center; gap: var(--s-3); margin: 32px auto 4px; font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--faint); }
+.day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.group { position: relative; padding: 0 0 2px 40px; margin-top: 32px; }
+.day + .group { margin-top: 18px; }
+.group .head > .av { position: absolute; left: 0; top: 0; }
 .group.mine .head > .av { opacity: .9; }
-.group .head { display: flex; align-items: baseline; gap: var(--s-2); min-width: 0; margin-bottom: 3px; font-size: var(--fs-base); line-height: 1.4; }
-.group .head b { font-weight: var(--fw-semi); color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the head reads as one line of text that wraps, never cut: the name strong, where it runs
+   (account@computer, project, tool) quiet beside it, the receiver after an arrow, the time last */
+.group .head { min-width: 0; margin-bottom: 4px; font-size: var(--fs-lg); line-height: 1.5; overflow-wrap: anywhere; }
+.group .head > b ~ * { margin-left: var(--s-2); }
+.group .head b { font-weight: var(--fw-bold); color: var(--ink); }
 .group .head b.mine { color: var(--accent-hover); }
-.group .head .to { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
-.group .head .to span { overflow: hidden; text-overflow: ellipsis; }
-.group .head .to svg { color: var(--faint); }
-.group .head time, .msg.sys time { flex: none; font-size: var(--fs-sm); color: var(--faint); }
-.msg { padding: 0; }
-.msg + .msg { margin-top: 10px; }
-.msg .text { max-width: 66ch; line-height: 1.6; }
+.group .head .ctx { font-size: var(--fs-md); color: var(--faint); }
+.group .head .to { font-size: var(--fs-md); color: var(--muted); }
+.group .head .to-n { white-space: nowrap; }  /* the arrow never ends a line alone */
+.group .head .to-n > svg { display: inline-block; vertical-align: -1px; margin-right: 5px; color: var(--faint); }
+.group .head .to-n > b { font-weight: var(--fw-semi); }
+.group .head .to .ctx { margin-left: 6px; }
+.group .head time, .msg.sys time { flex: none; font-size: var(--fs-sm); color: var(--faint); white-space: nowrap; }
+.msg { position: relative; padding: 0; }
+.msg + .msg { margin-top: 22px; }  /* clearly more than a paragraph's 12 px */
+.msg > time.at { position: absolute; left: -40px; top: .3em; width: 34px; font-size: var(--fs-xs); line-height: 1.5; color: var(--faint); }
+.msg .text { line-height: 1.55; }
 .msg .text.moving { overflow: hidden; transition: max-height var(--dur-3) var(--ease-out); }
 .new { animation: rise var(--dur-3) var(--ease-out); }
 /* over about 20 lines: folded, the last lines fading, Show more under it */
 .msg .text.clamp { max-height: 32em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 4.8em), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 4.8em), transparent); }
-.msg .more { margin-top: 2px; padding: 2px 0; font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--accent); }
+.msg .more { display: inline-flex; align-items: center; min-height: 32px; margin-top: 2px; padding: 0; font-size: var(--fs-md); font-weight: var(--fw-semi); color: var(--accent-hover); }
+.msg .more::after { content: ""; width: 6px; height: 6px; margin: -3px 0 0 8px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.msg .more[aria-expanded="true"]::after { margin-top: 3px; transform: rotate(-135deg); }
 .msg .more:hover { text-decoration: underline; }
-.msg.sys { display: flex; align-items: baseline; gap: 10px; padding: 5px 0 5px 8px; font-size: var(--fs-sm); }
+.msg.sys { display: flex; align-items: baseline; gap: 10px; margin-top: 16px; padding: 5px 0 5px 8px; font-size: var(--fs-md); }
 .msg.sys > svg { align-self: center; color: var(--faint); }
 .msg.sys .text { color: var(--muted); min-width: 0; line-height: 1.5; }
 /* markdown in a message, the safe part (see md()): quiet headings, real lists, code in
    monospace that scrolls sideways with a copy button, tables that scroll on a phone */
 .text.md { white-space: normal; }
-.md p { margin: 0 0 .65em; }
+.md p { margin: 0 0 .75em; }
 .md > :last-child { margin-bottom: 0; }
-.md .md-h { margin: 1em 0 .3em; font-weight: var(--fw-semi); color: var(--ink); line-height: 1.4; }
-.md .md-h1 { font-size: 1.07em; }
+.md .md-h { margin: 1.1em 0 .35em; font-weight: var(--fw-bold); color: var(--ink); line-height: 1.4; }
+.md .md-h1 { font-size: 1.125em; }
+.md .md-h2 { font-size: 1.06em; }
 .md > .md-h:first-child { margin-top: 0; }
-.md ul, .md ol { margin: 0 0 .65em; padding-left: 1.5em; }
-.md li + li { margin-top: .25em; }
+.md ul, .md ol { margin: 0 0 .75em; padding-left: 1.5em; }
+.md li + li { margin-top: .3em; }
 .md li > ul, .md li > ol { margin: .25em 0 0; }
 .md li::marker { color: var(--muted); }
 .md strong { font-weight: var(--fw-semi); color: var(--ink); }
 .md a { color: var(--accent-hover); text-decoration: underline; text-decoration-color: var(--accent-line); text-underline-offset: 2px; overflow-wrap: anywhere; }
 .md a:hover { text-decoration-color: currentColor; }
-.md code { font: .87em/1.3 var(--mono); padding: 0 .35em; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--surface2); color: var(--ink); overflow-wrap: anywhere; }
+.md code { font: .85em/1.3 var(--mono); padding: .1em .35em; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--surface2); color: var(--ink); overflow-wrap: anywhere; }
 .md blockquote { margin: 0 0 .65em; padding-left: 12px; border-left: 2px solid var(--line-strong); color: var(--muted); }
 .md hr { margin: .9em 0; border: 0; border-top: 1px solid var(--line); }
-.md-pre { position: relative; margin: .3em 0 .75em; }
-.md-pre pre { margin: 0; padding: 10px 44px 10px 12px; overflow-x: auto; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--surface);
-  font: 13px/1.55 var(--mono); color: var(--ink); white-space: pre; tab-size: 4; }
+.md-pre { position: relative; margin: .3em 0 .9em; }
+/* a wide screen: code may run 140 px past the text column (code lines are long, prose lines
+   are not); from 1200 px the pane always has that much room beside the column */
+@media (min-width: 1200px) { .md-pre { width: max-content; min-width: 100%; max-width: calc(100% + 140px); } }
+.md-pre pre { margin: 0; padding: 12px 44px 12px 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: #15140f;
+  font: .85em/1.5 var(--mono); color: var(--ink); white-space: pre; tab-size: 4; }
 .md-pre pre:focus-visible { outline: var(--ring); outline-offset: 1px; }
 .md-pre code { padding: 0; border: 0; background: none; font: inherit; overflow-wrap: normal; }
 .md-pre .md-copy { position: absolute; top: 5px; right: 5px; width: 28px; height: 28px; min-width: 28px; padding: 0; justify-content: center; opacity: 0;
@@ -581,7 +606,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .md-pre:hover .md-copy, .md-pre .md-copy:focus-visible, .md-pre .md-copy.copied { opacity: 1; }
 @media (hover: none) { .md-pre .md-copy { opacity: 1; } }
 .md-table { margin: .3em 0 .75em; overflow-x: auto; }
-.md table { border-collapse: collapse; font-size: var(--fs-base); line-height: 1.45; font-variant-numeric: tabular-nums; }
+.md table { border-collapse: collapse; font-size: .94em; line-height: 1.45; font-variant-numeric: tabular-nums; }
 .md th, .md td { padding: 6px 14px 6px 0; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: top; }
 .md th { font-weight: var(--fw-semi); color: var(--muted); border-bottom-color: var(--line); }
 /* new messages below while you read higher up: one button to jump down, never a jump */
@@ -594,9 +619,11 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .msg.out.sending .text, .msg.out.sending .att-out { opacity: .55; }
 .msg.out.failed .text { color: var(--muted); }
 .att-out { display: inline-flex; align-items: center; gap: 5px; margin-top: var(--s-1); font-size: var(--fs-sm); color: var(--muted); }
-.tick { display: flex; align-items: center; gap: 5px; margin-top: 3px; font-size: var(--fs-xs); color: var(--faint); animation: fade-in var(--dur-2) var(--ease-out); }
+.tick { display: flex; align-items: center; gap: 5px; margin-top: 4px; font-size: var(--fs-sm); color: var(--faint); animation: fade-in var(--dur-2) var(--ease-out); }
 .tick.delivered { color: var(--muted); }
 .tick.failed, .tick.undelivered { color: var(--danger); }
+.tick.late { color: var(--risk); font-weight: var(--fw-medium); }
+.tick .why { min-width: 0; font-weight: var(--fw-regular); color: var(--muted); }
 .tick button { padding: 2px 0; border: 0; background: none; font: inherit; font-weight: var(--fw-semi); color: var(--accent); cursor: pointer; }
 .tick button:hover { text-decoration: underline; }
 .tick .spin { width: 9px; height: 9px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: var(--round); animation: spin .7s linear infinite; }
@@ -619,7 +646,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
   box-shadow: var(--shadow-1); transition: border-color var(--ease), box-shadow var(--ease); }
 .compose-box:hover { border-color: var(--line-strong); }
 .compose-box:focus-within { border-color: var(--accent-line); box-shadow: 0 0 0 3px rgba(218, 105, 71, .14), var(--shadow-1); }
-.compose textarea { width: 100%; min-width: 0; height: 48px; max-height: 200px; padding: var(--s-3) 14px 6px; resize: none; line-height: 1.45;
+.compose textarea { width: 100%; min-width: 0; height: 48px; max-height: 240px; padding: var(--s-3) 14px 6px; resize: none; font-size: var(--fs-read); line-height: 1.5;
   background: transparent; border: 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
 .compose textarea:focus { box-shadow: none; }
 .compose-bar { display: flex; align-items: center; gap: var(--s-2); min-width: 0; padding: 6px var(--s-2) var(--s-2) var(--s-2); }
@@ -836,6 +863,8 @@ a.p-main { color: inherit; text-decoration: none; }
   .btn, .btn.small, .proj { min-height: var(--h-lg); }
   .btn.icon, .btn.icon.small { min-width: var(--h-lg); }
   .lb-close { width: var(--h-lg); height: var(--h-lg); }
+  .msg .more { min-height: var(--h-lg); }
+  .chat-with .with { height: var(--h-sm); }
 }
 
 @media (max-width: 720px) {
@@ -870,6 +899,7 @@ a.p-main { color: inherit; text-decoration: none; }
   .group { padding-left: 34px; }
   .group .head > .av { width: 24px; height: 24px; font-size: 9.5px; }
   .group.mine { padding-left: 34px; }
+  .msg > time.at { left: -34px; width: 30px; }
   .working { padding-left: 34px; }
   .chat > .err { padding: 0 var(--s-3) var(--s-2); }
   /* Team: the column uses the phone's width; a waiting line puts its answers under the words */
@@ -1520,8 +1550,9 @@ a.p-main { color: inherit; text-decoration: none; }
     if (admin) list.push({ key: "activity", name: "Activity", icon: "i-list", cls: "activity", sub: "", tip: "Every message", read: true });
     /* waiting: its account is at its usage limit; the grey line says until when */
     var ms = feed.manager === "waiting" ? "waiting" : mgr ? "up" : feed.manager || "off";
-    list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms,
-                sub: ms === "waiting" ? String(feed.manager_why || "").replace(/^waiting for its usage limit, resets /, "limit resets ").replace(/^waiting for its usage limit \(reset time unknown\)$/, "limit, reset unknown") : mgr ? mgr.where || mgr.machine : "", act: mgr ? mgr.activity || "" : "",
+    var mst = mgrState();
+    list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms, mgr: mst,
+                sub: ms === "waiting" ? String(feed.manager_why || "").replace(/^waiting for its usage limit, resets /, "limit resets ").replace(/^waiting for its usage limit \(reset time unknown\)$/, "limit, reset unknown") : mst.tone === "warn" || mst.tone === "bad" ? mst.why : mgr ? mgr.where || mgr.machine : "", act: mgr ? mgr.activity || "" : "",
                 to: "manager", tip: "the team's manager session" + (ms === "waiting" ? "\n" + feed.manager_why : "") + (mgr && mgr.status ? "\n" + mgr.status : "")
                   + (feed.manager_load ? "\nload: " + feed.manager_load : "") });
     agents.forEach(function (a) {
@@ -1538,6 +1569,7 @@ a.p-main { color: inherit; text-decoration: none; }
       list.push({ key: k, name: rowName(a, shortName(a.name)), online: true, idle: idle, kid: a.id, parent: a.parent || "",
                   sub: (idle ? idle + " \u00b7 " : "") + (a.left_by ? "left by " + a.left_by + " \u00b7 " : "") + (a.title && !a.label && !hidden(a) ? shortName(a.name) + " \u00b7 " : "") + (a.where || a.machine), to: k, bg: !!a.background, tool: a.tool, act: a.activity || "", stuck: a.stuck || null,
                   who: !a.mine && (isAdmin() || hidden(a)) ? a.person : null, ro: !a.mine && a.writable === false,
+                  ctx: [!hidden(a) && !(a.title && !a.label) && a.project !== rowName(a, shortName(a.name)) ? a.project : null, toolName(a.tool)].filter(Boolean).join(" \u00b7 "),
                   sess: true, mine: !!a.mine, note: a.status || "", where: a.where || a.machine, agent: a.tool === "claude-code" ? "Claude" : "the agent", team: !!a.team && !hidden(a), owner: a.team ? String(a.person || "").replace(/ \(team\)$/, "") : a.person || "",
                   tip: hidden(a) ? a.person + "'s session in a project you have no role in" : tip });
     });
@@ -1908,8 +1940,35 @@ a.p-main { color: inherit; text-decoration: none; }
   }
   /* how a session is doing, as a pill: working or waiting (coral), off (grey). Online and idle
      needs none: the green dot on the badge says it */
+  /* the manager, always in words: Ready, Working, Starting, Off, or what is wrong and why. From
+     the hub's state word (feed.manager, and manager_why while it waits for its usage limit) and
+     its session row (activity, stuck); the hub sends no reason for "blocked" */
+  function mgrState() {
+    var a = feed.agents.filter(function (x) { return x.role === "manager"; })[0], st = feed.manager || "off";
+    if (st === "waiting") return { word: "Usage limit", tone: "warn", why: String(feed.manager_why || "waiting for its usage limit") };
+    if (!a) {  /* no session reporting: the hub's word says why */
+      if (st === "blocked") return { word: "Can't start", tone: "bad", why: "the hub cannot start the manager" };
+      if (st === "off") return { word: "Off", tone: "idle", why: "the manager is switched off" };
+      if (st === "starting") return { word: "Starting", tone: "active", why: "", anim: "pulse" };
+      return { word: "No contact", tone: "warn", why: "its process runs, but its session has not reported to the hub" };
+    }
+    if (a.stuck) return { word: "Stuck " + spanText(a.stuck.s), tone: "warn", why: stuckText(a.stuck) };
+    if (WAITING[a.activity]) return { word: "Waiting", tone: "warn", why: "it " + WAITING[a.activity] };
+    if (a.activity === "shell") return { word: "Background task", tone: "active", why: "", anim: "dots" };
+    if (a.activity && a.activity !== "idle") return { word: "Working", tone: "active", why: a.status || "", anim: "dots" };
+    return { word: "Ready", tone: "ok", why: "" };
+  }
+  function mgrChip(m) {
+    var lead = m.anim === "dots" ? el("span", { "class": "chip-dots", "aria-hidden": "true" }, [el("i"), el("i"), el("i")])
+      : el("span", { "class": "dot" + (m.anim === "pulse" ? " beat" : "") });
+    var c = chip(m.word, m.tone, "mgr-chip", lead);
+    c.setAttribute("role", "status");
+    if (m.why) c.title = m.why;
+    return c;
+  }
   function statusChip(e) {
     if (e.icon) return null;
+    if (e.mgr) return mgrChip(e.mgr);
     if (e.state) return chip(e.state, e.state === "starting" ? "active" : e.state === "waiting" ? "warn" : "idle", "n");
     var bg = e.bg ? el("span", { "class": "bg-lead" + (e.online ? " on" : ""), title: "background job" }, [icon("i-clock", 12)]) : null;
     if (!e.online) return chip("Offline", "idle", null, bg);
@@ -1992,6 +2051,38 @@ a.p-main { color: inherit; text-decoration: none; }
   function senderName(m) {
     if (m.web) return me && m.sender === me.person ? "you" : m.sender;
     return m.fromMgr || sessionKey(m.sender) === "mgr" ? "manager" : labelOf(m.fromId || m.sender) || shortName(m.sender);
+  }
+  var TOOL_NAMES = { "claude-code": "Claude Code", codex: "Codex", opencode: "OpenCode", cursor: "Cursor", "cursor-agent": "Cursor" };
+  function toolName(t) { return TOOL_NAMES[t] || t || ""; }
+  /* one side of a message, who and where: { name, ctx: [quiet parts] }. A live session from the
+     feed: its machine (account@computer), its person when that is not the account, its project
+     (never a hidden one) and its tool. A closed session from its name, machine/tool/folder. A
+     person "web page". Nothing beyond what the feed already gives this viewer */
+  function sideOf(name, id, web, mgr) {
+    if (web) return { name: me && name === me.person ? "you" : name, ctx: me && name === me.person ? [] : ["web page"] };
+    if (mgr || sessionKey(name) === "mgr") return { name: "manager", ctx: [] };  /* one of a kind; its chat's head says where */
+    var a = feed.agents.filter(function (x) { return id ? x.id === id : x.name === name; })[0], ctx = [];
+    if (a) {
+      var n = rowName(a, shortName(a.name)), where = a.where || a.machine, owner = String(a.person || "").replace(/ \(team\)$/, "");
+      if (!a.mine && !a.team && owner && where.split("@")[0] !== owner) ctx.push(owner);
+      ctx.push(where);
+      if (!hidden(a) && a.project && a.project !== n) ctx.push(a.project);
+      ctx.push(toolName(a.tool));
+      return { name: n, ctx: ctx };
+    }
+    var p = String(name || "").split("/");
+    if (p.length < 3) return { name: shortName(name) || "—", ctx: [] };
+    var folder = p.slice(2).join("/"), label = labelOf(id || name) || folder;
+    ctx.push(p[0]);
+    if (folder !== label && folder.indexOf("(private)") !== 0) ctx.push(folder);
+    ctx.push(toolName(p[1]));
+    return { name: label, ctx: ctx };
+  }
+  function ctxEl(ctx) { return ctx.length ? el("span", { "class": "ctx", text: ctx.join(" · ") }) : null; }
+  /* the receiver, when the chat holds messages to more than one: "→ trainer u@box-1 · Codex" */
+  function toEl(m, to) {
+    var s = m.to.length > 1 ? { name: "all", ctx: [] } : sideOf(m.to[0], m.toId[0], m.toWeb, m.toMgr[0]);
+    return el("span", { "class": "to", title: "to " + to }, [el("span", { "class": "to-n" }, [icon("i-arrow", 12), el("b", { text: s.name })]), ctxEl(s.ctx)]);
   }
 
   /* an <img> or <video> cannot send a header, so they take ?t=; any other file is fetched with
@@ -2100,7 +2191,7 @@ a.p-main { color: inherit; text-decoration: none; }
       $("chat-name").textContent = e.name;
       var sub = $("chat-sub");
       sub.textContent = "";
-      if (!act) [e.bg ? "background job" : null, statusChip(e), e.sub, e.who, e.note].forEach(function (t) { if (t) sub.appendChild(typeof t === "string" ? el("span", { text: t }) : t); });
+      if (!act) [e.bg ? "background job" : null, statusChip(e), e.sub, e.ctx, e.who, e.note].forEach(function (t) { if (t) sub.appendChild(typeof t === "string" ? el("span", { text: t }) : t); });
     }
     $("access-pane").hidden = !askOpen;
     $("log").hidden = askOpen;
@@ -2231,15 +2322,17 @@ a.p-main { color: inherit; text-decoration: none; }
       var p = parties(m), between = p.every(function (x) { return x === ME || x === conv; });
       var to = (isGrp(conv) ? !grpOf(conv) || grpSize(grpOf(conv)) > 2 : act || !between) ? toName(m) : null, k = m.sender + "\n" + (to || "");
       if (!last || last.k !== k || m.created - last.t > 300) {
+        var s = sideOf(m.sender, m.fromId, m.web, m.fromMgr);
         group = el("div", { "class": "group" + (p[0] === ME ? " mine" : "") + (m.id > before ? " new" : "") }, [el("div", { "class": "head" }, [
-          senderBadge(m), el("b", { "class": p[0] === ME ? "mine" : null, text: senderName(m) }),
-          to ? el("span", { "class": "to", title: "to " + to }, [icon("i-arrow", 12), el("span", { text: to })]) : null, hm(m.created)])]);
+          senderBadge(m), el("b", { "class": p[0] === ME ? "mine" : null, text: senderName(m) }), ctxEl(s.ctx),
+          to ? toEl(m, to) : null, hm(m.created)])]);
         log.appendChild(group);
       }
       last = { k: k, t: m.created };
-      var text = md(m.text);
-      var body = el("div", { "class": "msg" + (m.id > before && group.firstChild.nextSibling ? " new" : ""), "data-id": String(m.id), title: senderName(m) + " → " + toName(m) },
-                    [text, m.file ? attachment(m.file) : null]);
+      var text = md(m.text), later = !!group.firstChild.nextSibling;  /* not the first of its run: its own time in the gutter */
+      var body = el("div", { "class": "msg" + (m.id > before && later ? " new" : ""), "data-id": String(m.id), title: senderName(m) + " → " + toName(m) },
+                    [later ? hm(m.created) : null, text, m.file ? attachment(m.file) : null]);
+      if (later) body.firstChild.className = "at";
       group.appendChild(body);
       if (m.id !== newest && (m.text.length > 1200 || m.text.split("\n").length > 18)) foldLong(m, text, body);
       mineLast = p[0] === ME ? { m: m, body: body } : null;
@@ -2258,7 +2351,7 @@ a.p-main { color: inherit; text-decoration: none; }
         o.sent ? el("span", { "class": "att-out" }, [icon("i-clip", 12), el("span", { text: o.sent.file.name })]) : null, sendMark(o)]));
     });
     /* only my last message, while nothing came after it: Sent, then Delivered once the session has it */
-    if (!act && !outs.length && mineLast) mineLast.body.appendChild(sendMark({ state: mineLast.m.read ? "delivered" : mineLast.m.failed ? "undelivered" : "sent", err: mineLast.m.failed || "" }));
+    if (!act && !outs.length && mineLast) mineLast.body.appendChild(sendMark(lateMark(mineLast.m) || { state: mineLast.m.read ? "delivered" : mineLast.m.failed ? "undelivered" : "sent", err: mineLast.m.failed || "" }));
     var bg = (entryOf[conv] || {}).bg;
     if (!shown.length && !outs.length) log.appendChild(el("div", { "class": "blank" }, [icon("i-chat", 20), el("span", { text: bg ? BG_EMPTY : emptyText(entryOf[conv]) })]));
     var t = $("notices-toggle");
@@ -2278,9 +2371,25 @@ a.p-main { color: inherit; text-decoration: none; }
   /* under my message: where it is, quietly */
   var TICKS = { sending: ["Sending\u2026", "On its way to the hub"], sent: ["Sent", "The hub has it; the session has not picked it up yet"],
                 delivered: ["Delivered", "The session has it"], failed: ["Not sent", ""],
-                undelivered: ["Not delivered", "The hub has it, but could not push it to the session; it can still read it"] };
+                undelivered: ["Not delivered", "The hub has it, but could not push it to the session; it can still read it"],
+                late: ["No answer yet", "A minute passed and the manager has not answered"] };
+  /* my last word to the manager, a minute old, no answer and the manager not working on it:
+     say so on the message, with what is wrong with the manager when something is */
+  var LATE_S = 60;
+  function lateMark(m) {
+    if (conv !== "mgr" || m.failed || Date.now() / 1000 - m.created < LATE_S) return null;
+    var st = mgrState();
+    if (st.anim) return null;  /* working or starting: the line under it says so */
+    return { state: "late", why: st.word === "Ready" ? "" : st.why || st.word };
+  }
+  function lateNow() {
+    if (conv !== "mgr") return 0;
+    var said = fold(feed.messages).filter(function (m) { return inConv(m, "mgr") && !notice(m); }).pop();
+    return said && parties(said)[0] === ME ? [!!lateMark(said), mgrState()] : 0;
+  }
   function sendMark(o) {
-    var t = TICKS[o.state], kids = [o.state === "sending" ? el("span", { "class": "spin", "aria-hidden": "true" }) : icon(o.state === "failed" || o.state === "undelivered" ? "i-warn" : "i-check", 11), t[0]];
+    var t = TICKS[o.state], kids = [o.state === "sending" ? el("span", { "class": "spin", "aria-hidden": "true" }) : icon(o.state === "failed" || o.state === "undelivered" || o.state === "late" ? "i-warn" : "i-check", 11), t[0]];
+    if (o.why) kids.push(el("span", { "class": "why", text: "\u00b7 " + o.why }));
     if (o.state === "failed") {
       var retry = el("button", { type: "button", title: "Send it again", text: "Retry" }), edit = el("button", { type: "button", title: "Put it back in the box below", text: "Edit" });
       retry.addEventListener("click", function () { sendErr(""); deliver(o); renderMessages(); });
@@ -2370,7 +2479,7 @@ a.p-main { color: inherit; text-decoration: none; }
     renderChat();
     pruneOutbox();
     if (changed("messages", [feed.messages, feed.agents.map(function (a) { return [a.name, a.mine, a.label, a.background]; }), showNotices, me && me.person, conv,
-                             outbox.map(function (o) { return [o.lid, o.state]; })]) || jump) {
+                             outbox.map(function (o) { return [o.lid, o.state]; }), lateNow()]) || jump) {
       renderMessages(jump);
       entries = buildEntries(msgs);  /* the open chat is read now */
     } else renderWorking();

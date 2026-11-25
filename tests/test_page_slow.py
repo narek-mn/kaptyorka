@@ -131,7 +131,7 @@ def test_member_sees_only_home(member_page):
     page.wait('document.querySelectorAll("#agents .row").length === 2')
     assert page.js('document.querySelector("#set-nav [data-sec=\\"people\\"]").hidden') and page.js('document.getElementById("settings").hidden')
     assert page.js('[...document.querySelectorAll("#agents .row .name")].map(n => n.textContent)') == ["manager", "proj-a"]
-    assert page.js('document.querySelector("#agents .mgr .n").textContent') == "off"
+    assert page.js('document.querySelector("#agents .mgr .chip").textContent') == "Off"
     assert page.js('document.getElementById("text").placeholder') == "Message manager"
     time.sleep(2.5)  # a poll or two
     assert page.js('document.getElementById("live").className') == "live"  # the hub answers
@@ -158,7 +158,7 @@ def test_manager_between_runs_on_home(tmp_path, monkeypatch):
     try:
         with chrome() as page:
             page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
-            assert page.wait('document.querySelector("#agents .mgr .n")?.textContent') == "blocked"
+            assert page.wait('document.querySelector("#agents .mgr .chip")?.textContent') == "Can't start"
     finally:
         stop()
         store.close()
@@ -192,7 +192,7 @@ def test_chat_reads_in_full_and_phone_goes_back(tmp_path):
                 assert page.wait('document.getElementById("text").placeholder') == "Message proj-0"
                 page.wait('!!document.querySelector("#log .more")')
                 assert page.js('document.querySelector("#log .more").textContent') == "Show more"
-                assert page.js('[...document.querySelectorAll("#log .head .to")].map(t => t.textContent)') == ["proj-1"]
+                assert page.js('[...document.querySelectorAll("#log .head .to .to-n")].map(t => t.textContent)') == ["proj-1"]
                 assert page.js(wide)
                 page.js('document.querySelector("#log .more").click()')
                 assert page.wait('document.querySelector("#log .more")?.textContent') == "Show less"
@@ -585,7 +585,7 @@ def test_manager_waking_row(tmp_path, monkeypatch, w, h):
     try:
         with chrome(w, h) as page:
             page.go(f"http://127.0.0.1:{stop.port}/#t={token}")
-            assert page.wait('document.querySelector("#agents .mgr .n")?.textContent') == "starting"
+            assert page.wait('document.querySelector("#agents .mgr .chip")?.textContent') == "Starting"
             if w < 720:
                 page.js('document.querySelector("#agents .row.mgr").click()')
             page.js('document.getElementById("text").value = "are you there?"')

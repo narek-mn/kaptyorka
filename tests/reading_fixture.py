@@ -124,18 +124,28 @@ MEASURE = """(() => {
     return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
   const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
   const texts = [...document.querySelectorAll("#log .msg:not(.sys) .text")];
-  const t = texts.find(n => n.textContent.length > 1200) || texts[0];
+  const t = texts.reduce((a, b) => b.textContent.length > a.textContent.length ? b : a, texts[0]);  /* the longest */
   const cs = getComputedStyle(t);
   const p = t.querySelector("p, li") || t;
-  const range = document.createRange(); range.selectNodeContents(p);
-  const probe = document.createElement("span"); probe.textContent = "abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,";
-  probe.style.cssText = "position:absolute;visibility:hidden;white-space:nowrap;font:" + getComputedStyle(p).font; document.body.appendChild(probe);
-  const avg = probe.getBoundingClientRect().width / probe.textContent.length; probe.remove();
+  /* characters on each full line of the chat's paragraphs (a paragraph's last line left out), the median */
+  const lines = [];
+  [...document.querySelectorAll("#log .msg:not(.sys) .text p")].forEach(b => {
+    /* a new line where a character sits half a line lower (inline code's box is a little higher) */
+    const w = document.createTreeWalker(b, NodeFilter.SHOW_TEXT), half = parseFloat(getComputedStyle(b).lineHeight) / 2, got = [];
+    let n, top = null;
+    while ((n = w.nextNode())) for (let i = 0; i < n.length; i++) {
+      const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + 1);
+      const rc = r.getClientRects()[0]; if (!rc) continue;
+      if (top === null || rc.top > top + half) { top = rc.top; got.push(0); }
+      got[got.length - 1]++; }
+    got.slice(0, -1).forEach(c => lines.push(c));
+  });
+  lines.sort((a, b) => a - b);
   let bg = getComputedStyle(document.getElementById("log")).backgroundColor;
   if (bg === "rgba(0, 0, 0, 0)") bg = getComputedStyle(document.body).backgroundColor;
   const pcs = getComputedStyle(p);
   return { font_px: parseFloat(pcs.fontSize), line_height: Math.round(parseFloat(pcs.lineHeight) / parseFloat(pcs.fontSize) * 100) / 100,
-           text_width_px: Math.round(t.getBoundingClientRect().width), chars_per_line: Math.round(p.getBoundingClientRect().width / avg),
+           text_width_px: Math.round(t.getBoundingClientRect().width), chars_per_line: lines.length ? lines[Math.floor(lines.length / 2)] : null,
            contrast: Math.round(ratio(pcs.color, bg) * 10) / 10, raw_markdown: /(^|\\n)(## |\\d\\. |- |\\|)/.test(t.textContent) || t.textContent.includes("```"),
            messages: texts.length, log_width: document.getElementById("log").clientWidth };
 })()"""

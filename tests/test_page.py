@@ -66,7 +66,7 @@ def test_home_two_pane_chat(hub):
     assert '(showNotices ? "hide notices" : "show notices") + " (" + notices + ")"' in html
     assert 'el("b", { "class": p[0] === ME ? "mine" : null, text: senderName(m) })' in html
     assert ".msg .text.clamp { max-height: 32em;" in html and '"Show more"' in html and "dayLabel(m.created)" in html
-    assert "if (m.id !== newest && " in html and "var text = md(m.text);" in html  # markdown, built from text nodes
+    assert "if (m.id !== newest && " in html and "var text = md(m.text)" in html  # markdown, built from text nodes
     assert "overflow-wrap: anywhere" in html
 
 

@@ -64,9 +64,9 @@ def test_manager_row_waits_for_its_reset(team, tmp_path):
         with chrome(w, h) as page:
             page.go(url)
             row = 'document.querySelector("#agents [data-key=\\"mgr\\"]")'
-            page.wait(f'!!{row} && {row}.textContent.includes("waiting")')
+            page.wait(f'!!{row} && {row}.textContent.includes("Usage limit")')
             text = page.js(f"{row}.innerText")
-            assert f"limit resets {hm}" in text, text  # the chip says Waiting: the time fits
+            assert f"limit resets {hm}" in text, text  # the chip says Usage limit: the time fits
             sub = f"{row}.querySelector(\".subline span\")"
             assert page.js(f"{sub}.scrollWidth <= {sub}.clientWidth"), "the reset time is cut off"
             assert "usage limit" in page.js(f"{row}.title")
@@ -122,7 +122,7 @@ def test_everything_tonight_together(team, tmp_path):
             page.wait(f'!!({row % json.dumps("helper-tests")}) && !!({row % json.dumps("helper-old")})')
             assert page.js(f'({row % json.dumps("helper-tests")}).classList.contains("wt-sub")')
             assert page.js(f'({row % json.dumps("helper-old")}).innerText').count("left by another session") == 1
-            assert "Waiting" in page.js('document.querySelector("#agents [data-key=\\"mgr\\"]").innerText')
+            assert "Usage limit" in page.js('document.querySelector("#agents [data-key=\\"mgr\\"]").innerText')
             page.js(f'({row % json.dumps("api-dev")}).click()')
             page.wait('!!document.querySelector("#log .md table")')
             assert page.js('!!document.querySelector("#log .md-pre pre code")')

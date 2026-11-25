@@ -1,6 +1,8 @@
-"""The chat as something to read, in a real headless Chrome: a column of about 70 characters at
-15 px, markdown rendered (and never HTML), long messages folded but never the newest, and the
-scroll left alone while you read. Screenshots to KAPTYORKA_SHOTS.
+"""The chat as something to read, in a real headless Chrome: 16 px text in a column of about 70
+characters a line (counted on the rendered lines), every head saying who and where, a time on
+each later message of a run, markdown rendered (and never HTML), long messages folded but never
+the newest, the scroll left alone while you read, and the manager's state and a late answer in
+words. Screenshots to KAPTYORKA_SHOTS.
 Run with: pytest -m slow tests/test_page_reading_slow.py"""
 import json
 import os
@@ -47,9 +49,16 @@ def test_column_markdown_and_folding(hub, tmp_path):
         with chrome(w, h) as page:
             open_chat(page, url)
             m = page.js(MEASURE)
-            assert m["font_px"] == 15 and m["line_height"] == 1.6 and m["contrast"] >= 4.5, m
+            assert m["font_px"] == 16 and m["line_height"] == 1.55 and m["contrast"] >= 4.5, m
             if w > 720:  # the pane is wide, the lines are not
-                assert 60 <= m["chars_per_line"] <= 75, m
+                assert 60 <= (m["chars_per_line"] or 0) <= 78, (w, m)
+            # who and where: the session's machine, project and tool beside its name, never cut
+            head = '[...document.querySelectorAll("#log .group .head")].find(h => h.querySelector("b").textContent === "api-dev")'
+            assert page.js(f'{head}.querySelector(".ctx").textContent') == "bob@box-2 \u00b7 proj-a \u00b7 Claude Code"
+            assert page.js(f'{head}.scrollWidth <= {head}.clientWidth')
+            # a later message of a run has its own time in the gutter
+            assert page.js('[...document.querySelectorAll("#log .group .msg + .msg")].every(m => m.querySelector(":scope > time.at"))')
+            assert page.js('document.querySelectorAll("#log .group .msg > time.at").length') > 0
             assert page.js("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
             # markdown, not its marks: headings, lists, code, a table
             text = page.js(f"{LOG}.innerText")
@@ -70,7 +79,7 @@ def test_column_markdown_and_folding(hub, tmp_path):
             long = '[...document.querySelectorAll("#log .msg")].find(m => m.textContent.includes("step 40 of"))'
             page.wait(f"!!({long})")
             assert page.js(f'!!{long}.querySelector(".text.clamp")') and page.js(f'{long}.querySelector(".more").textContent') == "Show more"
-            assert page.js(f'{long}.querySelector(".text").getBoundingClientRect().height') <= 15 * 1.6 * 20 + 2
+            assert page.js(f'{long}.querySelector(".text").getBoundingClientRect().height') <= 16 * 32 + 2
             page.js(f'{long}.querySelector(".more").click()')
             page.wait(f'{long}.querySelector(".more").textContent === "Show less"')
             store.send("b1", "bob", "One more thing: CI is green.")  # a redraw of the chat
@@ -125,3 +134,34 @@ def test_scroll_is_left_alone_while_reading(hub):
         # keyboard: a code block takes focus and scrolls sideways
         assert page.js('document.querySelector("#log .md-pre pre").tabIndex') == 0
         assert json.loads(json.dumps(page.js('document.querySelector("#jump").tagName'))) == "BUTTON"
+
+
+def test_manager_state_and_late_answer(hub, tmp_path):
+    """The manager says how it is in words (Ready with a session, Off without), and my message to
+    it, a minute old with no answer, says "No answer yet" with the reason."""
+    store, url = hub
+    shots = Path(os.environ.get("KAPTYORKA_SHOTS") or tmp_path)
+    from kaptyorka.manager import ManagerStore
+    mtoken = ManagerStore(store).ensure_account("box-1", "alice")
+    store.heartbeat("box-1", [{"key": "k:mgr", "tool": "claude-code", "project": "manager", "label": "manager"}],
+                    principal=store.authenticate(mtoken), facts={"host": "box-1", "os_user": "u"})
+    mgr = store.agent("k:mgr").name
+    with store.lock:
+        store.db.execute("INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool, project, text, created, read_at)"
+                         " VALUES ('web:bob','bob','k:mgr',?,'','','','Who reviews tokenizer-v2?',?,?)",
+                         (mgr, time.time() - 120, time.time() - 118))
+    chip = 'document.querySelector("#agents .row.mgr .chip")'
+    with chrome() as page:
+        page.go(url)
+        assert page.wait(f'{chip}?.textContent') == "Ready"
+        page.js('document.querySelector("#agents .row.mgr").click()')
+        assert page.wait('document.querySelector("#log .tick.late")?.textContent') == "No answer yet"
+        assert page.js('document.querySelector("#chat-sub .chip").textContent') == "Ready"
+        page.screenshot(shots / "manager-late.png")
+    with store.lock:
+        store.db.execute("UPDATE agents SET last_seen=last_seen-100 WHERE key='k:mgr'")  # gone: the hub has it off
+    with chrome() as page:
+        page.go(url)
+        assert page.wait(f'{chip}?.textContent') == "Off"
+        page.js('document.querySelector("#agents .row.mgr").click()')
+        assert page.wait('document.querySelector("#log .tick.late .why")?.textContent') == "\u00b7 the manager is switched off"
