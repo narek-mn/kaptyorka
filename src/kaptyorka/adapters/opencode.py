@@ -479,6 +479,7 @@ def _v2_unclaimed(svc: Dict[str, str], skip: frozenset) -> "List[tuple]":
     except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException):
         running = set()  # an older service without the route: the time rule alone
     since = time.time() * 1000 - OPEN_S * 1000
+    let_go = _closed_since()  # a window closed it, or moved on: not an app's until it moves again
     out = []
     for s in rows:
         if not isinstance(s, dict):
@@ -487,6 +488,8 @@ def _v2_unclaimed(svc: Dict[str, str], skip: frozenset) -> "List[tuple]":
         d = (s.get("location") or {}).get("directory") if isinstance(s.get("location"), dict) else None
         upd = t.get("updated")
         recent = isinstance(upd, (int, float)) and not isinstance(upd, bool) and upd >= since
+        if sid in let_go and not (sid in running or (recent and upd > let_go[sid])):
+            continue
         if (valid_id(sid) and not s.get("parentID") and not t.get("archived")
                 and isinstance(d, str) and d and f"opencode:{sid}" not in skip
                 and (recent or sid in running)):
@@ -557,11 +560,59 @@ def _alive(pid: int) -> bool:
     return True
 
 
+def _closed_file() -> Path:
+    """{"windows": {pid: session}, "closed": {session: ms}}: what each window last showed, and
+    the sessions a window has let go of (closed, or moved to another chat), with when."""
+    from kaptyorka import paths
+
+    return paths.home() / "opencode-closed.json"
+
+
+def _load_closed() -> "tuple[Dict[str, str], Dict[str, float]]":
+    try:
+        data = json.loads(_closed_file().read_text())
+        windows, closed = data["windows"], data["closed"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}, {}
+    if not (isinstance(windows, dict) and isinstance(closed, dict)):
+        return {}, {}
+    return ({str(k): v for k, v in windows.items() if valid_id(v)},
+            {k: v for k, v in closed.items() if valid_id(k) and isinstance(v, (int, float))
+             and not isinstance(v, bool)})
+
+
+def _note_closed(shown: Dict[str, str], unread: set) -> None:
+    """Record the sessions windows let go of since the last look: a window that closed, or
+    moved to another chat. A window whose note could not be read now keeps its last one."""
+    before = _load_closed()
+    windows, closed = before[0], dict(before[1])
+    now = time.time() * 1000
+    shown = {**{k: v for k, v in windows.items() if k in unread}, **shown}
+    for pid, sid in windows.items():
+        if shown.get(pid) != sid:
+            closed[sid] = now
+    for sid in shown.values():
+        closed.pop(sid, None)  # open in a window again
+    closed = {k: v for k, v in closed.items() if now - v < OPEN_S * 1000}
+    if (shown, closed) != before:
+        try:
+            write_atomic(_closed_file(), json.dumps({"windows": shown, "closed": closed}))
+        except OSError:
+            pass
+
+
+def _closed_since() -> Dict[str, float]:
+    """session -> when a window let go of it (ms), from _note_closed."""
+    return _load_closed()[1]
+
+
 def _opened() -> Dict[int, Optional[Dict[str, str]]]:
     """pid -> {"session", "directory"} that running V2 TUI shows, from the TUI plugin's notes
     (None while the window shows no chat). A note whose process is gone, or older than the
-    process with its pid (a reused pid), is removed."""
+    process with its pid (a reused pid), is removed, and the sessions windows let go of are
+    recorded (_note_closed), so a closed window's chat does not stay as an app's."""
     out: Dict[int, Optional[Dict[str, str]]] = {}
+    unread: set = set()
     try:
         notes = list(open_dir().glob("*.json"))
     except OSError:
@@ -569,16 +620,21 @@ def _opened() -> Dict[int, Optional[Dict[str, str]]]:
     for f in notes:
         try:
             pid = int(f.stem)
+        except ValueError:
+            continue
+        try:
             if not _alive(pid) or f.stat().st_mtime * 1000 < _started_ms(pid) - 1000:
                 f.unlink()
                 continue
             data = json.loads(f.read_text())
         except (OSError, ValueError, IndexError, StopIteration, subprocess.SubprocessError):
+            unread.add(str(pid))
             continue  # half written, or the window just closed
         sid = data.get("session") if isinstance(data, dict) else None
         d = data.get("directory") if isinstance(data, dict) else None
         out[pid] = ({"session": sid, "directory": d} if valid_id(sid) and isinstance(d, str) and d
                     else None)
+    _note_closed({str(pid): n["session"] for pid, n in out.items() if n}, unread)
     return out
 
 

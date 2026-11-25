@@ -327,6 +327,64 @@ def test_v2_note_of_a_closed_window_is_dropped(windows):
     assert not (opencode.open_dir() / f"{gone.pid}.json").exists()
 
 
+@pytest.fixture
+def recent(fake_v2):
+    """The service's sessions as just used: inside the 30 minutes an app's session stays."""
+    now = time.time() * 1000
+    for row in fake_v2.sessions["data"]:
+        row["time"]["updated"] = now - 60_000
+    return fake_v2
+
+
+def test_v2_a_closed_windows_chat_leaves_at_once_and_comes_back_when_used(windows, recent):
+    """Closing a window used to leave its chat on the hub for 30 minutes as an app's."""
+    (me, w1, w2), note = windows
+    for pid in (me, w1, w2):
+        note(pid, "")
+    gone = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    note(gone.pid, "ses_v2new")
+    a = OpenCodeAdapter()
+    assert "opencode:ses_v2new" in keys(a)
+    gone.kill()
+    gone.wait()
+    assert "opencode:ses_v2new" not in keys(a)  # the window closed: not an app's session
+    assert "opencode:ses_v2new" not in keys(a)  # and it stays gone
+    row = next(r for r in recent.sessions["data"] if r["id"] == "ses_v2new")
+    row["time"]["updated"] = time.time() * 1000 + 1000  # used again (the desktop app)
+    assert "opencode:ses_v2new" in keys(a)
+
+
+def test_v2_a_window_that_moves_to_another_chat_lets_the_old_one_go(windows, recent):
+    (me, w1, w2), note = windows
+    note(me, "")
+    note(w2, "")
+    note(w1, "ses_v2old")
+    a = OpenCodeAdapter()
+    assert "opencode:ses_v2old" in keys(a)
+    note(w1, "ses_v2stale")  # /sessions in the same window
+    got = keys(a)
+    assert "opencode:ses_v2stale" in got and "opencode:ses_v2old" not in got
+    note(w1, "ses_v2old")  # and back: open in a window again
+    assert "opencode:ses_v2old" in keys(a)
+
+
+def test_v2_a_note_that_cannot_be_read_now_does_not_close_its_chat(windows, recent):
+    (me, w1, w2), note = windows
+    note(me, "")
+    note(w2, "")
+    note(w1, "ses_v2old")
+    a = OpenCodeAdapter()
+    keys(a)
+    (opencode.open_dir() / f"{w1}.json").write_text("{half")  # mid-write
+    keys(a)
+    assert "ses_v2old" not in opencode._closed_since()  # unread is not closed
+    note(w1, "")  # the window went to its home screen: now it let the chat go
+    keys(a)
+    assert opencode._closed_since().keys() == {"ses_v2old"}
+    note(w1, "ses_v2old")
+    assert "opencode:ses_v2old" in keys(a) and opencode._closed_since() == {}
+
+
 def test_v2_note_older_than_its_process_is_a_reused_pid(windows, monkeypatch):
     (me, w1, w2), note = windows
     note(w1, "ses_v2old")

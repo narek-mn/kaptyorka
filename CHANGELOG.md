@@ -3,6 +3,7 @@
 ## 0.9.39
 
 - **OpenCode sessions show their name.** The page and `who` showed an OpenCode session only by its folder: kaptyorka never read OpenCode's session title, so a rename in OpenCode changed nothing on the hub. Its title now comes with the session, in OpenCode 1 and 2: the one OpenCode gave it after its first prompt, or the one you renamed it to. The placeholder a new session starts with ("New session - <time>") is not shown.
+- **A closed OpenCode window's chat leaves the hub at once.** In OpenCode 2, after you closed a window, or moved it to another chat, its old chat stayed on the page and in `who` for up to 30 minutes: with no window claiming it, kaptyorka took it for a chat open in the desktop or web app. The bridge now remembers which chat each window let go of, and drops it until it is used again (in the app, or in a window).
 - **No false "Claude Code internals changed" warning.** The check for the blocked-reply marker took any open session whose history mentioned the marker's name (a session reading kaptyorka's own code) for a marker in a new shape, and the machine showed "refusal markers in transcripts not read". It now counts only a line that is the marker itself.
 
 ## 0.9.38
