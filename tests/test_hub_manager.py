@@ -442,7 +442,11 @@ def test_decide_machine_starts_worker_for_asker(hub):
     out = run(call(mgr, me, "work_decide", request_id=1, machine="box-1", reason="alice agreed"))
     assert "proj-a-w1" in out
     w = hub.ws.by_name("proj-a-w1")
-    assert w["worktree"]
+    assert not w["worktree"] and w["folder"] == "/w/proj-a"  # alice's folder, shared
+    with hub.store.lock:
+        [told] = [r[0] for r in hub.store.db.execute(
+            "SELECT text FROM messages WHERE to_key='claude:a1'")]
+    assert told.startswith("Worker `proj-a-w1` (bob) joined your folder /w/proj-a on box-1")
     with hub.store.lock:
         row = hub.store.db.execute("SELECT boss_key, boss_person FROM workers WHERE"
                                    " name='proj-a-w1'").fetchone()

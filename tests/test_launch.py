@@ -1,4 +1,4 @@
-"""The launcher: folders, worktrees, command lines and detaching, with fake run/popen."""
+"""The launcher: folders, command lines and detaching, with fake run/popen."""
 import json
 import re
 import subprocess
@@ -18,7 +18,7 @@ FIRST = 'You are kaptyorka worker `proj-a-w1` for `box-1/codex/proj-a` (alice). 
 def order(**kw):
     base = {"kind": "launch", "id": 1, "issued": 1000.0, "worker": "proj-a-w1",
             "person": "alice", "tool": "claude-code", "project": "proj-a", "folder": "",
-            "worktree": False, "task": "fix the tests", "boss": "box-1/codex/proj-a",
+            "task": "fix the tests", "boss": "box-1/codex/proj-a",
             "resume": None, "first_message": FIRST + kw.get("task", "fix the tests"),
             "sig": "x"}
     return {**base, **kw}
@@ -120,43 +120,32 @@ def test_option_looking_values_are_refused(launcher):
 def test_folder_default_learned_and_missing(home, launcher):
     given = home / "given"
     given.mkdir()
-    assert launcher.folder_for(order(folder=str(given))) == (str(given), False)
+    assert launcher.folder_for(order(folder=str(given))) == str(given)
     learned = home / "code" / "proj-a"
     learned.mkdir(parents=True)
     (home / ".kaptyorka").mkdir(exist_ok=True)
     (home / ".kaptyorka" / "folders.json").write_text(json.dumps({"proj-a": str(learned)}))
-    assert launcher.folder_for(order()) == (str(learned), False)
+    assert launcher.folder_for(order()) == str(learned)
     (home / ".kaptyorka" / "folders.json").write_text("{}")
     (home / "proj-a").mkdir()
-    assert launcher.folder_for(order()) == (str(home / "proj-a"), False)
+    assert launcher.folder_for(order()) == str(home / "proj-a")
     with pytest.raises(LaunchError) as e:
         launcher.folder_for(order(project="proj-b", folder=str(home / "gone")))
     assert str(e.value) == (f"no folder for proj-b on this machine (looked in "
                             f"{home / 'gone'}, {home / 'proj-b'})")
 
 
-def test_occupied_folder_gets_worktree_with_branch(home):
+def test_a_busy_folder_is_used_as_it_is_never_a_worktree(home):
     run = FakeRun()
     launcher = make(home, run=run)
     folder = home / "proj-a"
     folder.mkdir()
-    (home / "proj-a--1").mkdir()  # taken: the next free one is --2
-    mine = [Session("codex:1", "codex", "proj-a", cwd=str(folder))]
-    assert launcher.occupied(str(folder), mine) and not launcher.occupied(str(home), mine)
-    path = str(home / "proj-a--2")
-    assert launcher.folder_for(order(folder=str(folder)), mine) == (path, True)
-    assert run.calls == [["git", "-C", str(folder), "worktree", "add", "-b",
-                          "work/proj-a-w1", path]]
-    run.calls.clear()
-    assert launcher.folder_for(order(folder=str(folder), worktree=True)) == (path, True)
-    assert run.calls[0][-1] == path
-
-
-def test_worktree_failure_carries_git_stderr(home):
-    (home / "proj-a").mkdir()
-    launcher = make(home, run=FakeRun(128, "fatal: not a git repository"))
-    with pytest.raises(LaunchError, match="fatal: not a git repository"):
-        launcher.folder_for(order(folder=str(home / "proj-a"), worktree=True))
+    # an older hub's order still asks for one; others work in the folder: still the folder
+    assert launcher.folder_for(order(folder=str(folder), worktree=True)) == str(folder)
+    assert launcher.launch(order(folder=str(folder), worktree=True),
+                           [Session("codex:1", "codex", "proj-a", cwd=str(folder))]
+                           )["folder"] == str(folder)
+    assert not any("worktree" in c for c in run.calls) and not (home / "proj-a--1").exists()
 
 
 def test_detach_uses_systemd_scope_on_linux_and_setsid_on_mac(home, with_systemd):
@@ -231,7 +220,7 @@ def test_launch_returns_key_folder_and_brief_flag(home, no_systemd):
     launcher = make(home, popen=popen)
     got = launcher.launch(order(folder=str(home / "proj-a")))
     assert got == {"key": None, "job": "ab12cd34", "folder": str(home / "proj-a"),
-                   "worktree": False, "needs_brief": False}
+                   "needs_brief": False}
     got = launcher.launch(order(tool="codex", folder=str(home / "proj-a")))
     assert got["key"] is None and got["job"] is None and got["needs_brief"] is False
     with pytest.raises(LaunchError, match="claude --bg printed no session id"):
@@ -292,11 +281,9 @@ def test_folder_override(home):
     m = home / ".kaptyorka" / "manager"
     m.mkdir(parents=True)
     (home / "manager").mkdir()  # the default lookup would pick this one
-    busy = [Session("claude:1", "claude-code", "manager", cwd=str(m))]
-    assert launcher.folder_for(order(manager=True, project="manager", folder=str(m) + "/"),
-                               busy) == (str(m), False)
-    assert launcher.folder_for(order(manager=True, folder=str(m), worktree=True)) \
-        == (str(m), False)
+    assert launcher.folder_for(order(manager=True, project="manager", folder=str(m) + "/")) \
+        == str(m)
+    assert launcher.folder_for(order(manager=True, folder=str(m), worktree=True)) == str(m)
     assert run.calls == []  # never a worktree
     for bad in ("", "rel/manager", str(home / "gone"), None, str(home / "manager")):
         with pytest.raises(LaunchError, match="no manager folder"):

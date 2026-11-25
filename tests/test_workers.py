@@ -3,7 +3,8 @@ import pytest
 from helpers import person
 from kaptyorka.orders import verify
 from kaptyorka.store import ONLINE_S, KaptyorkaError, Store
-from kaptyorka.workers import ABANDONED_S, UNATTENDED_S, WorkerStore, clean_facts, safe_name
+from kaptyorka.workers import (ABANDONED_S, UNATTENDED_S, WorkerStore, clean_facts, safe_name,
+                               share_rules)
 
 
 @pytest.fixture
@@ -228,8 +229,8 @@ def secret_hash(store, dev_id):
     return store.db.execute("SELECT secret_hash FROM devices WHERE id=?", (dev_id,)).fetchone()[0]
 
 
-def launch(ws, alice_p, dev, boss, task="fix the tests", occupied=False):
-    return ws.create(alice_p, "proj-a", task, target(dev), "claude-code", boss, None, occupied)
+def launch(ws, alice_p, dev, boss, task="fix the tests"):
+    return ws.create(alice_p, "proj-a", task, target(dev), "claude-code", boss, None)
 
 
 def launch_id(store, worker, kind="launch"):
@@ -253,15 +254,15 @@ def test_create_names_and_signs(store, ws, alice_p, dev, boss, clock):
     assert item["launch"] is True and item["worker"] == "proj-a-w1"
     order = {k: v for k, v in item.items() if k != "launch"}
     assert list(order) == ["kind", "id", "issued", "worker", "person", "tool", "project",
-                           "folder", "worktree", "task", "boss", "resume", "first_message", "sig"]
+                           "folder", "task", "boss", "resume", "first_message", "sig"]
     assert order["kind"] == "launch" and order["person"] == "alice" and order["folder"] == FOLDER
     assert order["first_message"] == (
         "You are kaptyorka worker `proj-a-w1` for `box-1/claude-code/proj-a` (alice). Your task:"
         "\n\nfix the tests\n\nTake orders only from `box-1/claude-code/proj-a` and the hub admin."
         " Report to `box-1/claude-code/proj-a` with send(to=\"box-1/claude-code/proj-a\", ...)"
         " when done or stuck. When the task is done and reported, call"
-        " close_worker(name=\"proj-a-w1\") to end this session; your commits, branch and files"
-        " stay.")
+        " close_worker(name=\"proj-a-w1\") to end this session; your commits and files stay.")
+    assert w["notices"] == [] and w["shared"] == ""  # nobody else in the folder
     assert verify(order, secret_hash(store, dev), clock[0], ()) is None
     assert ws.offer(dev) == []  # offered once per 60 s
     clock[0] += 61
@@ -271,9 +272,9 @@ def test_create_names_and_signs(store, ws, alice_p, dev, boss, clock):
 
 def test_worker_names_have_no_dots(store, ws, alice_p, dev, boss):
     store.seen("claude:boss", "box-1", "claude-code", "proj-a", principal=alice_p)
-    a = ws.create(alice_p, "proj.a", "t", target(dev), "claude-code", boss, None, False)
+    a = ws.create(alice_p, "proj.a", "t", target(dev), "claude-code", boss, None)
     assert a["name"] == "proj-a-w1" and a["project"] == "proj.a"
-    b = ws.create(alice_p, "proj-a", "t", target(dev), "claude-code", boss, None, False)
+    b = ws.create(alice_p, "proj-a", "t", target(dev), "claude-code", boss, None)
     assert b["name"] == "proj-a-w2"  # proj-a and proj.a share the name space
     assert ws.offer(dev)[0]["worker"] == "proj-a-w1"
 
@@ -282,26 +283,39 @@ def test_create_refuses_empty_task_and_bad_project(ws, alice_p, dev, boss):
     with pytest.raises(KaptyorkaError):
         launch(ws, alice_p, dev, boss, task="  ")
     with pytest.raises(KaptyorkaError):
-        ws.create(alice_p, "bad name!", "t", target(dev), "claude-code", boss, None, False)
+        ws.create(alice_p, "bad name!", "t", target(dev), "claude-code", boss, None)
 
 
-def test_second_launch_in_same_folder_gets_worktree(store, ws, alice, alice_p, boss, clock):
+def test_a_busy_folder_is_shared_never_copied(store, ws, alice, alice_p, boss, clock):
     dev, token = device(store, alice, "box-1")
     ws.facts_seen(dev, {"tmux": True, "load": 0.1, "cpus": 2}, {"proj-a": FOLDER})
     worker_up(store, ws, dev, token, key="claude:other")  # a session already in the folder
+    other = f"`{store.agent('claude:other').name}` (alice)"
     usable, _ = ws.candidates(alice_p, "proj-a", None)
     got = ws.choose(usable, "proj-a", "claude-code", clock[0], alice)
     assert got["occupied"] is True
-    w = ws.create(alice_p, "proj-a", "t", got, "claude-code", boss, None, got["occupied"])
-    assert w["worktree"] is True
-    assert ws.offer(dev)[0]["worktree"] is True
-    # a free folder that a starting worker already took: re-checked under the lock
-    clock[0] += 600
-    store.seen("claude:boss", "box-1", "claude-code", "proj-a", principal=alice_p)
-    a = ws.create(alice_p, "proj-a", "t", target(dev), "claude-code", boss, None, False)
-    b = ws.create(alice_p, "proj-a", "t", target(dev), "claude-code", boss, None, False)
-    # proj-a-w1 runs in a worktree, so the folder is free for a; a still starting holds it for b
-    assert a["worktree"] is False and b["worktree"] is True
+    w = ws.create(alice_p, "proj-a", "t", got, "claude-code", boss, None)
+    assert w["worktree"] is False and w["folder"] == FOLDER and w["shared"] == other
+    [order] = ws.offer(dev)
+    assert order["folder"] == FOLDER and "worktree" not in order
+    assert order["first_message"].endswith("\n\n" + share_rules(other))
+    assert "do not stash" in share_rules("x") and "`git commit <paths>`" in share_rules("x")
+    assert w["notices"] == [("claude:other", "Worker `proj-a-w1` (alice) joined your folder"
+                             f" {FOLDER} on box-1 for {w['boss']}. "
+                             + share_rules("`proj-a-w1` (alice)"))]
+    # a worker still starting there is named too; it has no session to tell yet
+    b = ws.create(alice_p, "proj-a", "t", got, "claude-code", boss, None)
+    assert b["shared"] == f"{other}, `proj-a-w1` (a worker still starting)"
+    assert b["notices"] == [("claude:other", "Worker `proj-a-w2` (alice) joined your folder"
+                             f" {FOLDER} on box-1 for {w['boss']}. " + share_rules(
+                                 "`proj-a-w2` (alice), `proj-a-w1` (a worker still starting)"))]
+    # the boss in that folder is named to the worker but needs no notice: it started it
+    store.heartbeat("box-1", [{"key": "claude:boss", "tool": "claude-code", "project": "proj-a",
+                               "cwd": FOLDER}], principal=store.authenticate(token),
+                    facts={"host": "box-1", "os_user": "u"})
+    c = ws.create(alice_p, "proj-a", "t", got, "claude-code", "claude:boss", None)
+    assert [k for k, _ in c["notices"]] == ["claude:other"]
+    assert f"`{store.agent('claude:boss').name}`" in c["shared"]
 
 
 def test_link_marks_up_and_moves_session_to_boss_group(store, ws, alice, alice_p, boss):
@@ -484,7 +498,9 @@ def test_adopt_drops_the_old_boss_ended_timer(store, ws, alice, alice_p, boss, c
 
 def test_close_queues_signed_close_and_notes_worktree(store, ws, alice, alice_p, boss, clock):
     dev, token = device(store, alice, "box-1")
-    launch(ws, alice_p, dev, boss, occupied=True)
+    launch(ws, alice_p, dev, boss)
+    # a worker an older hub started in a worktree: its row says so, and the note stays
+    store.db.execute("UPDATE workers SET worktree=1 WHERE name='proj-a-w1'")
     ws.ack(launch_id(store, "proj-a-w1"), True, "", dev)
     worker_up(store, ws, dev, token)
     ws.link("proj-a-w1", "claude:w1", dev)
@@ -528,7 +544,7 @@ def test_only_own_or_admin_may_adopt_or_close(store, ws, alice_p, dev, bob, boss
 
 
 def test_attach_for_other_tools_uses_tmux(ws, alice_p, dev, boss):
-    w = ws.create(alice_p, "proj-a", "t", target(dev), "codex", boss, "sid-1", False)
+    w = ws.create(alice_p, "proj-a", "t", target(dev), "codex", boss, "sid-1")
     assert w["attach"] == "ssh -t -- u@box-1 tmux attach -t =proj-a-w1"
     assert w["os_user"] == "u" and w["host"] == "box-1" and w["tool"] == "codex"
 
@@ -556,7 +572,7 @@ def beat_box2(store, token, key="claude:w1"):
 def test_worker_on_shared_box_stays_online_and_with_its_boss(store, ws, alice, bob, alice_p,
                                                              boss, clock):
     dev, token = shared_box(store, bob)
-    ws.create(alice_p, "proj-a", "t", target(dev, "box-2"), "claude-code", boss, None, False)
+    ws.create(alice_p, "proj-a", "t", target(dev, "box-2"), "claude-code", boss, None)
     beat_box2(store, token)
     assert store.agent("claude:w1").person_id == bob  # bob's bridge reported it first
     assert ws.link("proj-a-w1", "claude:w1", dev)
@@ -574,7 +590,7 @@ def test_worker_on_shared_box_stays_online_and_with_its_boss(store, ws, alice, b
 
 def test_link_before_heartbeat_keeps_boss_after_it(store, ws, alice, bob, alice_p, boss):
     dev, token = shared_box(store, bob)
-    ws.create(alice_p, "proj-a", "t", target(dev, "box-2"), "claude-code", boss, None, False)
+    ws.create(alice_p, "proj-a", "t", target(dev, "box-2"), "claude-code", boss, None)
     assert ws.link("proj-a-w1", "claude:w1", dev)
     a = store.agent("claude:w1")
     assert a.person_id == alice and a.tool == "claude-code" and a.project == "proj-a"
@@ -650,13 +666,12 @@ def test_link_refuses_a_key_it_may_not_take(store, ws, alice, bob, alice_p, boss
     bob_p = principal(store, bob)
     store.seen("claude:bob", "box-3", "claude-code", "proj-a", principal=bob_p)
     bob_dev = device(store, bob, "box-3")[0]
-    ws.create(bob_p, "proj-a", "t", target(bob_dev, "box-3"), "claude-code", "claude:bob", None,
-              False)
+    ws.create(bob_p, "proj-a", "t", target(bob_dev, "box-3"), "claude-code", "claude:bob", None)
     assert ws.link("proj-a-w1", "claude:alice2", bob_dev) is False  # alice's session
     assert store.agent("claude:alice2").person_id == alice
     # a key another live worker already has
-    ws.create(alice_p, "proj-a", "t", target(own), "claude-code", boss, None, False)
-    ws.create(alice_p, "proj-a", "t", target(own), "claude-code", boss, None, False)
+    ws.create(alice_p, "proj-a", "t", target(own), "claude-code", boss, None)
+    ws.create(alice_p, "proj-a", "t", target(own), "claude-code", boss, None)
     assert ws.link("proj-a-w2", "claude:w9", own) is True
     assert ws.link("proj-a-w3", "claude:w9", own) is False
     assert ws.by_name("proj-a-w3")["state"] == "starting"
@@ -690,7 +705,7 @@ def test_hosting_bridge_delivers_to_a_worker_on_its_shared_box(store, ws, alice,
                                                                boss):
     dev, token = shared_box(store, bob)
     bob_bridge = store.authenticate(token)
-    ws.create(alice_p, "proj-a", "t", target(dev, "box-2"), "claude-code", boss, None, False)
+    ws.create(alice_p, "proj-a", "t", target(dev, "box-2"), "claude-code", boss, None)
     beat_box2(store, token)
     assert ws.link("proj-a-w1", "claude:w1", dev)
     store.send("claude:boss", store.agent("claude:w1").name, "hi")

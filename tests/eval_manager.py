@@ -442,10 +442,31 @@ def judge_live(ev, ctx):
         live = Check("decides from the live workers line", False, f"no work_decide for request {rid}")
     return [called(ev, "decides the request", "work_decide",
                    lambda a: str(a.get("request_id")) == str(rid)), live,
+            shares_folder(taken[-1].input if taken else None),
+            nowhere_says(Evidence(replies=ev.replies, texts=ev.texts + [
+                str(c.input.get("reason", "")) for c in dec]),
+                "never promises or asks for a worktree", WORKTREE,
+                unless=r"\b(no|not|never|without)\b[^.\n]{0,30}(worktree|copy)"),
             nowhere_says(after, "never calls w-eval-6 live once it closed",
                          re.escape(wn(ctx, "w-eval-6"))
                          + r"[^.\n]{0,40}\b(runs|running|is (still )?(up|live|there|on)|occup)",
                          unless=r"closed|gone|no longer|not running|finished|done|ended")]
+
+
+WORKTREE = r"worktree|own (copy|branch)|branch work/|work/<"
+SHARE = r"\bshar|same folder"  # the reason says the worker shares bob's folder
+RULES = r"\bstash|switch|reset|commit only|own (files|changes)|files (they|you) (changed|touch)"
+
+
+def shares_folder(d: Optional[dict]) -> Check:
+    """A start on the busy machine passes the sharing rules in its reason; any other
+    decision has nobody to share with."""
+    name = "a start in the busy folder gives the sharing rules"
+    if not d or str(d.get("machine")) != "box-1":
+        return Check(name, True, f"decided {d.get('machine') if d else 'nothing'}: no sharing")
+    why = str(d.get("reason", ""))
+    ok = bool(re.search(SHARE, why, re.I) and re.search(RULES, why, re.I))
+    return Check(name, ok, _short(why, 160))
 
 
 # 6. free disk

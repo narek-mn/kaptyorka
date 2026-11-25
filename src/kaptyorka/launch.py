@@ -1,4 +1,4 @@
-"""Start and stop worker sessions for signed orders: folder, worktree, command line, detach."""
+"""Start and stop worker sessions for signed orders: folder, command line, detach."""
 import json
 import os
 import re
@@ -16,9 +16,9 @@ NAME = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 GONE = ("can't find session", "no server running", "can't find pane", "No job matching")
 NO_SERVER = ("error connecting to", "No such file or directory")  # newer tmux, no server
 CLAUDE_WAIT_S = 60  # `claude --bg` returns once the session runs
-# a Claude Code worker stays in the folder the hub chose (kaptyorka makes its own worktree when
-# that folder is busy): Claude Code 2.1.330 otherwise keeps --bg sessions out of the start
-# folder or moves them into .claude/worktrees/, whose name is no team project, off the hub
+# a Claude Code worker stays in the folder the hub chose, the project folder itself (kaptyorka
+# makes no copies; sessions in one folder share it): Claude Code 2.1.330 otherwise keeps --bg
+# sessions out of the start folder or moves them into .claude/worktrees/, off the hub
 WORKER_SETTINGS = json.dumps({"worktree": {"bgIsolation": "none"},
                               "permissions": {"deny": ["EnterWorktree"]}}, separators=(",", ":"))
 TMUX_WAIT_S = 10  # `tmux new-session -d` returns at once
@@ -62,21 +62,17 @@ class Launcher:
             raise LaunchError("bad worker name")
         return name
 
-    @staticmethod
-    def occupied(folder: str, sessions: Iterable) -> bool:
-        """A live session of this account already works in the folder."""
-        folder = folder.rstrip("/")
-        return any((getattr(s, "cwd", "") or "").rstrip("/") == folder for s in sessions)
-
-    def folder_for(self, order: dict, sessions: Iterable = ()) -> Tuple[str, bool]:
-        if order.get("manager") is True:  # only the manager's own folder; never a worktree
+    def folder_for(self, order: dict) -> str:
+        """The project folder itself, also when other sessions work in it: never a copy (an
+        older hub's `worktree` flag is ignored)."""
+        if order.get("manager") is True:  # only the manager's own folder
             folder = order.get("folder")
             want = paths.home() / paths.MANAGER_DIR
             if not isinstance(folder, str) or not os.path.isabs(folder) \
                     or not os.path.isdir(folder) or Path(folder).resolve() != want.resolve():
                 raise LaunchError(f"no manager folder {folder!r} on this machine"
                                   f" (it must be {want})")
-            return folder.rstrip("/") or folder, False
+            return folder.rstrip("/") or folder
         project = str(order.get("project") or "")
         learned = facts._learned().get(project)
         tried: List[str] = []
@@ -87,23 +83,7 @@ class Launcher:
         if folder is None:
             raise LaunchError(f"no folder for {project} on this machine"
                               f" (looked in {', '.join(tried)})")
-        folder = folder.rstrip("/") or folder
-        if not order.get("worktree") and not self.occupied(folder, sessions):
-            return folder, False
-        name = self._name(order)
-        n = 1
-        while os.path.exists(f"{folder}--{n}"):
-            n += 1
-        path = f"{folder}--{n}"
-        try:
-            r = self.run(["git", "-C", folder, "worktree", "add", "-b", f"work/{name}", path],
-                         capture_output=True, text=True, timeout=60)
-        except (OSError, subprocess.TimeoutExpired) as e:
-            raise LaunchError(f"git worktree add failed: {e}")
-        if r.returncode != 0:
-            raise LaunchError((r.stderr or r.stdout or "").strip()
-                              or f"git worktree add failed in {folder}")
-        return path, True
+        return folder.rstrip("/") or folder
 
     def command(self, order: dict, folder: str) -> List[str]:
         """The tool's argv; the first message is one element, never a shell string.
@@ -238,7 +218,7 @@ class Launcher:
 
     def launch(self, order: dict, sessions: Iterable = ()) -> dict:
         name = self._name(order)
-        folder, worktree = self.folder_for(order, sessions)
+        folder = self.folder_for(order)
         argv = self.command(order, folder)
         if order.get("manager") is True:
             self.stop_old_manager(sessions)
@@ -250,8 +230,7 @@ class Launcher:
                 raise LaunchError("claude --bg printed no session id; see"
                                   f" ~/.kaptyorka/workers/{name}.log")
             job = m.group(1)
-        return {"key": None, "job": job, "folder": folder, "worktree": worktree,
-                "needs_brief": False}
+        return {"key": None, "job": job, "folder": folder, "needs_brief": False}
 
     @staticmethod
     def _job(order: dict) -> str:

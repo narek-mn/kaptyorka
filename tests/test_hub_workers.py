@@ -12,7 +12,7 @@ from kaptyorka import facts, http
 from kaptyorka.adapters.base import Session
 from kaptyorka.orders import signing_key, verify
 from kaptyorka.store import ONLINE_S, Store
-from kaptyorka.workers import UNATTENDED_S, WorkerStore
+from kaptyorka.workers import UNATTENDED_S, WorkerStore, share_rules
 
 ADMIN = "T"  # the fixture's legacy token belongs to the admin
 
@@ -266,9 +266,19 @@ def test_busy_folder_of_another_person_answers_busy(hub, alice):
     assert answer == ("busy: box-1 has alice's session in that folder; ask again later or"
                       " name another machine")
     assert hub.ws.by_name("proj-a-w1") is None and poll(hub, b) == []
-    # the same person: a worktree beside their own session
+    # the same person: the worker shares the folder with their own session, which hears it
     answer = run(call(client, BOSS, "work", project="proj-a", task="x"))
-    assert answer == "starting `proj-a-w1` on box-1 (u) in a worktree, the folder is busy"
+    assert answer == ("starting `proj-a-w1` on box-1 (u) in /w/proj-a, shared with"
+                      " `box-1/claude-code/proj-a` (alice): its first message gives the sharing"
+                      " rules")
+    [launch] = [i for i in poll(hub, b) if i.get("launch")]
+    assert "worktree" not in launch and launch["folder"] == "/w/proj-a"
+    assert launch["first_message"].endswith(share_rules("`box-1/claude-code/proj-a` (alice)"))
+    with hub.store.lock:
+        [told] = [r[0] for r in hub.store.db.execute(
+            "SELECT text FROM messages WHERE to_key='claude:a1'")]
+    assert told.startswith("Worker `proj-a-w1` (alice) joined your folder /w/proj-a on box-1")
+    assert told.endswith(share_rules("`proj-a-w1` (alice)"))
 
 
 def test_who_marks_boss_and_worker(hub, alice):
@@ -380,10 +390,11 @@ def test_close_worker_queues_close_item(hub, alice):
         ("close", "proj-a-w1", True)]
     order = {k: v for k, v in items[0].items() if k != "launch"}
     assert verify(order, signing_key(b.secret), hub.store.clock(), []) is None
-    # w1 still holds the folder until the bridge acks the close: w2 gets a worktree
-    assert "in a worktree" in run(call(client, BOSS, "work", project="proj-a", task="y"))
+    # w1 still holds the folder until the bridge acks the close: w2 shares it
+    assert "shared with `proj-a-w1` (a worker)" in run(call(client, BOSS, "work",
+                                                            project="proj-a", task="y"))
     status, body = http.request("POST", hub.url + "/api/workers/proj-a-w2/close", client.token)
-    assert status == 200 and body["note"] == "its worktree /w/proj-a stays in place"
+    assert status == 200 and "note" not in body
     names = [w["name"] for w in run(call(client, BOSS, "workers"))]
     assert names == ["proj-a-w1", "proj-a-w2"]
     status, body = http.request("GET", hub.url + "/api/workers", client.token)
@@ -471,8 +482,8 @@ def test_worker_on_shared_box_cannot_start_adopt_or_close(hub, alice, clock):
     assert hub.ws.by_name("proj-a-w1")["state"] == "up" and hub.ws.by_name("proj-a-w2") is None
     # bob's own session on box-2 still may
     own = ident("k:bob", machine="box-2")
-    assert run(call(box, own, "work", project="proj-a", task="z", machine="box-2")) == \
-        "starting `proj-a-w2` on box-2 (u) in a worktree, the folder is busy"
+    assert run(call(box, own, "work", project="proj-a", task="z", machine="box-2")).startswith(
+        "starting `proj-a-w2` on box-2 (u) in /w/proj-a, shared with ")
     assert [w["name"] for w in run(call(box, own, "workers"))] == ["proj-a-w2"]
     assert run(call(box, own, "close_worker", name="proj-a-w2")).startswith("closing `proj-a-w2`")
 

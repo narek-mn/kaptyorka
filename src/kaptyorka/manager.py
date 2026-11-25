@@ -95,7 +95,12 @@ A new run gets it in its first message; read it again any time with `state("mana
 - A busy machine: a person wants a project on a machine that is occupied. Either pick another \
 machine at once, or message the person who occupies it and decide only after their answer: \
 `work_decide(request_id, machine_or_wait, reason)` with the machine, another machine, `wait` \
-or `no`. The hub refuses a reason that leans on a worker that is no longer live.
+or `no`. The hub refuses a reason that leans on a worker that is no longer live. A worker \
+started there works in that same folder, beside the sessions in it: kaptyorka makes no \
+worktree or copy. So a start's reason says they share the folder and its one branch, and \
+the rules: nobody switches or resets the branch or stashes; each commits only the files \
+they changed; say on the hub before building, running or restarting what others use; a \
+different branch is asked of the boss, not made.
 - You decided `wait` and things changed: decide the same request again, with a machine or \
 `no`, within an hour of the request; the asker hears it as a first decision. A start or a \
 `no` is final.
@@ -415,7 +420,9 @@ def text_busy(person: str, project: str, machine: str, other: str, folder: str,
     """The knock text for a busy machine. Plain f-strings: braces in any value stay as they
     are. `live`: ws.live_on(machine), the workers running there now."""
     return (_live(machine, live) + f"{person} wants {project} on {machine}, occupied by"
-            f" {other} in {folder}. Ask them, or pick another machine. " + _load(load or [])
+            f" {other} in {folder}. Ask them, or pick another machine. A start there shares"
+            " that folder and its branch with them (no worktree): give the sharing rules in"
+            " your reason. " + _load(load or [])
             + request_line(rid, machine))
 
 

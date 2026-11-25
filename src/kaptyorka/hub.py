@@ -375,6 +375,14 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if ws.notify(to_key, text):
             wake_bridges()
 
+    def share_notices(w: dict) -> str:
+        """Tell the sessions already in a new worker's folder that it joined (ws.create's
+        notices); the ones in that folder, or ""."""
+        notices = w.pop("notices", [])
+        for key, text in notices:
+            tell(key, text)
+        return w.pop("shared", "")
+
     def manager_files(host: str, now: float) -> None:
         """The manager's account, CLAUDE.md and config; written again when the rules changed
         or a file is missing. A lost config means a lost token: a new one, once an hour."""
@@ -1064,7 +1072,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         device = {"device_id": d["id"], "host": d["host"], "os_user": d["os_user"],
                   "folder": r["cwd"]}
         w = ws.create(who, r["project"], f"continue where session {r['name']} stopped", device,
-                      r["tool"], boss_key, key.split(":", 1)[1], False)
+                      r["tool"], boss_key, key.split(":", 1)[1])
+        share_notices(w)
         wake_bridges()
         return f"resuming {r['name']} on {w['host']} as `{w['name']}`"
 
@@ -1412,7 +1421,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     @_tool_errors
     async def work(project: str, task: str, ctx: Context, machine: str = "",
                    tool: str = "claude-code", resume: str = "") -> str:
-        """Start a worker session for you on another machine: in project's folder there, with
+        """Start a worker session for you on another machine: in project's folder there (never
+        a copy; sessions already in it share it, and both sides get the sharing rules), with
         task as its first message. machine: one host by name; tool: claude-code (default),
         codex or opencode; resume: the full session id to continue."""
         agent, principal = caller(ctx)
@@ -1470,8 +1480,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                                       ws.live_on(chosen["host"])))
                 return (f"busy: {chosen['host']} is in use by {heavy[0]}; the manager is"
                         f" deciding (request {rid}); you will hear back here")
-        w = ws.create(principal, project, task, chosen, tool, agent.key, resume or None,
-                      chosen["occupied"])
+        w = ws.create(principal, project, task, chosen, tool, agent.key, resume or None)
+        shared = share_notices(w)
         wake_bridges()
         if present and not fresh:  # could not check for heavy use: the manager hears of it
             manager_key = manager_to_wake()
@@ -1479,7 +1489,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 tell(manager_key, manager.text_unchecked(principal.person_name, project,
                                                          w["host"], present))
         return (f"starting `{w['name']}` on {w['host']} ({w['os_user']})"
-                + (" in a worktree, the folder is busy" if w["worktree"] else ""))
+                + (f" in {w['folder']}, shared with {shared}: its first message gives the sharing"
+                   " rules" if shared else ""))
 
     @server.tool()
     @_tool_errors
@@ -1562,7 +1573,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                           f"request {request_id}: asker gone — {reason}")
             return f"request {request_id}: the asker's session is gone; told them on the page"
         w = ws.create(who, project, r["task"], chosen,
-                      r["tool"], r["boss_key"], r["resume"], chosen["occupied"])
+                      r["tool"], r["boss_key"], r["resume"])
+        share_notices(w)
         mm.request_decide(request_id, f"start {w['host']}", reason, w["name"])
         wake_bridges()
         tell(asker, f"the manager started `{w['name']}` on {w['host']} for {project}:"

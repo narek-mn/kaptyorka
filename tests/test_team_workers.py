@@ -64,9 +64,9 @@ def poll(hub, b):
 
 
 def take(hub, b, key):
-    """The bridge on b takes the one launch waiting there and links its session `key`."""
-    item = poll(hub, b)[0]
-    assert item["kind"] == "launch"
+    """The bridge on b takes the one launch waiting there and links its session `key` (a
+    session already in the folder gets a notice beside it)."""
+    [item] = [i for i in poll(hub, b) if i.get("kind") == "launch"]
     assert http.request("POST", hub.url + "/bridge/ack", b.token,
                         {"id": item["id"], "ok": True, "launch": True})[0] == 204
     assert http.request("POST", hub.url + "/bridge/worker", b.token,

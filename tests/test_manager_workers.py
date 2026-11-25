@@ -16,7 +16,8 @@ def started(hub):
     b, bob_id, bob = busy_setup(hub)
     ask_work(hub, bob)
     run(call(mgr, me, "work_decide", request_id=1, machine="box-1", reason="alice agreed"))
-    [item] = poll(hub, b)  # the launch: taken and linked, so the worker is up
+    # the launch: taken and linked, so the worker is up (alice's session also hears it joined)
+    [item] = [i for i in poll(hub, b) if i.get("launch")]
     http.request("POST", hub.url + "/bridge/ack", b.token,
                  {"id": item["id"], "ok": True, "launch": True})
     assert http.request("POST", hub.url + "/bridge/worker", b.token,

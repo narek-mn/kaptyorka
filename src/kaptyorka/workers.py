@@ -38,6 +38,16 @@ APPROVED = ("EXISTS (SELECT 1 FROM work_requests r WHERE r.worker=w.name AND r.w
             " AND r.person_id=w.boss_person AND r.decision LIKE 'start %')")
 HUB_KEY, HUB_NAME = "hub:workers", "hub"  # the sender of worker notices; not a session
 
+
+def share_rules(others: str) -> str:
+    """How sessions in one folder work together: kaptyorka never makes a copy of a folder."""
+    return (f"You share this folder and its one checked-out branch with {others}. Do not switch"
+            " or reset the branch, and do not stash. Commit only the files you changed yourself,"
+            " naming each path (`git commit <paths>`). Say on the hub before you build, run or"
+            " restart anything the others depend on. If you need a different branch, ask your"
+            " boss instead of changing it.")
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS workers (
     name TEXT PRIMARY KEY, project TEXT NOT NULL, task TEXT NOT NULL, boss_key TEXT NOT NULL,
@@ -661,7 +671,11 @@ class WorkerStore:
         return self.db.execute("SELECT * FROM workers WHERE name=?", (name,)).fetchone()
 
     def create(self, principal: Principal, project: str, task: str, device: dict, tool: str,
-               boss_key: str, resume: Optional[str], occupied: bool) -> dict:
+               boss_key: str, resume: Optional[str]) -> dict:
+        """A worker in the project folder itself, never a copy of it. Sessions already in that
+        folder are named in its first message with the sharing rules, and each of them gets one
+        notice with the same rules: `notices` in the result, as (to_key, text), for the hub to
+        send once the lock is free."""
         task = (task or "").strip()
         if not task:
             raise KaptyorkaError("a worker needs a task")
@@ -682,32 +696,49 @@ class WorkerStore:
             while f"{base}-w{n}" in taken:
                 n += 1
             name = f"{base}-w{n}"
-            # again under the lock: a session or a starting worker may hold the folder by now
-            occupied = bool(occupied) or self.db.execute(
-                "SELECT 1 FROM agents WHERE host=? AND os_user=? AND cwd=? AND last_seen>?"
-                " LIMIT 1", (device["host"], device["os_user"], folder, now - ONLINE_S)
-            ).fetchone() is not None or self.db.execute(
-                "SELECT 1 FROM workers WHERE device_id=? AND folder=? AND worktree=0"
-                " AND state IN ('starting','up') LIMIT 1",
-                (device["device_id"], folder)).fetchone() is not None
+            # under the lock: who works in the folder now (sessions, and workers still starting)
+            here = self.db.execute(
+                "SELECT a.key, a.name, p.name AS person FROM agents a LEFT JOIN people p"
+                " ON p.id=a.person_id WHERE a.host=? AND a.os_user=? AND a.cwd=? AND"
+                " a.last_seen>? ORDER BY a.name",
+                (device["host"], device["os_user"], folder, now - ONLINE_S)).fetchall()
+            sharing = [(r["key"], f"`{r['name']}`" + (f" ({r['person']})" if r["person"] else ""))
+                       for r in here]
+            seen = {r["key"] for r in here}
+            sharing += [(r["key"], f"`{r['name']}` (a worker"
+                         + (" still starting)" if r["state"] == "starting" else ")"))
+                        for r in self.db.execute(
+                "SELECT name, key, state FROM workers WHERE device_id=? AND folder=? AND"
+                " worktree=0 AND state IN ('starting','up') ORDER BY name",
+                (device["device_id"], folder)) if r["key"] is None or r["key"] not in seen]
             person = self._person_name(principal.person_id)
             self.db.execute(
                 "INSERT INTO workers (name, project, task, boss_key, boss_person, device_id, host,"
                 " tool, folder, worktree, state, created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (name, project, task, boss_key, principal.person_id, device["device_id"],
-                 device["host"], tool, folder, int(occupied), "starting", now))
+                 device["host"], tool, folder, 0, "starting", now))
             boss_name = boss["name"]
             first = (f"You are kaptyorka worker `{name}` for `{boss_name}` ({person}). Your task:"
                      f"\n\n{task}\n\nTake orders only from `{boss_name}` and the hub admin."
                      f" Report to `{boss_name}` with send(to=\"{boss_name}\", ...) when done or"
                      " stuck. When the task is done and reported, call"
-                     f" close_worker(name=\"{name}\") to end this session; your commits,"
-                     " branch and files stay.")
+                     f" close_worker(name=\"{name}\") to end this session; your commits"
+                     " and files stay.")
+            if sharing:
+                first += "\n\n" + share_rules(", ".join(who for _, who in sharing))
             self._queue(device["device_id"], name, "launch", {
                 "issued": now, "worker": name, "person": person, "tool": tool,
-                "project": project, "folder": folder, "worktree": occupied, "task": task,
+                "project": project, "folder": folder, "task": task,
                 "boss": boss_name, "resume": resume, "first_message": first})
-            return self._dict(self._row(name))
+            out = self._dict(self._row(name))
+        out["shared"] = ", ".join(who for _, who in sharing)
+        joined = f"`{name}` ({person})" if person else f"`{name}`"
+        out["notices"] = [
+            (key, f"Worker {joined} joined your folder {folder} on {device['host']} for"
+                  f" {boss_name}. " + share_rules(", ".join(
+                      [joined] + [o for k, o in sharing if k != key])))
+            for key, _ in sharing if key and key != boss_key]
+        return out
 
     def create_manager(self, admin_person_id: int, manager_person_id: int, device: dict,
                        folder: str, first_message: str, model: str = "",
@@ -740,7 +771,7 @@ class WorkerStore:
                  device["host"], "claude-code", folder, now))
             self._queue(device["id"], WORKER, "launch", {
                 "issued": now, "worker": WORKER, "person": owner, "tool": "claude-code",
-                "project": "manager", "folder": folder, "worktree": False, "task": task,
+                "project": "manager", "folder": folder, "task": task,
                 "boss": admin, "resume": None, "first_message": first_message,
                 **({"model": model} if model else {}), **({"effort": effort} if effort else {}),
                 "manager": True})
@@ -1311,7 +1342,7 @@ class WorkerStore:
                 body.update(auto=auto, folder=(cwd["cwd"] if cwd and cwd["cwd"] else w["folder"]))
             self._queue(w["device_id"], name, "close", body)
         out = self._dict(self._row(name))
-        if w["worktree"]:
+        if w["worktree"]:  # a worker from an older hub, in a `<folder>--N` worktree
             notes.append(f"its worktree {w['folder']} stays in place")
         if notes:
             out["note"] = "; ".join(notes)

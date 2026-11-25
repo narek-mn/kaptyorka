@@ -240,7 +240,8 @@ def test_claude_md_has_the_usage_section():
 def test_text_busy():
     t = manager.text_busy("alice", "proj-a", "box-1", "bob", "/p", 7)
     assert t == ("alice wants proj-a on box-1, occupied by bob in /p. Ask them, or pick another"
-                 " machine. Request 7: work_decide(7, \"box-1\" or another machine or"
+                 " machine. A start there shares that folder and its branch with them (no"
+                 " worktree): give the sharing rules in your reason. Request 7: work_decide(7, \"box-1\" or another machine or"
                  " \"wait\", reason).")
     assert manager.request_line(7, "box-1") in t
 

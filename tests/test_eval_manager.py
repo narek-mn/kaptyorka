@@ -171,7 +171,7 @@ def test_close_case_wants_a_reason_and_no_promise_on_bobs_worker():
 def test_live_case_wants_box_1_and_no_stale_worker():
     ctx = {**CTX, "rid5": 7}
     good = ev(calls=[("work_decide", {"request_id": 7, "machine": "box-1",
-                                      "reason": "bob agreed; no live workers there"}, 1)])
+                                      "reason": "bob agreed; no live workers there." + SHARED}, 1)])
     assert all(names(em.judge_live(good, ctx)).values())
     stale = ev(calls=[("work_decide", {"request_id": 7, "machine": "wait",
                                        "reason": "w-eval-6 runs there"}, 1)],
@@ -181,12 +181,35 @@ def test_live_case_wants_box_1_and_no_stale_worker():
     assert not r["never calls w-eval-6 live once it closed"]
     assert not names(em.judge_live(ev(), ctx))["decides the request"]
     # "Noted: w-eval-6 runs on box-1" was true before it closed (mark "closed" at 5)
-    noted = ev(calls=[("work_decide", {"request_id": 7, "machine": "box-1", "reason": "bob agreed"}, 9)],
+    noted = ev(calls=[("work_decide", {"request_id": 7, "machine": "box-1",
+                                       "reason": "bob agreed." + SHARED}, 9)],
                replies=[("web:bob", "Noted: w-eval-6 is running on box-1 today.", 2)])
     assert all(names(em.judge_live(noted, {**ctx, "mark": {"closed": 5}})).values())
     done = ev(calls=[("work_decide", {"request_id": 7, "machine": "box-1",
                                       "reason": "bob confirmed w-eval-6 is done"}, 9)])
     assert names(em.judge_live(done, ctx))["decides from the live workers line"]
+
+
+SHARED = " They share the folder and its branch: no switch, reset or stash; commit only own files."
+RULES = "a start in the busy folder gives the sharing rules"
+NO_TREE = "never promises or asks for a worktree"
+
+
+def test_live_case_wants_the_sharing_rules_and_no_worktree():
+    ctx = {**CTX, "rid5": 7}
+
+    def decide(machine, reason, replies=()):
+        return names(em.judge_live(ev(calls=[("work_decide", {"request_id": 7, "machine": machine,
+                                                              "reason": reason}, 1)],
+                                      replies=replies), ctx))
+    bare = decide("box-1", "bob agreed")
+    assert bare[NO_TREE] and not bare[RULES]
+    assert not decide("box-1", "bob agreed; it gets its own worktree on branch work/proj-a-w1")[NO_TREE]
+    told = decide("box-1", "bob agreed." + SHARED,
+                  [(KEYS["a1"], "Started; it works in a worktree of proj-a.", 2)])
+    assert told[RULES] and not told[NO_TREE]
+    assert decide("box-1", "bob agreed; no worktree." + SHARED)[NO_TREE]
+    assert decide("wait", "bob is busy until noon")[RULES]  # nobody to share with yet
 
 
 def test_disk_case():
