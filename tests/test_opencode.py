@@ -72,6 +72,12 @@ def test_v1_window_resumed_on_an_older_chat_shows_it(fake_opencode, monkeypatch)
         assert identity.RESOLVERS["opencode"](os.getpid(), CWD) == s.key
     monkeypatch.setattr(opencode, "_argv", lambda pid: ["opencode", "-s", "not-an-id"])
     assert adapter(fake_opencode).sessions() == []
+    # a chat made in the second the window started (its start time is whole seconds) is not
+    # a step in a window opened by id
+    fake_opencode.sessions.append({"id": NEWEST, "directory": CWD,
+                                   "time": {"created": STARTED, "updated": STARTED + 500}})
+    monkeypatch.setattr(opencode, "_argv", lambda pid: ["opencode", "-s", STALE])
+    assert [s.key for s in adapter(fake_opencode).sessions()] == [f"opencode:{STALE}"]
 
 
 def test_v1_a_chat_another_window_was_opened_on_is_that_window_s(fake_opencode):
@@ -513,6 +519,25 @@ def test_v1_end_terminates_the_tui_whose_server_shows_it(fake_opencode, monkeypa
         assert tui.wait(timeout=5) == -15 and serve.poll() is None
     finally:
         for p in (tui, serve):
+            p.kill()
+            p.wait()
+
+
+def test_v1_end_refuses_a_chat_two_windows_map_to_and_both_stay(fake_opencode, monkeypatch):
+    """OpenCode 1: two windows in one folder share the store and both map to the newest chat,
+    a guess: closing it would end both, so neither gets the x and end() refuses."""
+    monkeypatch.setattr(opencode, "service", lambda: None)
+    tuis = [subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+            for _ in range(2)]
+    try:
+        a = OpenCodeAdapter(find_ports=lambda: {p.pid: fake_opencode.port for p in tuis})
+        assert [(s.key, s.closable) for s in a.sessions()] == [(f"opencode:{NEWEST}", False)] * 2
+        with pytest.raises(ValueError, match="more than one OpenCode 1 window"):
+            a.end(f"opencode:{NEWEST}")
+        time.sleep(0.2)
+        assert [p.poll() for p in tuis] == [None, None]
+    finally:
+        for p in tuis:
             p.kill()
             p.wait()
 

@@ -547,3 +547,22 @@ def test_invite_codes_never_start_with_a_dash(tmp_path, monkeypatch):
     monkeypatch.setattr(secrets, "token_urlsafe", lambda n=32: next(draws))
     assert s.invite_create(pid).startswith("good")
     s.close()
+
+
+def test_ended_leaves_another_person_s_or_another_device_s_session_online(tmp_path):
+    """A bridge's "ended" list touches only its own rows: one on the same machine name that
+    belongs to another person, or to the same person's other device, stays online."""
+    s = Store(tmp_path / "hub.db")
+    alice, ta = _member(s, "alice")
+    _, tb = _member(s, "bob")
+    other = s.device_add(alice, "alice-desktop")
+    own, row = s.authenticate(ta), lambda k: {"key": k, "tool": "opencode", "project": "proj-a"}
+    s.heartbeat("box-1", [row("opencode:ses_a")], principal=own, facts=_facts("box-1"))
+    s.heartbeat("box-1", [row("opencode:ses_b")], principal=s.authenticate(tb),
+                facts=_facts("box-1"))
+    s.heartbeat("box-1", [row("opencode:ses_c")], principal=s.authenticate(other),
+                facts=_facts("box-1"))
+    s.heartbeat("box-1", [], principal=own, facts=_facts("box-1"),
+                ended=["opencode:ses_a", "opencode:ses_b", "opencode:ses_c"])
+    assert sorted(a.key for a in s.online()) == ["opencode:ses_b", "opencode:ses_c"]
+    s.close()

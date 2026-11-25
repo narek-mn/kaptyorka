@@ -164,7 +164,10 @@ DEPS: Tuple[Dep, ...] = (
     Dep("opencode.sigterm", "opencode",
         "SIGTERM to a TUI window's own opencode process (one process, no children): it exits,"
         " the V2 service keeps running and keeps the chat (`opencode -s <id>` continues it, per"
-        " its --help); seen by hand on 2.4.1, V1 not checked",
+        " its --help); seen by hand on 2.4.1, and on 1.19.5 by tests/test_opencode_tui_slow.py"
+        " (the page's close ends that window only). V1 has no proof which chat a window shows:"
+        " the newest chat in its folder since it started, or its -s/-c command line; a chat"
+        " more than one V1 window maps to is never closed",
         "closing an OpenCode terminal window's session from the page", "", "", False,
         probed=False),
     # Codex

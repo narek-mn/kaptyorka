@@ -303,6 +303,35 @@ def test_a_session_the_adapter_says_ended_leaves_at_once_and_its_row_stays(hub, 
     assert hub.store.agent("opencode:ses_a") is not None  # offline, its row kept
 
 
+def test_ended_names_only_sessions_this_bridge_reported(hub, home, monkeypatch):
+    """A personal or /hub off chat a window let go of was never reported, so its id never
+    reaches the hub as "ended" either; a reported one goes once, then is forgotten."""
+    sent = []
+    real = bridge_mod.http.request
+
+    def spy(method, url, token, body=None, *a, **kw):
+        if url.endswith("/bridge/heartbeat"):
+            sent.append(body)
+        return real(method, url, token, body, *a, **kw)
+
+    monkeypatch.setattr(bridge_mod.http, "request", spy)
+    oc = FakeAdapter("opencode", "opencode", [
+        Session("opencode:ses_a", "opencode", "proj-a"),
+        Session("opencode:ses_p", "opencode", "notes"),  # personal: no team project
+        Session("opencode:ses_off", "opencode", "proj-a")])
+    oc.off_keys = {"opencode:ses_off"}
+    bridge = Bridge(cfg(hub), [oc], bridge_mod.log)
+    bridge._team = lambda: ({"proj-a"}, set())  # the hub's team projects
+    bridge.heartbeat()
+    assert [s["key"] for s in sent[-1]["sessions"]] == ["opencode:ses_a"]
+    oc._sessions.clear()
+    oc.ended_keys = {"opencode:ses_a", "opencode:ses_p", "opencode:ses_off"}
+    bridge.heartbeat()
+    assert sent[-1]["ended"] == ["opencode:ses_a"]
+    bridge.heartbeat()
+    assert "ended" not in sent[-1]
+
+
 def test_heartbeat_sends_facts(hub, home, monkeypatch):
     import getpass
 

@@ -859,13 +859,15 @@ def _newest_row(pid: int, port: int, cwd: str, others: frozenset = frozenset()) 
     has no way to say which chat a window shows (no TUI plugin, no route): a window switched to
     an older chat shows it from its first new step.
     """
-    since = _started_ms(pid)
+    sid, cont = _opened_with(pid)
+    # the start time is rounded down to the second: a chat made in that second, just before
+    # a window opened by id (-s), is not a step in that window
+    since = _started_ms(pid) + (1000 if sid else 0)
     rows = [s for s in _list(pid, port) if s.get("directory") == cwd]
     here = [s for s in rows if s.get("time", {}).get("updated", 0) >= since
             and s.get("id") not in others]
     if here:
         return max(here, key=lambda s: s.get("time", {}).get("updated", 0))
-    sid, cont = _opened_with(pid)
     if sid:
         return next((s for s in rows if s.get("id") == sid), None)
     top = [s for s in rows if not s.get("parentID")]
@@ -996,6 +998,12 @@ class OpenCodeAdapter:
                                    os.path.basename(cwd.rstrip("/")), act, cwd=cwd,
                                    title=session_title(row.get("title")),
                                    idle_s=idle_s, write_s=write_s, closable=not _is_service(pid)))
+        # two windows in one folder can map to the same chat (the newest-chat guess): closing
+        # it would end both, so end() refuses and no x is offered
+        windows: Dict[str, int] = {}
+        for s in out:
+            windows[s.key] = windows.get(s.key, 0) + s.closable
+        out = [replace(s, closable=False) if windows[s.key] > 1 else s for s in out]
         _note_closed(shown, unread)  # a window that closed, or moved on: its chat ended here
         self.ended_keys = self._ended(out)
         return out
@@ -1050,8 +1058,10 @@ class OpenCodeAdapter:
     def _windows(self, sid: str) -> List[int]:
         """The pids of the terminal windows (TUIs) proven to show this session now. V2: a note
         of kaptyorka's TUI plugin names it (_opened drops a dead or reused pid's note) and its
-        pid is an opencode process that is not the service. V1: a TUI's own server, not an
-        `opencode serve`, whose newest session since it started is this one."""
+        pid is an opencode process that is not the service. V1 is a guess, not proof: a TUI's own
+        server, not an `opencode serve`, whose newest session in its folder since it started
+        (or the one its -s/-c command line opened) is this one; end() refuses when that is more
+        than one window."""
         from kaptyorka.identity import proc_cwd
 
         if service():
@@ -1079,13 +1089,16 @@ class OpenCodeAdapter:
         to each window process proven to show it now (_windows), never the V2 service, then wait
         up to EXIT_WAIT_S for them to exit. The chat stays in OpenCode's own store. Raises
         ValueError when nothing was ended: not open in a window here (an app's session has no
-        process on this machine), or a window did not exit."""
+        process on this machine), on OpenCode 1 more than one window maps to it, or a window
+        did not exit."""
         sid = key.partition(":")[2]
         if not valid_id(sid):
             raise ValueError(f"not an OpenCode session id: {key}")
         pids = self._windows(sid)
         if not pids:
             raise ValueError("not open in an OpenCode terminal window on this machine")
+        if len(pids) > 1 and not service():  # V1 guesses: which window shows it is not known
+            raise ValueError("open in more than one OpenCode 1 window here; close it there")
         sent = []
         for pid in pids:
             try:

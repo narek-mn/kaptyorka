@@ -101,6 +101,10 @@ class Bridge:
         self._updated_to = ""  # the hub version an update was last run for
         self._update_retry_at = 0.0
         self._closed: List[str] = []  # left-behind sessions closed here, for the next beat
+        # keys sent to the hub as sessions in this run: only these may go as "ended", so a
+        # personal or /hub off chat a window let go of never reaches it (after a restart the
+        # hub's ONLINE_S fallback applies)
+        self._reported: set = set()
         self._close_done: Dict[str, str] = {}  # the page's close orders: key -> "" or why not
 
     def _report(self, area: str, problem: Optional[str]) -> None:
@@ -298,7 +302,7 @@ class Bridge:
                 "overnight": [s["key"] for s in sessions if self._overnight(s["key"])]}
         if gone:
             body["gone"] = gone
-        ended -= {s["key"] for s in sessions}
+        ended = (ended & self._reported) - {s["key"] for s in sessions}
         if ended:
             body["ended"] = sorted(ended)
         if refused:
@@ -313,6 +317,8 @@ class Bridge:
                                       self.cfg["token"], body)
         if gone and status in (200, 204):
             offhub.told(gone)
+        if status in (200, 204):  # an ended or switched-off one is told once, then forgotten
+            self._reported = (self._reported | {s["key"] for s in sessions}) - ended - set(gone)
         if closed and status in (200, 204):
             self._closed = [k for k in self._closed if k not in closed]
         if done and status in (200, 204):
