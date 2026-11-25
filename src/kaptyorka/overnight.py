@@ -71,10 +71,10 @@ PAST = re.compile(r"\blast night\b|\bthis morning\b|\byesterday\b|\ball night\b"
                   r"(?:was|were|did|didn't|ran|turned|went|stayed|got|had|has|failed|finished)\b",
                   re.I)
 ASK = re.compile(r"\b(?:turn|switch|put)\s+(?:on\s+)?overnight mode\b|\bovernight mode on\b"
-                 r"|\b(?:until|till)\s+i(?:'m| am)?\s+back\b"
-                 r"|\bwhile i(?:'m| am)?\s+(?:sleep|sleeping|asleep|away)\b"
-                 r"|\b(?:before|by)\s+(?:the\s+)?morning\b|^\s*overnight task\s*[:,.\-\u2013]"
+                 r"|^\s*overnight task\s*[:,.\-\u2013]"
                  r"|\bthis is an? overnight task\b|\bwork\b[^.?!\n]{0,20}\bwhole night\b"
+                 r"|\b(?:do|work|run|fix|finish|continue|keep|handle|build|try)\b[^.?!\n]{0,60}"
+                 r"\bwhile i(?:'m| am)?\s+(?:sleep|sleeping|asleep|away)\b"
                  r"|\b(?:do|work|run|fix|finish|continue|keep|handle|build|try)\b[^.?!\n]{0,60}"
                  r"\bover\s?-?night\b(?!\s+(?:task|run|job|mode)?\s*(?:results?|reports?))",
                  re.I | re.M)

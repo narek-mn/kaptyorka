@@ -540,7 +540,6 @@ def test_guarded_form_is_ours_for_install_leave_and_doctor(home):
     "turn on overnight mode and continue until I'm back tomorrow",
     "work on this overnight",
     "keep going while I sleep",
-    "have the parser done by morning",
     "overnight task: fix the flaky test",
 ])
 def test_asks_for_tonight_trigger(prompt):
@@ -593,6 +592,10 @@ def test_clear_orders_trigger(prompt):
     "turn off overnight mode",
     "disable overnight",
     "no overnight",
+    "i need this by morning",
+    "don't push until I'm back",
+    "wait until I'm back",
+    "I could not sleep, was it running while I sleep?",
     "why did overnight mode turn on?",
     "overnight mode is buggy",
     "the overnight trigger fires too often",
