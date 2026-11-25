@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -501,6 +502,47 @@ def test_v2_end_says_so_when_the_window_does_not_exit(windows, monkeypatch):
     finally:
         stubborn.kill()
         stubborn.wait()
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_ended_sees_an_unreaped_zombie(monkeypatch, platform):
+    """A signalled child its parent has not reaped still answers kill(pid, 0): ended anyway,
+    from /proc on Linux, from `ps -o stat=` elsewhere (macOS has no /proc)."""
+    monkeypatch.setattr(opencode.sys, "platform", platform)
+    if platform == "darwin":  # and no /proc to read
+        real = opencode.Path
+
+        def no_proc(*a):
+            p = real(*a)
+            return real("/nonexistent" + str(p)) if str(p).startswith("/proc") else p
+        monkeypatch.setattr(opencode, "Path", no_proc)
+    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        assert not opencode._ended(p.pid)
+        os.kill(p.pid, signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while not opencode._ended(p.pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert opencode._ended(p.pid) and p.returncode is None  # dead, and not reaped yet
+        assert opencode._alive(p.pid)  # the zombie still answers kill(pid, 0)
+    finally:
+        p.kill()
+        p.wait()
+
+
+@pytest.mark.parametrize("out,alive,ended", [("Z", True, True), ("Z+\n", True, True),
+                                             ("S+", True, False), ("R", True, False),
+                                             ("", True, False), ("", False, True)])
+def test_ended_reads_ps_state_off_linux(monkeypatch, out, alive, ended):
+    """macOS ps prints the state letters (Z = zombie), or no row once the process is gone."""
+    monkeypatch.setattr(opencode.sys, "platform", "darwin")
+    calls = []
+    monkeypatch.setattr(opencode.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or
+                        subprocess.CompletedProcess(cmd, 0 if out else 1, out, ""))
+    answers = iter([True, alive])
+    monkeypatch.setattr(opencode, "_alive", lambda pid: next(answers))
+    assert opencode._ended(4242) is ended
+    assert calls == [["ps", "-o", "stat=", "-p", "4242"]]
 
 
 def test_v1_end_terminates_the_tui_whose_server_shows_it(fake_opencode, monkeypatch):

@@ -642,12 +642,19 @@ def _opened() -> Dict[int, Optional[Dict[str, str]]]:
 
 
 def _ended(pid: int) -> bool:
-    """The process is gone, or only a zombie its parent has not reaped yet (Linux)."""
+    """The process is gone, or only a zombie its parent has not reaped yet: state Z in
+    /proc/<pid>/stat on Linux, the first letter of `ps -o stat=` elsewhere (BSD/macOS ps(1):
+    "Z  Marks a dead process (a zombie)"). A zombie still answers kill(pid, 0)."""
     if not _alive(pid):
         return True
     try:
-        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z"
-    except (OSError, IndexError):
+        if sys.platform.startswith("linux"):
+            return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z"
+        r = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True,
+                           timeout=TIMEOUT_S)
+        state = r.stdout.strip()
+        return state.startswith("Z") if state else not _alive(pid)  # no row: it went meanwhile
+    except (OSError, IndexError, subprocess.SubprocessError):
         return False
 
 
