@@ -508,6 +508,8 @@ def test_v2_end_says_so_when_the_window_does_not_exit(windows, monkeypatch):
 def test_ended_sees_an_unreaped_zombie(monkeypatch, platform):
     """A signalled child its parent has not reaped still answers kill(pid, 0): ended anyway,
     from /proc on Linux, from `ps -o stat=` elsewhere (macOS has no /proc)."""
+    if platform == "linux" and not os.path.exists("/proc/self/stat"):
+        pytest.skip("the /proc way needs a real /proc (not on macOS)")
     monkeypatch.setattr(opencode.sys, "platform", platform)
     if platform == "darwin":  # and no /proc to read
         real = opencode.Path
