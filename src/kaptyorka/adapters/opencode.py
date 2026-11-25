@@ -506,7 +506,9 @@ def activity(updated, busy: bool) -> "tuple[Optional[float], str, Optional[float
     return age, "busy" if busy else "idle", age if busy else None
 
 
-DEFAULT_TITLE = re.compile(r"^(New|Child) session - \d{4}-")  # OpenCode's name before the first prompt
+# OpenCode's placeholder before the first prompt: its own isDefaultTitle pattern, the same in
+# 1.19.5 and 2.4.1 ("New session - <ISO time>", "Child session - ..." for a subagent)
+DEFAULT_TITLE = re.compile(r"^(New|Child) session - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
 
 def session_title(value) -> str:

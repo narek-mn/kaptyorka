@@ -150,6 +150,11 @@ DEPS: Tuple[Dep, ...] = (
         " /api/session/<id> time.busy/time.idle",
         "idle time, working or idle, the busy-stuck check", "session times or status not readable",
         "no idle time or stuck check for OpenCode", True),
+    Dep("opencode.title", "opencode",
+        "a session row's `title` (OpenCode's own or the renamed one; V1 GET /session, V2 GET"
+        " /api/session and /api/session/<id>; checked on 1.19.5 and 2.4.1)",
+        "session names on the page and in who", "session rows have no title",
+        "sessions shown by folder only", True),
     Dep("opencode.limit_events", "opencode",
         "plugin events: V1 `session.error`, V2 session hook `retry` with the error",
         "why a session stopped (usage limit)", "", "", True, probed=False),
@@ -562,6 +567,49 @@ def p_opencode_activity(ctx: Ctx):
     return OK, ""
 
 
+TITLED_AFTER_MS = 60_000  # a session that worked this long has a title from OpenCode by then
+
+
+def title_rows(rows) -> Tuple[str, str]:
+    """The opencode.title verdict on session rows: OK when one has a text title; BROKEN when
+    none has one though a session worked long enough to get one (a renamed field); else
+    UNKNOWN (no sessions, or only new ones: a session has no title before its first prompt)."""
+    rows = [r for r in rows or [] if isinstance(r, dict)]
+    if any(isinstance(r.get("title"), str) and r["title"].strip() for r in rows):
+        return OK, ""
+    def worked(r):
+        t = r.get("time") if isinstance(r.get("time"), dict) else {}
+        c, u = t.get("created"), t.get("updated")
+        return all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (c, u)) \
+            and u - c >= TITLED_AFTER_MS
+    if any(worked(r) for r in rows):
+        return BROKEN, "no session row has a title"
+    return UNKNOWN, "no session that has worked yet"
+
+
+def p_opencode_title(ctx: Ctx):
+    from kaptyorka.adapters import opencode
+
+    if opencode.major() < 2:
+        for pid, port in opencode.find_ports().items():
+            try:
+                return title_rows(opencode._list(pid, port))
+            except (OSError, ValueError, opencode.NeedsPassword):
+                continue
+        return UNKNOWN, "no V1 TUI listening"
+    svc = opencode.service()
+    if svc is None:
+        return UNKNOWN, "no V2 service running"
+    try:
+        status, data = opencode._v2_call(svc, "GET", "/api/session?limit=20&order=desc")
+    except OSError as e:
+        return UNKNOWN, str(e)[:100]
+    rows = data.get("data") if status == 200 and isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return UNKNOWN, f"GET /api/session answered {status}"  # opencode.api_session says so
+    return title_rows(rows)
+
+
 # --- Codex probes ----------------------------------------------------------------------
 
 def p_codex_version(ctx: Ctx):
@@ -629,6 +677,7 @@ PROBES: Dict[str, Callable[[Ctx], Tuple[str, str]]] = {
     "opencode.version": p_opencode_version, "opencode.v1_server": p_opencode_v1,
     "opencode.service": p_opencode_service, "opencode.api_session": p_opencode_api,
     "opencode.activity": p_opencode_activity, "opencode.app_sessions": p_opencode_app_sessions,
+    "opencode.title": p_opencode_title,
     "codex.version": p_codex_version, "codex.app_server": p_codex_app_server,
     "codex.thread_status": p_codex_thread_status,
 }

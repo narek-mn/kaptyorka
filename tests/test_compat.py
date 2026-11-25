@@ -145,6 +145,34 @@ def test_a_real_refusal_marker_is_read(home, sock):
     assert res["claude.refusal"][0] == compat.OK
 
 
+@pytest.mark.parametrize("rows, state", [
+    ([{"id": "a", "title": "Fix the login page", "time": {"created": 0, "updated": 10}}], compat.OK),
+    ([{"id": "a", "title": "", "time": {"created": 0, "updated": 120_000}},
+      {"id": "b", "title": "Renamed", "time": {"created": 0, "updated": 5}}], compat.OK),
+    ([{"id": "a", "name": "Fix the login page", "time": {"created": 0, "updated": 120_000}}], compat.BROKEN),
+    ([{"id": "a", "title": 5, "time": {"created": 0, "updated": 120_000}}], compat.BROKEN),
+    ([{"id": "a", "time": {"created": 0, "updated": 5_000}}], compat.UNKNOWN),  # new: no title yet
+    ([], compat.UNKNOWN), (None, compat.UNKNOWN)])
+def test_opencode_title_probe_breaks_only_when_a_worked_session_has_no_title(rows, state):
+    assert compat.title_rows(rows)[0] == state
+
+
+def test_opencode_title_probe_reads_the_v2_list(monkeypatch):
+    from kaptyorka.adapters import opencode
+    monkeypatch.setattr(opencode, "major", lambda: 2)
+    monkeypatch.setattr(opencode, "service", lambda: {"url": "http://127.0.0.1:1"})
+    rows = [{"id": "a", "time": {"created": 0, "updated": 120_000}}]
+    calls = []
+    monkeypatch.setattr(opencode, "_v2_call", lambda svc, m, path: calls.append(path) or (200, {"data": rows}))
+    ctx = compat.Ctx(Path("/nonexistent"), SOUND)
+    assert compat.probe(compat.BY_ID["opencode.title"], ctx)[0] == compat.BROKEN
+    rows[0]["title"] = "ghoosh-gros-stream"
+    assert compat.probe(compat.BY_ID["opencode.title"], ctx) == (compat.OK, "")
+    assert calls[0] == "/api/session?limit=20&order=desc"
+    monkeypatch.setattr(opencode, "service", lambda: None)
+    assert compat.probe(compat.BY_ID["opencode.title"], ctx)[0] == compat.UNKNOWN
+
+
 def test_no_live_session_is_no_evidence(home):
     res = compat.cheap(["claude-code"], compat.Ctx(home, SOUND, tmp=home / "tmp"))
     assert broken_ids(res) == []
