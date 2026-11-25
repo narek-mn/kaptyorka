@@ -215,6 +215,20 @@ def _lineage(t: dict) -> "tuple[str, bool, bool]":
     return parent, t.get("source") == "exec", bool(parent)
 
 
+def thread_title(t: dict) -> str:
+    """The name Codex shows for a thread: its `name`, which holds both a /rename and the title
+    Codex's TUI generates after the first prompt (it saves that with thread/name/set only while
+    the thread has no name). Checked in codex rust-v0.166.0: Thread.name, "Optional user-facing
+    thread title", app-server-protocol/src/protocol/v2/thread_data.rs:285-286; automatic titles,
+    tui/src/app/event_dispatch.rs:3043-3058; /rename, tui/src/chatwidget/slash_dispatch.rs:927.
+    Its resume list shows `preview` (usually the first prompt's text) for a thread with no name
+    (tui/src/resume_picker.rs:1104-1105); that is never sent: it is what someone typed, not a
+    name. "" for none."""
+    from kaptyorka.adapters.claude import clean_title
+
+    return clean_title(t.get("name"))
+
+
 def session_key(pid: int, cwd: str) -> Optional[str]:
     """identity.RESOLVERS["codex"]: newest loaded thread in the shim's cwd (the MCP server's
     parent is the daemon, not the TUI, so the pid says nothing). None without a daemon."""
@@ -289,7 +303,7 @@ class CodexAdapter:
             parent, oneshot, helper = _lineage(t)
             # updatedAt is not judged as a last step (unverified during a long turn): no write_s
             out.append(Session(f"codex:{t['id']}", self.tool, os.path.basename(t["cwd"].rstrip("/")),
-                               _activity(t.get("status")), cwd=t["cwd"],
+                               _activity(t.get("status")), cwd=t["cwd"], title=thread_title(t),
                                idle_s=_idle(t.get("updatedAt")), parent=parent, oneshot=oneshot,
                                helper=helper, parent_gone=bool(parent) and parent not in live))
         return out

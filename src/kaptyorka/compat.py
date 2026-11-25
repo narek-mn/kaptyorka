@@ -178,6 +178,11 @@ DEPS: Tuple[Dep, ...] = (
         "thread/read `status` {type: idle | active, activeFlags}, parentThreadId, source",
         "working or idle, subagents under their parent", "thread status changed",
         "activity unknown", True),
+    Dep("codex.title", "codex",
+        "thread/read `name` (string or null): a /rename, else the title Codex's TUI made"
+        " (rust-v0.166.0 v2/thread_data.rs Thread.name)",
+        "session names on the page and in who", "thread/read has no name field",
+        "sessions shown by folder only", True),
     Dep("codex.rate_limits", "codex",
         "app-server account/rateLimits/read: rateLimits.primary/secondary {usedPercent,"
         " resetsAt}, ordinaryUsageAllowed (rust-v0.166.0 v2/account.rs)",
@@ -671,6 +676,31 @@ def p_codex_thread_status(ctx: Ctx):
         (BROKEN, f"thread status {str(s)[:60]}")
 
 
+def p_codex_title(ctx: Ctx):
+    """OK when a loaded thread's thread/read has `name`, a string or null (Codex sends the key
+    either way, Option<String> with no skip); BROKEN when it is missing or another type."""
+    from kaptyorka.adapters.codex import Rpc, RpcError, codex_home, default_socket
+
+    sock = default_socket(ctx.home) if not os.environ.get("CODEX_HOME") else \
+        codex_home() / "app-server-control" / "app-server-control.sock"
+    if not sock.exists():
+        return UNKNOWN, "app-server daemon not running"
+    try:
+        with Rpc(sock) as rpc:
+            ids = rpc.call("thread/loaded/list", {})["data"]
+            if not ids:
+                return UNKNOWN, "no loaded thread"
+            t = rpc.call("thread/read", {"threadId": ids[0]})["thread"]
+    except (ConnectionRefusedError, FileNotFoundError):
+        return UNKNOWN, "app-server daemon not running"
+    except (OSError, RpcError, KeyError, TypeError, ValueError) as e:
+        return BROKEN, str(e)[:100]
+    if not isinstance(t, dict) or "name" not in t:
+        return BROKEN, "thread/read has no name"
+    return (OK, "") if t["name"] is None or isinstance(t["name"], str) else \
+        (BROKEN, f"thread name is {type(t['name']).__name__}")
+
+
 PROBES: Dict[str, Callable[[Ctx], Tuple[str, str]]] = {
     "claude.version": p_claude_version, "claude.cli": p_claude_cli, "claude.auth": p_claude_auth,
     "claude.session_file": p_claude_session_file, "claude.status": p_claude_status,
@@ -685,7 +715,7 @@ PROBES: Dict[str, Callable[[Ctx], Tuple[str, str]]] = {
     "opencode.activity": p_opencode_activity, "opencode.app_sessions": p_opencode_app_sessions,
     "opencode.title": p_opencode_title,
     "codex.version": p_codex_version, "codex.app_server": p_codex_app_server,
-    "codex.thread_status": p_codex_thread_status,
+    "codex.thread_status": p_codex_thread_status, "codex.title": p_codex_title,
 }
 
 

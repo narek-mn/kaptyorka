@@ -9,7 +9,7 @@ import pytest
 
 from fakes.codex_app_server import FakeCodex
 from kaptyorka import hook, identity, paths
-from kaptyorka.adapters import base, codex
+from kaptyorka.adapters import base, claude, codex
 from kaptyorka.adapters.base import DeliveryError, Session
 from kaptyorka.adapters.codex import CodexAdapter
 
@@ -60,6 +60,17 @@ def test_sessions_from_loaded_threads(fake_codex):
                                          Session("codex:th-b", "codex", "beta", "", cwd="/p/beta"),
                                          Session("codex:th-old", "codex", project, "", cwd=CWD)]
     assert [c[0] for c in fake_codex.calls[:2]] == ["initialize", "initialized"]
+
+
+def test_a_thread_name_is_the_session_title_never_its_preview(fake_codex):
+    """Codex's thread `name`: a /rename, else the title its TUI made; one clean line. With
+    none, nothing: `preview` is the first prompt's text, not a name."""
+    a, b, old = fake_codex.threads[:3]
+    a["name"], b["name"], old["name"] = "Fix the\nlogin  page\x07", None, "  "
+    b["preview"] = "secret prompt text"
+    assert [s.title for s in CodexAdapter().sessions()] == ["Fix the login page", "", ""]
+    a["name"] = "x" * 500
+    assert CodexAdapter().sessions()[0].title == "x" * claude.MAX_TITLE
 
 
 def test_idle_from_updated_at():

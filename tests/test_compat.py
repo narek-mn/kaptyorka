@@ -173,6 +173,32 @@ def test_opencode_title_probe_reads_the_v2_list(monkeypatch):
     assert compat.probe(compat.BY_ID["opencode.title"], ctx)[0] == compat.UNKNOWN
 
 
+def test_codex_title_probe_needs_the_name_field(monkeypatch, tmp_path):
+    from fakes.codex_app_server import FakeCodex
+
+    d = Path(tempfile.mkdtemp(prefix="cx"))  # short: the socket path stays under 108 bytes
+    monkeypatch.setenv("CODEX_HOME", str(d))
+    sock = d / "app-server-control" / "app-server-control.sock"
+    sock.parent.mkdir(parents=True)
+    thread = {"id": "th-a", "cwd": "/w/proj-a", "name": None}
+    srv = FakeCodex(sock, [thread], ["th-a"])
+    try:
+        ctx = compat.Ctx(tmp_path, SOUND)
+        dep = compat.BY_ID["codex.title"]
+        assert compat.probe(dep, ctx) == (compat.OK, "")  # no name yet: null, still the field
+        thread["name"] = "Fix the login page"
+        assert compat.probe(dep, ctx) == (compat.OK, "")
+        thread["name"] = 5
+        assert compat.probe(dep, ctx)[0] == compat.BROKEN
+        del thread["name"]
+        assert compat.probe(dep, ctx) == (compat.BROKEN, "thread/read has no name")
+        srv.loaded.clear()
+        assert compat.probe(dep, ctx)[0] == compat.UNKNOWN
+    finally:
+        srv.stop()
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_no_live_session_is_no_evidence(home):
     res = compat.cheap(["claude-code"], compat.Ctx(home, SOUND, tmp=home / "tmp"))
     assert broken_ids(res) == []
@@ -277,7 +303,7 @@ def test_doctor_shows_broken_internals_and_notes_what_it_could_not_check(home):
     assert not c.ok and c.detail == "inbox socket not found (push off: sessions read the hub on their next turn)"
     assert "tasks" in c.info and "transcript" in c.info
     c = doctor._internals("codex", home, Run({"--version": (0, "codex-cli 0.166.0\n")}))
-    assert c.ok and c.info == "not checked now: app_server, thread_status"  # no daemon running
+    assert c.ok and c.info == "not checked now: app_server, thread_status, title"  # no daemon running
 
 
 # --- each feature degrades on its own when its internal breaks ---------------------------
