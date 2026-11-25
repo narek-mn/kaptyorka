@@ -183,6 +183,10 @@ def test_a_block_starts_a_fresh_manager_that_gets_the_question_once(hub, clock):
     st = http.request("GET", hub.url + "/api/settings", admin)[1]
     assert (st["manager_state"], st["manager_reason"]) == \
         ("up", f"reply blocked by the model's safety filter at {hm}, restarted")
+    # the page's feed carries the same reason, for everyone who writes to the manager
+    _, member = person(hub.store, "bob")
+    f = http.request("GET", hub.url + "/api/feed", member)[1]
+    assert (f["manager"], f["manager_why"]) == ("up", st["manager_reason"])
     # the fresh manager is blocked on it again: no second try, alice hears one line
     with hub.store.lock:
         hub.store.db.execute("UPDATE messages SET push_state='pushed', read_at=created WHERE to_key='claude:m2'")
@@ -252,6 +256,8 @@ def test_blocks_that_keep_coming_stop_the_restarts_for_the_hour(hub, clock):
     assert st["manager_reason"].startswith("reply blocked by the model's safety filter 4 times"
                                            " within an hour")
     assert st["manager_reason"].endswith(f"restarts stopped until {until}")
+    f = http.request("GET", hub.url + "/api/feed", admin)[1]
+    assert (f["manager"], f["manager_why"]) == ("blocked", st["manager_reason"])
     assert any("stopped it and starts a fresh one" in t for t in page_texts(hub))
     clock[0] = start + refusal.WINDOW_S + 2 * manager.RELAUNCH_S
     beat(hub, b)

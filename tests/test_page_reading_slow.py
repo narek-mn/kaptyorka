@@ -165,3 +165,10 @@ def test_manager_state_and_late_answer(hub, tmp_path):
         assert page.wait(f'{chip}?.textContent') == "Off"
         page.js('document.querySelector("#agents .row.mgr").click()')
         assert page.wait('document.querySelector("#log .tick.late .why")?.textContent') == "\u00b7 the manager is switched off"
+        # the hub's reason (manager_why, test_refusal checks the feed sends it): under the name and on the message
+        why = "reply blocked by the model's safety filter 4 times within an hour (last at 14:05); restarts stopped until 15:00"
+        page.js("""(() => { const f = window.fetch; window.fetch = (u, o) => f(u, o).then(r => !String(u).startsWith("/api/feed") ? r :
+          r.json().then(d => new Response(JSON.stringify(Object.assign(d, { manager: "blocked", manager_why: %s })), { status: 200 }))); })()""" % json.dumps(why))
+        assert page.wait(f'{chip}?.textContent === "Can\'t start" && {chip}.textContent')
+        assert page.js('document.querySelector("#agents .row.mgr .subline").textContent') == why
+        assert page.wait('document.querySelector("#log .tick.late .why")?.textContent === %s' % json.dumps("\u00b7 " + why))

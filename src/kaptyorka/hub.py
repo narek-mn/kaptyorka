@@ -2063,7 +2063,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             if principal.role == "admin" else {}  # the manager's load: for the admin only
         state, why, _ = manager_state()
         return JSONResponse({**feed(store, principal, ws, cs), "manager": state,
-                             **({"manager_why": why} if state == "waiting" else {}), **load})
+                             **({"manager_why": why} if why else {}), **load})
 
     @server.custom_route("/api/groups/{gid}/messages", methods=["GET"])
     async def api_group_messages(request: Request) -> Response:

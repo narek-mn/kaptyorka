@@ -1552,7 +1552,7 @@ a.p-main { color: inherit; text-decoration: none; }
     var ms = feed.manager === "waiting" ? "waiting" : mgr ? "up" : feed.manager || "off";
     var mst = mgrState();
     list.push({ key: "mgr", name: "manager", cls: "mgr", online: !!mgr, state: ms === "up" ? "" : ms, mgr: mst,
-                sub: ms === "waiting" ? String(feed.manager_why || "").replace(/^waiting for its usage limit, resets /, "limit resets ").replace(/^waiting for its usage limit \(reset time unknown\)$/, "limit, reset unknown") : mst.tone === "warn" || mst.tone === "bad" ? mst.why : mgr ? mgr.where || mgr.machine : "", act: mgr ? mgr.activity || "" : "",
+                sub: ms === "waiting" ? String(feed.manager_why || "").replace(/^waiting for its usage limit, resets /, "limit resets ").replace(/^waiting for its usage limit \(reset time unknown\)$/, "limit, reset unknown") : mst.tone === "warn" || mst.tone === "bad" ? mst.why : mst.note || (mgr ? mgr.where || mgr.machine : ""), act: mgr ? mgr.activity || "" : "",
                 to: "manager", tip: "the team's manager session" + (ms === "waiting" ? "\n" + feed.manager_why : "") + (mgr && mgr.status ? "\n" + mgr.status : "")
                   + (feed.manager_load ? "\nload: " + feed.manager_load : "") });
     agents.forEach(function (a) {
@@ -1941,14 +1941,20 @@ a.p-main { color: inherit; text-decoration: none; }
   /* how a session is doing, as a pill: working or waiting (coral), off (grey). Online and idle
      needs none: the green dot on the badge says it */
   /* the manager, always in words: Ready, Working, Starting, Off, or what is wrong and why. From
-     the hub's state word (feed.manager, and manager_why while it waits for its usage limit) and
-     its session row (activity, stuck); the hub sends no reason for "blocked" */
+     the hub's state word (feed.manager), its reason (manager_why: the usage limit, a reply the
+     safety filter blocked, why it cannot start) and its session row (activity, stuck). `note`:
+     a reason while it runs ("... blocked at 14:05, restarted"), shown under its name */
   function mgrState() {
-    var a = feed.agents.filter(function (x) { return x.role === "manager"; })[0], st = feed.manager || "off";
-    if (st === "waiting") return { word: "Usage limit", tone: "warn", why: String(feed.manager_why || "waiting for its usage limit") };
+    var a = feed.agents.filter(function (x) { return x.role === "manager"; })[0], st = feed.manager || "off", why = String(feed.manager_why || "");
+    if (st === "waiting") return { word: "Usage limit", tone: "warn", why: why || "waiting for its usage limit" };
+    if (st === "blocked") return { word: "Can't start", tone: "bad", why: why || "the hub cannot start the manager" };
+    var m = mgrRun(a, st);
+    if (why && st !== "off" && m.tone !== "warn" && m.tone !== "bad") m.note = why;
+    return m;
+  }
+  function mgrRun(a, st) {
     if (!a) {  /* no session reporting: the hub's word says why */
-      if (st === "blocked") return { word: "Can't start", tone: "bad", why: "the hub cannot start the manager" };
-      if (st === "off") return { word: "Off", tone: "idle", why: "the manager is switched off" };
+      if (st === "off") return { word: "Off", tone: "idle", why: String(feed.manager_why || "the manager is switched off") };
       if (st === "starting") return { word: "Starting", tone: "active", why: "", anim: "pulse" };
       return { word: "No contact", tone: "warn", why: "its process runs, but its session has not reported to the hub" };
     }
@@ -1963,7 +1969,7 @@ a.p-main { color: inherit; text-decoration: none; }
       : el("span", { "class": "dot" + (m.anim === "pulse" ? " beat" : "") });
     var c = chip(m.word, m.tone, "mgr-chip", lead);
     c.setAttribute("role", "status");
-    if (m.why) c.title = m.why;
+    if (m.why || m.note) c.title = m.why || m.note;
     return c;
   }
   function statusChip(e) {
@@ -2380,7 +2386,7 @@ a.p-main { color: inherit; text-decoration: none; }
     if (conv !== "mgr" || m.failed || Date.now() / 1000 - m.created < LATE_S) return null;
     var st = mgrState();
     if (st.anim) return null;  /* working or starting: the line under it says so */
-    return { state: "late", why: st.word === "Ready" ? "" : st.why || st.word };
+    return { state: "late", why: st.word === "Ready" ? st.note || "" : st.why || st.word };
   }
   function lateNow() {
     if (conv !== "mgr") return 0;
