@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.36
+
+- **A manager blocked by the model's safety filter comes back by itself.** Once the filter stopped one reply, every later turn of that session was stopped too (the flagged text stays in its history), so the manager went silent while the hub still showed it running and its messages as read. Now the hub machine's bridge notices the block in the manager's transcript, and the hub closes that session and starts a fresh one with a clean history (no crash counted). The message it was answering, if a person or a session sent it, goes once to the fresh manager; blocked on it again, its sender hears that the filter stopped the reply and to ask in other words or ask the admin. A hub notice is never sent again. The admins see it on the page, and `kaptyorka status` says "manager: running; reply blocked by the model's safety filter at HH:MM, restarted". After 3 fresh starts within an hour the next block stops it until the hour is over ("restarts stopped until HH:MM"); messages wait.
+
 ## 0.9.35
 
 - **The manager spends less of the shared usage limit.** Its instructions now say that a session costs more the longer its history is: one worker per task with a short brief, close a worker when its task is done, a fresh worker for an unrelated task, an old session resumed only when asked for, short replies.

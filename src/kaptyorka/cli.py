@@ -410,7 +410,7 @@ def _status_of(cfg: dict) -> int:
         return 1
     state, why = _manager_word(hub, cfg["token"], got)
     if state is not None:
-        shown = {"up": "running", "blocked": f"blocked: {why}" if why else "blocked",
+        shown = {"up": f"running; {why}" if why else "running", "blocked": f"blocked: {why}" if why else "blocked",
                  "waiting": why or "waiting for its usage limit"}.get(state, state)
         pin = ""
         if isinstance(got[1], dict) and got[1].get("manager_model"):

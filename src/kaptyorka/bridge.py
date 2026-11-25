@@ -255,7 +255,7 @@ class Bridge:
             tasks = None if s.tasks is None else [{**t, "command": ""} for t in s.tasks]
             return replace(s, project=joined[s.key], cwd="", tasks=tasks,
                            label=s.label or (optin.LABEL if coordinator else ""))
-        sessions, tools, objs, shown, held = [], [], [], [], False
+        sessions, tools, objs, shown, held, refused = [], [], [], [], False, {}
         for a in self.adapters:
             try:
                 got = [as_joined(s) for s in a.sessions()]
@@ -265,6 +265,11 @@ class Bridge:
                 held = held or bool(mine - off)
                 off |= mine
                 found = [asdict(s) for s in got if s.key not in off]
+                for s in got:  # the manager's reply stopped by the model's safety filter
+                    if hasattr(a, "refused") and paths.in_manager_folder(s.cwd):
+                        t = a.refused(s.key, s.cwd)
+                        if t is not None:
+                            refused[s.key] = t
                 problem = None
             except Exception as e:  # one broken adapter must not hide the others
                 found, problem = [], f"{a.tool} sessions failed: {e}"
@@ -286,6 +291,8 @@ class Bridge:
                 "overnight": [s["key"] for s in sessions if self._overnight(s["key"])]}
         if gone:
             body["gone"] = gone
+        if refused:
+            body["manager_refused"] = refused
         closed = list(self._closed)
         if closed:
             body["closed"] = closed

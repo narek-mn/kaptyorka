@@ -165,6 +165,36 @@ def last_real(path: Path, size: int) -> Optional[float]:
         window = REAL_TAIL
 
 
+REFUSAL = "model_refusal_no_fallback"  # a reply the model's safety filter stopped (compat.py)
+
+
+def parse_refusal(lines: List[str]) -> Optional[float]:
+    """The newest refusal marker's time in transcript lines: a main-thread line
+    {"type": "system", "subtype": "model_refusal_no_fallback", "timestamp": ...}."""
+    for line in reversed(lines):
+        if REFUSAL not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and rec.get("type") == "system" \
+                and rec.get("subtype") == REFUSAL and rec.get("isSidechain") is not True:
+            t = _stamp(rec.get("timestamp"))
+            if t is not None:
+                return t
+    return None
+
+
+def last_refusal(path: Path, size: int) -> Optional[float]:
+    """The newest refusal marker in the last TITLE_TAIL bytes of a transcript; None without."""
+    with open(path, "rb") as f:
+        start = max(0, size - TITLE_TAIL)
+        f.seek(start)
+        lines = f.read(TITLE_TAIL).decode("utf-8", "replace").splitlines()
+    return parse_refusal(lines[1:] if start else lines)
+
+
 LINEAGE_LINES = 40  # derived-from and the entrypoint come within a transcript's first lines
 
 
@@ -573,6 +603,26 @@ class ClaudeAdapter:
             return title, st.st_mtime
         except (OSError, ValueError):
             return "", None
+
+    def refused(self, key: str, cwd: str) -> Optional[float]:
+        """When the model's safety filter last stopped a reply in this session (its newest
+        refusal marker), read again only when the transcript changed; None without one."""
+        session_id = key.split(":", 1)[-1]
+        cache = self.__dict__.setdefault("_refusals", {})
+        try:
+            path = _transcript(self.home, session_id, cwd, self.__dict__.setdefault("_titles", {}))
+            if path is None:
+                return None
+            st = path.stat()
+            old = cache.get(session_id)
+            if old is not None and old[0] == (st.st_size, st.st_mtime):
+                return old[1]
+            t = last_refusal(path, st.st_size)
+            t = t if t is not None else (old[1] if old else None)
+            cache[session_id] = ((st.st_size, st.st_mtime), t)
+            return t
+        except (OSError, ValueError):
+            return None
 
     def _find(self, key: str):
         """(pid, socket path) of the session file whose sessionId is in the key."""

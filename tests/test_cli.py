@@ -38,7 +38,7 @@ def stub_401():
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as e:
         entry_with(["--version"])
-    assert e.value.code == 0 and "0.9.35" in capsys.readouterr().out
+    assert e.value.code == 0 and "0.9.36" in capsys.readouterr().out
 
 
 def test_subcommands_listed(capsys):
@@ -1109,6 +1109,17 @@ def test_status_shows_the_managers_model_and_effort(monkeypatch, home, capsys):
         "manager_state": "up", "manager_model": "claude-opus-5-5", "manager_effort": "medium"}))
     assert entry_with_exit(["status"]) == 0
     assert "manager: running (model claude-opus-5-5, effort medium)\n" in capsys.readouterr().out
+
+
+def test_status_shows_a_blocked_reply_and_the_restart(monkeypatch, home, capsys):
+    _joined()
+    _hub_json()
+    _units(monkeypatch, bridge=True, hub=True)
+    why = "reply blocked by the model's safety filter at 08:08, restarted"
+    monkeypatch.setattr(http, "request", lambda *a, **k: (200, {"manager_state": "up",
+                                                                "manager_reason": why}))
+    assert entry_with_exit(["status"]) == 0
+    assert f"manager: running; {why}\n" in capsys.readouterr().out
 
 
 def test_status_shows_the_managers_load(monkeypatch, home, capsys):

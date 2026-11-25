@@ -99,6 +99,13 @@ DEPS: Tuple[Dep, ...] = (
     Dep("claude.real_lines", "claude-code",
         "transcript user lines: isSidechain, isMeta, isCompactSummary, origin.kind",
         "when a person or the model last did something (left-behind idle time)", "", "", True, probed=False),
+    Dep("claude.refusal", "claude-code",
+        "transcript line {type: system, subtype: model_refusal_no_fallback, timestamp} when the"
+        " model's safety filter stopped a reply (seen on 2.1.331); a probe cannot provoke a real"
+        " block, so it checks the reader against the recorded line and any such line on disk",
+        "a fresh manager when its reply was blocked (refusal.py)",
+        "refusal markers in transcripts not read",
+        "a blocked manager stays silent until restarted by hand", True),
     Dep("claude.bg_launch", "claude-code", "`claude --bg -n <name>` prints `backgrounded · <8 hex>`",
         "starting workers", "`claude --bg` printed no session id", "workers fail to start", False),
     Dep("claude.bg_isolation", "claude-code", "--settings worktree.bgIsolation none keeps --bg in its folder",
@@ -335,6 +342,30 @@ def p_claude_title(ctx: Ctx):
     return UNKNOWN, "no live session has a title"
 
 
+# the marker's shape as Claude Code wrote it (other fields dropped)
+REFUSAL_LINE = ('{"isSidechain":false,"type":"system","subtype":"model_refusal_no_fallback",'
+                '"content":"","level":"warning","timestamp":"2026-11-25T08:08:13.871Z"}')
+
+
+def p_claude_refusal(ctx: Ctx):
+    """The reader finds the recorded marker, and every live transcript that holds one."""
+    from kaptyorka.adapters.claude import REFUSAL, last_refusal, parse_refusal
+
+    if parse_refusal([REFUSAL_LINE]) is None:
+        return BROKEN, "the reader misses the recorded marker line"
+    for p in _transcripts(ctx):
+        try:
+            size = p.stat().st_size
+            with open(p, "rb") as f:
+                f.seek(max(0, size - 256 * 1024))
+                held = REFUSAL.encode() in f.read()
+            if held and last_refusal(p, size) is None:
+                return BROKEN, f"a {REFUSAL} line without the expected type or timestamp"
+        except OSError:
+            continue
+    return OK, ""
+
+
 def p_claude_tasks(ctx: Ctx):
     from kaptyorka.adapters.claude import children, live_tasks
 
@@ -549,7 +580,7 @@ PROBES: Dict[str, Callable[[Ctx], Tuple[str, str]]] = {
     "claude.name": p_claude_name, "claude.kind": p_claude_kind, "claude.inbox": p_claude_inbox,
     "claude.transcript": p_claude_transcript, "claude.title": p_claude_title,
     "claude.tasks": p_claude_tasks, "claude.derived_from": p_claude_derived_from,
-    "claude.child_notes": p_claude_child_notes,
+    "claude.child_notes": p_claude_child_notes, "claude.refusal": p_claude_refusal,
     **{k: _live(k) for k in ("claude.bg_launch", "claude.bg_isolation", "claude.push",
                              "claude.stop", "claude.rm")},
     "opencode.version": p_opencode_version, "opencode.v1_server": p_opencode_v1,

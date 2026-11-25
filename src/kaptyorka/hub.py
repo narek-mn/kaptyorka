@@ -31,7 +31,7 @@ from kaptyorka.secrets_check import PATTERNS as SECRET_PATTERNS
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
-from kaptyorka import compat, hub_groups, left, limits, rollout, tls
+from kaptyorka import compat, hub_groups, left, limits, refusal, rollout, tls
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
@@ -576,6 +576,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 return
         except Exception as e:
             print(f"kaptyorka: manager usage limit check failed: {e}", flush=True)
+        try:  # its reply stopped by the model's safety filter: a fresh one (refusal.py)
+            if refusal.tick(store, mm, ws, tell, admin_ops.admins(store), now):
+                return
+        except Exception as e:
+            print(f"kaptyorka: manager refusal check failed: {e}", flush=True)
         if admin is not None and mm.failures_last_hour(now) >= 2 \
                 and mm.push_once("manager-failed", now, 3600):
             for name in admin_ops.admins(store):
@@ -1725,6 +1730,9 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if own and isinstance(facts, dict):  # this account's usage limits (limits.py)
             limits.from_facts(store, str(facts.get("host") or ""), str(facts.get("os_user") or ""),
                               facts.get("limits"), store.clock())
+        if own and isinstance(body.get("manager_refused"), dict):  # refusal.py
+            for key, at in body["manager_refused"].items():
+                refusal.seen(store, mm, key, at, principal.device_id, identity.facts()["host"])
         if own and body.get("closed"):  # sessions it closed for us (left.py)
             left.closed(store, principal.device_id, body["closed"], principal.person_name)
         if own and (isinstance(facts, dict) or isinstance(body.get("folders"), dict)):
@@ -2035,6 +2043,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         lim = limits.manager_limit(store, mm, identity.facts()["host"], now) if mm.enabled() else None
         if lim is not None:  # its account is at its usage limit: it waits for the reset
             return "waiting", limits.manager_words(lim), row
+        blocked = refusal.state(mm, now, running and row["state"] != "starting") \
+            if mm.enabled() else None
+        if blocked is not None:  # its reply stopped by the model's safety filter
+            return blocked[0], blocked[1], row
         if running:  # unattended or abandoned: the session is there, just nobody watching
             state = "starting" if row["state"] == "starting" else "up"
         elif not mm.enabled():
