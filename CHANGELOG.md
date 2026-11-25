@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.39
+
+- **OpenCode sessions show their name.** The page and `who` showed an OpenCode session only by its folder: kaptyorka never read OpenCode's session title, so a rename in OpenCode changed nothing on the hub. Its title now comes with the session, in OpenCode 1 and 2: the one OpenCode gave it after its first prompt, or the one you renamed it to. The placeholder a new session starts with ("New session - <time>") is not shown.
+- **No false "Claude Code internals changed" warning.** The check for the blocked-reply marker took any open session whose history mentioned the marker's name (a session reading kaptyorka's own code) for a marker in a new shape, and the machine showed "refusal markers in transcripts not read". It now counts only a line that is the marker itself.
+
 ## 0.9.38
 
 - **The chat has two sides.** What you sent is on the right in a coloured bubble (up to 70% of the column, 85% on a phone) with its time beside it and Sent, Delivered or No answer yet under it; answers are on the left on a grey surface under the who-and-where head.
@@ -14,7 +19,6 @@
 - Overnight mode no longer turns on from a mere mention of the word (pasted text, 'no need for overnight mode', questions about it, a deadline like 'by morning'); it needs a clear order such as 'overnight task: ...' or `/hub overnight`.
 - The rest of the machines now follow a staged update after 5 minutes instead of 20; `kaptyorka fleet rollout go` still releases them at once.
 - A first machine that updated and then stopped reporting now holds the rest of the update (the admins hear "<machine> stopped reporting after its update"); an account with no bridge of its own (such as the manager's) never goes first and is never judged.
-- **No false "Claude Code internals changed" warning.** The check for the blocked-reply marker took any open session whose history mentioned the marker's name (a session reading kaptyorka's own code) for a marker in a new shape, and the machine showed "refusal markers in transcripts not read". It now counts only a line that is the marker itself.
 
 ## 0.9.37
 

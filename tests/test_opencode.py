@@ -59,6 +59,16 @@ def test_opencode_key_matches_shim_and_bridge(fake_opencode):
                                                               CWD, "idle")  # none busy
 
 
+def test_v1_session_carries_its_title(fake_opencode):
+    """The title OpenCode gives a session, or the one its person renamed it to: one field."""
+    fake_opencode.sessions[2]["title"] = "  fix the\nlogin page "
+    s, = adapter(fake_opencode).sessions()
+    assert s.title == "fix the login page" and s.label == ""
+    fake_opencode.sessions[2]["title"] = "New session - 2026-11-25T10:00:00.000Z"
+    s, = adapter(fake_opencode).sessions()
+    assert s.title == ""  # the placeholder before the first prompt is no name
+
+
 def test_resolver_none_before_first_prompt(fake_opencode):
     fake_opencode.sessions = fake_opencode.sessions[:1]  # only a session from an earlier run
     assert identity.RESOLVERS["opencode"](os.getpid(), CWD) is None
@@ -373,6 +383,28 @@ def test_v2_activity_reads_busy_and_idle_times(monkeypatch):
     assert opencode._v2_activity({}, "new") == (100.0, "idle", None)
     monkeypatch.setattr(opencode, "_v2_call", lambda *a: (_ for _ in ()).throw(OSError("down")))
     assert opencode._v2_activity({}, "busy") == (None, "", None)
+
+
+def test_v2_session_carries_its_title(monkeypatch):
+    """A window's session: its title comes with the same call that reads its activity."""
+    monkeypatch.setattr(opencode.time, "time", lambda: 10_000.0)
+    calls = []
+    monkeypatch.setattr(opencode, "_v2_call", lambda svc, m, path: calls.append(path) or (
+        200, {"data": {"title": "ghoosh-gros-stream", "time": {"updated": 9_900_000}}}))
+    s = OpenCodeAdapter()._v2_session({}, "opencode:ses_a", CWD)
+    assert (s.key, s.title, s.label, s.activity, s.idle_s) == (
+        "opencode:ses_a", "ghoosh-gros-stream", "", "idle", 100.0)
+    assert calls == ["/api/session/ses_a"]  # one call, not one more for the title
+    monkeypatch.setattr(opencode, "_v2_call", lambda *a: (_ for _ in ()).throw(OSError("down")))
+    assert OpenCodeAdapter()._v2_session({}, "opencode:ses_a", CWD).title == ""
+
+
+@pytest.mark.parametrize("raw, title", [
+    ("Fix the login page", "Fix the login page"), ("x" * 200, "x" * 80), ("a\tb\n c", "a b c"),
+    ("New session - 2026-11-25T10:00:00.000Z", ""), ("Child session - 2026-11-25T10:00:00.000Z", ""),
+    ("New session ideas", "New session ideas"), ("", ""), (None, ""), (7, ""), ({"a": 1}, "")])
+def test_session_title_is_one_clean_line_and_never_the_placeholder(raw, title):
+    assert opencode.session_title(raw) == title
 
 
 def test_plugin_tells_the_hub_of_a_usage_limit_once(tmp_path):

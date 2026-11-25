@@ -151,6 +151,11 @@ def test_v2_sessions_open_in_an_app_with_no_tui_are_listed(app_only):
         ("opencode:ses_app", "proj-a", a), ("opencode:ses_tui", "proj-b", b),
         ("opencode:ses_long", "proj-b", b)]
     assert [s.activity for s in got] == ["idle", "idle", "busy"]  # from the list row and active
+    assert [s.title for s in got] == ["", "", ""]
+    state["rows"][1]["title"], state["rows"][2]["title"] = "App work", "New session - 2026-11-25T10:00:00.000Z"
+    assert [s.title for s in OpenCodeAdapter().sessions()] == ["App work", "", ""]  # from the list row too
+    calls.clear()
+    got = OpenCodeAdapter(find_ports=lambda: pytest.fail("no V1 port scan on V2")).sessions()
     assert 55 < got[0].idle_s < 65 and got[2].write_s > 3900
     assert [p for m, p in calls] == ["/api/session?limit=100&order=desc", "/api/session/active"]
     calls.clear()  # every folder, newest first, and no call per session

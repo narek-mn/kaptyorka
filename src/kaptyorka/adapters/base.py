@@ -30,7 +30,8 @@ class Session:
     label: str = ""  # the session name Claude Code shows, if any
     cwd: str = ""  # the folder the session runs in; "" when unknown
     background: bool = False  # a background job (claude --bg), not a terminal session
-    title: str = ""  # Claude Code's own title for the session (/rename, else its automatic one)
+    title: str = ""  # the tool's own title for the session (Claude Code: /rename, else its
+    # automatic one; OpenCode: its title, renamed or automatic)
     idle_s: Optional[float] = None  # seconds since the session last did anything; None: unknown
     # stuck measures (stuck.py), Claude Code on Linux only; None: unknown. write_s: seconds since
     # the session itself last wrote (messages delivered to it do not count); tasks: its live

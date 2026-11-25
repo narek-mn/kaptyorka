@@ -453,7 +453,7 @@ OPEN_S = 30 * 60  # a V2 session with no TUI counts as open this long after its 
 
 
 def _v2_unclaimed(svc: Dict[str, str], skip: frozenset) -> "List[tuple]":
-    """(key, directory, time.updated, running a turn) of each V2 session open in the service with no TUI window claiming it
+    """(key, directory, time.updated, running a turn, title) of each V2 session open in the service with no TUI window claiming it
     (not in skip): the desktop or web app's. The service cannot say which sessions a client
     has open (module docstring), so the fallback rule: a top-level session (no parentID), not
     archived, that runs a turn now or took a step in the last OPEN_S. A session that registered
@@ -490,7 +490,7 @@ def _v2_unclaimed(svc: Dict[str, str], skip: frozenset) -> "List[tuple]":
         if (valid_id(sid) and not s.get("parentID") and not t.get("archived")
                 and isinstance(d, str) and d and f"opencode:{sid}" not in skip
                 and (recent or sid in running)):
-            out.append((f"opencode:{sid}", d, upd, sid in running))
+            out.append((f"opencode:{sid}", d, upd, sid in running, session_title(s.get("title"))))
     return out
 
 
@@ -506,17 +506,36 @@ def activity(updated, busy: bool) -> "tuple[Optional[float], str, Optional[float
     return age, "busy" if busy else "idle", age if busy else None
 
 
-def _v2_activity(svc: Dict[str, str], sid: str) -> "tuple[Optional[float], str, Optional[float]]":
-    """activity() for a V2 session: GET /api/session/:id has time.updated, and time.busy and
-    time.idle (ms; a turn runs while busy is later than idle), checked on 2.3.2."""
+DEFAULT_TITLE = re.compile(r"^(New|Child) session - \d{4}-")  # OpenCode's name before the first prompt
+
+
+def session_title(value) -> str:
+    """A session's `title` as OpenCode gives it (its own after the first prompt, or the one the
+    person set by renaming it; both are this one field, checked on 2.4.1: GET /api/session and
+    /api/session/:id). "" for none and for the placeholder a new session starts with."""
+    from kaptyorka.adapters.claude import clean_title
+
+    title = clean_title(value)
+    return "" if DEFAULT_TITLE.match(title) else title
+
+
+def _v2_info(svc: Dict[str, str], sid: str) -> "tuple[tuple, str]":
+    """(activity(), title) of a V2 session: GET /api/session/:id has title, time.updated, and
+    time.busy and time.idle (ms; a turn runs while busy is later than idle), checked on 2.3.2
+    (the title on 2.4.1)."""
     try:
         status, data = _v2_call(svc, "GET", f"/api/session/{urllib.parse.quote(sid)}")
-        t = (data.get("data") or {}).get("time") or {} if status == 200 and isinstance(data, dict) else {}
+        row = (data.get("data") or {}) if status == 200 and isinstance(data, dict) else {}
+        t = row.get("time") or {}
     except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException):
-        return None, "", None
+        return (None, "", None), ""
     busy, idle = t.get("busy"), t.get("idle")
     running = isinstance(busy, (int, float)) and not (isinstance(idle, (int, float)) and idle >= busy)
-    return activity(t.get("updated"), running)
+    return activity(t.get("updated"), running), session_title(row.get("title"))
+
+
+def _v2_activity(svc: Dict[str, str], sid: str) -> "tuple[Optional[float], str, Optional[float]]":
+    return _v2_info(svc, sid)[0]
 
 
 def open_dir() -> Path:
@@ -854,6 +873,7 @@ class OpenCodeAdapter:
                 idle_s, act, write_s = activity(row.get("time", {}).get("updated"), row["id"] in busy)
                 out.append(Session("opencode:" + row["id"], self.tool,
                                    os.path.basename(cwd.rstrip("/")), act, cwd=cwd,
+                                   title=session_title(row.get("title")),
                                    idle_s=idle_s, write_s=write_s))
         return out
 
@@ -884,16 +904,16 @@ class OpenCodeAdapter:
             unclaimed = _v2_unclaimed(svc, frozenset(seen))
         except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException):
             unclaimed = []  # the service is restarting: the windows above still count
-        for key, cwd, updated, running in unclaimed:  # activity from the list row: no call each
+        for key, cwd, updated, running, title in unclaimed:  # from the list row: no call each
             idle_s, act, write_s = activity(updated, running)
             out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), act, cwd=cwd,
-                               idle_s=idle_s, write_s=write_s))
+                               title=title, idle_s=idle_s, write_s=write_s))
         return out
 
     def _v2_session(self, svc: Dict[str, str], key: str, cwd: str) -> Session:
-        idle_s, act, write_s = _v2_activity(svc, key.partition(":")[2])
+        (idle_s, act, write_s), title = _v2_info(svc, key.partition(":")[2])
         return Session(key, self.tool, os.path.basename(cwd.rstrip("/")), act, cwd=cwd,
-                       idle_s=idle_s, write_s=write_s)
+                       title=title, idle_s=idle_s, write_s=write_s)
 
     def deliver(self, key: str, text: str) -> None:
         sid = key.partition(":")[2]
