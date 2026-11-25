@@ -514,3 +514,31 @@ def test_an_ended_run_is_left_to_judge_run(store, ms, clock):
     live_manager(store, clock[0], "closed")
     ms.run_lasted(clock[0] + 3600)
     assert len(ms.crashes()) == 2
+
+
+def test_the_manager_boss_stays_when_someone_else_becomes_an_admin(store, ms, clock):
+    from kaptyorka import admin_ops
+    mate = store.person_create("mate", "member", "test")  # the lower id
+    owner = store.person_create("owner", "admin", "test")
+    box = {"person_id": store.person_create("box-1", "member", "test")}  # not an admin's device
+    as_ = store._person_principal
+    assert ms.boss(box) == owner
+    clock[0] += 60
+    admin_ops.set_role(store, "mate", "admin", as_(owner))
+    assert ms.boss(box) == owner  # a new admin with a lower id does not take over
+    store.db.execute("DELETE FROM settings WHERE key='manager_boss'")  # a hub from before
+    assert ms.boss(box) == owner  # admin longest, from the log
+    admin_ops.set_role(store, "owner", "member", as_(mate))
+    assert ms.boss(box) == mate  # a demoted boss is replaced, and the new one is kept
+    admin_ops.set_role(store, "owner", "admin", as_(mate))
+    assert ms.boss(box) == mate
+    store.db.execute("UPDATE people SET removed_at=? WHERE id=?", (clock[0], mate))
+    assert ms.boss(box) == owner  # a removed boss is replaced
+    assert ms.boss({"person_id": mate}) == owner
+
+
+def test_the_manager_boss_without_a_log_is_the_lowest_id(store, ms):
+    a, _ = person(store, "alice", "admin")
+    b, _ = person(store, "bob", "admin")
+    assert ms.boss({"person_id": 0}) == a
+    assert ms.boss({"person_id": b}) == a  # kept, even through an admin's own device

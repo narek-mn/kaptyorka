@@ -586,14 +586,37 @@ class ManagerStore:
         return out
 
     def boss(self, device: dict) -> Optional[int]:
-        """The admin the manager reports to when launched through `device`: the device's own
-        person when an admin, else the oldest admin who is not a team machine."""
+        """The admin the manager reports to when launched through `device`. Once chosen it is
+        kept (setting `manager_boss`) while that person is still an admin and not removed, so
+        making someone else an admin never moves it. Else: the device's own person when an
+        admin, else the admin who has been admin longest (the log's "created as admin" and
+        `admin_given` lines; the lowest id when the log has none), never a team machine."""
+        live = "role='admin' AND removed_at IS NULL AND team=0"
         with self.lock:
-            row = self.db.execute("SELECT id FROM people WHERE id=? AND role='admin' AND"
-                                  " removed_at IS NULL", (device["person_id"],)).fetchone()
+            kept = self.db.execute("SELECT value FROM settings WHERE key='manager_boss'"
+                                   ).fetchone()
+            row = self.db.execute(f"SELECT id FROM people WHERE id=? AND {live}",
+                                  (int(kept["value"]),)).fetchone() \
+                if kept and kept["value"].isdigit() else None
             if row is None:
-                row = self.db.execute("SELECT id FROM people WHERE role='admin' AND team=0 AND"
-                                      " removed_at IS NULL ORDER BY id LIMIT 1").fetchone()
+                row = self.db.execute(f"SELECT id FROM people WHERE id=? AND {live}",
+                                      (device["person_id"],)).fetchone()
+            if row is None:
+                admins = self.db.execute(f"SELECT id, name FROM people WHERE {live} ORDER BY id"
+                                         ).fetchall()
+                since = {}  # name -> when that person last became an admin
+                for r in self.db.execute(
+                        "SELECT time, kind, detail FROM log WHERE kind='admin_given' OR (kind="
+                        "'person' AND detail LIKE '% created as admin') ORDER BY id"):
+                    since[r["detail"] if r["kind"] == "admin_given"
+                          else r["detail"][:-len(" created as admin")]] = r["time"]
+                row = min(admins, key=lambda r: (r["name"] not in since,
+                                                 since.get(r["name"], 0.0), r["id"]),
+                          default=None)
+            if row is not None and (kept is None or kept["value"] != str(row["id"])):
+                self.db.execute("INSERT INTO settings (key, value) VALUES ('manager_boss', ?)"
+                                " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                                (str(row["id"]),))
         return None if row is None else row["id"]
 
     def ensure_account(self, host: str, by: str) -> Optional[str]:
