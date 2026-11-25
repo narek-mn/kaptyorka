@@ -48,7 +48,7 @@ def _devices(store: Store, night_keys=frozenset()) -> List[dict]:
     runs there."""
     with store.lock:
         rows = store.db.execute(
-            "SELECT d.id, d.host, d.os_user, d.name, d.token_hash, d.last_used, d.version,"
+            "SELECT d.id, d.host, d.os_user, d.name, d.token_hash, d.bridge_seen, d.version,"
             " p.team, f.facts FROM devices d JOIN people p ON p.id=d.person_id"
             " LEFT JOIN device_facts f ON f.device_id=d.id"
             " WHERE d.revoked_at IS NULL AND d.legacy=0 AND p.removed_at IS NULL").fetchall()
@@ -71,7 +71,7 @@ def _devices(store: Store, night_keys=frozenset()) -> List[dict]:
         facts = json.loads(r["facts"]) if r["facts"] else {}
         n, working = busy.get(r["id"], (0, 0))
         out.append({"id": r["id"], "host": r["host"], "os_user": r["os_user"], "team": bool(r["team"]),
-                    "hub_key": hub_key is not None and r["token_hash"] == hub_key, "last_used": r["last_used"],
+                    "hub_key": hub_key is not None and r["token_hash"] == hub_key, "bridge_seen": r["bridge_seen"],  # the bridge only; last_used moves on any token use
                     "version": facts.get("version") or r["version"] or "",
                     "update_failed": facts.get("update_failed") or "", "sessions": n,
                     "working": working or 0, "night": r["id"] in night or r["id"] in waiting,
@@ -89,9 +89,10 @@ def pick_first(store: Store, now: float, night_keys=frozenset()) -> List[int]:
     is not busy (_devices), one with no session at all first. Every team machine busy: the
     hub's computer alone. No hub account and no team machine: the least busy online account."""
     devs = _devices(store, night_keys)
-    online = [d for d in devs if d["last_used"] is not None and d["last_used"] > now - ONLINE_S]
+    online = [d for d in devs if d["bridge_seen"] is not None and d["bridge_seen"] > now - ONLINE_S]
+    bridged = {d["id"] for d in devs if d["bridge_seen"] is not None}  # a device with no bridge never goes first
     hub_hosts = {d["host"] for d in devs if d["host"] and d["hub_key"]}
-    first = [d["id"] for d in devs if d["host"] and d["host"] in hub_hosts]
+    first = [d["id"] for d in devs if d["host"] and d["host"] in hub_hosts and d["id"] in bridged]
     calm = sorted((d for d in online if d["team"] and d["host"] not in hub_hosts
                    and not d["busy"]), key=lambda d: (d["sessions"], d["id"]))
     if calm:
@@ -136,12 +137,12 @@ def health(store: Store, st: dict, now: float) -> Optional[str]:
     judged = 0
     for i in st["first"]:
         d = devs.get(i)
-        if d is None or d["last_used"] is None:
+        if d is None or d["bridge_seen"] is None:
             continue
         if _numbers(d["version"]) >= _numbers(st["version"]) and not d["update_failed"] \
-                and d["last_used"] <= now - FRESH_S:
+                and d["bridge_seen"] <= now - FRESH_S:
             return f"{_name(d)} stopped reporting after its update"  # it came up, then went silent
-        if d["last_used"] <= now - ONLINE_S:
+        if d["bridge_seen"] <= now - ONLINE_S:
             continue
         judged += 1
         if d["update_failed"]:

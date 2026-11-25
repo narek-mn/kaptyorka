@@ -28,8 +28,8 @@ def device(store, token, host, user, version=OLD, sessions=(), activity=""):
     store.heartbeat(host, [{"key": k, "tool": "codex", "project": "proj-a", "activity": activity or None}
                            for k in sessions], principal=p, facts={"host": host, "os_user": user})
     with store.lock:
-        store.db.execute("UPDATE devices SET host=?, os_user=?, last_used=? WHERE id=?",
-                         (host, user, store.clock(), p.device_id))
+        store.db.execute("UPDATE devices SET host=?, os_user=?, last_used=?, bridge_seen=? WHERE id=?",
+                         (host, user, store.clock(), store.clock(), p.device_id))
     facts(store, p.device_id, host=host, os_user=user, version=version)
     return p.device_id
 
@@ -62,7 +62,8 @@ def later(f, seconds, *alive):
     f.clock[0] += seconds
     with f.store.lock:
         for d in alive:
-            f.store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (f.clock[0], f.ids[d]))
+            f.store.db.execute("UPDATE devices SET last_used=?, bridge_seen=? WHERE id=?",
+                                (f.clock[0], f.clock[0], f.ids[d]))
             f.store.db.execute("UPDATE agents SET last_seen=? WHERE device_id=?", (f.clock[0], f.ids[d]))
 
 
@@ -88,7 +89,7 @@ def test_first_group_is_the_hub_computer_and_the_calm_team_machine(fleet):
 
 def test_a_busy_team_machine_never_goes_first(fleet):
     with fleet.store.lock:  # box-1 is gone: only box-2 (waiting on a task) is online
-        fleet.store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (fleet.clock[0] - 3600, fleet.ids["box-1"]))
+        fleet.store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?", (fleet.clock[0] - 3600, fleet.ids["box-1"]))
     assert rollout.pick_first(fleet.store, fleet.clock[0]) == [fleet.ids["hub"]]  # the hub alone
 
 
@@ -266,9 +267,45 @@ def test_a_bridge_that_updated_and_then_went_silent_holds_the_rest(fleet):
 def test_a_first_machine_that_was_offline_before_the_update_is_not_a_hold(fleet):
     rollout.state(fleet.store, NEW)
     with fleet.store.lock:  # box-1 was already gone when the update started
-        fleet.store.db.execute("UPDATE devices SET last_used=? WHERE id=?",
+        fleet.store.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?",
                                (fleet.clock[0] - 3600, fleet.ids["box-1"]))
     later(fleet, SOAK_S + 1, "hub", "laptop")
     updated(fleet, "hub")
     assert rollout.tick(fleet.store, NEW, fleet.clock[0]) == []
     assert rollout.status(fleet.store, NEW)["state"] == "passed"
+
+
+def test_a_bridge_silent_after_its_update_is_unhealthy_though_its_sessions_still_call_the_hub(fleet):
+    rollout.state(fleet.store, NEW)
+    later(fleet, 60, *ALL)
+    updated(fleet, "hub", "box-1")
+    later(fleet, SOAK_S, "hub", "laptop")
+    with fleet.store.lock:  # a session on box-1 keeps using the token; the bridge is dead
+        fleet.store.db.execute("UPDATE devices SET last_used=? WHERE id=?", (fleet.clock[0], fleet.ids["box-1"]))
+    told = rollout.tick(fleet.store, NEW, fleet.clock[0])
+    assert len(told) == 1 and "stopped reporting after its update" in told[0]
+
+
+def test_a_device_with_no_bridge_is_never_first_nor_judged(fleet):
+    s = fleet.store
+    _, code = s.team_machine_add("box-0", "alice")  # a bridge-less account on the hub's computer
+    t, _ = s.invite_redeem(code, "mgr", host="box-0", os_user="mgr")
+    mgr = s.authenticate(t).device_id
+    with s.lock:
+        s.db.execute("UPDATE devices SET host='box-0', last_used=? WHERE id=?", (fleet.clock[0], mgr))
+    assert s.db.execute("SELECT bridge_seen FROM devices WHERE id=?", (mgr,)).fetchone()[0] is None
+    assert mgr not in rollout.pick_first(s, fleet.clock[0])
+    rollout.state(s, NEW)
+    later(fleet, SOAK_S + 1, *ALL)
+    updated(fleet, "hub", "box-1")
+    with s.lock:  # the manager's tool calls keep last_used fresh; it runs no bridge
+        s.db.execute("UPDATE devices SET last_used=? WHERE id=?", (fleet.clock[0], mgr))
+    assert rollout.tick(s, NEW, fleet.clock[0]) == []
+    assert rollout.status(s, NEW)["state"] == "passed"
+
+
+def test_a_bridge_never_seen_since_an_upgrade_counts_as_not_online_yet(fleet):
+    with fleet.store.lock:
+        fleet.store.db.execute("UPDATE devices SET bridge_seen=NULL WHERE id=?", (fleet.ids["box-1"],))
+    assert fleet.ids["box-1"] not in rollout.pick_first(fleet.store, fleet.clock[0])
+    rollout.status(fleet.store, NEW)
