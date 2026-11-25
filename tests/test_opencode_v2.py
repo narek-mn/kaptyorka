@@ -150,9 +150,10 @@ def test_v2_sessions_open_in_an_app_with_no_tui_are_listed(app_only):
     assert [(s.key, s.project, s.cwd) for s in got] == [
         ("opencode:ses_app", "proj-a", a), ("opencode:ses_tui", "proj-b", b),
         ("opencode:ses_long", "proj-b", b)]
-    assert [s.activity for s in got] == ["idle", "idle", "idle"]  # times from GET /api/session/:id
-    listed = next(p for m, p in calls if p.startswith("/api/session?"))
-    assert "directory=" not in listed and "order=desc" in listed  # every folder, newest first
+    assert [s.activity for s in got] == ["idle", "idle", "busy"]  # from the list row and active
+    assert 55 < got[0].idle_s < 65 and got[2].write_s > 3900
+    assert [p for m, p in calls] == ["/api/session?limit=100&order=desc", "/api/session/active"]
+    calls.clear()  # every folder, newest first, and no call per session
     state["active"] = None  # a service without /api/session/active: the time rule alone
     assert [s.key for s in OpenCodeAdapter().sessions()] == ["opencode:ses_app", "opencode:ses_tui"]
 
@@ -184,6 +185,15 @@ def test_compat_probe_of_the_active_sessions_route(app_only, monkeypatch, home):
     assert compat.PROBES[dep.id](compat.Ctx(home, None)) == (compat.OK, "")
     state["active"] = None
     assert compat.PROBES[dep.id](compat.Ctx(home, None))[0] == compat.BROKEN
+
+
+def test_v2_no_list_means_no_active_call(app_only, monkeypatch):
+    state, calls, a, b = app_only
+    real = opencode._v2_call
+    monkeypatch.setattr(opencode, "_v2_call", lambda svc, m, p, *x, **k: (
+        (503, None) if p.startswith("/api/session?") else real(svc, m, p, *x, **k)))
+    assert OpenCodeAdapter().sessions() == []
+    assert "/api/session/active" not in [p for m, p in calls]
 
 
 def test_v2_service_list_failing_never_fails_the_report(app_only, monkeypatch):

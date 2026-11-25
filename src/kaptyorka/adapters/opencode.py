@@ -453,7 +453,7 @@ OPEN_S = 30 * 60  # a V2 session with no TUI counts as open this long after its 
 
 
 def _v2_unclaimed(svc: Dict[str, str], skip: frozenset) -> "List[tuple]":
-    """(key, directory) of each V2 session open in the service with no TUI window claiming it
+    """(key, directory, time.updated, running a turn) of each V2 session open in the service with no TUI window claiming it
     (not in skip): the desktop or web app's. The service cannot say which sessions a client
     has open (module docstring), so the fallback rule: a top-level session (no parentID), not
     archived, that runs a turn now or took a step in the last OPEN_S. A session that registered
@@ -470,6 +470,8 @@ def _v2_unclaimed(svc: Dict[str, str], skip: frozenset) -> "List[tuple]":
     status, data = _v2_call(svc, "GET", "/api/session?" + urllib.parse.urlencode(
         {"limit": 100, "order": "desc"}))
     rows = data.get("data") if status == 200 and isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
     try:
         status, act = _v2_call(svc, "GET", "/api/session/active")
         live = act.get("data") if status == 200 and isinstance(act, dict) else None
@@ -478,7 +480,7 @@ def _v2_unclaimed(svc: Dict[str, str], skip: frozenset) -> "List[tuple]":
         running = set()  # an older service without the route: the time rule alone
     since = time.time() * 1000 - OPEN_S * 1000
     out = []
-    for s in rows if isinstance(rows, list) else []:
+    for s in rows:
         if not isinstance(s, dict):
             continue
         sid, t = s.get("id"), s.get("time") if isinstance(s.get("time"), dict) else {}
@@ -488,7 +490,7 @@ def _v2_unclaimed(svc: Dict[str, str], skip: frozenset) -> "List[tuple]":
         if (valid_id(sid) and not s.get("parentID") and not t.get("archived")
                 and isinstance(d, str) and d and f"opencode:{sid}" not in skip
                 and (recent or sid in running)):
-            out.append((f"opencode:{sid}", d))
+            out.append((f"opencode:{sid}", d, upd, sid in running))
     return out
 
 
@@ -882,8 +884,10 @@ class OpenCodeAdapter:
             unclaimed = _v2_unclaimed(svc, frozenset(seen))
         except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException):
             unclaimed = []  # the service is restarting: the windows above still count
-        for key, cwd in unclaimed:
-            out.append(self._v2_session(svc, key, cwd))
+        for key, cwd, updated, running in unclaimed:  # activity from the list row: no call each
+            idle_s, act, write_s = activity(updated, running)
+            out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), act, cwd=cwd,
+                               idle_s=idle_s, write_s=write_s))
         return out
 
     def _v2_session(self, svc: Dict[str, str], key: str, cwd: str) -> Session:

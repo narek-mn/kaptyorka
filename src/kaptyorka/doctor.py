@@ -245,7 +245,8 @@ def _opencode_versions() -> str:
     if not served or served == cli:
         return ""
     return (f"OpenCode sessions here run on its service {served}, but `opencode` on PATH is "
-            f"{cli or 'missing'}; kaptyorka was checked against OpenCode 2.3.2")
+            f"{cli or 'missing'}; kaptyorka was checked against OpenCode 2.3.2. Nothing to do; "
+            "tell your admin if OpenCode sessions go missing from the hub")
 
 
 def _show(results: List[Check]) -> None:
