@@ -217,7 +217,7 @@ def _opencode_server() -> Check:
     except Exception:
         v2, deaf = False, []
     if not deaf:
-        return Check("opencode server", True)
+        return Check("opencode server", True, info=_opencode_versions())
     n = len(deaf)
     windows = f" ({n} windows)" if n > 1 else ""
     if v2:
@@ -228,6 +228,24 @@ def _opencode_server() -> Check:
     return Check("opencode server", False,
                  "OpenCode is running without its local server, so the hub can't reach it"
                  + windows, "close it and start it again from a new terminal")
+
+
+def _opencode_versions() -> str:
+    """A note when the V2 service that serves this machine's sessions (the desktop app's own
+    one, for example) is another version than the `opencode` on PATH: kaptyorka's OpenCode 2
+    support was checked against 2.3.2 only."""
+    from kaptyorka.adapters.opencode import service, service_version, version
+
+    try:
+        svc = service()
+        served = service_version(svc) if svc else None
+        cli = version() if served else None
+    except Exception:
+        return ""
+    if not served or served == cli:
+        return ""
+    return (f"OpenCode sessions here run on its service {served}, but `opencode` on PATH is "
+            f"{cli or 'missing'}; kaptyorka was checked against OpenCode 2.3.2")
 
 
 def _show(results: List[Check]) -> None:

@@ -22,6 +22,14 @@ Checked against OpenCode's own source (github.com/sst/opencode, tags v1.19.6 and
   source-directory.ts:23-24, module.ts:114-118); a TUI part must be a folder with tui.js, which
   the server leaves to the TUI (packages/core/src/config/plugin/source.ts:170-172,
   packages/plugin/src/host.ts:56-58, packages/tui/src/plugin/discovery.ts:24-53).
+
+V2 sessions with no TUI window (the desktop app, locally or over SSH, or the web app: clients of
+the service with no process on this machine) are listed from the service alone, see
+_v2_unclaimed. Checked in tags v2.3.2 and v2.4.1: the service does not know which client has
+which session open, nor which clients are connected. No route says so (packages/protocol/src/
+groups/*.ts); its event feed keeps subscribers as anonymous queues (packages/server/src/
+event-feed.ts:39); POST /api/session/:id/view only marks an idle transition as seen
+(packages/core/src/session/session.ts:55-64). So the fallback rule is used.
 """
 import base64
 import re
@@ -345,23 +353,54 @@ def valid_id(sid: object) -> bool:
     return isinstance(sid, str) and SESSION_ID.match(sid) is not None
 
 
-def major() -> int:
-    """OpenCode's major version from `opencode --version`; 1 if it cannot be read."""
+def version() -> Optional[str]:
+    """`opencode --version` of the opencode on PATH ("2.3.2"); None if it cannot be read."""
     try:
         r = subprocess.run(["opencode", "--version"], capture_output=True, text=True,
                            timeout=TIMEOUT_S)
     except (OSError, subprocess.SubprocessError):
-        return 1
-    m = re.search(r"(\d+)\.\d+", r.stdout)
-    return int(m.group(1)) if m else 1
+        return None
+    m = re.search(r"\d+\.\d+(?:\.\d+)?", r.stdout)
+    return m.group(0) if m else None
+
+
+def major() -> int:
+    """OpenCode's major version from `opencode --version`; 1 if it cannot be read."""
+    v = version()
+    return int(v.split(".")[0]) if v else 1
+
+
+def _service_file() -> Path:
+    state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "opencode"
+    return state / "service.json"
+
+
+def service_version(svc: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """The running V2 service's own version: service.json's "version" (written by the service,
+    packages/client/src/effect/service.ts:142-148 in v2.3.2 and v2.4.1), else GET /api/info's
+    "version" (packages/protocol/src/groups/server.ts:5-6). None if neither says."""
+    try:
+        v = json.loads(_service_file().read_text()).get("version")
+        if isinstance(v, str) and v:
+            return v
+    except (OSError, ValueError, AttributeError):
+        pass
+    svc = svc or service()
+    if not svc:
+        return None
+    try:
+        status, data = _v2_call(svc, "GET", "/api/info")
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+    v = data.get("version") if status == 200 and isinstance(data, dict) else None
+    return v if isinstance(v, str) and v else None
 
 
 def service() -> Optional[Dict[str, str]]:
     """The V2 background service's address and auth header, from its service.json; None if
     no V2 service runs."""
-    state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "opencode"
     try:
-        info = json.loads((state / "service.json").read_text())
+        info = json.loads(_service_file().read_text())
         url = info["url"].rstrip("/")
         if info.get("pid"):
             os.kill(int(info["pid"]), 0)  # a file left by a service that has stopped
@@ -408,6 +447,49 @@ def _v2_newest(svc: Dict[str, str], pid: int, cwd: str,
     if not here:
         return None
     return "opencode:" + max(here, key=lambda s: s.get("time", {}).get("updated", 0))["id"]
+
+
+OPEN_S = 30 * 60  # a V2 session with no TUI counts as open this long after its last step
+
+
+def _v2_unclaimed(svc: Dict[str, str], skip: frozenset) -> "List[tuple]":
+    """(key, directory) of each V2 session open in the service with no TUI window claiming it
+    (not in skip): the desktop or web app's. The service cannot say which sessions a client
+    has open (module docstring), so the fallback rule: a top-level session (no parentID), not
+    archived, that runs a turn now or took a step in the last OPEN_S. A session that registered
+    itself through the shim is in this list with no record of its own: a hub tool call is a
+    step of a turn, which moves time.updated (activity()).
+    Sources, the same in v2.3.2 and v2.4.1: GET /api/session takes limit and order and, with
+    no directory, lists every folder (packages/protocol/src/groups/session.ts:114-129,
+    packages/schema/src/session.ts:74-109), newest time.updated first (packages/core/src/
+    session/store.ts:156-157 in v2.3.2, 157 in v2.4.1); each row has parentID, location and
+    time.updated/archived (packages/core/src/session/info.ts:52-58). GET /api/session/active
+    names the sessions running a turn in this service process right now (packages/protocol/
+    src/groups/session.ts:43-45,225-234; packages/server/src/handlers/session.ts:158-163):
+    busy from it, the service's own live answer, rather than from stored time.busy/idle."""
+    status, data = _v2_call(svc, "GET", "/api/session?" + urllib.parse.urlencode(
+        {"limit": 100, "order": "desc"}))
+    rows = data.get("data") if status == 200 and isinstance(data, dict) else None
+    try:
+        status, act = _v2_call(svc, "GET", "/api/session/active")
+        live = act.get("data") if status == 200 and isinstance(act, dict) else None
+        running = set(live) if isinstance(live, dict) else set()
+    except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException):
+        running = set()  # an older service without the route: the time rule alone
+    since = time.time() * 1000 - OPEN_S * 1000
+    out = []
+    for s in rows if isinstance(rows, list) else []:
+        if not isinstance(s, dict):
+            continue
+        sid, t = s.get("id"), s.get("time") if isinstance(s.get("time"), dict) else {}
+        d = (s.get("location") or {}).get("directory") if isinstance(s.get("location"), dict) else None
+        upd = t.get("updated")
+        recent = isinstance(upd, (int, float)) and not isinstance(upd, bool) and upd >= since
+        if (valid_id(sid) and not s.get("parentID") and not t.get("archived")
+                and isinstance(d, str) and d and f"opencode:{sid}" not in skip
+                and (recent or sid in running)):
+            out.append((f"opencode:{sid}", d))
+    return out
 
 
 def activity(updated, busy: bool) -> "tuple[Optional[float], str, Optional[float]]":
@@ -796,6 +878,12 @@ class OpenCodeAdapter:
             if key and key not in seen:
                 seen.add(key)
                 out.append(self._v2_session(svc, key, cwd))
+        try:  # open in an app with no window here (desktop, web): from the service alone
+            unclaimed = _v2_unclaimed(svc, frozenset(seen))
+        except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException):
+            unclaimed = []  # the service is restarting: the windows above still count
+        for key, cwd in unclaimed:
+            out.append(self._v2_session(svc, key, cwd))
         return out
 
     def _v2_session(self, svc: Dict[str, str], key: str, cwd: str) -> Session:

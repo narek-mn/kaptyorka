@@ -132,6 +132,12 @@ DEPS: Tuple[Dep, ...] = (
         "V2: GET /api/session lists sessions; POST /api/session/<id>/prompt",
         "V2 sessions and push", "V2 /api/session gives no list",
         "its sessions are not listed", True),
+    Dep("opencode.app_sessions", "opencode",
+        "V2: GET /api/session over every folder (parentID, location.directory, time.archived)"
+        " and GET /api/session/active {data: {<id>: {type: running}}}",
+        "sessions open in the desktop or web app, with no TUI window here",
+        "V2 /api/session/active gives no map",
+        "a session working on one long step for over 30 minutes drops off the hub", True),
     Dep("opencode.activity", "opencode",
         "session `time.updated` (ms, moves per step); V1 GET /session/status, V2 GET"
         " /api/session/<id> time.busy/time.idle",
@@ -490,6 +496,23 @@ def p_opencode_api(ctx: Ctx):
     return BROKEN, f"GET /api/session answered {status}"
 
 
+def p_opencode_app_sessions(ctx: Ctx):
+    from kaptyorka.adapters import opencode
+
+    if opencode.major() < 2:
+        return UNKNOWN, "V1 installed"
+    svc = opencode.service()
+    if svc is None:
+        return UNKNOWN, "no V2 service running"
+    try:
+        status, data = opencode._v2_call(svc, "GET", "/api/session/active")
+    except OSError as e:
+        return UNKNOWN, str(e)[:100]
+    if status == 200 and isinstance(data, dict) and isinstance(data.get("data"), dict):
+        return OK, ""
+    return BROKEN, f"GET /api/session/active answered {status}"
+
+
 def p_opencode_activity(ctx: Ctx):
     from kaptyorka.adapters import opencode
 
@@ -585,7 +608,7 @@ PROBES: Dict[str, Callable[[Ctx], Tuple[str, str]]] = {
                              "claude.stop", "claude.rm")},
     "opencode.version": p_opencode_version, "opencode.v1_server": p_opencode_v1,
     "opencode.service": p_opencode_service, "opencode.api_session": p_opencode_api,
-    "opencode.activity": p_opencode_activity,
+    "opencode.activity": p_opencode_activity, "opencode.app_sessions": p_opencode_app_sessions,
     "codex.version": p_codex_version, "codex.app_server": p_codex_app_server,
     "codex.thread_status": p_codex_thread_status,
 }

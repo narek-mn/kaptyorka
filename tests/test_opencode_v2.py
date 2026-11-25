@@ -107,6 +107,120 @@ def test_v2_doctor_server_check(monkeypatch):
     assert opencode.deaf_tuis() == [] and doctor._opencode_server().ok
 
 
+# --- sessions open in an app with no TUI window here (desktop app, web) --------------------------
+
+@pytest.fixture
+def app_only(monkeypatch, tmp_path):
+    """A V2 service with no TUI on the machine: what the desktop app over SSH leaves. Routes as
+    OpenCode 2.3.2 / 2.4.1 answer them; `rows` and `active` are the service's state."""
+    now = time.time() * 1000
+    a, b = str(tmp_path / "proj-a"), str(tmp_path / "proj-b")
+    state = {"active": {"ses_long": {"type": "running"}}, "rows": [
+        {"id": "ses_child", "parentID": "ses_app", "location": {"directory": a},
+         "time": {"created": now, "updated": now}},
+        {"id": "ses_app", "location": {"directory": a}, "time": {"created": now - 9e5, "updated": now - 6e4}},
+        {"id": "ses_tui", "location": {"directory": b}, "time": {"created": now, "updated": now - 1e3}},
+        {"id": "ses_gone", "location": {"directory": a},
+         "time": {"created": now, "updated": now - 2e3, "archived": now - 1e3}},
+        {"id": "ses_long", "location": {"directory": b}, "time": {"created": 1, "updated": now - 4e6}},
+        {"id": "ses_old", "location": {"directory": a}, "time": {"created": 1, "updated": now - 3e6}},
+    ]}
+    calls = []
+
+    def call(svc, method, path, body=None, timeout=None):
+        calls.append((method, path))
+        if path == "/api/session/active":
+            return (200, {"data": state["active"]}) if state["active"] is not None else (404, None)
+        if path.startswith("/api/session?"):
+            return 200, {"data": state["rows"], "cursor": {}}
+        row = next((r for r in state["rows"] if path == "/api/session/" + r["id"]), None)
+        return (200, {"data": row}) if row else (404, None)
+
+    monkeypatch.setattr(opencode, "service", lambda: {"url": "http://127.0.0.1:1", "Authorization": "x"})
+    monkeypatch.setattr(opencode, "_v2_call", call)
+    monkeypatch.setattr(opencode, "_tuis", lambda: [])
+    return state, calls, a, b
+
+
+def test_v2_sessions_open_in_an_app_with_no_tui_are_listed(app_only):
+    """No TUI, no note: top-level sessions that ran a step in the last 30 minutes, or run a
+    turn now, with their own folder; never a subagent's, an archived or an old idle one."""
+    state, calls, a, b = app_only
+    got = OpenCodeAdapter(find_ports=lambda: pytest.fail("no V1 port scan on V2")).sessions()
+    assert [(s.key, s.project, s.cwd) for s in got] == [
+        ("opencode:ses_app", "proj-a", a), ("opencode:ses_tui", "proj-b", b),
+        ("opencode:ses_long", "proj-b", b)]
+    assert [s.activity for s in got] == ["idle", "idle", "idle"]  # times from GET /api/session/:id
+    listed = next(p for m, p in calls if p.startswith("/api/session?"))
+    assert "directory=" not in listed and "order=desc" in listed  # every folder, newest first
+    state["active"] = None  # a service without /api/session/active: the time rule alone
+    assert [s.key for s in OpenCodeAdapter().sessions()] == ["opencode:ses_app", "opencode:ses_tui"]
+
+
+def test_v2_a_tui_window_still_claims_its_session_once(app_only, monkeypatch):
+    import subprocess as sp
+    import sys
+
+    state, calls, a, b = app_only
+    window = sp.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        monkeypatch.setattr(opencode, "_tuis", lambda: [window.pid])
+        opencode.open_dir().mkdir(parents=True, exist_ok=True)
+        (opencode.open_dir() / f"{window.pid}.json").write_text(
+            json.dumps({"session": "ses_tui", "directory": b}))
+        keys = [s.key for s in OpenCodeAdapter().sessions()]
+        assert keys == ["opencode:ses_tui", "opencode:ses_app", "opencode:ses_long"]
+    finally:
+        window.kill()
+        window.wait()
+
+
+def test_compat_probe_of_the_active_sessions_route(app_only, monkeypatch, home):
+    from kaptyorka import compat
+
+    state, calls, a, b = app_only
+    monkeypatch.setattr(opencode, "major", lambda: 2)
+    dep = compat.BY_ID["opencode.app_sessions"]
+    assert compat.PROBES[dep.id](compat.Ctx(home, None)) == (compat.OK, "")
+    state["active"] = None
+    assert compat.PROBES[dep.id](compat.Ctx(home, None))[0] == compat.BROKEN
+
+
+def test_v2_service_list_failing_never_fails_the_report(app_only, monkeypatch):
+    state, calls, a, b = app_only
+    real = opencode._v2_call
+
+    def down(svc, method, path, body=None, timeout=None):
+        if path.startswith("/api/session?"):
+            raise OSError("restarting")
+        return real(svc, method, path, body, timeout)
+    monkeypatch.setattr(opencode, "_v2_call", down)
+    assert OpenCodeAdapter().sessions() == []
+
+
+def test_doctor_notes_a_service_of_another_version(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    (tmp_path / "opencode").mkdir()
+    reg = tmp_path / "opencode" / "service.json"
+    monkeypatch.setattr(opencode, "_tuis", lambda: [])
+    monkeypatch.setattr(opencode, "major", lambda: 2)
+    monkeypatch.setattr(opencode, "version", lambda: "2.3.2")
+    monkeypatch.setattr(opencode, "service", lambda: {"url": "http://127.0.0.1:1", "Authorization": "x"})
+    reg.write_text(json.dumps({"url": "http://127.0.0.1:1", "pid": 1, "version": "2.4.1"}))
+    c = doctor._opencode_server()
+    assert c.ok and "service 2.4.1" in c.info and "on PATH is 2.3.2" in c.info
+    reg.write_text(json.dumps({"url": "http://127.0.0.1:1", "pid": 1, "version": "2.3.2"}))
+    assert doctor._opencode_server().info == ""
+    reg.write_text(json.dumps({"url": "http://127.0.0.1:1", "pid": 1}))  # no version: ask the service
+    monkeypatch.setattr(opencode, "_v2_call", lambda svc, m, p, *a, **k: (
+        (200, {"version": "2.4.1", "pid": 1}) if p == "/api/info" else (404, None)))
+    assert "service 2.4.1" in doctor._opencode_server().info
+    monkeypatch.setattr(opencode, "version", lambda: None)  # the desktop app alone, no CLI
+    assert "on PATH is missing" in doctor._opencode_server().info
+    monkeypatch.setattr(opencode, "service", lambda: None)
+    assert doctor._opencode_server().info == ""
+
+
 # --- the TUI plugin itself, under node ---------------------------------------------------------
 
 HARNESS = r"""
