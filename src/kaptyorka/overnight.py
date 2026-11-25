@@ -73,7 +73,8 @@ PAST = re.compile(r"\blast night\b|\bthis morning\b|\byesterday\b|\ball night\b"
 ASK = re.compile(r"\b(?:turn|switch|put)\s+(?:on\s+)?overnight mode\b|\bovernight mode on\b"
                  r"|\b(?:until|till)\s+i(?:'m| am)?\s+back\b"
                  r"|\bwhile i(?:'m| am)?\s+(?:sleep|sleeping|asleep|away)\b"
-                 r"|\b(?:before|by)\s+(?:the\s+)?morning\b|^\s*overnight task\s*:"
+                 r"|\b(?:before|by)\s+(?:the\s+)?morning\b|^\s*overnight task\s*[:,.\-\u2013]"
+                 r"|\bthis is an? overnight task\b|\bwork\b[^.?!\n]{0,20}\bwhole night\b"
                  r"|\b(?:do|work|run|fix|finish|continue|keep|handle|build|try)\b[^.?!\n]{0,60}"
                  r"\bover\s?-?night\b(?!\s+(?:task|run|job|mode)?\s*(?:results?|reports?))",
                  re.I | re.M)
@@ -787,11 +788,29 @@ def asks(tool: str, tool_input: dict, rules: List[str]) -> str:
 
 # ---------- on, off and the words of the developer ----------
 
+# Material the person did not write as an order: pasted blocks, code, quoted lines.
+_PASTE = re.compile(r"<pasted_content\b.*?</pasted_content>|```.*?```|`[^`\n]*`|^\s*>.*$",
+                    re.I | re.S | re.M)
+_NEGATED = re.compile(r"\b(?:no|not|never|nor|without|stop|cancel|disable|off|"
+                      r"(?:do|does|did|is|are|was|were|would|will|can|could|should)n'?t|"
+                      r"(?:do|does|did|will|can) not)\b|n't\b", re.I)
+_ASKING = re.compile(r"\s*(?:please\s+)?(?:can|could|would|will)\s+you\b", re.I)
+
+
 def triggered(prompt: str) -> bool:
-    prompt = prompt or ""
-    if PAST.search(prompt):
-        return bool(ASK.search(prompt))
-    return bool(TRIGGER.search(prompt))
+    """True only for a clear order typed by the person ("overnight task: ...", "run this
+    overnight"). A mention never counts: pasted or quoted text, a negation ("no need for overnight
+    mode"), a question or talk about the feature, a past night. When unsure: False."""
+    text = _PASTE.sub("\n", prompt or "")
+    for sent in re.findall(r"[^.?!\n;]+[.?!;]?", text):
+        if sent.rstrip().endswith("?") and not _ASKING.match(sent):
+            continue
+        if PAST.search(sent):
+            continue
+        for m in ASK.finditer(sent):
+            if not _NEGATED.search(sent[max(0, m.start() - 40):m.end()]):
+                return True
+    return False
 
 
 def turn_on(sid: str, project: str, cwd: str, team: bool, key: str, machine: str,

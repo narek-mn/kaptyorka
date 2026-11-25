@@ -249,7 +249,7 @@ def test_a_subagent_report_or_task_notice_never_turns_it_on(home, capsys):
         assert run_hook("prompt", {"session_id": "s9", "cwd": "/w/proj-a", "prompt": prompt},
                         capsys) is None
         assert overnight.state("s9") is None
-    assert overnight.triggered(report)  # the words alone would have turned it on
+    assert not overnight.triggered(report)  # and the words alone no longer count either
 
 
 def test_transcript_origin_decides_when_written(home, tmp_path):
@@ -558,6 +558,51 @@ def test_asks_for_tonight_trigger(prompt):
     "the overnight task failed, why?",
 ])
 def test_words_about_a_past_night_do_not_trigger(prompt):
+    assert not overnight.triggered(prompt)
+
+
+DOCTOR_PASTE = (
+    '<pasted_content name="doctor.txt">\n'
+    "note tool: opencode overnight: not yet: overnight mode works in Claude Code only\n"
+    "</pasted_content>")
+
+
+@pytest.mark.parametrize("prompt", [
+    "overnight task - fix the flaky test",
+    "Overnight task, tidy the docs",
+    "this is an overnight task",
+    "work overnight on the parser",
+    "run this overnight",
+    "do this overnight please",
+    "work the whole night on the importer",
+    "fix the tests. Overnight task: they must be green by morning, not flaky",
+])
+def test_clear_orders_trigger(prompt):
+    assert overnight.triggered(prompt)
+
+
+@pytest.mark.parametrize("prompt", [
+    DOCTOR_PASTE,
+    "note tool: opencode overnight: not yet: overnight mode works in Claude Code only",
+    "No need for overnight mode. I am at office and can assist you if needed.",
+    "not overnight",
+    "don't use overnight mode",
+    "please don't work overnight on this",
+    "without overnight mode",
+    "stop overnight mode",
+    "turn off overnight mode",
+    "disable overnight",
+    "no overnight",
+    "why did overnight mode turn on?",
+    "overnight mode is buggy",
+    "the overnight trigger fires too often",
+    "we did an overnight run yesterday",
+    "is overnight mode on?",
+    "see this:\n> run this overnight\nwhat does it mean?",
+    "the log says `work overnight on it` and `overnight task: x`",
+    "```\nrun this overnight\n```",
+])
+def test_mentions_never_trigger(prompt):
     assert not overnight.triggered(prompt)
 
 
