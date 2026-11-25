@@ -14,6 +14,7 @@
 - Overnight mode no longer turns on from a mere mention of the word (pasted text, 'no need for overnight mode', questions about it, a deadline like 'by morning'); it needs a clear order such as 'overnight task: ...' or `/hub overnight`.
 - The rest of the machines now follow a staged update after 5 minutes instead of 20; `kaptyorka fleet rollout go` still releases them at once.
 - A first machine that updated and then stopped reporting now holds the rest of the update (the admins hear "<machine> stopped reporting after its update"); an account with no bridge of its own (such as the manager's) never goes first and is never judged.
+- **No false "Claude Code internals changed" warning.** The check for the blocked-reply marker took any open session whose history mentioned the marker's name (a session reading kaptyorka's own code) for a marker in a new shape, and the machine showed "refusal markers in transcripts not read". It now counts only a line that is the marker itself.
 
 ## 0.9.37
 

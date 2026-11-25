@@ -360,6 +360,18 @@ REFUSAL_LINE = ('{"isSidechain":false,"type":"system","subtype":"model_refusal_n
                 '"content":"","level":"warning","timestamp":"2026-11-25T08:08:13.871Z"}')
 
 
+def _is_refusal_marker(line: str, name: str) -> bool:
+    """A transcript line that is the marker itself: the name is the value of one of the line's
+    own fields, whatever the others are called now. A session that only talks about the name
+    (a message, a tool result) has it deeper, inside its content."""
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        return False
+    return (isinstance(rec, dict) and rec.get("isSidechain") is not True
+            and any(v == name for v in rec.values()))
+
+
 def p_claude_refusal(ctx: Ctx):
     """The reader finds the recorded marker, and every live transcript that holds one."""
     from kaptyorka.adapters.claude import REFUSAL, last_refusal, parse_refusal
@@ -371,7 +383,8 @@ def p_claude_refusal(ctx: Ctx):
             size = p.stat().st_size
             with open(p, "rb") as f:
                 f.seek(max(0, size - 256 * 1024))
-                held = REFUSAL.encode() in f.read()
+                tail = f.read().decode("utf-8", "replace")
+            held = any(_is_refusal_marker(line, REFUSAL) for line in tail.splitlines() if REFUSAL in line)
             if held and last_refusal(p, size) is None:
                 return BROKEN, f"a {REFUSAL} line without the expected type or timestamp"
         except OSError:

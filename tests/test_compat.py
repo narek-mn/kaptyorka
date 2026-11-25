@@ -111,6 +111,40 @@ def test_a_sound_claude_install_passes_every_cheap_probe(home, sock):
     assert "claude.bg_launch" not in res  # starts a session: only the slow test
 
 
+def _add_line(home, rec):
+    with open(home / ".claude" / "projects" / "-w-proj-a" / f"sid-{os.getpid()}.jsonl", "a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
+def test_a_session_that_only_mentions_the_refusal_marker_is_not_a_break(home, sock):
+    """A session reading kaptyorka's own code has the marker's name in a message, not as a marker."""
+    sound_install(home, sock)
+    _add_line(home, {"type": "assistant", "timestamp": "2026-11-24T10:01:00.000Z",
+                     "message": {"content": [{"type": "text", "text": "grep model_refusal_no_fallback"}]}})
+    _add_line(home, {"type": "user", "message": {"content": compat.REFUSAL_LINE}})
+    res = compat.cheap(["claude-code"], compat.Ctx(home, SOUND, tmp=home / "tmp"))
+    assert res["claude.refusal"][0] == compat.OK
+
+
+@pytest.mark.parametrize("marker", [
+    {"type": "system", "subtype": "model_refusal_no_fallback"},  # no timestamp
+    {"type": "notice", "subtype": "model_refusal_no_fallback", "timestamp": "2026-11-24T10:01:00.000Z"},
+    {"type": "system", "kind": "model_refusal_no_fallback", "timestamp": "2026-11-24T10:01:00.000Z"},
+])
+def test_a_refusal_marker_in_a_new_shape_is_a_break(home, sock, marker):
+    sound_install(home, sock)
+    _add_line(home, marker)
+    res = compat.cheap(["claude-code"], compat.Ctx(home, SOUND, tmp=home / "tmp"))
+    assert res["claude.refusal"][0] == compat.BROKEN
+
+
+def test_a_real_refusal_marker_is_read(home, sock):
+    sound_install(home, sock)
+    _add_line(home, json.loads(compat.REFUSAL_LINE))
+    res = compat.cheap(["claude-code"], compat.Ctx(home, SOUND, tmp=home / "tmp"))
+    assert res["claude.refusal"][0] == compat.OK
+
+
 def test_no_live_session_is_no_evidence(home):
     res = compat.cheap(["claude-code"], compat.Ctx(home, SOUND, tmp=home / "tmp"))
     assert broken_ids(res) == []
