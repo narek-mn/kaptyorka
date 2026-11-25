@@ -1567,10 +1567,15 @@ a.p-main { color: inherit; text-decoration: none; }
     m.to.forEach(function (t, i) { out.push(m.toMgr[i] ? "mgr" : m.toWeb ? (mine(t) ? ME : "@" + t) : m.toId[i] || sessionKey(t)); });
     return out;
   }
+  /* a chat with a person is a direct exchange only: they wrote to this page, or this page wrote
+     to them. Someone who got the same message from a third sender is not a chat partner; that
+     message stays in its sender's chat */
+  function direct(p, x) { return (p[0] === x && p.indexOf(ME, 1) >= 0) || (p[0] === ME && p.indexOf(x, 1) >= 0); }
   /* a member's hub notices to this page sit in the manager's chat; the admin's in Activity */
   function inConv(m, c) {
     if (c === "activity") return true;
     var p = parties(m);
+    if (c.charAt(0) === "@") return direct(p, c);
     return p.indexOf(c) >= 0 || (c === "mgr" && !isAdmin() && p.every(function (x) { return x === ME || x === HUB; }));
   }
   /* what this page has read, per chat: kept in this browser; a new browser starts all read */
@@ -1634,7 +1639,7 @@ a.p-main { color: inherit; text-decoration: none; }
     var people = {};
     msgs.forEach(function (m) {
       var p = parties(m);
-      if (p.indexOf(ME) >= 0) p.forEach(function (x) { if (x.charAt(0) === "@" && x !== ME && x !== HUB) people[x] = 1; });
+      p.forEach(function (x) { if (x.charAt(0) === "@" && x !== ME && x !== HUB && direct(p, x)) people[x] = 1; });
     });
     Object.keys(people).sort().forEach(function (x) {
       list.push({ key: x, name: x.slice(1), icon: "i-person", sub: "", to: x.slice(1), tip: "On the web page" });

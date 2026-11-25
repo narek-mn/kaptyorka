@@ -149,6 +149,37 @@ def test_two_sides(hub):
             assert page.js("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
 
 
+def test_person_row_only_for_a_direct_exchange(hub):
+    """One message from the manager to both alice and bob does not make bob a chat in alice's
+    list: it stays in the manager's chat, to "all". A message bob wrote to alice does make the
+    row, and its chat holds that message only."""
+    store, url = hub
+    alice = manager_chat(store)
+    mgr = store.agent("k:mgr").name
+    names = '[...document.querySelectorAll("#agents .row .name")].map(n => n.textContent)'
+    texts = '[...document.querySelectorAll("#log .msg .text")].map(t => t.textContent)'
+
+    def put(sender_key, sender, to, text):
+        with store.lock:
+            store.db.execute("INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool, project, text, created)"
+                             " VALUES (?,?,?,?,'','','',?,?)", (sender_key, sender, "web:" + to, to, text, store.clock()))
+
+    put("k:mgr", mgr, "alice", "Both of you: the hub restarts at 18:00.")
+    put("k:mgr", mgr, "bob", "Both of you: the hub restarts at 18:00.")
+    with chrome() as page:
+        page.go(url.split("#")[0] + alice)
+        page.wait('!!document.querySelector("#agents .row.mgr")')
+        page.js('document.querySelector("#agents .row.mgr").click()')
+        page.wait(f'{texts}.includes("Both of you: the hub restarts at 18:00.")')
+        assert "bob" not in page.js(names), page.js(names)
+        assert page.js('[...document.querySelectorAll("#log .head .to .to-n")].pop().textContent') == "all"
+        put("web:bob", "bob", "alice", "Can I restart box-2 before that?")
+        page.wait(f'{names}.includes("bob")')
+        page.js('[...document.querySelectorAll("#agents .row")].find(r => r.querySelector(".name")?.textContent === "bob").click()')
+        page.wait(f'{texts}.length === 1')
+        assert page.js(texts) == ["Can I restart box-2 before that?"]
+
+
 def test_never_html(hub):
     store, url = hub
     store.send("b1", "bob", EVIL)
