@@ -119,6 +119,73 @@ def build(tmp_path):
     return store, f"http://127.0.0.1:{stop.port}/#t={btoken}", stop
 
 
+def manager_chat(store):
+    """The manager's chat as the admin alice reads it: the three sessions and bob's page write to
+    the manager, it answers each, and alice writes to it herself (a run of two, then one more).
+    Returns alice's page url fragment ("#t=...")."""
+    import hashlib
+    import secrets
+    from test_working_together import said
+    mtoken = ManagerStore(store).ensure_account("box-1", "alice")
+    store.heartbeat("box-1", [{"key": "k:mgr", "tool": "claude-code", "project": "manager", "label": "manager"}],
+                    principal=store.authenticate(mtoken), facts={"host": "box-1", "os_user": "u"})
+    mgr = store.agent("k:mgr").name
+    token = secrets.token_urlsafe(32)
+    with store.lock:
+        alice = store.db.execute("SELECT id FROM people WHERE name='alice'").fetchone()[0]
+        store.db.execute("INSERT INTO devices (person_id, name, token_hash, created) VALUES (?,?,?,?)",
+                         (alice, "alice-phone", hashlib.sha256(token.encode()).hexdigest(), store.clock()))
+    for who, to, text, ago in (
+            ("b1", mgr, "tokenizer-v2 is ready for review: 214 tests pass, the branch is pushed.", 3600),
+            ("k:mgr", "b1", "Got it. parser-tests reviews it; I told it to start now.", 3540),
+            ("t1", mgr, "The training run on box-1 finished: loss 1.87 against 1.91 for the baseline at step 20k. "
+                        "The GPU is free again from now.", 2400),
+            ("@bob", mgr, "Please give box-1 to parser-tests for an hour, it needs the GPU for the slow tests.", 1500),
+            ("k:mgr", "bob", "Done: parser-tests has box-1 until 15:00. trainer knows.", 1440),
+            ("bw", mgr, "Parser edge cases are covered: empty input, BOM and CRLF. 2 tests were failing on main "
+                        "before my fix; both pass now. Waiting for api-dev to merge.", 1200),
+            ("k:mgr", "bw", "Thanks. api-dev, please merge `parser-edge` after `tokenizer-v2`; both are approved.", 1140),
+            ("@alice", mgr, "What is still open on proj-a today?", 600),
+            ("@alice", mgr, "Short list please, most urgent first.", 570),
+            ("k:mgr", "alice", "Three things, most urgent first:\n\n1. **Merge order**: `tokenizer-v2` first, then "
+                               "`parser-edge`. api-dev does both once CI is green.\n2. The nightly job may need 40 more "
+                               "minutes with the bigger vocabulary; nobody has changed its limit yet.\n3. Old "
+                               "checkpoints (380 GB) are kept one more week, then deleted.", 500),
+            ("@alice", mgr, "Raise the nightly limit to 3 hours and tell bob.", 200)):
+        if who.startswith("@"):  # a person's page to the manager, as the hub keeps it
+            with store.lock:
+                store.db.execute("INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool, project, text, created)"
+                                 " VALUES (?,?,'k:mgr',?,'','','',?,?)", ("web:" + who[1:], who[1:], mgr, text, store.clock()))
+        elif to in ("alice", "bob"):  # the manager to a person's page
+            with store.lock:
+                store.db.execute("INSERT INTO messages (sender_key, sender_name, to_key, to_name, machine, tool, project, text, created)"
+                                 " VALUES ('k:mgr',?,?,?,'','','',?,?)", (mgr, "web:" + to, to, text, store.clock()))
+        else:
+            said(store, who, "k:mgr" if to == mgr else to, text)
+        with store.lock:
+            store.db.execute("UPDATE messages SET created=?, read_at=? WHERE id=(SELECT MAX(id) FROM messages)",
+                             (store.clock() - ago, store.clock() - ago + 5))
+    return f"#t={token}"
+
+
+# each bubble in the open chat: its side ("mine", "peer" or "" for the left), where it sits in
+# the column, its colours and the contrast of its text on its own surface
+SIDES = """(() => {
+  const lum = c => { const v = c.match(/[\\d.]+/g).slice(0, 3).map(Number).map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return Math.round((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) * 10) / 10; };
+  const log = document.getElementById("log"), ls = getComputedStyle(log);
+  const col = [...log.children].find(c => c.classList.contains("group")).getBoundingClientRect();
+  return [...log.querySelectorAll(".group .msg > .bub")].map(b => {
+    const g = b.closest(".group"), r = b.getBoundingClientRect(), cs = getComputedStyle(b), p = b.querySelector("p, li") || b;
+    return { side: g.classList.contains("mine") ? "mine" : g.classList.contains("peer") ? "peer" : "", bg: cs.backgroundColor,
+             left: Math.round(r.left - col.left), right: Math.round(col.right - r.right), width: Math.round(r.width), col: Math.round(col.width),
+             contrast: ratio(getComputedStyle(p).color, cs.backgroundColor), head: !!g.querySelector(".head"),
+             pane: log.clientWidth - parseFloat(ls.paddingLeft) - parseFloat(ls.paddingRight) };
+  });
+})()"""
+
+
 MEASURE = """(() => {
   const lum = c => { const v = c.match(/[\\d.]+/g).slice(0, 3).map(Number).map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
     return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
@@ -141,8 +208,8 @@ MEASURE = """(() => {
     got.slice(0, -1).forEach(c => lines.push(c));
   });
   lines.sort((a, b) => a - b);
-  let bg = getComputedStyle(document.getElementById("log")).backgroundColor;
-  if (bg === "rgba(0, 0, 0, 0)") bg = getComputedStyle(document.body).backgroundColor;
+  let bg = "rgba(0, 0, 0, 0)";  /* the surface the text sits on: its bubble */
+  for (let n = p; n && bg === "rgba(0, 0, 0, 0)"; n = n.parentElement) bg = getComputedStyle(n).backgroundColor;
   const pcs = getComputedStyle(p);
   return { font_px: parseFloat(pcs.fontSize), line_height: Math.round(parseFloat(pcs.lineHeight) / parseFloat(pcs.fontSize) * 100) / 100,
            text_width_px: Math.round(t.getBoundingClientRect().width), chars_per_line: lines.length ? lines[Math.floor(lines.length / 2)] : null,

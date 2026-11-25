@@ -64,7 +64,9 @@ def test_home_two_pane_chat(hub):
     # messages in full, grouped by sender, a line per day; very long ones fold at about 20 lines, never the newest
     assert 'function notice(m) { return m.kind !== "message" || m.sender === "hub"; }' in html
     assert '(showNotices ? "hide notices" : "show notices") + " (" + notices + ")"' in html
-    assert 'el("b", { "class": p[0] === ME ? "mine" : null, text: senderName(m) })' in html
+    # two sides: mine on the right in the accent bubble with no name over it, the rest on the left
+    assert 'var mine = p[0] === ME, side = mine ? " mine" : many ? "" :' in html and 'el("div", { "class": "bub" }' in html
+    assert ".group.mine { align-items: flex-end;" in html and ".group.mine .bub { background: var(--mine);" in html
     assert ".msg .text.clamp { max-height: 32em;" in html and '"Show more"' in html and "dayLabel(m.created)" in html
     assert "if (m.id !== newest && " in html and "var text = md(m.text)" in html  # markdown, built from text nodes
     assert "overflow-wrap: anywhere" in html

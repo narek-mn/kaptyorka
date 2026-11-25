@@ -545,38 +545,68 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .warn-pop li.wp-wait .wp-fix { flex-wrap: wrap; }
 .warn-pop .wp-err { color: var(--risk); font-size: var(--fs-sm); margin-top: 4px; }
 .warn-pop .wp-fix .btn.icon { width: 28px; height: 28px; min-width: 28px; padding: 0; justify-content: center; }
-/* the chat reads like a document: 16 px text at 1.55 (GitHub's markdown body is 16/1.5, Discord
-   and Claude 16 px) in one column of about 75 characters a line (Bringhurst's 45-75, measured
-   on real sentences of Archivo, not on a row of capitals and digits), centred in a wide pane as
-   ChatGPT and Claude do. Name and time on one line over a sender's run of messages (Slack,
-   Discord); each later message of a run has its time in the gutter (Telegram shows a time on
-   every message), so where one long message ends and the next begins is never a guess */
-#log { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-6) var(--s-6); }
-.chat { --col: 552px; }  /* the reading column: 40 px of badges and 32em of 16 px text; the write box matches it */
+/* the chat is a conversation with two sides, laid out as the products people already read all
+   day do it (values read from their own stylesheets and sources, not from memory):
+   - what I sent sits on the right in a bubble of limited width, the answer on the left: ChatGPT
+     (--user-chat-width: 70%), VS Code's chat (request bubble: margin-left auto, fit-content),
+     Telegram (.own: row-reverse), Signal. Mine in the accent as messengers do it; the other side
+     on a neutral surface; a second neutral for the counterpart in a chat I only read
+   - one column, centred: 768 px (ChatGPT's 48rem thread, Telegram Web's 47.5rem container);
+     wider on a very wide screen (Telegram: from 1921 px; ChatGPT's 60rem variant)
+   - 16 px text (ChatGPT 1rem, Telegram 16px); long answers get the whole column like ChatGPT's
+     assistant row (100% against 88% for people), prose inside capped near 75 characters, code
+     and tables free to use the full width (VS Code: a bubble with code gets max-width 100%)
+   - who wrote: avatar and name once over a sender's run, never on my own (ChatGPT's group chat
+     .show-sender, Telegram .first-in-group); inside a run tight gaps and small corners on the
+     sender's side (Telegram 15 px / 6 px, Signal 18 px / 4 px, ChatGPT gap 4 px)
+   - hub notices and days as quiet centred lines (Telegram's service messages and date pill) */
+#log { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-6) var(--s-6); font-size: var(--fs-read); }
+.chat { --col: 768px; --gut: 40px;
+  --mine: #7d3a25; --mine-ink: #fdf6f0;  /* my bubble: the accent, deep enough for near-white text (6.6:1) */
+  --theirs: #2c2a23;                     /* the other side: one step above the page */
+  --peer: #3d3a31; }                     /* the counterpart on the right in a chat I only read: neutral, never the accent */
+@media (min-width: 1800px) { .chat { --col: 864px; } }
 #log > * { max-width: var(--col); margin-left: auto; margin-right: auto; }
-#log { font-size: var(--fs-read); }
-.day { display: flex; align-items: center; gap: var(--s-3); margin: 32px auto 4px; font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--faint); }
-.day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-.group { position: relative; padding: 0 0 2px 40px; margin-top: 32px; }
-.day + .group { margin-top: 18px; }
+.day { display: flex; justify-content: center; margin: 28px auto 14px; font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--muted); }
+.day > span { padding: 3px 12px; border-radius: var(--pill); background: var(--surface2); }
+.group { position: relative; display: flex; flex-direction: column; align-items: flex-start; padding-left: var(--gut); margin-top: 18px; }
+.day + .group { margin-top: 0; }
+.group.mine { align-items: flex-end; padding-left: 0; }
+.group.peer { align-items: flex-end; padding-left: 0; padding-right: var(--gut); }
 .group .head > .av { position: absolute; left: 0; top: 0; }
-.group.mine .head > .av { opacity: .9; }
+.group.peer .head > .av { left: auto; right: 0; }
 /* the head reads as one line of text that wraps, never cut: the name strong, where it runs
    (account@computer, project, tool) quiet beside it, the receiver after an arrow, the time last */
-.group .head { min-width: 0; margin-bottom: 4px; font-size: var(--fs-lg); line-height: 1.5; overflow-wrap: anywhere; }
+.group .head, .group .sent-to { max-width: 100%; min-width: 0; margin: 0 2px 5px; font-size: var(--fs-base); line-height: 1.45; overflow-wrap: anywhere; }
+.group.peer .head, .group .sent-to { text-align: right; }
 .group .head > b ~ * { margin-left: var(--s-2); }
 .group .head b { font-weight: var(--fw-bold); color: var(--ink); }
-.group .head b.mine { color: var(--accent-hover); }
-.group .head .ctx { font-size: var(--fs-md); color: var(--faint); }
-.group .head .to { font-size: var(--fs-md); color: var(--muted); }
-.group .head .to-n { white-space: nowrap; }  /* the arrow never ends a line alone */
-.group .head .to-n > svg { display: inline-block; vertical-align: -1px; margin-right: 5px; color: var(--faint); }
-.group .head .to-n > b { font-weight: var(--fw-semi); }
-.group .head .to .ctx { margin-left: 6px; }
+/* a chat of many: each sender's name in its own colour, as group chats do */
+.group .head > b[class*="tint-"] { color: color-mix(in srgb, var(--t) 55%, var(--ink)); }
+.group .head .ctx, .group .sent-to .ctx { font-size: var(--fs-sm); color: var(--faint); }
+.group .head .to, .group .sent-to .to { font-size: var(--fs-md); color: var(--muted); }
+.group .to-n { white-space: nowrap; }  /* the arrow never ends a line alone */
+.group .to-n > svg { display: inline-block; vertical-align: -1px; margin-right: 5px; color: var(--faint); }
+.group .to-n > b { font-weight: var(--fw-semi); color: var(--ink); }
+.group .to .ctx { margin-left: 6px; }
 .group .head time, .msg.sys time { flex: none; font-size: var(--fs-sm); color: var(--faint); white-space: nowrap; }
-.msg { position: relative; padding: 0; }
-.msg + .msg { margin-top: 22px; }  /* clearly more than a paragraph's 12 px */
-.msg > time.at { position: absolute; left: -40px; top: .3em; width: 34px; font-size: var(--fs-xs); line-height: 1.5; color: var(--faint); }
+.group .msg { position: relative; display: flex; flex-direction: column; align-items: inherit; min-width: 0; max-width: 100%; }
+.group.mine .msg, .group.peer .msg { max-width: 70%; }
+.group.mine .msg:has(.md-pre, .md-table), .group.peer .msg:has(.md-pre, .md-table) { max-width: 100%; }
+.group .msg + .msg { margin-top: 3px; }
+.bub { min-width: 0; max-width: 100%; padding: 9px 14px; border-radius: 14px; background: var(--theirs); color: var(--ink); }
+.group .msg + .msg > .bub { border-top-left-radius: 5px; }
+.group .msg:not(:last-child) > .bub { border-bottom-left-radius: 5px; }
+.group.mine .msg + .msg > .bub, .group.peer .msg + .msg > .bub { border-top-left-radius: 14px; border-top-right-radius: 5px; }
+.group.mine .msg:not(:last-child) > .bub, .group.peer .msg:not(:last-child) > .bub { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
+.group.mine .bub { background: var(--mine); color: var(--mine-ink); }
+.group.peer .bub { background: var(--peer); }
+/* the time of a message: a run's first has it in the head; each later one in the gutter beside
+   it; mine (no head) beside every bubble */
+.msg > time.at { position: absolute; left: calc(-1 * var(--gut)); top: 13px; width: 34px; font-size: var(--fs-xs); line-height: 1.5; color: var(--faint); white-space: nowrap; }
+.group.peer .msg > time.at { left: auto; right: calc(-1 * var(--gut)); text-align: right; }
+.group.mine .msg > time.at { left: auto; right: 100%; width: auto; margin-right: 10px; }
+.group.mine .msg:has(.md-pre, .md-table) > time.at { position: static; margin: 0 2px 3px; }
 .msg .text { line-height: 1.55; }
 .msg .text.moving { overflow: hidden; transition: max-height var(--dur-3) var(--ease-out); }
 .new { animation: rise var(--dur-3) var(--ease-out); }
@@ -584,16 +614,21 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .msg .text.clamp { max-height: 32em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 4.8em), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 4.8em), transparent); }
 .msg .more { display: inline-flex; align-items: center; min-height: 32px; margin-top: 2px; padding: 0; font-size: var(--fs-md); font-weight: var(--fw-semi); color: var(--accent-hover); }
+.group.mine .more { color: var(--mine-ink); }
 .msg .more::after { content: ""; width: 6px; height: 6px; margin: -3px 0 0 8px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
 .msg .more[aria-expanded="true"]::after { margin-top: 3px; transform: rotate(-135deg); }
 .msg .more:hover { text-decoration: underline; }
-.msg.sys { display: flex; align-items: baseline; gap: 10px; margin-top: 16px; padding: 5px 0 5px 8px; font-size: var(--fs-md); }
-.msg.sys > svg { align-self: center; color: var(--faint); }
+/* a hub notice: a quiet line in the middle, not anybody's message */
+.msg.sys { display: flex; justify-content: center; align-items: baseline; gap: var(--s-2); margin-top: 16px; padding: 2px var(--s-4); font-size: var(--fs-md); }
+.msg.sys > svg { flex: none; align-self: center; color: var(--faint); }
 .msg.sys .text { color: var(--muted); min-width: 0; line-height: 1.5; }
 /* markdown in a message, the safe part (see md()): quiet headings, real lists, code in
    monospace that scrolls sideways with a copy button, tables that scroll on a phone */
 .text.md { white-space: normal; }
 .md p { margin: 0 0 .75em; }
+/* prose lines stay readable however wide the bubble (under 80 characters); code and
+   tables use all of it */
+.md > p, .md > ul, .md > ol, .md > .md-h, .md > blockquote { max-width: 38em; }
 .md > :last-child { margin-bottom: 0; }
 .md .md-h { margin: 1.1em 0 .35em; font-weight: var(--fw-bold); color: var(--ink); line-height: 1.4; }
 .md .md-h1 { font-size: 1.125em; }
@@ -606,13 +641,17 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .md strong { font-weight: var(--fw-semi); color: var(--ink); }
 .md a { color: var(--accent-hover); text-decoration: underline; text-decoration-color: var(--accent-line); text-underline-offset: 2px; overflow-wrap: anywhere; }
 .md a:hover { text-decoration-color: currentColor; }
-.md code { font: .85em/1.3 var(--mono); padding: .1em .35em; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--surface2); color: var(--ink); overflow-wrap: anywhere; }
+.md code { font: .85em/1.3 var(--mono); padding: .1em .35em; border: 1px solid var(--line-soft); border-radius: 4px; background: rgba(0, 0, 0, .26); color: var(--ink); overflow-wrap: anywhere; }
 .md blockquote { margin: 0 0 .65em; padding-left: 12px; border-left: 2px solid var(--line-strong); color: var(--muted); }
 .md hr { margin: .9em 0; border: 0; border-top: 1px solid var(--line); }
 .md-pre { position: relative; margin: .3em 0 .9em; }
-/* a wide screen: code may run 140 px past the text column (code lines are long, prose lines
-   are not); from 1200 px the pane always has that much room beside the column */
-@media (min-width: 1200px) { .md-pre { width: max-content; min-width: 100%; max-width: calc(100% + 140px); } }
+/* in my own bubble everything takes the bubble's ink: links, bold, code, marks and rules */
+.group.mine .md strong, .group.mine .md .md-h, .group.mine .md code, .group.mine .md a, .group.mine .md th, .group.mine .md blockquote { color: inherit; }
+.group.mine .md a { text-decoration-color: rgba(253, 246, 240, .6); }
+.group.mine .md li::marker { color: rgba(253, 246, 240, .75); }
+.group.mine .md :not(pre) > code { border-color: rgba(253, 246, 240, .16); }
+.group.mine .md blockquote { border-left-color: rgba(253, 246, 240, .6); }
+.group.mine .md th, .group.mine .md td { border-bottom-color: rgba(253, 246, 240, .22); }
 .md-pre pre { margin: 0; padding: 12px 44px 12px 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: #15140f;
   font: .85em/1.5 var(--mono); color: var(--ink); white-space: pre; tab-size: 4; }
 .md-pre pre:focus-visible { outline: var(--ring); outline-offset: 1px; }
@@ -631,9 +670,10 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
   animation: rise var(--dur-2) var(--ease-out); }
 .jump > svg { transform: rotate(90deg); }
 /* my message on its way, and where it is: quiet, under the last one only */
-.msg.out .text, .msg.out .att-out { transition: opacity var(--dur-3); }
-.msg.out.sending .text, .msg.out.sending .att-out { opacity: .55; }
-.msg.out.failed .text { color: var(--muted); }
+.msg.out .bub { transition: opacity var(--dur-3); }
+.msg.out.sending .bub { opacity: .55; }
+.group.mine .msg.out.failed .bub { background: none; box-shadow: inset 0 0 0 1px var(--danger-line); color: var(--muted); }
+.group.mine .att-out { color: inherit; opacity: .85; }
 .att-out { display: inline-flex; align-items: center; gap: 5px; margin-top: var(--s-1); font-size: var(--fs-sm); color: var(--muted); }
 .tick { display: flex; align-items: center; gap: 5px; margin-top: 4px; font-size: var(--fs-sm); color: var(--faint); animation: fade-in var(--dur-2) var(--ease-out); }
 .tick.delivered { color: var(--muted); }
@@ -644,7 +684,7 @@ main > section { animation: fade-in var(--dur-3) var(--ease-out); }
 .tick button:hover { text-decoration: underline; }
 .tick .spin { width: 9px; height: 9px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: var(--round); animation: spin .7s linear infinite; }
 /* the session is working on my message: three dots, its name, what it says it does */
-.working { display: flex; align-items: center; gap: var(--s-2); min-width: 0; padding: var(--s-4) 0 2px 40px; font-size: var(--fs-md); color: var(--muted); animation: rise var(--dur-3) var(--ease-out); }
+.working { display: flex; align-items: center; gap: var(--s-2); min-width: 0; padding: var(--s-4) 0 2px var(--gut); font-size: var(--fs-md); color: var(--muted); animation: rise var(--dur-3) var(--ease-out); }
 .working b { font-weight: var(--fw-semi); color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
 .working .what { flex: none; }
 .working .more-act { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
@@ -912,11 +952,13 @@ a.p-main { color: inherit; text-decoration: none; }
   .compose .btn.primary span { display: none; }
   .compose .btn[aria-busy="true"]::before { left: calc(50% - 6px); }
   .compose .file-chip { max-width: 55%; }
-  .group { padding-left: 34px; }
+  /* a phone: bubbles up to 85% of the width (Telegram Web's own figure) */
+  .chat { --gut: 32px; }
   .group .head > .av { width: 24px; height: 24px; font-size: 9.5px; }
-  .group.mine { padding-left: 34px; }
-  .msg > time.at { left: -34px; width: 30px; }
-  .working { padding-left: 34px; }
+  .group.mine .msg, .group.peer .msg { max-width: 85%; }
+  .bub { padding: 8px 12px; }
+  .msg > time.at { width: 30px; }
+  .group.mine .msg > time.at { margin-right: 8px; }
   .chat > .err { padding: 0 var(--s-3) var(--s-2); }
   /* Team: the column uses the phone's width; a waiting line puts its answers under the words */
   .set { grid-template-columns: minmax(0, 1fr); padding: 0 16px 32px; }
@@ -2368,7 +2410,8 @@ a.p-main { color: inherit; text-decoration: none; }
     var all = isGrp(conv) ? fold(grpMsgs[conv.slice(4)] || []) : fold(feed.messages).filter(function (m) { return inConv(m, conv); });
     var notices = all.filter(notice).length;
     var shown = all.filter(function (m) { return !act || showNotices || !notice(m); });
-    var day = null, last = null, group = null, mineLast = null;
+    var day = null, last = null, group = null, mineLast = null, firstFrom = null;
+    var many = act || conv === "mgr" || (isGrp(conv) && (!grpOf(conv) || grpSize(grpOf(conv)) > 2));
     var newest = shown.length ? shown[shown.length - 1].id : null;  /* never folded */
     /* what this chat showed last time: newer messages come in with a short rise */
     var before = shownTo[conv] == null ? Infinity : shownTo[conv];
@@ -2382,23 +2425,31 @@ a.p-main { color: inherit; text-decoration: none; }
         last = null;
         return;
       }
-      var p = parties(m), between = p.every(function (x) { return x === ME || x === conv; });
-      var to = (isGrp(conv) ? !grpOf(conv) || grpSize(grpOf(conv)) > 2 : act || !between) ? toName(m) : null, k = m.sender + "\n" + (to || "");
+      /* the receiver is named only when it is not plain from the chat: somebody other than this
+         page and the chat's own session */
+      var p = parties(m), away = p.slice(1).some(function (x) { return x !== ME && x !== conv; });
+      var to = (isGrp(conv) ? !grpOf(conv) || grpSize(grpOf(conv)) > 2 : act || away) ? toName(m) : null, k = m.sender + "\n" + (to || "");
+      /* the side: mine on the right. In a session's own chat whoever else writes to it, and in a
+         chat of just two sessions the second one, sits on the right too, in a neutral tone;
+         in a chat of many (the manager's, Activity, a group) everyone else is on the left */
+      if (firstFrom === null) firstFrom = p[0];
+      var mine = p[0] === ME, side = mine ? " mine" : many ? "" : (isGrp(conv) ? p[0] !== firstFrom : conv.charAt(0) !== "@" && p[0] !== conv) ? " peer" : "";
       if (!last || last.k !== k || m.created - last.t > 300) {
         var s = sideOf(m.sender, m.fromId, m.web, m.fromMgr);
-        group = el("div", { "class": "group" + (p[0] === ME ? " mine" : "") + (m.id > before ? " new" : "") }, [el("div", { "class": "head" }, [
-          senderBadge(m), el("b", { "class": p[0] === ME ? "mine" : null, text: senderName(m) }), ctxEl(s.ctx),
-          to ? toEl(m, to) : null, hm(m.created)])]);
+        /* my own run has no name or badge; only the receiver, where the chat holds more than one */
+        group = el("div", { "class": "group" + side + (m.id > before ? " new" : "") }, [mine ? (to ? el("div", { "class": "sent-to" }, [toEl(m, to)]) : null) :
+          el("div", { "class": "head" }, [senderBadge(m), el("b", { "class": many && !m.fromMgr && sessionKey(m.sender) !== "mgr" ? "tint-" + tintOf(senderName(m)) : null, text: senderName(m) }),
+            ctxEl(s.ctx), to ? toEl(m, to) : null, hm(m.created)])]);
         log.appendChild(group);
       }
       last = { k: k, t: m.created };
-      var text = md(m.text), later = !!group.firstChild.nextSibling;  /* not the first of its run: its own time in the gutter */
-      var body = el("div", { "class": "msg" + (m.id > before && later ? " new" : ""), "data-id": String(m.id), title: senderName(m) + " → " + toName(m) },
-                    [later ? hm(m.created) : null, text, m.file ? attachment(m.file) : null]);
-      if (later) body.firstChild.className = "at";
+      var text = md(m.text), later = !!group.querySelector(".msg");  /* not the first of its run: its own time beside it */
+      var at = mine || later ? hm(m.created) : null, bub = el("div", { "class": "bub" }, [text, m.file ? attachment(m.file) : null]);
+      var body = el("div", { "class": "msg" + (m.id > before && later ? " new" : ""), "data-id": String(m.id), title: senderName(m) + " → " + toName(m) }, [at, bub]);
+      if (at) at.className = "at";
       group.appendChild(body);
-      if (m.id !== newest && (m.text.length > 1200 || m.text.split("\n").length > 18)) foldLong(m, text, body);
-      mineLast = p[0] === ME ? { m: m, body: body } : null;
+      if (m.id !== newest && (m.text.length > 1200 || m.text.split("\n").length > 18)) foldLong(m, text, bub);
+      mineLast = mine ? { m: m, body: body } : null;
     });
     /* my messages the feed does not have yet: Sending, Sent, or Not sent with Retry */
     var outs = act ? [] : outbox.filter(function (o) { return o.conv === conv; });
@@ -2406,12 +2457,14 @@ a.p-main { color: inherit; text-decoration: none; }
       var d = new Date(o.created * 1000).toDateString(), k = (me ? me.person : "") + "\n";
       if (d !== day) { log.appendChild(el("div", { "class": "day" }, [el("span", { text: dayLabel(o.created) })])); day = d; last = null; }
       if (!last || last.k !== k || o.created - last.t > 300) {
-        group = el("div", { "class": "group mine" }, [el("div", { "class": "head" }, [avatar("person", me ? me.person : "you"), el("b", { "class": "mine", text: "you" }), hm(o.created)])]);
+        group = el("div", { "class": "group mine" });
         log.appendChild(group);
       }
       last = { k: k, t: o.created };
-      group.appendChild(el("div", { "class": "msg out " + o.state, "data-out": String(o.lid) }, [md(o.text),
-        o.sent ? el("span", { "class": "att-out" }, [icon("i-clip", 12), el("span", { text: o.sent.file.name })]) : null, sendMark(o)]));
+      var sentAt = hm(o.created);
+      sentAt.className = "at";
+      group.appendChild(el("div", { "class": "msg out " + o.state, "data-out": String(o.lid) }, [sentAt, el("div", { "class": "bub" }, [md(o.text),
+        o.sent ? el("span", { "class": "att-out" }, [icon("i-clip", 12), el("span", { text: o.sent.file.name })]) : null]), sendMark(o)]));
     });
     /* only my last message, while nothing came after it: Sent, then Delivered once the session has it */
     if (!act && !outs.length && mineLast) mineLast.body.appendChild(sendMark(lateMark(mineLast.m) || { state: mineLast.m.read ? "delivered" : mineLast.m.failed ? "undelivered" : "sent", err: mineLast.m.failed || "" }));

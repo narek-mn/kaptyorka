@@ -1,5 +1,6 @@
-"""The chat as something to read, in a real headless Chrome: 16 px text in a column of about 70
-characters a line (counted on the rendered lines), every head saying who and where, a time on
+"""The chat as something to read, in a real headless Chrome: two sides (what I sent on the right
+on the accent surface, the other side on the left on a neutral one), 16 px text in lines under
+80 characters (counted on the rendered lines), every head saying who and where, a time on
 each later message of a run, markdown rendered (and never HTML), long messages folded but never
 the newest, the scroll left alone while you read, and the manager's state and a late answer in
 words. Screenshots to KAPTYORKA_SHOTS.
@@ -12,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from chrome import chrome, chrome_path
-from reading_fixture import MEASURE, build
+from reading_fixture import MEASURE, SIDES, build, manager_chat
 
 pytestmark = [pytest.mark.slow,
               pytest.mark.skipif(chrome_path() is None, reason="no Chrome or Chromium installed")]
@@ -51,12 +52,12 @@ def test_column_markdown_and_folding(hub, tmp_path):
             m = page.js(MEASURE)
             assert m["font_px"] == 16 and m["line_height"] == 1.55 and m["contrast"] >= 4.5, m
             if w > 720:  # the pane is wide, the lines are not
-                assert 60 <= (m["chars_per_line"] or 0) <= 78, (w, m)
+                assert 60 <= (m["chars_per_line"] or 0) <= 80, (w, m)
             # who and where: the session's machine, project and tool beside its name, never cut
             head = '[...document.querySelectorAll("#log .group .head")].find(h => h.querySelector("b").textContent === "api-dev")'
             assert page.js(f'{head}.querySelector(".ctx").textContent') == "bob@box-2 \u00b7 proj-a \u00b7 Claude Code"
             assert page.js(f'{head}.scrollWidth <= {head}.clientWidth')
-            # a later message of a run has its own time in the gutter
+            # a later message of a run has its own time beside it
             assert page.js('[...document.querySelectorAll("#log .group .msg + .msg")].every(m => m.querySelector(":scope > time.at"))')
             assert page.js('document.querySelectorAll("#log .group .msg > time.at").length') > 0
             assert page.js("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
@@ -88,6 +89,59 @@ def test_column_markdown_and_folding(hub, tmp_path):
             page.js(f'{long}.scrollIntoView()')
             time.sleep(0.3)
             page.screenshot(shots / f"reading-long-{tag}.png")
+
+
+def test_two_sides(hub):
+    """What I sent sits on the right in the accent bubble, of limited width, with no name over it;
+    the session's answer on the left on a neutral surface under its who-and-where head; in the
+    session's own chat another session writing to it sits on the right in a second neutral tone.
+    In the manager's chat everybody but me is on the left. Text on every surface is at least
+    4.5:1, at a desktop and a phone width."""
+    store, url = hub
+    alice = manager_chat(store)
+    for w, h, share, gut in ((1366, 768, 0.70, 40), (390, 844, 0.85, 32)):
+        with chrome(w, h) as page:
+            open_chat(page, url)
+            rows = page.js(SIDES)
+            mine, left, peer = ([r for r in rows if r["side"] == s] for s in ("mine", "", "peer"))
+            assert mine and left and peer, (len(mine), len(left), len(peer))
+            col = rows[0]["col"]
+            assert col == min(768, rows[0]["pane"]), rows[0]
+            for r in mine:  # flush right, never the whole width, no head of its own
+                assert r["right"] == 0 and r["left"] > 0 and r["width"] <= col * share + 1 and not r["head"], r
+            for r in left:  # after the badge gutter, under a head
+                assert r["left"] == gut and r["head"], r
+            for r in peer:
+                assert r["right"] == gut and r["head"], r  # one with code may take the whole width
+            page_bg = page.js("getComputedStyle(document.body).backgroundColor")
+            tones = [{r["bg"] for r in side} for side in (mine, left, peer)]
+            assert all(len(t) == 1 for t in tones) and len(set.union(*tones) | {page_bg}) == 4, (tones, page_bg)
+            assert page.js('getComputedStyle(document.querySelector("#log .group.mine .bub")).backgroundColor') == \
+                page.js('getComputedStyle(document.querySelector(".chat")).getPropertyValue("--mine")'
+                        '.replace(/^#(..)(..)(..)$/, (_, r, g, b) => `rgb(${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)})`)')
+            assert min(r["contrast"] for r in rows) >= 4.5, sorted({r["contrast"] for r in rows})
+            # a wide answer uses the column; my own time sits beside my bubble, inside the column
+            assert max(r["width"] for r in left) >= (col - gut) * 0.9
+            assert page.js('[...document.querySelectorAll("#log .group.mine .msg")].every(m => { const t = m.querySelector(":scope > time.at");'
+                           ' return t && t.getBoundingClientRect().right <= m.querySelector(".bub").getBoundingClientRect().left; })')
+            assert page.js("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        with chrome(w, h) as page:  # the manager's chat, read by the admin
+            page.go(url.split("#")[0] + alice)
+            page.wait('!!document.querySelector("#agents .row.mgr")')
+            page.js('document.querySelector("#agents .row.mgr").click()')
+            page.wait('document.querySelectorAll("#log .msg").length > 8')
+            rows = page.js(SIDES)
+            assert {r["side"] for r in rows} == {"mine", ""}, {r["side"] for r in rows}
+            assert all(r["right"] == 0 for r in rows if r["side"] == "mine") and all(r["left"] == gut for r in rows if not r["side"])
+            names = page.js('[...document.querySelectorAll("#log .head > b")].map(b => b.textContent)')
+            assert "you" not in names and {"api-dev", "trainer", "parser-tests", "bob", "manager"} <= set(names), names
+            # the receiver only where it is not the manager itself; my two in a row are one run
+            assert page.js('[...document.querySelectorAll("#log .head .to .to-n")].map(t => t.textContent)') == ["api-dev", "bob", "parser-tests"]
+            assert page.js('Math.max(...[...document.querySelectorAll("#log .group.mine")].map(g => g.querySelectorAll(".msg").length))') == 2
+            tick = 'document.querySelector("#log .group.mine .msg:last-child .tick")'
+            assert page.wait(f'{tick}?.textContent') == "No answer yet"
+            assert page.js(f'Math.round({tick}.getBoundingClientRect().right) === Math.round({tick}.closest(".group").getBoundingClientRect().right)')
+            assert page.js("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
 
 
 def test_never_html(hub):
