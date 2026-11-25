@@ -382,5 +382,6 @@ def test_close_x_only_where_the_feed_allows_it(hub):
     html = page(hub)
     # the hub decides who may close (left.refused); the row draws the x only for those
     assert 'close: a.close || ""' in html and 'e.sess && e.online && e.close' in html
-    assert '"aria-label": "Close session"' in html and "Close this session? It is in use." in html
+    assert '"aria-label": "Close session"' in html and "It is working: what it is doing now stops." in html
+    assert "if (ev.repeat) return;" in html  # a held Enter on the x never confirms
     assert '"/api/sessions/" + encodeURIComponent(e.kid) + "/close"' in html

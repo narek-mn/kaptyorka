@@ -115,7 +115,14 @@ DEPS: Tuple[Dep, ...] = (
         "push into a session", "a message on the inbox socket did not arrive",
         "push off: sessions read the hub on their next turn", False),
     Dep("claude.stop", "claude-code", "`claude stop <8 hex>` ends it; again says `No job matching`",
-        "closing workers", "`claude stop` output changed", "closing a worker fails", False),
+        "closing workers, and background jobs closed from the page", "`claude stop` output changed",
+        "closing a worker or a background job from the page fails", False),
+    Dep("claude.sigterm", "claude-code",
+        "SIGTERM to a terminal session's own claude process (`claude stop` knows only background"
+        " jobs): it exits, ends the command its Bash tool runs, drops its session file, keeps its"
+        " transcript, and `claude --resume <id>` opens it again (seen on 2.1.332); guarded by the"
+        " slow test tests/test_close_slow.py, not by a probe here",
+        "closing a terminal session from the page", "", "", False, probed=False),
     Dep("claude.rm", "claude-code", "`claude rm <8 hex>` removes a stopped background session",
         "cleaning up after tests", "`claude rm` failed", "stopped sessions stay listed", False),
     # OpenCode

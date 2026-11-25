@@ -2014,7 +2014,7 @@ a.p-main { color: inherit; text-decoration: none; }
     var on = e.key === conv && !askOpen && (phoneOpen || wide());  /* a phone marks a chat only while it is open */
     var x = e.sess && e.online && e.close ? e.key : null, asking = x && xAsk === x;
     var closing = x && (e.closing || xSent[x]), err = x && !closing ? xErr[x] || e.closeErr : "";
-    var sub = closing ? "Closing\u2026" : asking ? "Close this session? It is in use." : err || e.sub;
+    var sub = closing ? "Closing\u2026" : asking ? xQuestion(e) : err || e.sub;
     var b = el("button", { type: "button", "class": "row" + (e.cls ? " " + e.cls : "") + (on ? " on" : "") + (e.off ? " off" : "") + (e.unread ? " unread" : "") + (x && !closing ? " can-x" : "") + (asking ? " asking" : ""),
                            title: e.tip || null, "aria-current": on ? "true" : null, "data-key": e.key }, [
       el("span", { "class": "lead" }, [lead(e)]),
@@ -2034,13 +2034,17 @@ a.p-main { color: inherit; text-decoration: none; }
   function pressable(node, fn) {  /* a control inside a row: never opens the chat */
     node.addEventListener("click", function (ev) { ev.stopPropagation(); ev.preventDefault(); fn(); });
     node.addEventListener("keydown", function (ev) {
+      if (ev.repeat) return;  /* a held key never answers the question it just opened */
       if (ev.key === "Enter" || ev.key === " ") { ev.stopPropagation(); ev.preventDefault(); fn(); }
       else if (ev.key === "Escape" && xAsk) { ev.stopPropagation(); xAsk = null; renderSessions(); }
     });
     return node;
   }
+  function xQuestion(e) {
+    return "Close this session? " + (e.act && e.act !== "idle" ? "It is working: what it is doing now stops." : "It is in use.");
+  }
   function closeCtl(e, asking) {
-    if (asking) return el("span", { "class": "row-ask", role: "group", "aria-label": "Close this session? It is in use." }, [
+    if (asking) return el("span", { "class": "row-ask", role: "group", "aria-label": xQuestion(e) }, [
       pressable(el("span", { "class": "btn small danger", role: "button", tabindex: "0", "data-key": "xy:" + e.key, text: "Close" }), function () { closeSession(e, true); }),
       pressable(el("span", { "class": "btn small quiet", role: "button", tabindex: "0", "data-key": "xn:" + e.key, text: "Cancel" }), function () { xAsk = null; renderSessions(); })]);
     var b = el("span", { "class": "btn icon small quiet row-x", role: "button", tabindex: "0", title: "Close session", "aria-label": "Close session", "data-key": "x:" + e.key, "data-x": e.close }, [icon("i-x", 14)]);

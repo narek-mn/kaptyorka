@@ -45,7 +45,8 @@ def test_who_sees_the_x_and_what_it_does(tmp_path):
     bob, token = person(store, "bob")
     store.project_register("proj-a", by="alice")
     store.grant_project("proj-a", bob, "write", "alice")
-    beat = [s("claude:b1", "old-term", 3 * DAY), s("claude:b2", "busy-one", 60)]
+    beat = [s("claude:b1", "old-term", 3 * DAY), s("claude:b2", "busy-one", 60),
+            {**s("claude:b3", "working-one", 5), "activity": "busy"}]
     store.heartbeat("box-2", beat, principal=store.authenticate(token),
                     facts={"host": "box-2", "os_user": "bob"})
     store.heartbeat("box-1", [s("claude:a1", "alice-own", 60)], principal=store.authenticate(admin),
@@ -77,6 +78,13 @@ def test_who_sees_the_x_and_what_it_does(tmp_path):
                 page.js(f'[...{row("busy-one")}.querySelectorAll(".row-ask [role=button]")].find(b => b.textContent === "Cancel").click()')
                 page.wait(f'!{row("busy-one")}.textContent.includes("Close this session?")')
                 assert page.js(f'!!{row("busy-one")}{x}')
+                # a held Enter: its repeats never open or answer the question
+                page.js(f'{row("busy-one")}{x}.dispatchEvent(new KeyboardEvent("keydown", {{key: "Enter", repeat: true, bubbles: true}}))')
+                assert not page.js(f'{row("busy-one")}.textContent.includes("Close this session?")')
+                # working right now: the question says what stops
+                page.js(f'{row("working-one")}{x}.click()')
+                page.wait(f'{row("working-one")}.textContent.includes("Close this session? It is working: what it is doing now stops.")')
+                page.js(f'[...{row("working-one")}.querySelectorAll(".row-ask [role=button]")].find(b => b.textContent === "Cancel").click()')
                 if tag == "phone":
                     page.js(f'{row("busy-one")}.click()')  # the row itself still opens the chat
                     page.wait(f'{row("busy-one")}.classList.contains("on")')
@@ -100,7 +108,7 @@ def test_who_sees_the_x_and_what_it_does(tmp_path):
                 page.wait(f'{row("old-term")}.textContent.includes("Closing\\u2026")')
                 # this time it closed: the row goes
                 http.request("POST", url + "/bridge/heartbeat", token, {
-                    "machine": "box-2", "sessions": [beat[1]], "close_done": {"claude:b1": ""}})
+                    "machine": "box-2", "sessions": beat[1:], "close_done": {"claude:b1": ""}})
                 page.wait(f'!({row("old-term")})', 20)
     finally:
         stop()

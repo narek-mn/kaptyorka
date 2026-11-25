@@ -641,10 +641,12 @@ class ClaudeAdapter:
         """End a session from outside, its conversation kept (`claude --resume <id>` opens it
         again): a background job with `claude stop`, any other with SIGTERM to its own
         process, which this user owns (checked on 2.1.332: `claude stop` knows only background
-        jobs; a terminal session exits on SIGTERM and removes its session file, its transcript
-        stays; tests/test_close_slow.py). Raises ValueError when it cannot."""
+        jobs; a terminal session exits on SIGTERM, ends the command its Bash tool runs, removes
+        its session file and keeps its transcript; tests/test_close_slow.py). SIGTERM only to a
+        process proven to be that session: its start time matches the session file (Linux);
+        with no /proc (macOS), `ps` must name claude. Raises ValueError when nothing was ended."""
         wanted = key.split(":", 1)[1]
-        for f in self.dir.glob("*.json"):
+        for f in sorted(self.dir.glob("*.json")):
             try:
                 pid = int(f.stem)
                 data = json.loads(f.read_text())
@@ -652,8 +654,9 @@ class ClaudeAdapter:
                 continue
             if not isinstance(data, dict) or data.get("sessionId") != wanted:
                 continue
-            if _same_start(pid, data.get("procStart")) is False:
-                return  # its process ended and the pid is another one now
+            started = _same_start(pid, data.get("procStart"))
+            if started is False:
+                continue  # a file left behind: its pid is another process now
             if data.get("kind") == "bg":
                 r = self.run(["claude", "stop", wanted[:8]], capture_output=True, text=True,
                              timeout=30)
@@ -661,11 +664,24 @@ class ClaudeAdapter:
                     raise ValueError(((r.stderr or "") + (r.stdout or "")).strip()[:200]
                                      or "claude stop failed")
                 return
+            if started is None and (os.path.isdir("/proc") or not self._is_claude(pid)):
+                raise ValueError("cannot check that its process is still that session")
             try:
                 os.kill(pid, signal.SIGTERM)
             except ProcessLookupError:
-                pass  # ended meanwhile
+                raise ValueError("its process had already ended")
             return
+        raise ValueError("no running session with that id on this machine")
+
+    def _is_claude(self, pid: int) -> bool:
+        """`ps` names claude for this process (where /proc cannot tell its start time)."""
+        try:
+            r = self.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True,
+                         text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return r.returncode == 0 and any(os.path.basename(w) == "claude"
+                                         for w in (r.stdout or "").split())
 
     def deliver(self, key: str, text: str) -> None:
         if key in self.off_keys:

@@ -194,7 +194,12 @@ def test_the_bridge_checks_again_then_ends_it(tmp_path, monkeypatch):
     assert claude.ended == ["claude:i1", "claude:conf"]  # once, until the hub has the answer
 
 
-def test_end_stops_a_background_job_and_terminates_a_terminal_session(tmp_path):
+def start_of(pid):
+    stat = open(f"/proc/{pid}/stat").read()
+    return stat[stat.rindex(")") + 2:].split()[19]
+
+
+def test_end_stops_a_background_job_and_terminates_only_a_proven_session(tmp_path):
     calls = []
 
     def run(cmd, **kw):
@@ -207,14 +212,71 @@ def test_end_stops_a_background_job_and_terminates_a_terminal_session(tmp_path):
     assert calls == [["claude", "stop", "abcdef12"]]
     p = subprocess.Popen(["sleep", "60"])
     try:
+        # no start time to compare: never killed, the reason comes back to the row
         write_session_file(tmp_path, p.pid, session_id="fg-1", extra={"kind": "interactive"})
+        with pytest.raises(ValueError, match="cannot check that its process is still that session"):
+            a.end("claude:fg-1")
+        # a wrong start time: a file left behind, its pid is someone else's now
+        write_session_file(tmp_path, p.pid, session_id="fg-1",
+                           extra={"kind": "interactive", "procStart": "1"})
+        with pytest.raises(ValueError, match="no running session"):
+            a.end("claude:fg-1")
+        assert p.poll() is None
+        # the start time matches: that session, ended
+        write_session_file(tmp_path, p.pid, session_id="fg-1",
+                           extra={"kind": "interactive", "procStart": start_of(p.pid)})
         a.end("claude:fg-1")
         assert p.wait(timeout=10) == -signal.SIGTERM
     finally:
         if p.poll() is None:
             p.kill()
-    a.end("claude:not-here")  # gone already: nothing to do
+    with pytest.raises(ValueError, match="no running session"):
+        a.end("claude:not-here")  # nothing ended is never reported as closed
     assert len(calls) == 1
+
+
+def test_a_stale_file_never_hides_the_live_one(tmp_path):
+    p = subprocess.Popen(["sleep", "60"])
+    try:
+        a = ClaudeAdapter(home=tmp_path, run=None)
+        write_session_file(tmp_path, 1, session_id="fg-2", extra={"procStart": "1"})  # sorts first
+        write_session_file(tmp_path, p.pid, session_id="fg-2", extra={"procStart": start_of(p.pid)})
+        a.end("claude:fg-2")
+        assert p.wait(timeout=10) == -signal.SIGTERM
+    finally:
+        if p.poll() is None:
+            p.kill()
+
+
+def test_without_proc_ps_must_name_claude(tmp_path, monkeypatch):
+    real = os.path.isdir
+    monkeypatch.setattr(os.path, "isdir", lambda d: False if d == "/proc" else real(d))
+    p = subprocess.Popen(["sleep", "60"])
+    try:
+        said = {"out": "sleep 60\n"}
+        a = ClaudeAdapter(home=tmp_path, run=lambda cmd, **kw: SimpleNamespace(
+            returncode=0, stdout=said["out"], stderr=""))
+        write_session_file(tmp_path, p.pid, session_id="fg-3")
+        with pytest.raises(ValueError, match="cannot check"):
+            a.end("claude:fg-3")
+        assert p.poll() is None
+        said["out"] = "/opt/homebrew/bin/claude --model haiku\n"
+        a.end("claude:fg-3")
+        assert p.wait(timeout=10) == -signal.SIGTERM
+    finally:
+        if p.poll() is None:
+            p.kill()
+
+
+def test_the_bridge_puts_the_reason_on_the_row(tmp_path, monkeypatch):
+    class Refuses(Ender):
+        def end(self, key):
+            raise ValueError("cannot check that its process is still that session")
+
+    b = make_bridge(tmp_path, monkeypatch, Refuses())
+    b.hub = {"close_asked": [{"key": "claude:i1", "confirmed": True}]}
+    b._close_asked([sess("claude:i1")])
+    assert b._close_done == {"claude:i1": "cannot check that its process is still that session"}
 
 
 def test_a_failed_claude_stop_says_why(tmp_path):
