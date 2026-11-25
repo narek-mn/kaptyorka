@@ -13,6 +13,7 @@
 - **Making someone an admin no longer moves the manager to them.** When the hub machine's own account is not an admin, the manager reported to the admin with the lowest person number, so a teammate made admin later could take it over: its "worker `manager` is up" notices and its messages for the admin went to that teammate's page. Now the hub remembers the admin the manager reports to and keeps them while they are still an admin; only when they stop being one (or are removed) does it pick again. A hub that upgrades picks the admin who has been admin longest, from its log.
 - Overnight mode no longer turns on from a mere mention of the word (pasted text, 'no need for overnight mode', questions about it, a deadline like 'by morning'); it needs a clear order such as 'overnight task: ...' or `/hub overnight`.
 - The rest of the machines now follow a staged update after 5 minutes instead of 20; `kaptyorka fleet rollout go` still releases them at once.
+- A first machine that updated and then stopped reporting now holds the rest of the update (the admins hear "<machine> stopped reporting after its update"); an account with no bridge of its own (such as the manager's) never goes first and is never judged.
 
 ## 0.9.37
 

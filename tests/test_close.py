@@ -207,7 +207,7 @@ def test_end_stops_a_background_job_and_terminates_only_a_proven_session(tmp_pat
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     a = ClaudeAdapter(home=tmp_path, run=run)
-    write_session_file(tmp_path, 4242424, session_id="abcdef12-bg", extra={"kind": "bg"})
+    write_session_file(tmp_path, os.getpid(), session_id="abcdef12-bg", extra={"kind": "bg"})
     a.end("claude:abcdef12-bg")
     assert calls == [["claude", "stop", "abcdef12"]]
     p = subprocess.Popen(["sleep", "60"])
@@ -246,6 +246,30 @@ def test_a_stale_file_never_hides_the_live_one(tmp_path):
     finally:
         if p.poll() is None:
             p.kill()
+
+
+def test_a_dead_pids_file_never_hides_the_live_one(tmp_path):
+    p = subprocess.Popen(["sleep", "60"])
+    try:
+        dead = next(c for c in range(100000, 4000000, 7919)
+                    if str(c) < str(p.pid) and not os.path.exists(f"/proc/{c}"))
+        a = ClaudeAdapter(home=tmp_path, run=None)
+        write_session_file(tmp_path, dead, session_id="fg-4")  # sorts first, no process
+        write_session_file(tmp_path, p.pid, session_id="fg-4", extra={"procStart": start_of(p.pid)})
+        a.end("claude:fg-4")
+        assert p.wait(timeout=10) == -signal.SIGTERM
+    finally:
+        if p.poll() is None:
+            p.kill()
+
+
+@pytest.mark.parametrize("out,ok", [
+    ("grep -rn claude .\n", False), ("vim claude\n", False), ("", False),
+    ("/usr/local/bin/claude --resume x\n", True), ("node /x/bin/claude\n", True)])
+def test_is_claude_reads_the_program_not_any_word(tmp_path, out, ok):
+    a = ClaudeAdapter(home=tmp_path, run=lambda cmd, **kw: SimpleNamespace(
+        returncode=0, stdout=out, stderr=""))
+    assert a._is_claude(1) is ok
 
 
 def test_without_proc_ps_must_name_claude(tmp_path, monkeypatch):

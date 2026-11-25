@@ -654,6 +654,12 @@ class ClaudeAdapter:
                 continue
             if not isinstance(data, dict) or data.get("sessionId") != wanted:
                 continue
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue  # a file left behind by a dead process
+            except OSError:
+                pass  # PermissionError: it exists
             started = _same_start(pid, data.get("procStart"))
             if started is False:
                 continue  # a file left behind: its pid is another process now
@@ -680,8 +686,11 @@ class ClaudeAdapter:
                          text=True, timeout=10)
         except (OSError, subprocess.TimeoutExpired):
             return False
-        return r.returncode == 0 and any(os.path.basename(w) == "claude"
-                                         for w in (r.stdout or "").split())
+        w = (r.stdout or "").split()
+        if r.returncode != 0 or not w:
+            return False
+        return os.path.basename(w[0]) == "claude" or (
+            os.path.basename(w[0]) == "node" and len(w) > 1 and os.path.basename(w[1]) == "claude")
 
     def deliver(self, key: str, text: str) -> None:
         if key in self.off_keys:
