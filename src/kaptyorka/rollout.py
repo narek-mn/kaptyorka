@@ -17,7 +17,7 @@ from typing import List, Optional
 from kaptyorka import paths
 from kaptyorka.store import Store, machine_name
 
-SOAK_S = 20 * 60  # the first group runs the new version this long before the rest follow
+SOAK_S = 5 * 60  # the first group runs the new version this long before the rest follow
 ONLINE_S = 600  # a bridge silent longer than this is offline (workers.OFFLINE_S)
 KEY = "rollout"
 

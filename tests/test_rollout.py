@@ -83,7 +83,7 @@ def test_first_group_is_the_hub_computer_and_the_calm_team_machine(fleet):
     assert [may(fleet, n) for n in ALL] == [True, True, False, False]
     s = rollout.status(fleet.store, NEW)
     assert s["state"] == "soak" and s["first"] == ["alice@box-0", "u@box-1"]
-    assert rollout.line(s) == "update 0.9.35: first alice@box-0, u@box-1; the rest follow in 20 min if they are healthy"
+    assert rollout.line(s) == "update 0.9.35: first alice@box-0, u@box-1; the rest follow in 5 min if they are healthy"
 
 
 def test_a_busy_team_machine_never_goes_first(fleet):
@@ -128,7 +128,7 @@ def test_the_first_group_waits_for_fresh_reports(fleet):
 
 def test_healthy_first_group_releases_everyone(fleet):
     rollout.state(fleet.store, NEW)
-    later(fleet, 300, *ALL)
+    later(fleet, 60, *ALL)
     updated(fleet, "hub", "box-1")
     assert rollout.tick(fleet.store, NEW, fleet.clock[0]) == []  # still inside the window
     assert not may(fleet, "laptop")
@@ -185,7 +185,7 @@ def test_offline_during_the_window_updates_when_back(fleet):
 
 def test_no_first_machine_online_waits(fleet):
     rollout.state(fleet.store, NEW)
-    later(fleet, SOAK_S + 1, "laptop")  # neither the hub computer nor box-1 reports
+    later(fleet, SOAK_S + rollout.ONLINE_S + 1, "laptop")  # neither the hub computer nor box-1 reports
     assert rollout.tick(fleet.store, NEW, fleet.clock[0]) == []
     assert rollout.status(fleet.store, NEW)["state"] == "soak"
 
