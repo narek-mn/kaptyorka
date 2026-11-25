@@ -1554,11 +1554,14 @@ class Store:
 
     def heartbeat(self, machine: str, sessions: List[dict], tools: Sequence[str] = (),
                   principal: Optional[Principal] = None, facts: Optional[dict] = None,
-                  gone: Sequence[str] = (), bridge: bool = True) -> None:
+                  gone: Sequence[str] = (), bridge: bool = True,
+                  ended: Sequence[str] = ()) -> None:
         """`tools` are the tools whose sessions this list is complete for: the rest of their agents
         on this machine are gone, so their names are free at once. `facts` (host, os_user,
         version) say which computer the sessions run on; an older bridge sends none. `gone`:
-        sessions of this machine switched off the hub there; their rows are deleted."""
+        sessions of this machine switched off the hub there; their rows are deleted. `ended`:
+        sessions of this machine its bridge knows have ended (a tool whose list is not complete,
+        such as OpenCode, whose window closed): offline at once, their rows kept."""
         facts = facts or {}
         machine = clean(machine, MAX_IDENT)
         sessions = [{**s, "tool": clean(s["tool"], MAX_IDENT),
@@ -1632,6 +1635,12 @@ class Store:
                 elif principal is not None and not principal.legacy:  # until it calls a tool
                     self.db.execute("UPDATE agents SET person_id=COALESCE(person_id, ?)"
                                     " WHERE key=?", (principal.person_id, s["key"]))
+            for key in ended if isinstance(ended, (list, tuple)) else ():
+                r = self.db.execute("SELECT * FROM agents WHERE key=?", (str(key),)).fetchone()
+                if r is not None and r["machine"] == machine and str(key) not in seen \
+                        and _owns(r, principal):
+                    self.db.execute("UPDATE agents SET last_seen=MIN(last_seen, ?) WHERE key=?",
+                                    (now - ONLINE_S, r["key"]))
             for key in gone if isinstance(gone, (list, tuple)) else ():
                 r = self.db.execute("SELECT * FROM agents WHERE key=?", (str(key),)).fetchone()
                 if r is not None and r["machine"] == machine and str(key) not in seen \

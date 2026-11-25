@@ -59,6 +59,41 @@ def test_opencode_key_matches_shim_and_bridge(fake_opencode):
                                                               CWD, "idle")  # none busy
 
 
+def test_v1_window_resumed_on_an_older_chat_shows_it(fake_opencode, monkeypatch):
+    """`opencode -s <id>` (or -c) opens a chat from before the window started; it is not
+    written to until the person types, so the newest-since-start rule alone never listed it."""
+    fake_opencode.sessions[:] = fake_opencode.sessions[:1]  # only STALE, from an earlier run
+    assert adapter(fake_opencode).sessions() == []
+    for argv in (["opencode", "--port", "0", "-s", STALE], ["opencode", f"--session={STALE}"],
+                 ["opencode", "-c"]):
+        monkeypatch.setattr(opencode, "_argv", lambda pid, argv=argv: argv)
+        s, = adapter(fake_opencode).sessions()
+        assert (s.key, s.closable) == (f"opencode:{STALE}", True), argv
+        assert identity.RESOLVERS["opencode"](os.getpid(), CWD) == s.key
+    monkeypatch.setattr(opencode, "_argv", lambda pid: ["opencode", "-s", "not-an-id"])
+    assert adapter(fake_opencode).sessions() == []
+
+
+def test_v1_a_chat_another_window_was_opened_on_is_that_window_s(fake_opencode):
+    """Two windows in one folder: a write to one window's chat (opened by id) makes it the
+    newest for both; the other window keeps its own."""
+    row = opencode._newest_row(os.getpid(), fake_opencode.port, CWD, frozenset({NEWEST}))
+    assert row["id"] == OLDER
+    assert opencode._newest_row(os.getpid(), fake_opencode.port, CWD)["id"] == NEWEST
+
+
+def test_v1_a_closed_window_s_chat_is_reported_ended(fake_opencode):
+    """OpenCode's list is not complete, so the hub keeps a missing session ONLINE_S; the
+    adapter names the chats a window let go of, for the bridge to say they ended."""
+    ports = {os.getpid(): fake_opencode.port}
+    a = OpenCodeAdapter(find_ports=lambda: ports)
+    assert [s.key for s in a.sessions()] == [f"opencode:{NEWEST}"] and a.ended_keys == set()
+    ports.clear()  # the window closed
+    assert a.sessions() == [] and a.ended_keys == {f"opencode:{NEWEST}"}
+    ports[os.getpid()] = fake_opencode.port  # open again
+    assert len(a.sessions()) == 1 and a.ended_keys == set()
+
+
 def test_v1_session_carries_its_title(fake_opencode):
     """The title OpenCode gives a session, or the one its person renamed it to: one field."""
     fake_opencode.sessions[2]["title"] = "  fix the\nlogin page "
@@ -353,6 +388,21 @@ def test_v2_a_closed_windows_chat_leaves_at_once_and_comes_back_when_used(window
     row = next(r for r in recent.sessions["data"] if r["id"] == "ses_v2new")
     row["time"]["updated"] = time.time() * 1000 + 1000  # used again (the desktop app)
     assert "opencode:ses_v2new" in keys(a)
+
+
+def test_v2_a_closed_window_s_chat_is_reported_ended(windows, recent):
+    """The bridge tells the hub, so the hub drops it at once rather than after ONLINE_S."""
+    (me, w1, w2), note = windows
+    for pid in (me, w2):
+        note(pid, "")
+    note(w1, "ses_v2old")
+    a = OpenCodeAdapter()
+    assert "opencode:ses_v2old" in keys(a) and a.ended_keys == set()
+    note(w1, "ses_v2stale")  # moved on
+    assert "opencode:ses_v2old" not in keys(a) and a.ended_keys == {"opencode:ses_v2old"}
+    row = next(r for r in recent.sessions["data"] if r["id"] == "ses_v2old")
+    row["time"]["updated"] = time.time() * 1000 + 1000  # used again, in the app
+    assert "opencode:ses_v2old" in keys(a) and a.ended_keys == set()
 
 
 def test_v2_a_window_that_moves_to_another_chat_lets_the_old_one_go(windows, recent):

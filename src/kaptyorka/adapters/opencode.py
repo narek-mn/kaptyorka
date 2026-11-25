@@ -817,21 +817,64 @@ def _list(pid: int, port: int, timeout: float = TIMEOUT_S) -> list:
     return data if status == 200 and isinstance(data, list) else []
 
 
-def _newest_row(pid: int, port: int, cwd: str) -> Optional[dict]:
-    """Most recently updated session in cwd since the TUI started; None before its first prompt.
+def _argv(pid: int) -> List[str]:
+    """The process's command line ([] if it cannot be read)."""
+    try:
+        if sys.platform.startswith("linux"):
+            raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+            return [a.decode(errors="replace") for a in raw.split(b"\0")[:-1]]
+        r = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True,
+                           timeout=TIMEOUT_S)
+        return r.stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return []
 
-    Sessions from earlier runs in the same folder are stored too; nobody sees those.
+
+def _opened_with(pid: int) -> "tuple[Optional[str], bool]":
+    """(the session id a V1 TUI was started on with -s/--session, whether with -c/--continue):
+    OpenCode 1.19.5's own flags (`opencode --help`). A resumed chat is not written to until
+    the person types, so its time.updated is older than the window."""
+    argv, sid, cont = _argv(pid), None, False
+    for i, a in enumerate(argv[1:], 1):
+        if a in ("-s", "--session") and i + 1 < len(argv):
+            sid = argv[i + 1]
+        elif a.startswith("--session="):
+            sid = a.split("=", 1)[1]
+        elif a in ("-c", "--continue"):
+            cont = True
+    return (sid if valid_id(sid) else None), cont
+
+
+def _claims(pids) -> Dict[int, str]:
+    """pid -> the session each of these V1 TUIs was started on (-s), for the ones that were."""
+    return {pid: sid for pid in pids for sid in [_opened_with(pid)[0]] if sid}
+
+
+def _newest_row(pid: int, port: int, cwd: str, others: frozenset = frozenset()) -> Optional[dict]:
+    """The session a V1 TUI shows, as far as its server tells: the most recently updated one in
+    cwd since the TUI started, not one another window was started on by id (others); else the
+    one it was started on (-s <id>, or -c: the folder's newest). None before its first prompt.
+
+    Sessions from earlier runs in the same folder are stored too; nobody sees those. OpenCode 1
+    has no way to say which chat a window shows (no TUI plugin, no route): a window switched to
+    an older chat shows it from its first new step.
     """
     since = _started_ms(pid)
-    here = [s for s in _list(pid, port) if s.get("directory") == cwd
-            and s.get("time", {}).get("updated", 0) >= since]
-    if not here:
-        return None
-    return max(here, key=lambda s: s.get("time", {}).get("updated", 0))
+    rows = [s for s in _list(pid, port) if s.get("directory") == cwd]
+    here = [s for s in rows if s.get("time", {}).get("updated", 0) >= since
+            and s.get("id") not in others]
+    if here:
+        return max(here, key=lambda s: s.get("time", {}).get("updated", 0))
+    sid, cont = _opened_with(pid)
+    if sid:
+        return next((s for s in rows if s.get("id") == sid), None)
+    top = [s for s in rows if not s.get("parentID")]
+    return max(top, key=lambda s: s.get("time", {}).get("updated", 0)) if cont and top else None
 
 
 def _newest(pid: int, port: int, cwd: str) -> Optional[str]:
-    row = _newest_row(pid, port, cwd)
+    claims = _claims(find_ports())
+    row = _newest_row(pid, port, cwd, frozenset(v for p, v in claims.items() if p != pid))
     return "opencode:" + row["id"] if row else None
 
 
@@ -893,6 +936,7 @@ class OpenCodeAdapter:
         self.log = log
         self.run = run
         self._locked: set = set()  # ports already logged as needing a password
+        self.ended_keys: set = set()  # sessions of the last sessions() that ended (_ended)
 
     def _skip(self, e: NeedsPassword, port: int) -> None:
         if port not in self._locked:
@@ -928,25 +972,39 @@ class OpenCodeAdapter:
         svc = service()
         if svc:
             return self._v2_sessions(svc)
-        out = []
-        for pid, port in self.find_ports().items():
+        out, shown, unread = [], {}, set()
+        ports = self.find_ports()
+        claims = _claims(ports)
+        for pid, port in ports.items():
             try:
                 cwd = proc_cwd(pid)
-                row = _newest_row(pid, port, cwd)
+                row = _newest_row(pid, port, cwd, frozenset(v for p, v in claims.items() if p != pid))
                 busy = _busy(pid, port) if row else set()
             except NeedsPassword as e:
                 self._skip(e, port)
+                unread.add(str(pid))
                 continue
             except (OSError, ValueError, TypeError, KeyError, StopIteration, IndexError,
                     http.client.HTTPException, subprocess.SubprocessError):
+                unread.add(str(pid))
                 continue  # TUI just exited
+            if row and valid_id(row.get("id")):
+                shown[str(pid)] = row["id"]
             if row:
                 idle_s, act, write_s = activity(row.get("time", {}).get("updated"), row["id"] in busy)
                 out.append(Session("opencode:" + row["id"], self.tool,
                                    os.path.basename(cwd.rstrip("/")), act, cwd=cwd,
                                    title=session_title(row.get("title")),
                                    idle_s=idle_s, write_s=write_s, closable=not _is_service(pid)))
+        _note_closed(shown, unread)  # a window that closed, or moved on: its chat ended here
+        self.ended_keys = self._ended(out)
         return out
+
+    def _ended(self, listed: List[Session]) -> set:
+        """The sessions a window let go of (closed, or moved to another chat) and that are not
+        listed now: the bridge tells the hub they ended, so they leave at once. OpenCode's list
+        is not complete (bridge.COMPLETE), so without this the hub keeps one ONLINE_S."""
+        return {f"opencode:{sid}" for sid in _closed_since()} - {s.key for s in listed}
 
     def _v2_sessions(self, svc: Dict[str, str]) -> List[Session]:
         from kaptyorka.identity import proc_cwd
@@ -981,6 +1039,7 @@ class OpenCodeAdapter:
             idle_s, act, write_s = activity(updated, running)
             out.append(Session(key, self.tool, os.path.basename(cwd.rstrip("/")), act, cwd=cwd,
                                title=title, idle_s=idle_s, write_s=write_s))
+        self.ended_keys = self._ended(out)
         return out
 
     def _v2_session(self, svc: Dict[str, str], key: str, cwd: str) -> Session:
@@ -1000,11 +1059,14 @@ class OpenCodeAdapter:
             return sorted(pid for pid, note in _opened().items()
                           if note and note["session"] == sid and pid in tuis)
         out = []
-        for pid, port in self.find_ports().items():
+        ports = self.find_ports()
+        claims = _claims(ports)
+        for pid, port in ports.items():
             try:
                 if _is_service(pid):
                     continue
-                row = _newest_row(pid, port, proc_cwd(pid))
+                row = _newest_row(pid, port, proc_cwd(pid),
+                                  frozenset(v for p, v in claims.items() if p != pid))
             except (OSError, ValueError, TypeError, KeyError, StopIteration, IndexError,
                     http.client.HTTPException, subprocess.SubprocessError, NeedsPassword):
                 continue

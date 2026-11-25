@@ -287,6 +287,22 @@ def test_heartbeat_frees_closed_claude_session_but_keeps_codex_when_list_is_empt
     assert [a.key for a in hub.store.online()] == ["codex:5"]
 
 
+def test_a_session_the_adapter_says_ended_leaves_at_once_and_its_row_stays(hub, home):
+    """OpenCode's list is not complete (a missing session may still run), so the hub keeps it
+    ONLINE_S; one the adapter knows ended (its window closed) goes offline on this beat. One
+    still listed, or another machine's, is untouched."""
+    oc = FakeAdapter("opencode", "opencode", [Session("opencode:ses_a", "opencode", "proj-a"),
+                                              Session("opencode:ses_b", "opencode", "proj-a")])
+    bridge = Bridge(cfg(hub), [oc], bridge_mod.log)
+    bridge.heartbeat()
+    hub.store.heartbeat("box-9", [{"key": "opencode:ses_c", "tool": "opencode", "project": "p"}])
+    oc._sessions.pop(0)
+    oc.ended_keys = {"opencode:ses_a", "opencode:ses_b", "opencode:ses_c"}
+    bridge.heartbeat()
+    assert sorted(a.key for a in hub.store.online()) == ["opencode:ses_b", "opencode:ses_c"]
+    assert hub.store.agent("opencode:ses_a") is not None  # offline, its row kept
+
+
 def test_heartbeat_sends_facts(hub, home, monkeypatch):
     import getpass
 

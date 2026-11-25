@@ -1723,7 +1723,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             isinstance(body.get("tools"), list) and isinstance(facts, dict))
         store.heartbeat(body["machine"], body["sessions"], body.get("tools", ()),
                         principal=principal, facts=facts if isinstance(facts, dict) else None,
-                        gone=body.get("gone", ()), bridge=bridge)
+                        gone=body.get("gone", ()), bridge=bridge, ended=body.get("ended", ()))
         if principal is None:
             return Response(status_code=204)
         own = not principal.legacy

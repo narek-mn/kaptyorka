@@ -257,6 +257,7 @@ class Bridge:
             return replace(s, project=joined[s.key], cwd="", tasks=tasks,
                            label=s.label or (optin.LABEL if coordinator else ""))
         sessions, tools, objs, shown, held, refused = [], [], [], [], False, {}
+        ended: set = set()  # sessions an adapter knows ended (OpenCode: a window let go of them)
         for a in self.adapters:
             try:
                 got = [as_joined(s) for s in a.sessions()]
@@ -278,6 +279,8 @@ class Bridge:
             except Exception:
                 pass  # never costs the sessions; the next heartbeat reads it again
             self._report("sessions:" + a.prefix, problem)
+            if problem is None:
+                ended |= set(getattr(a, "ended_keys", ()))
             sessions += found
             objs += got if problem is None else []
             shown += [s for s in got if s.key not in off] if problem is None else []
@@ -295,6 +298,9 @@ class Bridge:
                 "overnight": [s["key"] for s in sessions if self._overnight(s["key"])]}
         if gone:
             body["gone"] = gone
+        ended -= {s["key"] for s in sessions}
+        if ended:
+            body["ended"] = sorted(ended)
         if refused:
             body["manager_refused"] = refused
         closed = list(self._closed)
