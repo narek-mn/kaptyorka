@@ -646,6 +646,7 @@ class ClaudeAdapter:
         process proven to be that session: its start time matches the session file (Linux);
         with no /proc (macOS), `ps` must name claude. Raises ValueError when nothing was ended."""
         wanted = key.split(":", 1)[1]
+        refused = ""
         for f in sorted(self.dir.glob("*.json")):
             try:
                 pid = int(f.stem)
@@ -671,13 +672,14 @@ class ClaudeAdapter:
                                      or "claude stop failed")
                 return
             if started is None and (os.path.isdir("/proc") or not self._is_claude(pid)):
-                raise ValueError("cannot check that its process is still that session")
+                refused = "cannot check that its process is still that session"
+                continue  # not proven: never signalled, and it must not hide a live file after it
             try:
                 os.kill(pid, signal.SIGTERM)
             except ProcessLookupError:
                 raise ValueError("its process had already ended")
             return
-        raise ValueError("no running session with that id on this machine")
+        raise ValueError(refused or "no running session with that id on this machine")
 
     def _is_claude(self, pid: int) -> bool:
         """`ps` names claude for this process (where /proc cannot tell its start time)."""

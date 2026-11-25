@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import anyio
@@ -37,6 +38,12 @@ def procs():
             env[offhub.ENV] = hub_env
         p = subprocess.Popen(["sleep", "60"], env=env)
         started.append(p)
+        # Popen returns before the kernel has set up the new program's environment: its
+        # /proc/<pid>/environ reads empty for a moment (about half the time here), which
+        # reads as "no KAPTYORKA_HUB". A real session writes its session file long after.
+        deadline = time.monotonic() + 10
+        while not Path(f"/proc/{p.pid}/environ").read_bytes() and time.monotonic() < deadline:
+            time.sleep(0.001)
         return p
     yield start
     for p in started:
@@ -158,7 +165,7 @@ def test_started_with_env_off_is_never_reported(team, alice_box, home, procs,  #
     bridge = alice_box()
     bridge.heartbeat()
     alice_box().heartbeat()  # a restarted bridge
-    assert sent.bodies and not sent.mentions("s2", "hidden-proj", "secret-desk")
+    assert sent.bodies and not sent.mentions("s2", "hidden-proj", "secret-desk"), sent.bodies
     assert team.store.agent("claude:s2") is None
     assert offhub.command([], {**env, offhub.ENV: "off"}) == (0, offhub.COME_BACK)
     offhub.command(["on"], env)  # the person's choice beats the variable

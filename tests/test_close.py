@@ -4,6 +4,7 @@ session's own bridge once, and what the row then says."""
 import os
 import signal
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,7 @@ from test_hub_workers import bridge, heartbeat
 from kaptyorka import bridge as bridge_mod
 from kaptyorka import http, left
 from kaptyorka.adapters.base import Session
+from kaptyorka.adapters import claude as claude_mod
 from kaptyorka.adapters.claude import ClaudeAdapter
 from kaptyorka.store import session_id
 
@@ -194,11 +196,15 @@ def test_the_bridge_checks_again_then_ends_it(tmp_path, monkeypatch):
     assert claude.ended == ["claude:i1", "claude:conf"]  # once, until the hub has the answer
 
 
+linux_proc = pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="needs /proc")
+
+
 def start_of(pid):
     stat = open(f"/proc/{pid}/stat").read()
     return stat[stat.rindex(")") + 2:].split()[19]
 
 
+@linux_proc
 def test_end_stops_a_background_job_and_terminates_only_a_proven_session(tmp_path):
     calls = []
 
@@ -235,6 +241,7 @@ def test_end_stops_a_background_job_and_terminates_only_a_proven_session(tmp_pat
     assert len(calls) == 1
 
 
+@linux_proc
 def test_a_stale_file_never_hides_the_live_one(tmp_path):
     p = subprocess.Popen(["sleep", "60"])
     try:
@@ -248,6 +255,7 @@ def test_a_stale_file_never_hides_the_live_one(tmp_path):
             p.kill()
 
 
+@linux_proc
 def test_a_dead_pids_file_never_hides_the_live_one(tmp_path):
     p = subprocess.Popen(["sleep", "60"])
     try:
@@ -290,6 +298,88 @@ def test_without_proc_ps_must_name_claude(tmp_path, monkeypatch):
     finally:
         if p.poll() is None:
             p.kill()
+
+
+def no_proc(monkeypatch, tmp_path, said):
+    """The macOS path on any system: no /proc, no start time, `ps` answers `said[pid]`."""
+    real = os.path.isdir
+    monkeypatch.setattr(os.path, "isdir", lambda d: False if d == "/proc" else real(d))
+    monkeypatch.setattr(claude_mod, "_same_start", lambda pid, start: None)
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[0] == "ps":
+            return SimpleNamespace(returncode=0, stdout=said.get(int(cmd[2]), ""), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    return ClaudeAdapter(home=tmp_path, run=run), calls
+
+
+def test_no_proc_refuses_a_non_claude_process_and_ends_a_claude_one(tmp_path, monkeypatch):
+    p = subprocess.Popen(["sleep", "60"])
+    try:
+        said = {p.pid: "sleep 60\n"}
+        a, calls = no_proc(monkeypatch, tmp_path, said)
+        write_session_file(tmp_path, p.pid, session_id="fg-5", extra={"procStart": "1"})
+        with pytest.raises(ValueError, match="cannot check that its process is still that session"):
+            a.end("claude:fg-5")
+        assert p.poll() is None
+        assert calls == [["ps", "-p", str(p.pid), "-o", "command="]]
+        said[p.pid] = "node /usr/local/lib/node_modules/claude --resume x\n"
+        a.end("claude:fg-5")
+        assert p.wait(timeout=10) == -signal.SIGTERM
+    finally:
+        if p.poll() is None:
+            p.kill()
+
+
+def test_no_proc_a_stale_or_dead_file_never_hides_the_live_one(tmp_path, monkeypatch):
+    # files are read in name order: the stale ones sort first, the live claude last
+    other, live = sorted((subprocess.Popen(["sleep", "60"]) for _ in range(2)),
+                         key=lambda p: str(p.pid))
+    try:
+        dead = next(c for c in range(100000, 4000000, 7919)
+                    if str(c) < str(other.pid) and not pid_alive(c))
+        a, calls = no_proc(monkeypatch, tmp_path, {other.pid: "sleep 60\n",
+                                                     live.pid: "/opt/homebrew/bin/claude\n"})
+        for pid in (dead, other.pid, live.pid):
+            write_session_file(tmp_path, pid, session_id="fg-6")
+        a.end("claude:fg-6")
+        assert live.wait(timeout=10) == -signal.SIGTERM
+        assert other.poll() is None  # an unproven process is never signalled
+        assert ["ps", "-p", str(dead), "-o", "command="] not in calls  # a dead pid is skipped
+    finally:
+        for p in (other, live):
+            if p.poll() is None:
+                p.kill()
+
+
+def test_no_proc_nothing_ended_says_so(tmp_path, monkeypatch):
+    a, calls = no_proc(monkeypatch, tmp_path, {})
+    with pytest.raises(ValueError, match="no running session"):
+        a.end("claude:not-here")
+    dead = next(c for c in range(100000, 4000000, 7919) if not pid_alive(c))
+    write_session_file(tmp_path, dead, session_id="fg-7")
+    with pytest.raises(ValueError, match="no running session"):
+        a.end("claude:fg-7")
+    assert calls == []
+
+
+def test_no_proc_a_background_job_is_stopped_by_id(tmp_path, monkeypatch):
+    a, calls = no_proc(monkeypatch, tmp_path, {})
+    write_session_file(tmp_path, os.getpid(), session_id="abcdef12-bg", extra={"kind": "bg"})
+    a.end("claude:abcdef12-bg")
+    assert calls == [["claude", "stop", "abcdef12"]]
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass
+    return True
 
 
 def test_the_bridge_puts_the_reason_on_the_row(tmp_path, monkeypatch):
