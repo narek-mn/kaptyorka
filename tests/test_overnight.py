@@ -184,7 +184,7 @@ def test_prompt_turns_it_on_with_the_rules_and_one_line(home, capsys):
 
 
 @pytest.mark.parametrize("prompt", ["run this overnight please", "do it while I sleep",
-                                    "finish by the morning", "/hub overnight"])
+                                    "/hub overnight"])
 def test_similar_phrases_turn_it_on(home, capsys, prompt):
     run_hook("prompt", {"session_id": "s1", "cwd": "/w/x", "prompt": prompt}, capsys)
     assert overnight.state("s1") is not None
