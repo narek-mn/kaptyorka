@@ -125,6 +125,7 @@ def report(hub, b, key, at):
 def close_acked(hub, b):
     """The bridge stops the session it was told to close."""
     status, items = http.request("GET", f"{hub.url}/bridge/poll?machine={HOST}", b.token)
+    assert status == 200, (status, items)
     closes = [i for i in items if i.get("launch") and i.get("kind") == "close"] or \
         [i for i in items if i.get("launch") and "close" in json.dumps(i)]
     assert closes, items
@@ -142,7 +143,7 @@ def ask(hub, text, key="claude:m1"):
     A = {"key": "k:alice", "machine": "box-1", "tool": "codex", "project": "proj-a"}
     run(call(alice, A, "send", to=hub.store.agent(key).name, text=text))
     with hub.store.lock:
-        hub.store.db.execute("UPDATE messages SET push_state='pushed' WHERE sender_key='k:alice'")
+        hub.store.db.execute("UPDATE messages SET push_state='pushed', read_at=created WHERE sender_key='k:alice'")
     return alice, A
 
 
@@ -184,7 +185,7 @@ def test_a_block_starts_a_fresh_manager_that_gets_the_question_once(hub, clock):
         ("up", f"reply blocked by the model's safety filter at {hm}, restarted")
     # the fresh manager is blocked on it again: no second try, alice hears one line
     with hub.store.lock:
-        hub.store.db.execute("UPDATE messages SET push_state='pushed' WHERE to_key='claude:m2'")
+        hub.store.db.execute("UPDATE messages SET push_state='pushed', read_at=created WHERE to_key='claude:m2'")
     clock[0] += 5
     report(hub, b, "claude:m2", clock[0] - 1)
     hub.tick()
@@ -206,7 +207,7 @@ def test_a_hub_notice_that_led_to_a_block_is_never_given_again(hub, clock):
     up(hub, b, clock)
     hub.tell("claude:m1", "knowledge: two notes changed")
     with hub.store.lock:
-        hub.store.db.execute("UPDATE messages SET push_state='pushed' WHERE to_key='claude:m1'")
+        hub.store.db.execute("UPDATE messages SET push_state='pushed', read_at=created WHERE to_key='claude:m1'")
     clock[0] += 5
     report(hub, b, "claude:m1", clock[0] - 1)
     report(hub, b, "claude:m1", clock[0] - 1)  # the same marker again: one restart
@@ -256,3 +257,54 @@ def test_blocks_that_keep_coming_stop_the_restarts_for_the_hour(hub, clock):
     beat(hub, b)
     hub.tick()
     assert state(hub) == "starting"  # it comes back by itself after the hour
+
+
+def test_a_hand_run_claude_in_the_manager_folder_never_restarts_the_manager(hub, clock):
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    client, _ = up(hub, b, clock)
+    run(call(client, ident("claude:hand", project="manager"), "inbox"))  # not its worker's key
+    report(hub, b, "claude:hand", clock[0])
+    hub.tick()
+    assert state(hub) == "up" and hub.mm._get(refusal.PENDING) == ""
+    assert not any("safety filter" in t for t in page_texts(hub))
+    status, items = http.request("GET", f"{hub.url}/bridge/poll?machine={HOST}", b.token)
+    assert not [i for i in items if i.get("kind") == "close"]
+
+
+def answering_case(hub, clock, setup):
+    """alice's message, then `setup` changes it; after a block, what reaches claude:m2."""
+    b = admin_bridge(hub)
+    hub.mm.set_enabled(True, "test")
+    hub.tick()
+    client, me = up(hub, b, clock)
+    ask(hub, "please start a worker on proj-a")
+    setup(hub, client, me)
+    clock[0] += 5
+    report(hub, b, "claude:m1", clock[0] - 1)
+    fresh(hub, b, clock, "claude:m2")
+    return [t for k, t in to(hub, "claude:m2") if k == "k:alice"]
+
+
+def test_a_message_the_manager_already_answered_is_not_given_again(hub, clock):
+    def answered(hub, client, me):
+        clock[0] += 1
+        run(call(client, me, "send", to=hub.store.agent("k:alice").name, text="started"))
+    assert answering_case(hub, clock, answered) == []
+
+
+def test_a_message_not_read_yet_is_not_copied(hub, clock):
+    def unread(hub, client, me):
+        with hub.store.lock:
+            hub.store.db.execute("UPDATE messages SET read_at=NULL, push_state='offered',"
+                                 " offered_at=created"
+                                 " WHERE sender_key='k:alice'")
+    assert answering_case(hub, clock, unread) == []
+
+
+def test_a_knock_is_never_copied(hub, clock):
+    def knock(hub, client, me):
+        with hub.store.lock:
+            hub.store.db.execute("UPDATE messages SET kind='knock' WHERE sender_key='k:alice'")
+    assert answering_case(hub, clock, knock) == []

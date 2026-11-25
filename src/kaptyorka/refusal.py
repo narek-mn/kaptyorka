@@ -18,6 +18,8 @@ import json
 from typing import Callable, List, Optional, Tuple
 
 from kaptyorka.limits import hm
+from kaptyorka.manager import WORKER
+from kaptyorka.workers import LIVE
 
 MAX_RESTARTS = 3  # fresh starts after a block within WINDOW_S; the next block stops them
 WINDOW_S = 3600
@@ -69,12 +71,16 @@ def seen(store, mm, key: str, at, device_id: int, host: str) -> None:
 
 
 def _answering(store, key: str, at: float) -> Optional[dict]:
-    """The message the session was answering: the newest one delivered to it by then."""
+    """The message the session was answering: the newest plain message it had read by then
+    and not answered (no message from a manager session to that sender since). One still
+    offered goes to the next session anyway; a knock is never copied."""
     with store.lock:
         row = store.db.execute(
-            "SELECT * FROM messages WHERE to_key=? AND created<=? AND (read_at IS NOT NULL"
-            " OR push_state!='new') ORDER BY created DESC, id DESC LIMIT 1",
-            (key, at + 1)).fetchone()
+            "SELECT * FROM messages m WHERE m.to_key=? AND m.created<=? AND m.read_at IS NOT NULL"
+            " AND m.kind='message' AND NOT EXISTS (SELECT 1 FROM messages r WHERE"
+            "  r.to_key=m.sender_key AND r.created>=m.created AND r.sender_key IN (SELECT a.key"
+            "  FROM agents a JOIN people p ON p.id=a.person_id WHERE p.role='manager'))"
+            " ORDER BY m.created DESC, m.id DESC LIMIT 1", (key, at + 1)).fetchone()
     return None if row is None else dict(row)
 
 
@@ -93,6 +99,9 @@ def tick(store, mm, ws, tell: Callable[[str, str], None], admins: List[str],
         at = float(pending.get("at") or now)
         mm._set(SEEN, repr(at))
         mm._set(PENDING, "")
+        w = ws.by_name(WORKER)
+        if w is None or w["state"] not in LIVE or w["key"] != pending["key"]:
+            return False  # not the live manager (a hand-run claude in its folder): handled
         mm._set(LAST, repr(at))
         _question(store, mm, ws, tell, pending["key"], at)
         recent = [t for t in _json(mm, RESTARTS, []) if now - float(t) < WINDOW_S]

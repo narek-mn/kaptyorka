@@ -265,14 +265,17 @@ class Bridge:
                 held = held or bool(mine - off)
                 off |= mine
                 found = [asdict(s) for s in got if s.key not in off]
-                for s in got:  # the manager's reply stopped by the model's safety filter
-                    if hasattr(a, "refused") and paths.in_manager_folder(s.cwd):
-                        t = a.refused(s.key, s.cwd)
-                        if t is not None:
-                            refused[s.key] = t
                 problem = None
             except Exception as e:  # one broken adapter must not hide the others
                 found, problem = [], f"{a.tool} sessions failed: {e}"
+            try:  # the manager's reply stopped by the model's safety filter (refusal.py)
+                for s in (got if problem is None and hasattr(a, "refused") else []):
+                    if paths.in_manager_folder(s.cwd):
+                        t = a.refused(s.key, s.cwd)
+                        if t is not None:
+                            refused[s.key] = t
+            except Exception:
+                pass  # never costs the sessions; the next heartbeat reads it again
             self._report("sessions:" + a.prefix, problem)
             sessions += found
             objs += got if problem is None else []
