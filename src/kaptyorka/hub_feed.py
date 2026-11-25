@@ -2,7 +2,7 @@
 from dataclasses import asdict
 from typing import Optional
 
-from kaptyorka import __version__, admin_ops, stuck
+from kaptyorka import __version__, admin_ops, left, stuck
 from kaptyorka.hub_groups import feed_groups
 from kaptyorka.manager import ManagerStore
 from kaptyorka.store import PRIVATE, Agent, Principal, Store, machine_name, private_name, session_id
@@ -125,7 +125,15 @@ def _notes(store: Store, principal: Principal) -> list:
     return out
 
 
-def feed(store: Store, principal: Principal, ws=None, cs=None) -> dict:
+def closable(principal: Principal, a: Agent, live, mid, closing, night, now: float) -> dict:
+    """A row's close fields for the page (left.py): "close" "now" (idle over a day: no
+    question) or "ask" when this viewer may close it, and how a close under way stands."""
+    if left.refused(principal, a, live or (), mid, night) is not None:
+        return {}
+    return {"close": "now" if left._idle(a, now) else "ask", **closing.state(a.key, now)}
+
+
+def feed(store: Store, principal: Principal, ws=None, cs=None, closing=None, night=()) -> dict:
     now = store.clock()
     people = store.people()
     names = admin_ops.names(store)  # removed people too: their old sessions keep a name
@@ -137,7 +145,8 @@ def feed(store: Store, principal: Principal, ws=None, cs=None) -> dict:
     live = ws.live_keys() if ws is not None else None  # workers never fold into Idle
     fresh = store.fresh_helpers(now)  # most end within seconds (left.py)
     out = {
-        "agents": [session_row(store, a, principal, names, now, live, ws=ws, manager_id=mid)
+        "agents": [{**session_row(store, a, principal, names, now, live, ws=ws, manager_id=mid),
+                    **(closable(principal, a, live, mid, closing, night, now) if closing else {})}
                    for a in store.online()
                    if a.key not in fresh and store.listed(principal.person_id, a.key, a.person_id)],
         "messages": [message_row(store, principal, m, mid) for m in store.messages_for(principal, 500)],

@@ -799,12 +799,19 @@ def _auto_update(who, d):
     return f"{who} turned auto-update {m.group(2)} for {m.group(1)}"
 
 
+def _session_close(who: str, detail: str) -> str:
+    """left.py: "<session> on <machine>", or "...: not closed, <why>" from its bridge."""
+    name, sep, why = detail.partition(": not closed, ")
+    return f"{name} was not closed: {why}" if sep else f"{who} closed {name} from the page"
+
+
 SENTENCES = {
     "grant": _grant,
     "revoke": _revoke,
     "person": _match(r"(.+) created as (\w+)", "{0} added {1} with the role {2}"),
     "device": _device_added,
     "invite": _match(r"invite for (.+)", "{0} made an invite link for {1}"),
+    "session_close": _session_close,
     "invite_new": _match(r"invite for (.+)", "{0} made a new invite link for {1}; the old ones"
                                               " no longer work"),
     "machine_label": _match(r"(.+) -> (.+)", "{0} renamed their machine {1} to {2}"),
@@ -889,7 +896,7 @@ LOG_GROUPS = [
                   "backup", "auto_update"]),
     ("messages", ["settings", "retention", "door_open", "door_close", "knock", "knock_answer"]),
     ("rules", ["rules", "skills", "propose", "proposal", "conflict"]),
-    ("workers", ["manager", "work_decide"]),
+    ("workers", ["manager", "work_decide", "session_close"]),
     ("sign-ins", ["page_login", "gitlab_signin", "gitlab_signout"]),
 ]
 

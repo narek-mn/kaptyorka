@@ -101,6 +101,7 @@ class Bridge:
         self._updated_to = ""  # the hub version an update was last run for
         self._update_retry_at = 0.0
         self._closed: List[str] = []  # left-behind sessions closed here, for the next beat
+        self._close_done: Dict[str, str] = {}  # the page's close orders: key -> "" or why not
 
     def _report(self, area: str, problem: Optional[str]) -> None:
         """Log a problem once per area until that area succeeds (problem None) again."""
@@ -299,12 +300,17 @@ class Bridge:
         closed = list(self._closed)
         if closed:
             body["closed"] = closed
+        done = dict(self._close_done)
+        if done:
+            body["close_done"] = done
         status, answer = http.request("POST", self.cfg["hub"] + "/bridge/heartbeat",
                                       self.cfg["token"], body)
         if gone and status in (200, 204):
             offhub.told(gone)
         if closed and status in (200, 204):
             self._closed = [k for k in self._closed if k not in closed]
+        if done and status in (200, 204):
+            self._close_done = {k: v for k, v in self._close_done.items() if k not in done}
         self.hub = answer if status == 200 and isinstance(answer, dict) else {}
         if self.hub.get("tls") is not None:  # the hub moves to https or back (tls.py)
             self.cfg = tls.follow(self.cfg, self.hub, lambda m: self._report("tls", m))
@@ -327,6 +333,7 @@ class Bridge:
         self._sync_skills()
         self._check_pending(objs)
         self._close_left(objs)
+        self._close_asked(objs)
         if again and team is None and held and self._team()[0] is not None:
             self.heartbeat(again=False)  # the list came just now: report its sessions at once
 
@@ -518,6 +525,46 @@ class Bridge:
             self._closed.append(key)
             self.log(f"closed left session {s.label or s.title or key}: started by a session that"
                      f" ended, idle {int(s.idle_s // 3600)} h; its transcript is kept")
+
+    def _close_asked(self, sessions: list) -> None:
+        """End the sessions a person closed on the page (left.py), each checked here again:
+        no worker of this machine, the manager or a session in overnight mode; one not
+        confirmed (closed as idle) must still be idle over a day. The hub hears next beat."""
+        ask = self.hub.get("close_asked")
+        if not isinstance(ask, list):
+            return
+        claude = next((a for a in self.adapters if a.prefix == "claude"), None)
+        keep = set(self._team()[1])
+        by_key = {s.key: s for s in sessions}
+        for item in ask:
+            key = item.get("key") if isinstance(item, dict) else None
+            if not isinstance(key, str) or key in self._close_done:
+                continue
+            s = by_key.get(key)
+            if s is None:
+                why = ""  # gone already
+            elif key in keep:
+                why = "a hub worker: close it with its own close"
+            elif paths.in_manager_folder(s.cwd):
+                why = "the manager is never closed from here"
+            elif self._overnight(key):
+                why = "overnight mode is on in that session"
+            elif claude is None or s.tool != claude.tool or not hasattr(claude, "end"):
+                why = "this tool's sessions cannot be closed from the page"
+            elif item.get("confirmed") is not True and (
+                    s.idle_s is None or s.idle_s <= left.IDLE_S
+                    or (s.activity or "idle") != "idle" or s.tasks):
+                why = "in use again, not closed"
+            else:
+                try:
+                    claude.end(key)
+                    why = ""
+                except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+                    why = str(e) or "could not end it"
+            self._close_done[key] = why
+            name = (s.label or s.title or key) if s is not None else key
+            self.log(f"closed session {name} as asked on the page" if not why
+                     else f"closing session {name} as asked on the page failed: {why[:200]}")
 
     def _check_pending(self, sessions: list) -> None:
         """Tell the hub each started worker's session key once it shows up, or that it never

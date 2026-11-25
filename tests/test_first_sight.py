@@ -1,13 +1,12 @@
 """What the first ticks after an update must not do (found by a dry run on a copy of a real
 hub's data): ask people to update machines the staged rollout updates by itself, remind the
-admin of door requests older than the door_request tool, or send one message per session
-when an updated bridge first names many sessions left behind."""
+admin of door requests older than the door_request tool."""
 from helpers import call, run
 from test_hub_manager import clock, device, hub, inbox, manager_online, old_beat  # noqa: F401
 from test_hub_workers import bridge, heartbeat, member
 
 import kaptyorka
-from kaptyorka import left, rollout
+from kaptyorka import rollout
 from kaptyorka.workers import HUB_KEY
 
 
@@ -66,26 +65,3 @@ def test_a_door_request_from_before_0_9_11_never_reminds(hub, clock):
     with s.lock:
         texts = [r[0] for r in s.db.execute("SELECT text FROM messages")]
     assert not [t for t in texts if t.startswith("Still waiting")]
-
-
-def child(key, gone=True):
-    return {"key": key, "tool": "claude-code", "project": "proj-a", "cwd": "/w/proj-a",
-            "background": True, "parent": "claude:p1", "oneshot": False, "helper": True,
-            "parent_gone": gone}
-
-
-def test_many_children_left_behind_come_as_one_message_per_owner(hub, clock):
-    hub.store.project_register("proj-a", by="test")
-    pid, _ = member(hub, "alice")
-    plain = {"key": "claude:o1", "tool": "claude-code", "project": "proj-a", "cwd": "/w/proj-a"}
-    b = bridge(hub, pid, sessions=[plain] + [child(f"claude:c{i}", gone=False) for i in (1, 2, 3)])
-    clock[0] += left.FRESH_S + 1
-    # an updated bridge's first report names three at once
-    heartbeat(hub, b.token, "box-1", [plain, child("claude:c1"), child("claude:c2"),
-                                      child("claude:c3")], extra={"tools": ["claude-code"]})
-    hub.tick()
-    with hub.store.lock:
-        rows = [(r[0], r[1]) for r in hub.store.db.execute(
-            "SELECT to_key, text FROM messages WHERE sender_key=?", (HUB_KEY,))]
-    assert len(rows) == 1 and rows[0][0] == "claude:o1"
-    assert rows[0][1].count("which has ended") == 3

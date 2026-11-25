@@ -376,3 +376,11 @@ def test_markdown_is_built_from_text_nodes(hub):
     assert "innerHTML" not in code and "insertAdjacentHTML" not in code and "outerHTML" not in code
     assert "var MD_LINK = /^https?:\\/\\/[^\\s<>]+$/i;" in code and 'rel: "noopener noreferrer nofollow"' in code
     assert "innerHTML" not in html  # nowhere on the page
+
+
+def test_close_x_only_where_the_feed_allows_it(hub):
+    html = page(hub)
+    # the hub decides who may close (left.refused); the row draws the x only for those
+    assert 'close: a.close || ""' in html and 'e.sess && e.online && e.close' in html
+    assert '"aria-label": "Close session"' in html and "Close this session? It is in use." in html
+    assert '"/api/sessions/" + encodeURIComponent(e.kid) + "/close"' in html

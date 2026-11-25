@@ -1356,37 +1356,6 @@ class Store:
                             ("1" if on else "0",))
         self.log_add(by, "settings", f"close_left={'on' if on else 'off'}")
 
-    def closed_add(self, person_id: Optional[int], machine: str, name: str) -> None:
-        """Remember a session a bridge closed (left.py) for its owner's next daily line."""
-        if person_id is None:
-            return
-        key = f"closed:{person_id}:{machine}"
-        with self.lock:
-            row = self.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-            names = _json_or(row["value"], list) if row else []
-            names = (names if isinstance(names, list) else []) + [name]
-            self.db.execute("INSERT INTO settings (key, value) VALUES (?, ?)"
-                            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                            (key, json.dumps(names[-50:])))
-
-    def closed_pending(self) -> List[tuple]:
-        """(person id, machine) of every owner with closed sessions not yet told."""
-        with self.lock:
-            out = []
-            for r in self.db.execute("SELECT key FROM settings WHERE substr(key, 1, 7)='closed:'"):
-                _, pid, machine = r["key"].split(":", 2)
-                if pid.isdigit():
-                    out.append((int(pid), machine))
-            return out
-
-    def closed_take(self, person_id: int, machine: str) -> List[str]:
-        key = f"closed:{person_id}:{machine}"
-        with self.lock:
-            row = self.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-            self.db.execute("DELETE FROM settings WHERE key=?", (key,))
-        names = _json_or(row["value"], list) if row else []
-        return [str(n) for n in names] if isinstance(names, list) else []
-
     def prune(self, now: float) -> dict:
         """Delete old messages and their files, and unsent uploads older than a day.
         Notes, the log, requests, doors and knocks are never touched."""

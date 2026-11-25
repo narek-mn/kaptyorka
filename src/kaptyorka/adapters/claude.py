@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import time
@@ -635,6 +636,36 @@ class ClaudeAdapter:
             except (OSError, ValueError, KeyError, TypeError):
                 continue
         raise ValueError("no session file with that id")
+
+    def end(self, key: str) -> None:
+        """End a session from outside, its conversation kept (`claude --resume <id>` opens it
+        again): a background job with `claude stop`, any other with SIGTERM to its own
+        process, which this user owns (checked on 2.1.332: `claude stop` knows only background
+        jobs; a terminal session exits on SIGTERM and removes its session file, its transcript
+        stays; tests/test_close_slow.py). Raises ValueError when it cannot."""
+        wanted = key.split(":", 1)[1]
+        for f in self.dir.glob("*.json"):
+            try:
+                pid = int(f.stem)
+                data = json.loads(f.read_text())
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict) or data.get("sessionId") != wanted:
+                continue
+            if _same_start(pid, data.get("procStart")) is False:
+                return  # its process ended and the pid is another one now
+            if data.get("kind") == "bg":
+                r = self.run(["claude", "stop", wanted[:8]], capture_output=True, text=True,
+                             timeout=30)
+                if r.returncode != 0:
+                    raise ValueError(((r.stderr or "") + (r.stdout or "")).strip()[:200]
+                                     or "claude stop failed")
+                return
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass  # ended meanwhile
+            return
 
     def deliver(self, key: str, text: str) -> None:
         if key in self.off_keys:

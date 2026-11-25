@@ -279,6 +279,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
     # sessions in overnight mode, per bridge device, as its last heartbeat said: their bridge
     # wakes them when stuck, so the hub does not as well
     night: dict = {"by_device": {}, "keys": set()}
+    closing = left.Closing()  # people's orders from the page to close a session (left.py)
     mev = machine_events.MachineEvents(store, lambda: identity.facts()["host"])
 
     def principal_of(headers: Mapping) -> Principal:
@@ -739,10 +740,6 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             limits.tick(store, now)
         except Exception as e:
             print(f"kaptyorka: usage limits check failed: {e}", flush=True)
-        try:
-            left.tick(store, mm, ws.live_keys(), tell, now)
-        except Exception as e:  # nor may the left-behind check
-            print(f"kaptyorka: left sessions check failed: {e}", flush=True)
         try:
             manager_tick(now)
         except Exception as e:  # the manager must never stop the workers' clock
@@ -1747,6 +1744,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 refusal.seen(store, mm, key, at, principal.device_id, identity.facts()["host"])
         if own and body.get("closed"):  # sessions it closed for us (left.py)
             left.closed(store, principal.device_id, body["closed"], principal.person_name)
+        if own and body.get("close_done"):  # what it did with the page's close orders
+            closing.done(store, principal.device_id, body["close_done"], principal.person_name)
         if own and (isinstance(facts, dict) or isinstance(body.get("folders"), dict)):
             ws.facts_seen(principal.device_id, facts, body.get("folders"))
             try:  # history is a bonus: a bad git payload must not fail the heartbeat
@@ -1764,10 +1763,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         # left behind (left.py): its bridge checks each again before it closes it
         close = left.close_keys(store, principal.device_id, ws.live_keys(), mm.person_id(),
                                 store.clock()) if own else []
+        asked = closing.for_device(principal.device_id) if own else []
         announce = tls.announcement(device_signing(principal.device_id),
                                     request.headers.get("host") or request.url.netloc, store.clock())
         return JSONResponse({"version": __version__,
                              **({"close_left": close} if close else {}),
+                             **({"close_asked": asked} if asked else {}),
                              **({"tls": announce} if announce else {}),  # tls.py: signed
                              "auto_update": own and ws.auto_update(principal.device_id)
                              and rollout.allows(store, principal.device_id, __version__,
@@ -2074,8 +2075,38 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         load = {"manager_load": manager.load_line(mm.load(store.clock()), store.clock())} \
             if principal.role == "admin" else {}  # the manager's load: for the admin only
         state, why, _ = manager_state()
-        return JSONResponse({**feed(store, principal, ws, cs), "manager": state,
+        return JSONResponse({**feed(store, principal, ws, cs, closing, night["keys"]),
+                             "manager": state,
                              **({"manager_why": why} if why else {}), **load})
+
+    @server.custom_route("/api/sessions/{sid}/close", methods=["POST"])
+    @_bad_request
+    async def api_session_close(request: Request) -> Response:
+        """Close a session from the page (left.py): its owner, or an admin for anyone's. Its
+        own bridge ends it on its next beat. A session idle over a day closes as asked; a
+        newer one only with {"confirm": true}. Someone else's session, for a member, is no
+        such session."""
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None:
+            return PlainTextResponse("unauthorized", status_code=401)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        sid = unquote(request.path_params["sid"])
+        a = next((x for x in store.online() if session_id(x.key) == sid), None)
+        why = "no such session" if a is None else \
+            left.refused(principal, a, ws.live_keys(), mm.person_id(), night["keys"])
+        if why == "no such session":
+            return PlainTextResponse(why, status_code=404)
+        if why:
+            return PlainTextResponse(why, status_code=409)
+        now = store.clock()
+        if not left._idle(a, now) and (not isinstance(body, dict) or body.get("confirm") is not True):
+            return PlainTextResponse("it is in use; confirm to close it", status_code=409)
+        closing.ask(a, principal.person_name, not left._idle(a, now), now)
+        store.log_add(principal.person_name, "session_close", f"{a.name} on {a.machine}")
+        return JSONResponse({"closing": True}, status_code=202)
 
     @server.custom_route("/api/groups/{gid}/messages", methods=["GET"])
     async def api_group_messages(request: Request) -> Response:

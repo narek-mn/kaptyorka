@@ -1,5 +1,5 @@
 """Sessions left behind (left.py): truthful idle time, who started a session, the parent's Stop
-check, "left by", the daily line and the narrow auto-close.
+check, "left by" and the narrow auto-close; nobody is told about them.
 docs/superpowers/specs/2026-11-24-left-sessions.md"""
 import json
 import os
@@ -212,7 +212,7 @@ def test_stop_check_skips_workers_and_the_manager(stop_home, monkeypatch):
     assert stop() == ""
 
 
-# ---------- (a)(d) the daily line and "left by" ----------
+# ---------- (d) "left by", and no notices ----------
 
 def hub_lines(hub):
     with hub.store.lock:
@@ -220,48 +220,24 @@ def hub_lines(hub):
             "SELECT to_key, text FROM messages WHERE sender_key=? ORDER BY id", (HUB_KEY,))]
 
 
-def test_daily_idle_line_once_a_day_to_the_owner(hub, clock):
+def test_left_by_shows_and_nobody_is_told(hub, clock):
     hub.store.project_register("proj-a", by="test")
     pid, _ = member(hub, "alice")
-    beat = [plain("claude:p1", 10), plain("claude:i1", 3 * DAY + 5)]
-    b = bridge(hub, pid, sessions=beat)
-    hub.tick()
-    name = hub.store.agent("claude:i1").name
-    assert hub_lines(hub) == [("claude:p1", f"1 session of yours on box-1 has done nothing for"
-                               f" 3 days: {name}; close them or leave them.")]
-    hub.tick()
-    assert len(hub_lines(hub)) == 1
-    clock[0] += DAY + 1
-    heartbeat(hub, b.token, "box-1", beat)
-    hub.tick()
-    assert len(hub_lines(hub)) == 2
-
-
-def test_the_page_hears_it_when_no_other_session_runs(hub):
-    hub.store.project_register("proj-a", by="test")
-    pid, _ = member(hub, "alice")
-    bridge(hub, pid, sessions=[plain("claude:i1", 2 * DAY)])
-    hub.tick()
-    assert [k for k, _ in hub_lines(hub)] == ["web:alice"]
-
-
-def test_left_by_shows_and_the_owner_hears_once(hub, clock):
-    hub.store.project_register("proj-a", by="test")
-    pid, _ = member(hub, "alice")
-    b = bridge(hub, pid, sessions=[plain("claude:p1"), plain("claude:o1"), child_row("claude:c1")])
+    b = bridge(hub, pid, sessions=[plain("claude:p1"), plain("claude:o1"),
+                                   child_row("claude:c1"), plain("claude:i1", 3 * DAY)])
     parent = hub.store.agent("claude:p1").name
     clock[0] += left.FRESH_S + 1
-    heartbeat(hub, b.token, "box-1", [plain("claude:o1"), child_row("claude:c1", gone=True)],
+    heartbeat(hub, b.token, "box-1", [plain("claude:o1"), child_row("claude:c1", gone=True),
+                                      plain("claude:i1", 3 * DAY)],
               extra={"tools": ["claude-code"]})  # complete: its parent ended
     hub.tick()
     child = hub.store.agent("claude:c1").name
-    assert hub_lines(hub) == [("claude:o1", f"Session `{child}` on box-1 was started by `{parent}`,"
-                               " which has ended; it still runs. To stop it: `claude stop c1`"
-                               " on box-1.")]
-    hub.tick()
-    assert len(hub_lines(hub)) == 1
     row = {a["name"]: a for a in feed(hub.store, hub.store.authenticate(b.token))["agents"]}[child]
     assert row["left_by"] == parent
+    clock[0] += DAY + 1
+    heartbeat(hub, b.token, "box-1", [plain("claude:o1"), plain("claude:i1", 4 * DAY)])
+    hub.tick()
+    assert hub_lines(hub) == []  # no "parent ended" notice, no daily idle line
 
 
 # ---------- (e) the narrow auto-close ----------
@@ -292,7 +268,7 @@ def test_the_hub_asks_to_close_only_the_narrow_case(hub, clock):
     assert close_asked(hub, b, [child_row("claude:c1", idle_s=old, gone=True)]) == []  # a message
 
 
-def test_a_closed_session_is_logged_and_in_the_daily_line(hub):
+def test_a_closed_session_is_logged_and_nobody_is_told(hub):
     hub.store.project_register("proj-a", by="test")
     pid, _ = member(hub, "alice")
     b = bridge(hub, pid, sessions=[plain("claude:p2"), child_row("claude:c1", idle_s=2 * DAY, gone=True)])
@@ -303,8 +279,7 @@ def test_a_closed_session_is_logged_and_in_the_daily_line(hub):
             "SELECT detail FROM log WHERE kind='left_closed'")]
     assert logged == [f"{name} on box-1"]
     hub.tick()
-    assert ("claude:p2", f"Closed on box-1 (started by a session that ended, idle over a day, no"
-            f" hub message): {name}.") in hub_lines(hub)
+    assert hub_lines(hub) == []
 
 
 def test_close_left_setting_on_the_settings_route(hub):
