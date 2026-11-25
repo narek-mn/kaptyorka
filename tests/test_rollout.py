@@ -251,3 +251,24 @@ def test_a_bridge_one_version_behind_still_reports(fleet):
         assert http.request("GET", url + "/bridge/poll?machine=pc-d&wait=0", tok)[0] == 200
     finally:
         stop()
+
+
+def test_a_bridge_that_updated_and_then_went_silent_holds_the_rest(fleet):
+    rollout.state(fleet.store, NEW)
+    later(fleet, 60, *ALL)
+    updated(fleet, "hub", "box-1")
+    later(fleet, SOAK_S, "hub", "laptop")  # box-1 reported the new version once, then nothing
+    told = rollout.tick(fleet.store, NEW, fleet.clock[0])
+    assert len(told) == 1 and "u@box-1 stopped reporting after its update" in told[0]
+    assert not may(fleet, "laptop")
+
+
+def test_a_first_machine_that_was_offline_before_the_update_is_not_a_hold(fleet):
+    rollout.state(fleet.store, NEW)
+    with fleet.store.lock:  # box-1 was already gone when the update started
+        fleet.store.db.execute("UPDATE devices SET last_used=? WHERE id=?",
+                               (fleet.clock[0] - 3600, fleet.ids["box-1"]))
+    later(fleet, SOAK_S + 1, "hub", "laptop")
+    updated(fleet, "hub")
+    assert rollout.tick(fleet.store, NEW, fleet.clock[0]) == []
+    assert rollout.status(fleet.store, NEW)["state"] == "passed"

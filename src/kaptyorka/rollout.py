@@ -19,6 +19,7 @@ from kaptyorka.store import Store, machine_name
 
 SOAK_S = 5 * 60  # the first group runs the new version this long before the rest follow
 ONLINE_S = 600  # a bridge silent longer than this is offline (workers.OFFLINE_S)
+FRESH_S = 60  # at judgment, a first-group bridge on the new version must have reported this recently
 KEY = "rollout"
 
 
@@ -135,7 +136,12 @@ def health(store: Store, st: dict, now: float) -> Optional[str]:
     judged = 0
     for i in st["first"]:
         d = devs.get(i)
-        if d is None or d["last_used"] is None or d["last_used"] <= now - ONLINE_S:
+        if d is None or d["last_used"] is None:
+            continue
+        if _numbers(d["version"]) >= _numbers(st["version"]) and not d["update_failed"] \
+                and d["last_used"] <= now - FRESH_S:
+            return f"{_name(d)} stopped reporting after its update"  # it came up, then went silent
+        if d["last_used"] <= now - ONLINE_S:
             continue
         judged += 1
         if d["update_failed"]:
