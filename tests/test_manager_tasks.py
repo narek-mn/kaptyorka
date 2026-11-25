@@ -14,7 +14,7 @@ TASKS = "- alice: waits for the GPU answer from bob\n- relay to bob: the log pat
 
 
 def knowledge(texts):
-    return [t for t in texts if t.startswith("knowledge")]
+    return [t for t in texts if t.startswith(("workers finished", "team digest", "knowledge"))]
 
 
 # the task list
@@ -86,7 +86,7 @@ def test_task_list_reminder_after_two_hours(hub, clock):
         == ["a", "b\n\n" + manager.TASKS_LINE]
 
 
-# bundled knowledge notices
+# bundled routine notices
 
 def note_setup(hub):
     hub.store.project_register("proj-a", by="test")
@@ -97,50 +97,47 @@ def note_setup(hub):
     return alice
 
 
-def test_knowledge_waits_five_minutes_bundles_and_dedupes(hub, clock):
+def finish_worker(hub, name, state, boss, now, error=""):
+    insert_worker(hub, name, state, boss, now, error)
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE workers SET closed_at=? WHERE name=?", (now, name))
+
+
+def test_workers_finished_waits_five_minutes_and_bundles(hub, clock):
     mgr, me = manager_online(hub)
     hub.tick()
     alice = note_setup(hub)
     clock[0] += 1
-    hub.store.notes_write("k:alice", "state", "v1", "proj-a")
+    finish_worker(hub, "w-ok", "closed", alice, clock[0])
     hub.tick()
     assert knowledge(inbox(mgr, me)) == []
     clock[0] += 200
-    hub.store.notes_write("k:alice", "state", "v2", "proj-a")  # the same note again
-    hub.store.notes_write("k:alice", "api", "x", "proj-a")
-    insert_worker(hub, "w-ok", "closed", alice, clock[0])
-    insert_worker(hub, "w-bad", "failed", alice, clock[0], "no tmux")  # needs nothing: left out
-    with hub.store.lock:
-        hub.store.db.execute("UPDATE workers SET closed_at=?", (clock[0],))
+    finish_worker(hub, "w-ok2", "closed", alice, clock[0])
+    finish_worker(hub, "w-bad", "failed", alice, clock[0], "no tmux")  # needs nothing: left out
     run(call(mgr, me, "inbox"))
     hub.tick()
-    assert knowledge(inbox(mgr, me)) == []  # the first change is not 5 minutes old yet
+    assert knowledge(inbox(mgr, me)) == []  # the first one is not 5 minutes old yet
     clock[0] += 100
     run(call(mgr, me, "inbox"))
     hub.tick()
     assert knowledge(inbox(mgr, me)) == [
-        "knowledge: proj-a/state written by alice; proj-a/api written by alice; worker `w-ok`"
-        " in proj-a finished. If it changes what the team knows, update the team notes (read"
-        " first, merge)."]
+        "workers finished: `w-ok` in proj-a; `w-ok2` in proj-a. Update your task list if a"
+        " task waited on one."]
 
 
-def test_knowledge_skips_own_and_unchanged_writes(hub, clock):
+def test_project_notes_never_notify_the_manager(hub, clock):
     mgr, me = manager_online(hub)
     hub.tick()
     note_setup(hub)
-    hub.store.notes_write("k:alice", "state", "same", "proj-a")
-    clock[0] += 601
-    run(call(mgr, me, "inbox"))
-    hub.tick()
-    inbox(mgr, me)
     clock[0] += 1
-    hub.store.notes_write("k:alice", "state", "same", "proj-a")  # nothing changed
-    run(call(mgr, me, "notes_write", topic="api", text="mine", project="proj-a"))
-    run(call(mgr, me, "state_write", project="manager", text=TASKS))
-    clock[0] += 601
-    run(call(mgr, me, "inbox"))
-    hub.tick()
-    assert knowledge(inbox(mgr, me)) == []
+    hub.store.notes_write("k:alice", "state", "where proj-a stands", "proj-a")
+    hub.store.notes_write("k:alice", "projects", "- proj-a: the parser")
+    hub.store.notes_write("k:alice", "team", "how we work")
+    for _ in range(3):
+        clock[0] += 601
+        run(call(mgr, me, "inbox"))
+        hub.tick()
+        assert knowledge(inbox(mgr, me)) == []
 
 
 def test_old_versions_come_as_one_message(hub, clock):
@@ -184,11 +181,11 @@ def test_old_versions_text_for_team_machines():
 def test_routine_digest_waits_for_a_person_then_goes_at_the_cap(hub, clock):
     mgr, me = manager_online(hub)
     hub.tick()
-    note_setup(hub)
+    alice = note_setup(hub)
     _, _, bob = plain(hub, "bob")
     B = mident("k:bob", project="proj-b", machine="pc-2")
     clock[0] += 1
-    hub.store.notes_write("k:alice", "state", "v1", "proj-a")
+    finish_worker(hub, "w-1", "closed", alice, clock[0])
     clock[0] += 300
     ask(hub, bob, B, "are you there?")
     run(call(mgr, me, "inbox"))
@@ -212,11 +209,11 @@ def test_routine_digest_waits_for_a_person_then_goes_at_the_cap(hub, clock):
 def test_routine_digest_goes_once_the_person_is_answered(hub, clock):
     mgr, me = manager_online(hub)
     hub.tick()
-    note_setup(hub)
+    alice = note_setup(hub)
     _, _, bob = plain(hub, "bob")
     B = mident("k:bob", project="proj-b", machine="pc-2")
     clock[0] += 1
-    hub.store.notes_write("k:alice", "state", "v1", "proj-a")
+    finish_worker(hub, "w-1", "closed", alice, clock[0])
     clock[0] += 300
     ask(hub, bob, B, "are you there?")
     run(call(mgr, me, "inbox"))

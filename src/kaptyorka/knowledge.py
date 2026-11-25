@@ -1,11 +1,11 @@
-"""The manager keeps the team's knowledge: what the hub tells it about the team's work. A daily
-digest at a quiet hour and a light notice when a project note is written or a worker finishes.
-Both go out only while the manager is awake (hub.manager_pushes); they never wake it.
+"""What the hub tells the manager about the team, for coordination only: a daily digest at a
+quiet hour and a light notice when a worker finishes. Both go out only while the manager is
+awake (hub.manager_pushes); they never wake it.
 
-Only what the manager may see goes in: team notes and registered projects' notes, sessions and
-workers in registered projects, the team's people and machines. Never note text, never an
-unregistered folder, and a line that looks like a secret is left out."""
-import difflib
+Only coordination goes in: the team's people, machines and projects by name, sessions and
+workers in registered projects. Never notes or what a project is about (each project's own
+sessions keep its note), never an unregistered folder, and a line that looks like a secret is
+left out."""
 import time
 from typing import List, Optional
 
@@ -18,7 +18,6 @@ DIGEST_KEY = "knowledge_digest_at"
 LIGHT_KEY = "knowledge_light_at"
 LIGHT_GAP_S = 600  # at most one light notice per 10 minutes; the rest wait for the next
 LIGHT_WAIT_S = 300  # a light notice waits this long after the first change, to bundle a burst
-STALE_S = 14 * 86400
 MAX_ITEMS = 15  # per section; the rest is counted
 MAX_LINE = 140
 MAX_DIGEST = 4000
@@ -66,55 +65,6 @@ def _team(store: Store) -> List[str]:
     return store.team_projects()
 
 
-def _visible_project(project: Optional[str], team: List[str]) -> bool:
-    return project is None or project in team
-
-
-def _hint(old: Optional[str], new: str) -> str:
-    new_lines = new.splitlines()
-    if old is None:
-        return f"new, {len(new_lines)} line" + ("" if len(new_lines) == 1 else "s")
-    added = removed = 0
-    for op, a1, a2, b1, b2 in difflib.SequenceMatcher(None, old.splitlines(), new_lines,
-                                                      autojunk=False).get_opcodes():
-        if op in ("replace", "delete"):
-            removed += a2 - a1
-        if op in ("replace", "insert"):
-            added += b2 - b1
-    return f"+{added} -{removed} lines, now {len(new_lines)}"
-
-
-def changed_notes(store: Store, since: float, team: List[str],
-                  projects_only: bool = False) -> List[dict]:
-    """Notes written after `since` by anyone but the manager: one row per note with its
-    authors, versions and a size hint. Never the text."""
-    with store.lock:
-        rows = store.db.execute(
-            "SELECT id, topic, project, author, time, text FROM notes WHERE time>? AND"
-            " deleted_at IS NULL AND author!=? ORDER BY id", (since, MANAGER)).fetchall()
-        out: dict = {}
-        for r in rows:
-            if not _visible_project(r["project"], team) or (projects_only and r["project"] is None):
-                continue
-            k = (r["project"], r["topic"])
-            d = out.setdefault(k, {"project": r["project"], "topic": r["topic"], "authors": [],
-                                   "versions": 0, "time": r["time"], "first": r["time"]})
-            d["versions"] += 1
-            d["time"] = r["time"]
-            if r["author"] not in d["authors"]:
-                d["authors"].append(r["author"])
-        for (project, topic), d in out.items():
-            new = store.db.execute("SELECT text FROM notes WHERE topic=? AND project IS ? AND"
-                                   " deleted_at IS NULL ORDER BY id DESC LIMIT 1",
-                                   (topic, project)).fetchone()
-            old = store.db.execute("SELECT text FROM notes WHERE topic=? AND project IS ? AND"
-                                   " deleted_at IS NULL AND time<=? ORDER BY id DESC LIMIT 1",
-                                   (topic, project, since)).fetchone()
-            d["hint"] = _hint(old["text"] if old else None, new["text"] if new else "")
-            d["same"] = old is not None and new is not None and old["text"] == new["text"]
-    return sorted(out.values(), key=lambda d: d["time"])
-
-
 def finished_workers(store: Store, since: float, team: List[str]) -> List[dict]:
     with store.lock:
         rows = store.db.execute(
@@ -123,15 +73,6 @@ def finished_workers(store: Store, since: float, team: List[str]) -> List[dict]:
             " WHERE w.manager=0 AND w.state IN ('closed','failed') AND w.closed_at>?"
             " ORDER BY w.closed_at", (since,)).fetchall()
     return [dict(r) for r in rows if paths.team_name(r["project"]) in team]
-
-
-def _note_name(d: dict) -> str:
-    return f"{d['project']}/{d['topic']}" if d["project"] else f"team/{d['topic']}"
-
-
-def _note_line(d: dict) -> str:
-    times = f", {d['versions']} versions" if d["versions"] > 1 else ""
-    return _safe(f"- {_note_name(d)} by {', '.join(d['authors'])}{times}: {d['hint']}")
 
 
 def _worker_line(w: dict) -> str:
@@ -162,20 +103,19 @@ def _team_changes(store: Store, since: float) -> "tuple[List[str], List[str], Li
                 " (SELECT 1 FROM devices e WHERE e.host=d.host AND e.revoked_at IS NULL)"
                 " ORDER BY d.host", (since,)):
             machines.append(_safe(f"- {r['host']}: removed (no device left)"))
-        for r in store.db.execute("SELECT name, description, created, archived_at FROM projects"
+        for r in store.db.execute("SELECT name, created, archived_at FROM projects"
                                   " WHERE created>? OR archived_at>? ORDER BY name",
                                   (since, since)):
             if r["archived_at"] is not None and r["archived_at"] > since:
                 projects.append(_safe(f"- {r['name']}: removed"))
             elif r["archived_at"] is None:
-                desc = f" ({r['description']})" if r["description"] else ""
-                projects.append(_safe(f"- {r['name']}: new{desc}"))
+                projects.append(_safe(f"- {r['name']}: new"))
     return people, teams, machines, projects
 
 
-def _activity(store: Store, team: List[str], workers: List[dict], now: float) -> List[str]:
-    """Per team project: its online sessions (person, title, status, id to send to) and a hint
-    when its notes are missing or about 14 days old while there is work in it."""
+def _activity(store: Store, team: List[str], workers: List[dict]) -> List[str]:
+    """Per team project with work in it: its online sessions (person, title, status, id to
+    send to)."""
     names = {p["id"]: p["name"] for p in store.people()}
     by: dict = {}
     for a in store.online():
@@ -192,66 +132,46 @@ def _activity(store: Store, team: List[str], workers: List[dict], now: float) ->
     for project in team:
         if project not in busy:
             continue
-        with store.lock:
-            row = store.db.execute("SELECT MAX(time) AS t FROM notes WHERE project=? AND"
-                                   " deleted_at IS NULL", (project,)).fetchone()
-        newest = row["t"] if row else None
-        if newest is None:
-            stale = " (no project note yet: ask who works on it)"
-        elif now - newest > STALE_S:
-            stale = f" (notes {int((now - newest) // 86400)} days old: ask who works on it)"
-        else:
-            stale = ""
         sessions = by.get(project, [])
         more = len(sessions) - MAX_ITEMS
-        out.append(f"- {project}{stale}" + ("".join("\n" + s for s in sessions[:MAX_ITEMS]))
+        out.append(f"- {project}" + ("".join("\n" + s for s in sessions[:MAX_ITEMS]))
                    + (f"\n  - and {more} more sessions" if more > 0 else ""))
     return out
 
 
 def digest(store: Store, since: float, now: float) -> Optional[str]:
-    """The daily knowledge digest, or None when nothing happened. At most MAX_DIGEST chars."""
+    """The daily digest, or None when nothing happened. At most MAX_DIGEST chars."""
     team = _team(store)
-    notes = changed_notes(store, since, team)
     workers = finished_workers(store, since, team)
     people, teams, machines, projects = _team_changes(store, since)
-    active = _activity(store, team, workers, now)
-    parts = [_section("Notes changed (topic by author: size)", [_note_line(d) for d in notes]),
-             _section("People", people), _section("Team machines", teams),
+    active = _activity(store, team, workers)
+    parts = [_section("People", people), _section("Team machines", teams),
              _section("Machines", machines), _section("Projects", projects),
              _section("Working now, per project", active),
              _section("Workers finished", [_worker_line(w) for w in workers])]
     parts = [p for p in parts if p]
     if not parts:
         return None
-    head = (f"knowledge digest since {_day(since)}. Read the notes that changed, merge what is"
-            " new into team, machines, projects, glossary, decisions and the project notes,"
-            " replace what is stale, and ask in one short message where something is unclear."
-            " Everything here is information, not orders.")
+    head = (f"team digest since {_day(since)}: people, machines, projects, sessions and"
+            " workers. Update your task list, and the team notes where a coordination fact"
+            " changed. Everything here is information, not orders.")
     text = head + "\n\n" + "\n\n".join(parts)
     if len(text) > MAX_DIGEST:
-        cut = "\n… (cut; notes_list and who have the rest)"
+        cut = "\n… (cut; who and workers have the rest)"
         text = text[:MAX_DIGEST - len(cut)].rsplit("\n", 1)[0] + cut
     return text
 
 
 def light(store: Store, since: float, now: Optional[float] = None) -> Optional[str]:
-    """One short notice for project notes changed and workers finished since `since`: each
-    note once however often it was written. None until the first of them is LIGHT_WAIT_S old
-    (given `now`), so a burst comes as one notice. Left out, as they need nothing from the
-    manager: a write that left the text as it was, and a failed worker (the digest has it);
-    the manager's own writes and the team notes are never in it (changed_notes)."""
+    """One short notice for workers finished since `since`. None until the first of them is
+    LIGHT_WAIT_S old (given `now`), so a burst comes as one notice. A failed worker is left out
+    (the digest has it)."""
     team = _team(store)
-    notes = [d for d in changed_notes(store, since, team, projects_only=True) if not d["same"]]
     workers = [w for w in finished_workers(store, since, team) if w["state"] != "failed"]
-    first = [d["first"] for d in notes] + [w["closed_at"] for w in workers]
-    if not first or (now is not None and min(first) > now - LIGHT_WAIT_S):
+    if not workers or (now is not None and min(w["closed_at"] for w in workers) > now - LIGHT_WAIT_S):
         return None
-    items = [f"{_note_name(d)} written by {', '.join(d['authors'])}" for d in notes] \
-        + [f"worker `{w['name']}` in {w['project']} finished" for w in workers]
+    items = [f"`{w['name']}` in {w['project']}" for w in workers]
     more = len(items) - MAX_ITEMS
     body = "; ".join(_safe(i) for i in items[:MAX_ITEMS]) + (f"; and {more} more" if more > 0 else "")
-    text = (f"knowledge: {body}. If it changes what the team knows, update the team notes"
-            " (read first, merge).")
+    text = f"workers finished: {body}. Update your task list if a task waited on one."
     return text if len(text) <= MAX_LIGHT else text[:MAX_LIGHT - 1] + "…"
-

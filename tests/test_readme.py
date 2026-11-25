@@ -94,9 +94,10 @@ def test_readme_team_machine_switch():
     assert "Team accounts take no workers yet" not in r and "shared accounts; team accounts" not in r
 
 
-def test_readme_knowledge_section():
+def test_readme_coordination_section():
     r = (ROOT / "README.md").read_text()
-    k = r.split("### The manager keeps the team's knowledge", 1)[1].split("\n## ", 1)[0]
-    for s in ["`team`", "`glossary`", "`decisions`", "knowledge digest", "never the text",
-              "never wake a sleeping manager", "14 days", "never edits rules", "not orders"]:
+    k = r.split("### The manager coordinates; projects keep their own notes", 1)[1].split("\n## ", 1)[0]
+    for s in ["`team`", "`glossary`", "`decisions`", "team digest", "Never notes",
+              "never reads them", "ask a session of <project>", "never wake a sleeping manager",
+              "never edits rules", "not orders"]:
         assert s in k, s

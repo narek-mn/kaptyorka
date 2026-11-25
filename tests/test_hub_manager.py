@@ -638,7 +638,7 @@ def test_weekly_push_repeats_after_a_week(hub, clock):
     assert sum(t.startswith("weekly review") for t in drain(hub, mgr, me)) == 1
 
 
-def knowledge_texts(hub, mgr, me, start="knowledge"):
+def knowledge_texts(hub, mgr, me, start=("team digest", "workers finished", "knowledge")):
     return [t for t in drain(hub, mgr, me) if t.startswith(start)]
 
 
@@ -662,7 +662,7 @@ def test_knowledge_digest_daily_and_only_to_an_awake_manager(hub, clock):
     clock[0] += 5 * 3600  # it wakes later in the day
     run(call(mgr, me, "inbox"))
     hub.tick()
-    [digest] = knowledge_texts(hub, mgr, me, "knowledge digest")
+    [digest] = knowledge_texts(hub, mgr, me, "team digest")
     assert "- proj-a: new" in digest
     hub.tick()
     assert knowledge_texts(hub, mgr, me) == []
@@ -670,15 +670,15 @@ def test_knowledge_digest_daily_and_only_to_an_awake_manager(hub, clock):
     run(call(mgr, me, "inbox"))
     hub.store.project_register("proj-b", by="test")
     hub.tick()
-    assert knowledge_texts(hub, mgr, me, "knowledge digest") == []
+    assert knowledge_texts(hub, mgr, me, "team digest") == []
     clock[0] += 12 * 3600
     run(call(mgr, me, "inbox"))
     hub.tick()
-    [digest] = knowledge_texts(hub, mgr, me, "knowledge digest")
+    [digest] = knowledge_texts(hub, mgr, me, "team digest")
     assert "- proj-b: new" in digest and "proj-a" not in digest
 
 
-def test_knowledge_light_notice_on_a_project_note_and_a_finished_worker(hub, clock):
+def test_light_notice_on_a_finished_worker_never_on_a_note(hub, clock):
     mgr, me = manager_online(hub)
     hub.tick()
     hub.store.project_register("proj-a", by="test")
@@ -688,32 +688,33 @@ def test_knowledge_light_notice_on_a_project_note_and_a_finished_worker(hub, clo
                    principal=hub.store._person_principal(alice))
     clock[0] += 1
     hub.store.notes_write("k:alice", "state", "where it stands", "proj-a")
+    clock[0] += 300
     run(call(mgr, me, "inbox"))
-    hub.tick()  # it waits 5 minutes for more changes to bundle with
+    hub.tick()
+    assert knowledge_texts(hub, mgr, me) == []  # a project note is its sessions' own
+    insert_worker(hub, "w-1", "closed", alice, clock[0])
+    with hub.store.lock:
+        hub.store.db.execute("UPDATE workers SET closed_at=? WHERE name='w-1'", (clock[0],))
+    hub.tick()  # it waits 5 minutes for more to bundle with
     assert knowledge_texts(hub, mgr, me) == []
     clock[0] += 300
     run(call(mgr, me, "inbox"))
     hub.tick()
     assert knowledge_texts(hub, mgr, me) == [
-        "knowledge: proj-a/state written by alice. If it changes what the team knows, update"
-        " the team notes (read first, merge)."]
+        "workers finished: `w-1` in proj-a. Update your task list if a task waited on one."]
     clock[0] += 1
-    insert_worker(hub, "w-1", "closed", alice, clock[0])
+    insert_worker(hub, "w-2", "closed", alice, clock[0])
     with hub.store.lock:
-        hub.store.db.execute("UPDATE workers SET closed_at=? WHERE name='w-1'", (clock[0],))
+        hub.store.db.execute("UPDATE workers SET closed_at=? WHERE name='w-2'", (clock[0],))
+    clock[0] += 300
+    run(call(mgr, me, "inbox"))
     hub.tick()  # at most one light notice per 10 minutes: this one waits
     assert knowledge_texts(hub, mgr, me) == []
-    clock[0] += 600
+    clock[0] += 301
     run(call(mgr, me, "inbox"))
     hub.tick()
     assert knowledge_texts(hub, mgr, me) == [
-        "knowledge: worker `w-1` in proj-a finished. If it changes what the team knows,"
-        " update the team notes (read first, merge)."]
-    hub.store.notes_write("k:alice", "team", "a team note waits for the digest")
-    clock[0] += 601
-    run(call(mgr, me, "inbox"))
-    hub.tick()
-    assert knowledge_texts(hub, mgr, me) == []
+        "workers finished: `w-2` in proj-a. Update your task list if a task waited on one."]
 
 
 def test_manager_writes_project_notes_through_the_tool(hub):

@@ -1,4 +1,4 @@
-"""The manager's knowledge: what the digest and light notices hold, and its note rights."""
+"""What the digest and light notices hold (coordination only), and the manager's note rights."""
 import time
 
 import pytest
@@ -99,10 +99,9 @@ def test_digest_lists_changes_since_the_last_one(store, clock):
     worker(store, "w-2", "proj-a", pid, "failed", clock[0], error="no tmux")
     worker(store, "w-old", "proj-a", pid, "closed", since - 10)
     text = knowledge.digest(store, since, clock[0])
-    assert text.startswith("knowledge digest since ")
-    assert "- proj-a/state by alice: +2 -1 lines, now 3" in text
-    assert "- team/glossary by alice: new, 1 line" in text
-    assert "proj-a/old" not in text and "inverse kinematics" not in text  # never the text
+    assert text.startswith("team digest since ")
+    assert "state" not in text.split("\n", 1)[1] and "glossary" not in text  # never notes
+    assert "inverse kinematics" not in text and "robot arm" not in text  # nor what a project is
     assert "- bob: new member" in text and "- jetson-1: new" in text
     assert "- proj-b: new" in text and "proj-a: new" not in text
     assert f"- proj-a\n  - alice {session_id('k:a')} " in text and "tuning the gripper" in text
@@ -125,7 +124,6 @@ def test_digest_shows_only_what_the_manager_may_see(store, clock):
     _, mgr = session(store, "manager", "k:mgr", "manager", role="manager")
     since = clock[0]
     clock[0] += 5
-    store.notes_write("k:mgr", "team", "by the manager")
     with store.lock:  # a removed project's note: the admin's alone
         store.db.execute("INSERT INTO projects (name, created, archived_at) VALUES"
                          " ('proj-old', 0, 1)")
@@ -134,7 +132,7 @@ def test_digest_shows_only_what_the_manager_may_see(store, clock):
     text = knowledge.digest(store, since, clock[0])
     assert "home-stuff" not in text and "private things" not in text and "bob" not in text
     assert "ghp_" not in text and knowledge.HIDDEN in text
-    assert "team/team" not in text and "proj-old" not in text and "w-home" not in text
+    assert "proj-old" not in text and "w-home" not in text
 
 
 def test_digest_is_bounded(store, clock):
@@ -154,36 +152,34 @@ def test_digest_is_bounded(store, clock):
     assert all(len(line) <= knowledge.MAX_LINE for line in text.splitlines()[1:])
 
 
-def test_digest_flags_thin_and_old_project_notes(store, clock):
+def test_digest_never_asks_about_project_notes_and_skips_a_notes_only_day(store, clock):
     store.project_register("proj-a", by="test")
-    store.project_register("proj-b", by="test")
-    store.project_register("proj-c", by="test")
     pid, _ = session(store, "alice", "k:a", "proj-a")
-    store.grant_project("proj-b", pid, "write", by="test")
-    store.notes_write("k:a", "state", "x", "proj-b")
+    store.grant_project("proj-a", pid, "write", by="test")
     clock[0] += 20 * 86400
+    store.notes_write("k:a", "state", "x", "proj-a")
+    store.notes_write("k:a", "projects", "- proj-a: x")
+    store.db.execute("UPDATE agents SET last_seen=0")
+    assert knowledge.digest(store, clock[0] - 10, clock[0]) is None  # notes alone: nothing
     store.seen("k:a", "box-1", "claude-code", "proj-a")
-    store.seen("k:a2", "box-1", "claude-code", "proj-b--2", principal=store._person_principal(pid))
     text = knowledge.digest(store, clock[0] - 10, clock[0])
-    assert "- proj-a (no project note yet: ask who works on it)" in text
-    assert "- proj-b (notes 20 days old: ask who works on it)" in text
-    assert "proj-c" not in text  # nobody works on it
+    assert "\n- proj-a\n" in text and "note" not in text.split("\n\n", 1)[1]
 
 
-def test_light_notice_for_project_notes_and_workers(store, clock):
+def test_light_notice_for_finished_workers_only(store, clock):
     store.project_register("proj-a", by="test")
     pid, _ = session(store, "alice", "k:a", "proj-a")
     store.grant_project("proj-a", pid, "write", by="test")
     since = clock[0]
     assert knowledge.light(store, since) is None
     clock[0] += 1
-    store.notes_write("k:a", "team", "a team note: the digest has it")
-    assert knowledge.light(store, since) is None
+    store.notes_write("k:a", "team", "a team note")
     store.notes_write("k:a", "state", "x", "proj-a")
+    assert knowledge.light(store, since) is None  # notes never
     worker(store, "w-1", "proj-a", pid, "closed", clock[0])
+    worker(store, "w-2", "proj-a", pid, "failed", clock[0], error="no tmux")
     assert knowledge.light(store, since) == (
-        "knowledge: proj-a/state written by alice; worker `w-1` in proj-a finished. If it"
-        " changes what the team knows, update the team notes (read first, merge).")
+        "workers finished: `w-1` in proj-a. Update your task list if a task waited on one.")
     assert knowledge.light(store, clock[0]) is None
 
 

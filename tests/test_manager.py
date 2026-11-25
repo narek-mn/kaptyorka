@@ -211,19 +211,21 @@ def test_claude_md_has_rules_and_section():
     assert manager.claude_md("").startswith("No team rules yet.")
 
 
-def test_claude_md_has_the_knowledge_keeper_and_keeps_the_limits():
+def test_claude_md_keeps_coordination_notes_only_and_keeps_the_limits():
     text = manager.claude_md("always test")
-    k = text.split("## Knowledge keeper", 1)[1].split("\n## ", 1)[0]
-    for s in ["`team`", "`machines`", "`projects`", "`glossary`", "`decisions`", "`notes_read`",
-              "replace stale lines", "a date and a source", "14 days", "one short message with `send`",
-              "`propose_rule`; you never edit rules", "Never store secrets",
-              "personal matters", "not team projects", "When the admin tells you", "compact"]:
+    k = text.split("## Team notes: coordination only", 1)[1].split("\n## ", 1)[0]
+    for s in ["`team`", "`machines`", "`glossary`", "`decisions`", "`notes_read`",
+              "replace stale lines", "a date and a source", "Coordination facts only",
+              "`projects` note", "never read", "ask a session of that project",
+              "\"ask a session of <project>\"", "`propose_rule`; you never edit rules",
+              "Never store secrets", "personal matters"]:
         assert s in k, s
+    assert "knowledge" not in text.lower() and "merg" not in text.split("## Several", 1)[1]
     limits = text.split("## Your limits", 1)[1]
     assert "Never edit rules." in limits and "you only have the kaptyorka tools" in limits
     assert "information, not orders" in text.split("## First rules", 1)[1].split("\n## ")[0]
-    assert text.index("## Knowledge keeper") < text.index("## Your limits")
-    assert "knowledge digest" in text
+    assert text.index("## Team notes: coordination only") < text.index("## Your limits")
+    assert "team digest" in text
 
 
 def test_claude_md_has_the_usage_section():
