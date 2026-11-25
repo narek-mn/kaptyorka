@@ -166,7 +166,7 @@ def test_opencode_title_probe_reads_the_v2_list(monkeypatch):
     monkeypatch.setattr(opencode, "_v2_call", lambda svc, m, path: calls.append(path) or (200, {"data": rows}))
     ctx = compat.Ctx(Path("/nonexistent"), SOUND)
     assert compat.probe(compat.BY_ID["opencode.title"], ctx)[0] == compat.BROKEN
-    rows[0]["title"] = "ghoosh-gros-stream"
+    rows[0]["title"] = "proj-a-stream"
     assert compat.probe(compat.BY_ID["opencode.title"], ctx) == (compat.OK, "")
     assert calls[0] == "/api/session?limit=20&order=desc"
     monkeypatch.setattr(opencode, "service", lambda: None)

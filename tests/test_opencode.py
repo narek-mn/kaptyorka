@@ -390,10 +390,10 @@ def test_v2_session_carries_its_title(monkeypatch):
     monkeypatch.setattr(opencode.time, "time", lambda: 10_000.0)
     calls = []
     monkeypatch.setattr(opencode, "_v2_call", lambda svc, m, path: calls.append(path) or (
-        200, {"data": {"title": "ghoosh-gros-stream", "time": {"updated": 9_900_000}}}))
+        200, {"data": {"title": "proj-a-stream", "time": {"updated": 9_900_000}}}))
     s = OpenCodeAdapter()._v2_session({}, "opencode:ses_a", CWD)
     assert (s.key, s.title, s.label, s.activity, s.idle_s) == (
-        "opencode:ses_a", "ghoosh-gros-stream", "", "idle", 100.0)
+        "opencode:ses_a", "proj-a-stream", "", "idle", 100.0)
     assert calls == ["/api/session/ses_a"]  # one call, not one more for the title
     monkeypatch.setattr(opencode, "_v2_call", lambda *a: (_ for _ in ()).throw(OSError("down")))
     assert OpenCodeAdapter()._v2_session({}, "opencode:ses_a", CWD).title == ""
