@@ -1,7 +1,8 @@
 #!/bin/bash
 # Slice 3 of 07-design-v2.md (section 13): a box chat on the hub, end to end, in a fresh throw-away container.
 # A real kaptyorka hub (the hub app of this checkout) runs inside the container on loopback with TLS;
-# alice's laptop is installed in personal mode with a device token from a personal invite; a STUB claude in the
+# alice's laptop is installed in personal mode with one command from a real personal invite link (each kind of bad
+# link is refused first, with nothing changed); a STUB claude in the
 # box fires Claude Code's hook JSON and owns a mailbox socket. A second fake machine (team machine box-1) sends
 # a message to the box chat through the hub; it must arrive in the stub's socket, and the stub's reply (through
 # the box's MCP server, the helper, the relay) must arrive back at box-1. Then the box chat asks for a helper chat
@@ -59,7 +60,7 @@ if [ "${1:-}" != "--inner" ]; then
   rm -rf "$SB"
   X bash -c ': > /root/results.tsv'
   for p in ${PHASES:-$ALL_PHASES}; do
-    case $p in hubvenv) lim=400;; chat) lim=170;; *) lim=85;; esac
+    case $p in hubvenv) lim=400;; chat) lim=170;; install) lim=120;; *) lim=85;; esac
     echo "== phase $p (limit ${lim}s)"; unit "$p" "$lim"
   done
   X bash -c 'systemctl kill --signal=KILL "kapbox-*.slice" kaptest-chat.service >/dev/null 2>&1; true'
@@ -224,6 +225,20 @@ tok, _ = s.invite_redeem(code, "box-1", "box-1", "team")
 Path("/etc/kaptest/tm.token").write_text(tok)
 Path("/etc/kaptest/root.token").write_text(s.device_add(root, "root-desk"))
 Path("/etc/kaptest/invite").write_text(s.invite_create(alice, kind="personal", by="root"))
+# the links as the hub's tls.invite_url makes them, by name (the installer resolves it; the relay keeps the address)
+fp = Path("/etc/kaptest/hub.fp").read_text().strip()
+link = lambda code, pin=fp: f"https://localhost:8443/i/{code}#sha256={pin}"
+Path("/etc/kaptest/link").write_text(link(Path("/etc/kaptest/invite").read_text()))
+used = s.invite_create(alice, kind="personal", by="root"); s.invite_redeem(used, "old-laptop")
+Path("/etc/kaptest/link-used").write_text(link(used))
+Path("/etc/kaptest/link-expired").write_text(link(s.invite_create(alice, kind="personal", ttl_s=0, by="root")))
+team = s.invite_create(alice, by="root"); Path("/etc/kaptest/code-team").write_text(team)
+Path("/etc/kaptest/link-team").write_text(link(team))
+fpcode = s.invite_create(alice, kind="personal", by="root"); Path("/etc/kaptest/code-fp").write_text(fpcode)
+Path("/etc/kaptest/link-fp").write_text(link(fpcode, "0" * 64))
+for i, bad in enumerate(('https://localhost:8443/i/a"],"x', "https://localhost\nIPAddressAllow=any:8443/i/a",
+                         "https://local;id:8443/i/a")):
+    Path(f"/etc/kaptest/bad-{i}").write_text(f"{bad}#sha256={fp}")
 EOF
   cat > /root/hub.py <<'EOF'
 from pathlib import Path
@@ -281,19 +296,44 @@ EOF
   t "S3-2 a real hub with TLS on loopback" "https answers" 're:^rc=0 [0-9]{3}$' "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/"
   t "S3-3 kaptyorka join's request cannot use a personal invite (nothing used)" "refused: secure installer" 're:secure installer' \
     "curl -sk -X POST https://127.0.0.1:8443/i/\$(cat /etc/kaptest/invite) -H 'Content-Type: application/json' -d '{\"device_name\":\"x\",\"host\":\"h\",\"os_user\":\"alice\"}'"
-  curl -sk -X POST "https://127.0.0.1:8443/i/$(cat /etc/kaptest/invite)" -H 'Content-Type: application/json' \
-    -d '{"device_name":"alice-laptop","mode":"personal"}' > /root/redeem.json
-  python3 -I -c 'import json; print(json.load(open("/root/redeem.json"))["token"])' > /root/devtok; chmod 600 /root/devtok
-  t "S3-4 the personal invite through the installer's request" "a token, mode personal" 're:^rc=0 personal [A-Za-z0-9_-]{30,}$' \
-    "python3 -I -c 'import json; d=json.load(open(\"/root/redeem.json\")); print(d[\"mode\"], d[\"token\"])'"
   t "S3-5 the team machine's session is on the hub" "box-1/claude-code/proj-a online" 're:box-1/claude-code/proj-a' \
     "$HUBPY /root/q.py 'SELECT name FROM agents WHERE last_seen > ?'"
   ;;
 
 install)
   printf 'sk-ant-oat01-FAKE-SETUP-TOKEN-s3-not-a-login\n' > /root/claudetok; chmod 600 /root/claudetok
-  t "I-0 installer, personal mode, real device token and pinned fingerprint" "self-check passes" 're:^rc=0 .*Self-check: all walls in place' \
-    "$SETUP install --personal --person alice --hub-ip 127.0.0.1 --hub-port 8443 --hub-sha256 \$(cat /etc/kaptest/hub.fp) --name alice-laptop --device-token-file /root/devtok --claude-token-file /root/claudetok --runtime-max 150s --tools-from /root/tools"
+  OPTS="--person alice --name alice-laptop --claude-token-file /root/claudetok --runtime-max 150s --tools-from /root/tools"
+  ONE="$SETUP install --personal"
+  # unused <file with a code>: 1 while that invite is not used
+  printf '#!/bin/bash\n%s /root/q.py "SELECT used_at IS NULL FROM invites WHERE code='"'"'$(cat /etc/kaptest/$1)'"'"'"\n' "$HUBPY" > /root/unused
+  chmod 700 /root/unused
+  # every bad link first: one sentence with a next step, rc 2, and nothing on the laptop (checked after them)
+  t "I-2a a plain http:// link is refused (TLS is mandatory in personal mode)" "ask the admin to switch it on" \
+    're:^rc=2 kaptyorka-secure-setup: this link starts with http://.*switch it on.*Nothing was changed' \
+    "$ONE 'http://127.0.0.1:8080/i/\$(cat /etc/kaptest/invite)' $OPTS"
+  t "I-2b a link without its fingerprint is refused (never taken from the network)" "no fingerprint" \
+    're:^rc=2 .*no fingerprint at its end.*Nothing was changed' "$ONE \"\$(cut -d'#' -f1 /etc/kaptest/link)\" $OPTS"
+  t "I-4 a wrong fingerprint: refused before any byte is sent, the invite not used" "not the one in the link; unused" \
+    're:^rc=0 .*is not the one in the link \(its fingerprint differs\), so nothing was sent.*Nothing was changed.* exit=2 unused=1$' \
+    "$ONE \"\$(cat /etc/kaptest/link-fp)\" $OPTS; echo \" exit=\$? unused=\$(/root/unused code-fp)\""
+  t "I-2c a team-machine invite is refused by kind, the invite not used" "for a team machine; unused" \
+    're:^rc=0 .*this link is for a team machine \(kaptyorka join\), not for a personal laptop: ask your team admin.* exit=2 unused=1$' \
+    "$ONE \"\$(cat /etc/kaptest/link-team)\" $OPTS; echo \" exit=\$? unused=\$(/root/unused code-team)\""
+  t "I-2d a used link is refused" "already used" 're:^rc=2 .*this link was already used \(a link works once\): ask your team admin' \
+    "$ONE \"\$(cat /etc/kaptest/link-used)\" $OPTS"
+  t "I-2e an expired link is refused" "not valid any more" 're:^rc=2 .*this link is not valid any more.*ask your team admin' \
+    "$ONE \"\$(cat /etc/kaptest/link-expired)\" $OPTS"
+  t "I-1 a link with unit or JSON text in it is refused" "refused, 3 times" 're:^rc=0 (refused ){3}$' \
+    "for f in /etc/kaptest/bad-*; do $ONE \"\$(cat \$f)\" $OPTS >/dev/null 2>&1 && echo -n 'ACCEPTED ' || echo -n 'refused '; done"
+  t "I-nochange after every refusal nothing of kaptyorka is on the laptop" "nothing" 're:^rc=0 $' \
+    "ls -d /etc/kaptyorka /usr/local/libexec/kaptyorka /opt/kaptyorka /etc/sudoers.d/kaptyorka-* /etc/systemd/system/kap* /etc/profile.d/kaptyorka.sh 2>/dev/null; getent passwd kap-alice; true"
+  t "I-0 installer, personal mode, ONE command from the real personal invite link (by name: localhost)" "joined; self-check passes" \
+    're:^rc=0 .*Joining the hub at localhost:8443.*Joined: this computer is alice-laptop on the hub \(address 127\.0\.0\.1\).*Self-check: all walls in place.*Done\. This computer is alice-laptop' \
+    "$ONE \"\$(cat /etc/kaptest/link)\" $OPTS"
+  t "I-conf the relay got the address it connected to, the link's port and pin, the key root-only for LoadCredential" \
+    "hub_ip=127.0.0.1 hub_port=8443 pin; 600 root; IPAddressAllow=127.0.0.1; invite used (unused=0)" \
+    "re:^rc=0 hub_ip=127\\.0\\.0\\.1 hub_port=8443 hub_sha256=$(cat /etc/kaptest/hub.fp) name=alice-laptop \\| 600 root root /etc/kaptyorka/secret/device-token \\| IPAddressAllow=127\\.0\\.0\\.1 \\| unused=0\$" \
+    "grep -E '^(hub_|name=)' /etc/kaptyorka/relay.conf | tr '\n' ' '; echo -n '| '; stat -c '%a %U %G %n' /etc/kaptyorka/secret/device-token | tr '\n' ' '; echo -n '| '; grep IPAddressAllow /etc/systemd/system/kaptyorka-relay.service.d/hub.conf | tr '\n' ' '; echo \"| unused=\$(/root/unused invite)\""
   t "I-helper the box code holds the helper next to the proxy bridge, its fence module and the tools' wire (slice 5)" "fence.py, helper.py, proxybridge.py, toolwire.py" 're:^rc=0 fence.py helper.py proxybridge.py toolwire.py$' \
     "ls /opt/kaptyorka/box/current/ | tr '\n' ' ' | sed 's/ \$//'"
   t "I-profile the box's Claude Code settings: deny rules and the four command hooks, no tool or permission hooks" "as section 5.2" \
@@ -349,7 +389,7 @@ chat)
   t "C-11 the hub never holds the chat's session id, its folder path, the prompt or alice's personal data" "none of them" \
     're:^rc=0 $' "strings /var/lib/kaphub/hub.db /var/lib/kaphub/hub.db-wal 2>/dev/null | grep -o -e \"$SID\" -e 'CANARY-[A-Z-]*' -e '/srv/team/alice' -e 'kap-alice' | sort -u | tr '\n' ' '"
   t "C-12 the personal device reaches nothing but its box calls" "403 403 403" 're:^rc=0 403 403 403$' \
-    "for p in /api/me /api/feed '/bridge/poll?machine=x'; do curl -sk -o /dev/null -w '%{http_code} ' -H \"Authorization: Bearer \$(cat /root/devtok)\" \"https://127.0.0.1:8443\$p\"; done | sed 's/ \$//'"
+    "for p in /api/me /api/feed '/bridge/poll?machine=x'; do curl -sk -o /dev/null -w '%{http_code} ' -H \"Authorization: Bearer \$(cat /etc/kaptyorka/secret/device-token)\" \"https://127.0.0.1:8443\$p\"; done | sed 's/ \$//'"
   t "C-13 the relay sent only box calls and refused nothing of the box" "relay: alice report ok" 're:relay: alice report ok' \
     "journalctl -u kaptyorka-relay.service --no-pager -q | tail -40"
   t "C-14 the relay holds no file of the person and runs under its own sandbox" "its view check passed" 're:^rc=0 active$' \

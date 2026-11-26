@@ -100,7 +100,7 @@ def w(tmp_path, certs):
                     principal=tm_p, facts={"host": "box-1", "os_user": "team"})
     beat()
     yield SimpleNamespace(s=s, port=port, relay=relay, token=token, tm=tm_p, tm_token=tm_token,
-                          alice=alice, admin=admin, beat=beat)
+                          alice=alice, admin=admin, beat=beat, fp=certs.fp)
     stop()
     s.close()
 
@@ -135,6 +135,59 @@ def test_a_personal_invite_works_only_through_the_secure_installer(w):
     assert status == 400 and "not for a personal laptop" in text
     with pytest.raises(KaptyorkaError, match="team machine joins as a team machine"):
         w.s.invite_create(w.s.person_by_name("box-1")["id"], kind="personal", by="root")
+
+
+def _link(w, code, fp=None):
+    return f"https://127.0.0.1:{w.port}/i/{code}#sha256={fp or w.fp}"
+
+
+def test_the_installer_redeems_a_personal_link_over_the_pinned_connection(w):
+    from kaptyorka.secure import kap_setup as setup
+    code = w.s.invite_create(w.alice, kind="personal", by="root")
+    got = setup.redeem(setup.parse_invite(_link(w, code)), "laptop-2")
+    # only the key from the hub; the address is the one connected to, the port and pin the link's
+    assert set(got) == {"ip", "port", "fp", "token"}
+    assert (got["ip"], got["port"], got["fp"]) == ("127.0.0.1", w.port, w.fp)
+    p = w.s.authenticate(got["token"])
+    assert p.personal and not w.s.invite_valid(code)
+    dev = [d for d in w.s.devices(w.alice) if d["name"] == "laptop-2"][0]
+    assert (dev["mode"], dev["host"], dev["os_user"]) == ("personal", "", "")
+
+
+@pytest.mark.parametrize("case, says", [
+    ("fingerprint", "not the one in the link"),
+    ("used", "already used"),
+    ("expired", "not valid any more"),
+    ("unknown", "not valid any more"),
+    ("team", "for a team machine"),
+])
+def test_the_installer_refuses_a_bad_link_in_one_sentence_and_uses_nothing(w, case, says):
+    from kaptyorka.secure import kap_setup as setup
+    code = w.s.invite_create(w.alice, kind="" if case == "team" else "personal",
+                             ttl_s=0 if case == "expired" else 7 * 86400, by="root")
+    if case == "used":
+        setup.redeem(setup.parse_invite(_link(w, code)), "laptop-2")
+    devices = len(w.s.devices(w.alice))
+    link = _link(w, "nosuchcode" if case == "unknown" else code, "a" * 64 if case == "fingerprint" else None)
+    with pytest.raises(setup.Refuse) as e:
+        setup.redeem(setup.parse_invite(link), "laptop-3")
+    msg = str(e.value)
+    assert says in msg and "Nothing was changed" in msg and "\n" not in msg
+    assert len(w.s.devices(w.alice)) == devices
+    if case in ("fingerprint", "team"):
+        assert w.s.invite_valid(code)  # not used: the fingerprint stopped it before any byte, or the kind
+
+
+def test_the_invite_page_of_a_personal_link_offers_no_join_command(w):
+    code = w.s.invite_create(w.alice, kind="personal", by="root")
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+    c = http.client.HTTPSConnection("127.0.0.1", w.port, context=ctx, timeout=10)
+    c.request("GET", f"/i/{code}")
+    page = c.getresponse().read().decode()
+    c.close()
+    assert "personal laptop" in page and "kaptyorka join" not in page
+    assert w.s.invite_valid(code)
 
 
 def test_a_personal_device_sends_no_host_and_is_never_shared_moved_or_a_team_machine(w):

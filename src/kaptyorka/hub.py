@@ -3254,6 +3254,18 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     + f"<p>This invite is for {html.escape(who['name'])}.</p>"
                     + INVITE_GITLAB.format(action=html.escape(f"/i/{code}/gitlab")))
             return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)
+        if store.invite_kind(code) == "personal":
+            # a personal laptop installs with the secure installer from the project page (design v2,
+            # 9.2), never a command this page offers to run as root; the link alone is shown
+            link = invite_url(request, code)
+            body = ("<h1>Set up your personal laptop</h1>"
+                    + (INVITE_GITLAB.format(action=html.escape(f"/i/{code}/gitlab")) if on else "")
+                    + ("<p>Get the secure installer from the kaptyorka project page (README, \"Personal"
+                       " laptop\") and give it this link:</p>" f"<pre>{html.escape(link)}</pre>"
+                       "<p>This link works for 7 days, once.</p>" if link.startswith("https://") else
+                       "<p>This hub has no encrypted connections yet, and a personal laptop joins only over"
+                       " one: ask your admin to switch them on and send a new link.</p>"))
+            return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)
         cmd = html.escape(f"kaptyorka join {invite_url(request, code)}")
         if on:  # sign in first; the join command still works afterwards
             who = signin.invite_person(store, code)
@@ -3281,7 +3293,8 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         mode = store.invite_kind(code)
         # the invite carries its kind (secure design v2, 9.1): a personal laptop's only through
         # its installer (which says mode personal), any other never through it; nothing is used
-        if (body.get("mode") == "personal") != (mode == "personal"):
+        # (an unknown code has no kind: invite_redeem says "no such invite")
+        if mode is not None and (body.get("mode") == "personal") != (mode == "personal"):
             return PlainTextResponse(
                 "this invite is for a personal laptop: use the secure installer, not kaptyorka join"
                 if mode == "personal" else

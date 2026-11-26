@@ -1,24 +1,33 @@
 #!/usr/bin/python3 -I
 """kaptyorka-secure-setup (secure design v2, 9.1, 9.2, 9.6): install and remove the personal-laptop
-mode. Root, run once by the person: sudo python3 -I kap_setup.py install --personal ...
+mode. Root, run once by the person: sudo python3 -I kap_setup.py install --personal '<invite link>'
 
-  install --personal [--person NAME] --hub-ip IP --hub-port N --hub-sha256 HEX --name NAME
-          --device-token-file FILE [--claude-token-file FILE] [--runtime-max 7d] [--tools-from DIR]
+  install --personal '<https invite link>' [--name NAME] [--person NAME] [--claude-token-file FILE]
+          [--runtime-max 7d] [--tools-from DIR]
   remove [--person NAME] [--delete-box-home] [--yes]
 
-install: checks the computer; makes the box user and groups; writes the files of 4.2 (root
-programs, launcher, box configs, units); installs relay, forwarder and box code; makes the
-namespace, relay door, forwarder, canary; stores the Claude token root-only; makes the box's SSH
-key; adds the launcher to the system shell files; runs the self-check. The mode is fixed here
-(/etc/kaptyorka/mode = personal) and never changes afterwards.
+install: checks the computer; redeems the personal invite over TLS pinned to the link's own
+fingerprint (the device token comes back; the hub's address is the one actually connected to);
+makes the box user and groups; writes the files of 4.2 (root programs, launcher, box configs,
+units); installs relay, forwarder and box code; makes the namespace, relay door, forwarder,
+canary; stores the Claude token root-only; makes the box's SSH key; adds the launcher to the
+system shell files; runs the self-check. The mode is fixed here (/etc/kaptyorka/mode = personal)
+and never changes afterwards.
+
+For tests only, instead of the link: --hub-ip IP --hub-port N --hub-sha256 HEX
+--device-token-file FILE (a token redeemed some other way). Not in the usage text.
 
 remove: hands every team folder back (made safe, as hubchat remove), stops and deletes every
 unit, file, user and group it made, the namespace and the launcher lines.
 
-Every outside value is checked against a strict pattern before root uses it. Fetching the device
-token from an invite and the tools' own sign-ins are later slices (7 and 5): here they are files.
+Every outside value is checked against a strict pattern before root uses it. From the hub only
+the device token is taken (a strict pattern); nothing else it answers reaches a file or a unit.
+The tools' own sign-ins are slice 5.
 """
 import grp
+import hashlib
+import hmac
+import http.client
 import ipaddress
 import json
 import os
@@ -26,6 +35,7 @@ import pwd
 import re
 import secrets
 import shutil
+import ssl
 import subprocess
 import sys
 
@@ -39,10 +49,10 @@ else:
 Refuse = kc.Refuse
 USAGE = """Install or remove kaptyorka's team box on a personal laptop (run with sudo).
 
-Install (your team admin gives you the hub's IP, port and fingerprint and a device token file):
-  sudo python3 -I kap_setup.py install --personal --hub-ip IP --hub-port PORT --hub-sha256 FINGERPRINT \\
-       --name THIS-COMPUTER --device-token-file FILE [--claude-token-file FILE]
-  --claude-token-file: a file with the token from `claude setup-token` (or paste it when asked).
+Install, with the personal invite link your team admin sent you (keep the quotes):
+  sudo python3 -I kap_setup.py install --personal 'https://HUB:PORT/i/CODE#sha256=FINGERPRINT'
+  It asks for a name for this computer on the hub and for the token from `claude setup-token`
+  (run that as yourself first). Or give them: --name THIS-COMPUTER --claude-token-file FILE.
   More: --person NAME (default: you), --runtime-max 7d (longest a team chat runs).
 
 Remove (every team folder goes back to you first):
@@ -53,7 +63,7 @@ RELAY_SRC = os.path.join(os.path.dirname(HERE), "relay")
 SYSTEMD = kr.SYSTEMD
 HOOK_BEGIN, HOOK_END = "# >>> kaptyorka >>>", "# <<< kaptyorka <<<"
 FP_RX = re.compile(r"[0-9a-f]{64}")
-CNAME_RX = re.compile(r"[A-Za-z0-9._-]{1,32}")
+CNAME_RX = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,31}")   # also within the relay's name pattern
 TOKEN_RX = kc.TOKEN_RX
 PROGRAMS = (  # (source in this folder, name in /usr/local/libexec/kaptyorka, mode)
     ("kap_enter.py", "enter", 0o755), ("kap_hubchat.py", "hubchat-root", 0o755),
@@ -279,8 +289,24 @@ def install_units() -> None:
     kr.systemctl("restart", "kaptyorka-addrwatch.service", "kaptyorka-guard.service", check=False)
 
 
+def check_local_values(a) -> dict:
+    """The values given on this computer (name, Claude token, tools), checked before anything
+    is sent or written (9.2, I-1)."""
+    if not CNAME_RX.fullmatch(a.get("--name") or ""):
+        raise Refuse("--name: letters, digits, '.', '_', '-', at most 32, not starting with '.' or '-'")
+    out = {"name": a["--name"], "claude": ""}
+    if a.get("--claude-token-file"):
+        out["claude"] = open(a["--claude-token-file"]).read().strip()
+        if not TOKEN_RX.fullmatch(out["claude"]):
+            raise Refuse("the Claude token does not look like one (claude setup-token prints it)")
+    if a.get("--tools-from") and not os.path.isdir(os.path.join(a["--tools-from"], "bin")):
+        raise Refuse("--tools-from needs a folder with bin/<tool>")
+    return out
+
+
 def check_relay_values(a) -> dict:
-    """Every outside value, checked before anything is written (9.2, I-1)."""
+    """Tests only: the hub's values and a device token file given by hand, checked like the
+    invite's (9.2, I-1)."""
     try:
         ip = str(ipaddress.ip_address(a["--hub-ip"]))
     except ValueError:
@@ -291,19 +317,162 @@ def check_relay_values(a) -> dict:
     fp = a["--hub-sha256"].lower().replace(":", "")
     if not FP_RX.fullmatch(fp):
         raise Refuse("--hub-sha256 must be 64 hex characters")
-    if not CNAME_RX.fullmatch(a["--name"]):
-        raise Refuse("--name: letters, digits, '.', '_', '-', at most 32")
+    out = check_local_values(a)
     tok = open(a["--device-token-file"]).read().strip()
     if not TOKEN_RX.fullmatch(tok):
         raise Refuse("the device token does not look like one")
-    out = {"ip": ip, "port": int(port), "fp": fp, "name": a["--name"], "token": tok, "claude": ""}
-    if a.get("--claude-token-file"):
-        out["claude"] = open(a["--claude-token-file"]).read().strip()
-        if not TOKEN_RX.fullmatch(out["claude"]):
-            raise Refuse("the Claude token does not look like one (claude setup-token prints it)")
-    if a.get("--tools-from") and not os.path.isdir(os.path.join(a["--tools-from"], "bin")):
-        raise Refuse("--tools-from needs a folder with bin/<tool>")
-    return out
+    return {"ip": ip, "port": int(port), "fp": fp, "token": tok, **out}
+
+
+# ---------------------------------------------------------------------------- the invite (9.2, 9.5)
+
+ASK_ADMIN = "ask your team admin for a new personal link (kaptyorka invite <you> --personal)"
+UNCHANGED = " Nothing was changed on this computer."
+PLAIN_HTTP = ("this link starts with http://, and a personal laptop joins only over an encrypted "
+              "connection: ask your team admin to switch it on (kaptyorka tls on, then tls only) and "
+              "send you a new link." + UNCHANGED)
+INVITE_RX = re.compile(r"https://(\[[0-9A-Fa-f:.]{2,45}\]|[A-Za-z0-9][A-Za-z0-9.-]{0,252})(?::([0-9]{1,5}))?"
+                       r"/i/([A-Za-z0-9_-]{1,64})/?")
+HOST_RX = re.compile(r"[a-z0-9][a-z0-9.-]{0,252}")
+MAX_ANSWER = 64 * 1024
+
+
+def parse_invite(link: str) -> dict:
+    """The invite link's parts, each checked: {"host", "port", "code", "fp"}. The fingerprint
+    comes only from the link (9.5): without one, no connection is made."""
+    link = (link or "").strip()
+    if re.match(r"http://", link, re.I):
+        raise Refuse(PLAIN_HTTP)
+    base, hashmark, frag = link.partition("#")
+    m = INVITE_RX.fullmatch(base)
+    if not m:
+        raise Refuse("that is not an invite link (expected 'https://<hub>:<port>/i/<code>#sha256=<fingerprint>'; "
+                     "copy the whole link, in quotes)." + UNCHANGED)
+    fm = re.fullmatch(r"sha256=([0-9A-Fa-f]{64})", frag)
+    if not fm:
+        raise Refuse("the link has no fingerprint at its end (#sha256= and 64 letters and digits): copy the "
+                     "whole link, in quotes, or " + ASK_ADMIN + "." + UNCHANGED)
+    host, port, code = m.group(1).lower(), m.group(2), m.group(3)
+    if host.startswith("["):
+        try:
+            if ipaddress.ip_address(host[1:-1]).version != 6:
+                raise ValueError
+        except ValueError:
+            raise Refuse("the link's hub address is not an address." + UNCHANGED)
+    elif not HOST_RX.fullmatch(host) or ".." in host:
+        raise Refuse("the link's hub name is not a name." + UNCHANGED)
+    port = int(port) if port else 443
+    if not 0 < port < 65536:
+        raise Refuse("the link's port is not a port number." + UNCHANGED)
+    return {"host": host, "port": port, "code": code, "fp": fm.group(1).lower()}
+
+
+class CertMismatch(OSError):
+    pass
+
+
+class PinnedConnection(http.client.HTTPSConnection):
+    """https that accepts the hub only by its certificate's SHA-256 fingerprint, checked before
+    any byte of the request goes out (the relay's own way, relay.PinnedConnection)."""
+
+    def __init__(self, host: str, port: int, pin: str, timeout: float):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE  # the fingerprint decides
+        super().__init__(host, port, timeout=timeout, context=ctx)
+        self._pin = pin
+
+    def connect(self):
+        super().connect()
+        der = self.sock.getpeercert(binary_form=True)
+        if not der or not hmac.compare_digest(hashlib.sha256(der).hexdigest(), self._pin):
+            self.sock.close()
+            raise CertMismatch()
+
+
+def hub_refusal(status: int, said: str) -> str:
+    """One plain sentence and a next step for a hub that did not take the invite."""
+    said = said.strip()
+    if status == 400 and said in ("invite already used",):
+        return "this link was already used (a link works once): " + ASK_ADMIN + "." + UNCHANGED
+    if status == 400 and said in ("no such invite", "invite expired"):
+        return "this link is not valid any more (cancelled, or older than 7 days): " + ASK_ADMIN + "." + UNCHANGED
+    if status == 400 and ("not for a personal laptop" in said or "joins as a team machine" in said):
+        return ("this link is for a team machine (kaptyorka join), not for a personal laptop: "
+                + ASK_ADMIN + "." + UNCHANGED)
+    if status == 429:
+        return "the hub had too many wrong tries with this link: wait an hour and run this again." + UNCHANGED
+    words = kc.term(said.split("\n", 1)[0])[:120]
+    return (f"the hub refused this link ({status}{': ' + words if words else ''}): " + ASK_ADMIN + "."
+            + UNCHANGED)
+
+
+def redeem(inv: dict, name: str, timeout: float = 20) -> dict:
+    """Use the personal invite over the pinned connection: {"ip", "port", "fp", "token"}. The
+    address is the one this connection reached (the relay has no DNS); of the hub's answer only
+    the device token is taken, and only when it fits its pattern and the answer says personal."""
+    conn = PinnedConnection(inv["host"], inv["port"], inv["fp"], timeout)
+    where = f"{inv['host']}:{inv['port']}"
+    try:
+        try:
+            conn.connect()
+        except CertMismatch:
+            raise Refuse(f"the hub at {where} is not the one in the link (its fingerprint differs), so nothing "
+                         "was sent: check that you copied the whole link, or ask your team admin whether the "
+                         "hub's certificate changed and for a new link." + UNCHANGED)
+        except (OSError, ssl.SSLError):
+            raise Refuse(f"cannot reach the hub at {where} over an encrypted connection: check that this "
+                         "computer is online (and on the team's network or VPN), then run this again." + UNCHANGED)
+        try:
+            peer = ipaddress.ip_address(conn.sock.getpeername()[0])
+        except (OSError, ValueError, IndexError):
+            raise Refuse("cannot tell which address the hub has." + UNCHANGED)
+        if peer.version == 6 and peer.ipv4_mapped:
+            peer = peer.ipv4_mapped
+        if peer.is_link_local or peer.is_multicast or peer.is_unspecified:
+            raise Refuse(f"the hub answered from {peer}, which this computer cannot keep using: "
+                         "ask your team admin for a link with the hub's usual address." + UNCHANGED)
+        body = json.dumps({"device_name": name, "mode": "personal"})
+        try:
+            conn.request("POST", f"/i/{inv['code']}", body, {"Content-Type": "application/json"})
+            r = conn.getresponse()
+            raw = r.read(MAX_ANSWER + 1)
+        except (OSError, ssl.SSLError, http.client.HTTPException):
+            raise Refuse(f"the hub at {where} stopped answering: run this again in a minute." + UNCHANGED)
+    finally:
+        conn.close()
+    if len(raw) > MAX_ANSWER:
+        raise Refuse("the hub's answer is too long; it is not a kaptyorka hub's: ask your team admin." + UNCHANGED)
+    if r.status != 200:
+        raise Refuse(hub_refusal(r.status, raw.decode("utf-8", "replace")))
+    try:
+        got = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        got = None
+    if not isinstance(got, dict) or got.get("mode") != "personal" or not isinstance(got.get("token"), str) \
+            or not TOKEN_RX.fullmatch(got["token"]):
+        raise Refuse("the hub's answer is not a personal laptop's key, so it was not used: "
+                     + ASK_ADMIN + "." + UNCHANGED)
+    return {"ip": str(peer), "port": inv["port"], "fp": inv["fp"], "token": got["token"]}
+
+
+def ask_name(a) -> None:
+    if a.get("--name") or not sys.stdin.isatty():
+        return
+    a["--name"] = input("A name for this computer on the hub, such as laptop-2 (not your user or host "
+                        "name): ").strip()
+
+
+def ask_claude_token(person: str, v: dict) -> None:
+    """Asked before the invite is used, so stopping here costs no link."""
+    if v["claude"] or not sys.stdin.isatty() or os.path.exists(f"{kc.SECRET}/{person}/claude-oauth-token"):
+        return
+    import getpass
+    tok = getpass.getpass("Paste the token from `claude setup-token` (run it as yourself), or Enter to skip: ").strip()
+    if tok and not TOKEN_RX.fullmatch(tok):
+        raise Refuse("that does not look like a token")
+    v["claude"] = tok
 
 
 def install_relay_conf(v: dict) -> None:
@@ -337,13 +506,6 @@ def install_person(person: str, v: dict) -> None:
     kr.mkdir(f"{kc.SECRET}/{person}", 0o700)
     if v["claude"]:
         kr.write_file(f"{kc.SECRET}/{person}/claude-oauth-token", v["claude"] + "\n", 0o600)
-    elif sys.stdin.isatty() and not os.path.exists(f"{kc.SECRET}/{person}/claude-oauth-token"):
-        import getpass
-        tok = getpass.getpass("Paste the token from `claude setup-token` (run it as yourself), or Enter to skip: ").strip()
-        if tok:
-            if not TOKEN_RX.fullmatch(tok):
-                raise Refuse("that does not look like a token")
-            kr.write_file(f"{kc.SECRET}/{person}/claude-oauth-token", tok + "\n", 0o600)
     kr.ensure_box(person, person, kr.read_text(f"{kc.BOXCONF}/egress-base"))
     sudoers = (f"# kaptyorka (secure design v2, 4.2): {person} may start team chats and use hubchat. Nothing else.\n"
                f"{person} ALL=(root) NOPASSWD: {kc.ENTER}, {kc.HUBCHAT_ROOT}\n")
@@ -353,21 +515,33 @@ def install_person(person: str, v: dict) -> None:
     os.replace(tmp, f"/etc/sudoers.d/kaptyorka-{person}")
 
 
+BY_HAND = ("--hub-ip", "--hub-port", "--hub-sha256", "--device-token-file")   # tests only
+
+
 def install(a) -> int:
     person = a.get("--person") or os.environ.get("SUDO_USER", "")
     kc.check_person(person)
     if not a.get("--personal"):
         raise Refuse("say --personal (a team machine is installed with pipx install kaptyorka and kaptyorka join)")
-    missing = [k for k in ("--hub-ip", "--hub-port", "--hub-sha256", "--name", "--device-token-file")
-               if not a.get(k)]
-    if missing:
-        raise Refuse("missing: " + " ".join(missing) + ". Your team admin gives you the hub's IP, port and "
-                     "fingerprint and a device token file; --name is a name you choose for this computer.")
+    link = a.get("link")
+    by_hand = [k for k in BY_HAND if a.get(k)]
+    if link and by_hand:
+        raise Refuse("give the invite link alone: " + " ".join(by_hand) + " are for tests")
+    if not link and len(by_hand) < len(BY_HAND):
+        raise Refuse("give the personal invite link your team admin sent you, in quotes:  sudo python3 -I "
+                     "kap_setup.py install --personal 'https://<hub>:<port>/i/<code>#sha256=<fingerprint>'")
     rt = a.get("--runtime-max") or "7d"
     if not kc.RUNTIME_RX.fullmatch(rt):
         raise Refuse("--runtime-max: like 7d, 12h, 90min or infinity")
+    # every value is checked, and the computer too, before the link is used: a refusal costs no link
+    inv = parse_invite(link) if link else None
+    if inv:
+        ask_name(a)
+        if not a.get("--name"):
+            raise Refuse("add --name THIS-COMPUTER: the name this computer gets on the hub (not your user or "
+                         "host name), such as laptop-2." + UNCHANGED)
     try:
-        v = check_relay_values(a)
+        v = check_local_values(a) if inv else check_relay_values(a)
     except OSError as e:
         raise Refuse(f"cannot read a token file: {e.strerror}")
     stop, warn = preflight(person)
@@ -376,7 +550,14 @@ def install(a) -> int:
     if stop:
         for s in stop:
             print(kc.term("kaptyorka-secure-setup: " + s), file=sys.stderr)
+        if inv:
+            say("Nothing was changed on this computer, and the link was not used: fix the above and run this again.")
         return 2
+    ask_claude_token(person, v)
+    if inv:
+        say(f"Joining the hub at {inv['host']}:{inv['port']} (fingerprint {inv['fp'][:16]}...) as {v['name']} ...")
+        v.update(redeem(inv, v["name"]))
+        say(f"Joined: this computer is {v['name']} on the hub (address {v['ip']}).")
     ver = version()
     say(f"Installing kaptyorka {ver} for {person}, personal-laptop mode ...")
     install_code(ver)
@@ -404,12 +585,17 @@ def install(a) -> int:
         return 3
     say("Self-check: all walls in place. " + " ".join(r.stderr.split()))
     pub = kr.read_text(f"{kc.box_home(person)}/.ssh/id_ed25519.pub").strip()
-    say("", "Done. Next steps:",
+    say("", f"Done. This computer is {v['name']} on the hub; team chats reach it only through the box.",
+        "Next steps:",
         "  1. Log out and in once (or restart the computer). Until then your own programs get",
         "     \"Permission denied\" in team folders.",
         "  2. Make a folder a team folder:   hubchat add ~/path/to/folder",
         "     or get a repository as one:    hubchat add <git URL>",
         "  3. cd into it and run claude, codex, opencode or cursor-agent as usual.",
+        *([] if v["claude"] else ["  Claude in the box has no token yet: run  claude setup-token  as yourself, then",
+                                  "  hubchat token-rotate  and paste it."]),
+        *([f"  Delete the token file now: rm {kc.shown(a['--claude-token-file'], 200)}"]
+          if a.get("--claude-token-file") else []),
         *(["For private repositories: add the box's own SSH key to your git account (as an extra key):",
            "  " + pub] if pub else []))
     return 0
@@ -535,7 +721,9 @@ def main(argv) -> int:
     try:
         if os.geteuid() != 0:
             raise Refuse("run it with sudo")
-        if pos == ["install"]:
+        if pos[:1] == ["install"] and len(pos) <= 2:
+            if len(pos) == 2:
+                a["link"] = pos[1]
             return install(a)
         if pos == ["remove"]:
             return remove(a)

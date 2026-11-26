@@ -175,6 +175,16 @@ def test_redeem_failure_message(monkeypatch, capsys):
     assert join.redeem("not a url", "pc") is None
 
 
+def test_redeem_of_a_personal_link_points_to_the_secure_installer(monkeypatch, capsys):
+    from kaptyorka import join
+
+    monkeypatch.setattr("kaptyorka.http.request", lambda *a, **k: (
+        400, "this invite is for a personal laptop: use the secure installer, not kaptyorka join"))
+    assert join.redeem("http://h:1/i/CODE123", "pc") is None
+    err = capsys.readouterr().err
+    assert "secure installer" in err and "Personal laptop" in err and "new one" not in err
+
+
 def test_join_saves_secret(hub, home):
     a = FakeAdapter("a")
     assert main(hub.url, "T", "pc", adapters=[a], install=no_service([]), secret="s3") == 0

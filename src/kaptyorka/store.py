@@ -660,11 +660,11 @@ class Store:
         self.log_add(by or row["name"], log_kind, f"{kind + ' ' if kind else ''}invite for {row['name']}")
         return code
 
-    def invite_kind(self, code: str) -> str:
-        """The invite's kind: "personal" or ""."""
+    def invite_kind(self, code: str) -> Optional[str]:
+        """The invite's kind: "personal" or "", None when there is no such invite."""
         with self.lock:
             row = self.db.execute("SELECT kind FROM invites WHERE code=?", (code,)).fetchone()
-            return row["kind"] if row is not None else ""
+            return row["kind"] if row is not None else None
 
     def invite_valid(self, code: str) -> bool:
         """True when the code exists, is unused and has not expired."""

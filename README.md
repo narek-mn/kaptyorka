@@ -111,19 +111,19 @@ On a Jetson the bridge reads GPU use from the board itself (no `nvidia-smi` need
 
 On your own laptop, kaptyorka can keep the team away from your personal files. Only the folders you choose become **team folders**. A team chat (Claude Code, Codex, OpenCode or Cursor started in a team folder) runs as a separate Linux user, the **box**, that cannot see your other files, chats or sign-ins. Everywhere else your tools work as before, with no kaptyorka in them. You need Linux with systemd 254 or newer (Ubuntu 24.04 is fine) and `sudo`.
 
-**1. Get four things from your team admin:** the hub's IP address, its port, its fingerprint (64 letters and digits), and a device token in a file. Choose a name for this computer, such as `alice-laptop`.
+**1. Get a personal invite link from your team admin.** The admin runs `kaptyorka invite <you> --personal` on a hub with encrypted connections switched on (see "Encrypted connections"), and sends you the link it prints. It looks like `https://192.0.2.10:8444/i/<code>#sha256=<fingerprint>`, works once and for 7 days. A plain `http://` link is refused: ask the admin to switch encryption on.
 
-**2. Make a Claude token for the box** (in a terminal, as yourself): `claude setup-token`. Save the token it prints in a file, such as `~/claude-token.txt`. You can also skip this and paste it when the installer asks.
+**2. Make a Claude token for the box** (in a terminal, as yourself): `claude setup-token`. Keep the token it prints; the installer asks for it. You can also skip it and add it later with `hubchat token-rotate`.
 
-**3. Install** (from a kaptyorka checkout, in `src/kaptyorka/secure`):
+**3. Install** with that one link (from a kaptyorka checkout, in `src/kaptyorka/secure`; keep the quotes):
 
 ```bash
-sudo python3 -I kap_setup.py install --personal --hub-ip 192.0.2.10 --hub-port 8443 \
-     --hub-sha256 <fingerprint> --name alice-laptop \
-     --device-token-file ~/device-token.txt --claude-token-file ~/claude-token.txt
+sudo python3 -I kap_setup.py install --personal 'https://192.0.2.10:8444/i/<code>#sha256=<fingerprint>'
 ```
 
-It ends with `Self-check: all walls in place` and `Done. Next steps:`. Delete the two token files afterwards.
+It asks for a name for this computer on the hub (choose one, such as `laptop-2`; not your user or host name) and for the Claude token, then joins the hub and sets everything up. It ends with `Self-check: all walls in place` and `Done.`. To answer without questions: `--name laptop-2 --claude-token-file ~/claude-token.txt` (delete that file afterwards).
+
+The installer checks the hub against the fingerprint at the end of the link before it sends anything, and keeps the hub's address it actually reached. If the link was already used, is older than 7 days, is for a team machine, or the hub's fingerprint does not match, it says so in one sentence and changes nothing on your computer: ask the admin for a new personal link. It also checks your computer first (systemd version, an old kaptyorka in your account, your home folder's rights), so a computer that is not ready does not use up the link.
 
 **4. Log out and in once** (or restart the computer). Until then, your own programs get `Permission denied` in team folders; `hubchat` reminds you.
 
