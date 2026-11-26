@@ -330,6 +330,8 @@ OK = Obj({"ok": O(Bool), "reply": O(ONE_LINE)})
 
 _MESSAGE = Obj({  # 6.5: a message for a chat
     "id": R(Int), "chat": R(Chat), "text": R(TEXT),
+    # the sender's own words (the helper fences them) and the name an answer goes to
+    "body": O(TEXT), "reply": O(Text(200, lines=False)),
     "person": O(Label(64)), "machine": O(Label(64)), "kind": O(Choice("chat", "page", "manager")),
     "files": O(List_(Obj({"id": R(Int), "name": R(FILE_NAME), "size": R(Int)}), 10, True)),
 })

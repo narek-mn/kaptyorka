@@ -153,7 +153,8 @@ def install_code(ver: str) -> None:
     copy(os.path.join(FILES, "hubchat"), "/usr/local/bin/hubchat", 0o755)
     kr.mkdir(kc.OPT, 0o755)
     for part, files in (("egress", {"kap_egress.py": "egress.py"}), ("box", {"kap_proxybridge.py": "proxybridge.py",
-                                                                         "kap_helper.py": "helper.py"}),
+                                                                         "kap_helper.py": "helper.py",
+                                                                         "kap_fence.py": "fence.py"}),
                         ("relay", {os.path.join(RELAY_SRC, "relay.py"): "relay.py"})):
         kr.mkdir(f"{kc.OPT}/{part}", 0o755)
         kr.mkdir(f"{kc.OPT}/{part}/{ver}", 0o755)
@@ -348,7 +349,7 @@ def install(a) -> int:
         say("warning: " + w)
     if stop:
         for s in stop:
-            print("kaptyorka-secure-setup: " + s, file=sys.stderr)
+            print(kc.term("kaptyorka-secure-setup: " + s), file=sys.stderr)
         return 2
     ver = version()
     say(f"Installing kaptyorka {ver} for {person}, personal-laptop mode ...")
@@ -373,9 +374,9 @@ def install(a) -> int:
                 "--addrs", ",".join(kr.host_addrs()), "--canaries", ",".join(kr.shared_canaries()),
                 "--", "/bin/true"], check=False)
     if r.returncode != 0:
-        say("Self-check (inside the box): PROBLEMS", "  " + (r.stderr or r.stdout).strip()[-400:])
+        say("Self-check (inside the box): PROBLEMS", *["  " + ln for ln in (r.stderr or r.stdout).strip()[-400:].splitlines()])
         return 3
-    say("Self-check: all walls in place. " + r.stderr.strip())
+    say("Self-check: all walls in place. " + " ".join(r.stderr.split()))
     pub = kr.read_text(f"{kc.box_home(person)}/.ssh/id_ed25519.pub").strip()
     say("", "Done. Log out and in once, so your account joins its new group.",
         "Next:  hubchat add <folder>   (or: hubchat add <git URL>)",
@@ -503,7 +504,7 @@ def main(argv) -> int:
         print(__doc__.split("\n\n")[1])
         return 2
     except Refuse as e:
-        print(f"kaptyorka-secure-setup: {e}", file=sys.stderr)
+        print(kc.term(f"kaptyorka-secure-setup: {e}"), file=sys.stderr)
         return 2
 
 

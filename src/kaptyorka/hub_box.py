@@ -223,7 +223,7 @@ class BoxHub:
         version = self.rs.skills_version()
         if self.skills_sent.get(principal.device_id) != version:
             self.skills_sent[principal.device_id] = version
-            out["skills"] = [{"name": k["name"], "text": k["text"]} for k in self.rs.skills()
+            out["skills"] = [{"name": k["name"], "text": k["text"]} for k in self.rs.box_skills()
                              if isinstance(k.get("name"), str) and NAME_RX.fullmatch(k["name"])][:50]
         return out
 
@@ -246,6 +246,14 @@ class BoxHub:
                 out[k] = v
         return out
 
+    def _reply(self, m, principal: Principal) -> dict:
+        """{"reply": the name send(to=) answers to}, as store.offer's reply line; {} for the
+        hub's own notices. Lock held."""
+        if (m["sender_key"] or "").startswith("hub:"):
+            return {}
+        _, handle = self.store._from_for(m, principal.person_id)
+        return {"reply": clean(handle or m["sender_name"], 128)}
+
     def _messages(self, principal: Principal) -> List[dict]:
         """Messages for this box's chats that wait for delivery, each offered once a minute
         until its ack (store.offer's lease)."""
@@ -259,6 +267,9 @@ class BoxHub:
                 f = s._file_info(m["file_id"]) if m is not None else None
                 out.append({"id": o["id"], "chat": chat_of(o["key"], principal.device_id),
                             "text": o["text"], **(self._origin(m) if m is not None else {}),
+                            # the sender's own words, which the helper fences under its origin
+                            # line, and the name an answer goes to
+                            **({"body": m["text"], **self._reply(m, principal)} if m is not None else {}),
                             **({"files": [{"id": f["id"], "name": f["name"], "size": f["size"]}]}
                                if f else {})})
         return out
@@ -352,7 +363,8 @@ class BoxHub:
         out = []
         for m in self.store.inbox(key)[:50]:  # read now: the chat itself asked
             out.append({"id": m.id, "chat": chat, "kind": "page" if m.from_web else "chat",
-                        "text": brief_mod.message_text(m),
+                        "text": brief_mod.message_text(m), "body": m.text,
+                        **({} if m.from_hub else {"reply": clean(m.reply_to or m.sender, 128)}),
                         **({"files": [{"id": m.file["id"], "name": m.file["name"],
                                        "size": m.file["size"]}]} if m.file else {})})
         return {"messages": out}
@@ -378,7 +390,9 @@ class BoxHub:
             from kaptyorka.hub_feed import visible
             if visible(s, principal, a.person_id, a.project) and NAME_RX.fullmatch(a.project or ""):
                 row["project"] = a.project
-                row["name"] = clean(a.title or a.label or a.name, 80)
+                title = clean(a.title or a.label or a.name, 80)
+                # a chat's title is its owner's words: one the trick filter matches is not shown
+                row["name"] = title if check_tricks(title) is None else session_id(a.key)
             else:
                 row["name"] = session_id(a.key)
             rows.append(row)
@@ -392,7 +406,7 @@ class BoxHub:
         key = self.caller(principal, body)
         topic = _name(body.get("topic"), "topic")
         note = self.store.notes_read(topic, principal, self._project(key))
-        return {"topic": topic, "text": note.text if note else f"no note named {topic}"}
+        return {"topic": topic, "text": brief_mod.note_text(note) if note else f"no note named {topic}"}
 
     def c_notes_list(self, principal: Principal, body: dict) -> dict:
         key = self.caller(principal, body)

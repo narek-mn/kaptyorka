@@ -14,6 +14,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 from kaptyorka import paths, stuck
 from kaptyorka.secrets_check import TEXT_TYPES, check_secrets
 from kaptyorka.tricks import check_tricks, visible
+from kaptyorka.secure.kap_fence import fence, inline
 
 ONLINE_S = 30
 RECENT_S = 600  # send to a session gone this long still holds the message for it
@@ -184,6 +185,11 @@ ADDED_COLUMNS = [
     ("devices", "mode", "TEXT NOT NULL DEFAULT ''"),
     ("invites", "kind", "TEXT NOT NULL DEFAULT ''"),
     ("agents", "box", "INTEGER NOT NULL DEFAULT 0"),
+    # the trick filter also holds a note write (red team round 2, finding 2): kind "note",
+    # with the note's topic and project; releasing it writes the note
+    ("held", "kind", "TEXT NOT NULL DEFAULT 'message'"),
+    ("held", "topic", "TEXT"),
+    ("held", "project", "TEXT"),
 ]
 
 
@@ -416,6 +422,7 @@ class Message:
     file: Optional[dict] = None  # {id, name, size} of the attachment
     reply_to: str = ""  # the sender's handle when its name is shown with the project hidden
     failed: str = ""  # unread, and the bridge could not push it: why (pull still works)
+    from_hub: bool = False  # the hub's own notice (workers, the manager's hub texts): not fenced
 
 
 @dataclass
@@ -440,7 +447,7 @@ def attach_line(file: Optional[dict]) -> str:
     n = file["size"]
     size = f"{n} bytes" if n < 1024 else f"{n / 1024:.0f} KB" if n < 1024 * 1024 \
         else f"{n / 1024 / 1024:.1f} MB"
-    return f"\n[attached: {file['name']} ({size}) \u2014 get it with fetch_file({file['id']})]"
+    return f"\n[attached: {inline(file['name'], 200)} ({size}) \u2014 get it with fetch_file({file['id']})]"
 
 
 class Store:
@@ -1781,6 +1788,9 @@ class Store:
             return self._agent(row, self.clock()) if row else None
 
     def set_status(self, key: str, text: str) -> None:
+        reason = check_tricks(text)
+        if reason is not None:  # one short line: nothing to hold, it is simply not set
+            raise KaptyorkaError(f"status not set: it has {reason}. Say what you work on in plain words.")
         with self.lock:
             self.db.execute("UPDATE agents SET status=? WHERE key=?",
                             (clean(text, MAX_ACTIVITY), key))
@@ -1852,7 +1862,7 @@ class Store:
         """Messages waiting for an admin, oldest first. `text` shows hidden characters as
         <U+XXXX>, so what the admin reads is what would be delivered."""
         with self.lock:
-            return [{"id": r["id"], "from": r["sender_name"], "to": r["to_name"],
+            return [{"id": r["id"], "kind": r["kind"], "from": r["sender_name"], "to": r["to_name"],
                      "text": visible(r["text"]), "reason": r["reason"], "created": r["created"]}
                     for r in self.db.execute(
                         "SELECT * FROM held WHERE decided_at IS NULL ORDER BY id")]
@@ -1870,8 +1880,12 @@ class Store:
         with self.lock:
             row = self._held_open(hid)
             now = self.clock()
-            n = self._insert(row["sender_key"], row["sender_name"], json.loads(row["targets"]),
-                             row["text"], now, row["file_id"])
+            if row["kind"] == "note":
+                self._note(row["topic"], row["text"], row["sender_name"], row["project"])
+                n = 1
+            else:
+                n = self._insert(row["sender_key"], row["sender_name"], json.loads(row["targets"]),
+                                 row["text"], now, row["file_id"])
             self.db.execute("UPDATE held SET decided_at=?, decision='released', decided_by=?"
                             " WHERE id=?", (now, by, hid))
             self.db.execute("INSERT INTO log (time, person, kind, detail) VALUES (?,?,?,?)",
@@ -2211,7 +2225,8 @@ class Store:
                 sender, reply = self._from_for(m, t["person_id"])
                 out.append(Message(m["id"], sender, m["to_name"], m["text"], m["created"], True,
                                    m["sender_key"].startswith("web:"), kind=m["kind"],
-                                   file=self._file_info(m["file_id"]), reply_to=reply))
+                                   file=self._file_info(m["file_id"]), reply_to=reply,
+                                   from_hub=m["sender_key"].startswith("hub:")))
             return out
 
     def _launched_keys(self, principal: Optional[Principal]) -> set:
@@ -2255,7 +2270,7 @@ class Store:
                     self._bind(m, t["key"])
                     shown, reply = self._from_for(m, t["person_id"])
                     sender = f"{shown} (reply to {reply})" if reply else _sender(m)
-                    text = (f"Kaptyorka message from {_one_line(sender)}:\n\n{m['text']}"
+                    text = (f"Kaptyorka message from {_one_line(sender)}:\n\n{m['text'] if m['sender_key'].startswith('hub:') else fence(m['text'])}"
                             f"{attach_line(self._file_info(m['file_id']))}"
                             f"{'' if m['sender_key'].startswith('hub:') else reply_line(reply or m['sender_name'])}"
                             if m["kind"] == "message" else m["text"])  # knocks and doors: as written
@@ -2838,6 +2853,7 @@ class Store:
                 who = self._person_principal(row["person_id"])
                 self._check_project(project, who, write=True)
                 author = who.person_name if who else author
+            self._hold_note_if_tricky(key, author, topic, text, project)
             self._note(topic, text, author, project)
 
     def notes_write_from_web(self, name: str, topic: str, text: str,
@@ -2850,7 +2866,26 @@ class Store:
         check_secrets(text)
         with self.lock:
             self._check_project(project or None, principal, write=True)
+            self._hold_note_if_tricky(f"web:{name}", name, topic, text, project or None)
             self._note(topic, text, name, project or None)
+
+    def _hold_note_if_tricky(self, key: str, author: str, topic: str, text: str,
+                             project: Optional[str]) -> None:
+        """Lock held. A note text that matches the trick filter is held for an admin like a
+        message (red team round 2, finding 2): every chat that reads the note would get it."""
+        reason = check_tricks(text)
+        if reason is None:
+            return
+        where = f"note {topic} of {project}" if project else f"note {topic} on the team board"
+        now = self.clock()
+        hid = self.db.execute(
+            "INSERT INTO held (sender_key, sender_name, to_name, targets, text, file_id, reason, created,"
+            " kind, topic, project) VALUES (?,?,?,'[]',?,NULL,?,?,'note',?,?)",
+            (key, author, where, text, reason, now, topic, project)).lastrowid
+        self.db.execute("INSERT INTO log (time, person, kind, detail) VALUES (?,?,?,?)",
+                        (now, author, "note_held", f"#{hid} {where}: {reason}"))
+        raise MessageHeld(f"not saved: held for a person to look at, because it has {reason}."
+                          " An admin can release it; the note was not changed.")
 
     def project_members(self) -> Dict[str, List[dict]]:
         """Each registered project's roles by person, for the admin's page."""

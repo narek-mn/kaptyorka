@@ -336,3 +336,10 @@ def scratch_dir(prefix: str):
     while ".claude" in base.parts:
         base = base.parent
     return Path(tempfile.mkdtemp(prefix=prefix, dir=base.parent))
+
+
+def fenced(text: str, what: str = "message") -> str:
+    """`text` in the data fence a delivery puts it in (the tests' fixed boundary)."""
+    from conftest import FENCE
+    from kaptyorka.secure.kap_fence import fence
+    return fence(text, what, boundary=FENCE)

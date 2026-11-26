@@ -6,7 +6,7 @@ import time
 
 from kaptyorka import http
 from kaptyorka.auth import Auth
-from helpers import call, call_error, run
+from helpers import call, call_error, fenced, run
 
 PC = {"key": "claude:1", "machine": "pc", "tool": "claude-code", "project": "proj-a"}
 BOX2 = {"key": "claude:2", "machine": "box-2", "tool": "claude-code", "project": "proj-b"}
@@ -81,7 +81,7 @@ def test_poll_returns_immediately_when_queued(hub):
                                  timeout=30)
     assert status == 200 and len(items) == 1 and time.time() - t0 < 1
     assert items[0]["key"] == BOX2["key"]
-    assert items[0]["text"] == ("Kaptyorka message from pc/claude-code/proj-a:\n\nhi"
+    assert items[0]["text"] == ("Kaptyorka message from pc/claude-code/proj-a:\n\n" + fenced("hi") +
                                 "\nAnswer with send(to=\"pc/claude-code/proj-a\"); text written only in your terminal is not seen by them.")
 
 
@@ -109,7 +109,7 @@ def test_ack_false_leaves_message_for_brief(hub):
     assert http.request("POST", hub.url + "/bridge/ack", "T",
                         {"id": items[0]["id"], "ok": False})[0] == 204
     assert brief(hub, BOX2, "prompt") == \
-        "Kaptyorka message from pc/claude-code/proj-a:\n\nmove api?"
+        "Kaptyorka message from pc/claude-code/proj-a:\n\n" + fenced("move api?")
     assert brief(hub, BOX2, "prompt") == ""
 
 
@@ -164,7 +164,7 @@ def test_brief_start_summary_exact(hub):
     assert brief(hub, PC, "start") == (
         f"You are `pc/claude-code/proj-a`, {ADMIN_NAME}, on pc. 1 other online:"
         " box-2/claude-code/proj-b (idle). 1 unread message. Only sessions in team project folders reach the hub. Board topics: proj-a-api.\n\n"
-        "Unread messages:\n\nKaptyorka message from box-2/claude-code/proj-b:\n\nping")
+        "Unread messages:\n\nKaptyorka message from box-2/claude-code/proj-b:\n\n" + fenced("ping"))
     # again within the cache's 10 s: the delivered message is not repeated as unread
     assert brief(hub, PC, "start") == (
         f"You are `pc/claude-code/proj-a`, {ADMIN_NAME}, on pc. 1 other online:"
@@ -186,8 +186,8 @@ def test_brief_start_alone_plural_no_topics(hub):
         f"You are `pc/claude-code/proj-a`, {ADMIN_NAME}, on pc. 2 others online:"
         " box-2/claude-code/proj-b, box-1/opencode/nav (busy). 2 unread messages."
         " Only sessions in team project folders reach the hub. Board topics: b, a.\n\nUnread messages:\n\n"
-        "Kaptyorka message from box-2/claude-code/proj-b:\n\none\n\n"
-        "Kaptyorka message from box-2/claude-code/proj-b:\n\ntwo")
+        "Kaptyorka message from box-2/claude-code/proj-b:\n\n" + fenced("one") + "\n\n"
+        "Kaptyorka message from box-2/claude-code/proj-b:\n\n" + fenced("two"))
 
 
 def test_brief_prompt_empty_when_nothing_new(hub):
@@ -247,7 +247,7 @@ def test_websocket_without_token_closed(tmp_path):
 def test_brief_stop_and_tool_are_unread_only(hub, event):
     box2_online(hub)
     hub_send(hub, PC, BOX2_NAME, "hi")
-    assert brief(hub, BOX2, event) == "Kaptyorka message from pc/claude-code/proj-a:\n\nhi"
+    assert brief(hub, BOX2, event) == "Kaptyorka message from pc/claude-code/proj-a:\n\n" + fenced("hi")
     assert brief(hub, BOX2, event) == ""
 
 
@@ -316,7 +316,7 @@ def test_agent_reply_to_web_sender_goes_to_page_not_inbox(hub):
     box2_online(hub)
     http.request("POST", hub.url + "/api/send", "T", {"to": BOX2_NAME, "text": "hi"})
     assert http.request("GET", hub.url + "/bridge/poll?machine=box-2&wait=0", "T")[1][0]["text"] == (
-        f"Kaptyorka message from {ADMIN_NAME} (web page):\n\nhi"
+        f"Kaptyorka message from {ADMIN_NAME} (web page):\n\n" + fenced("hi") +
         f"\nAnswer with send(to=\"{ADMIN_NAME}\"); text written only in your terminal is not seen by them.")
     assert "sent to 1 session" in str(hub_send(hub, BOX2, ADMIN_NAME, "on it"))
     last = feed(hub)["messages"][-1]

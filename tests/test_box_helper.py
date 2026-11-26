@@ -232,7 +232,7 @@ def test_report_names_each_chat_and_a_message_is_delivered_then_acked(box):
         rep = door.calls("report")[0]["chats"]
         assert [(c["chat"], c["project"], c["state"], c["name"]) for c in rep] == \
             [("claude-code:1111-2222", "proj-a", "idle", "fix tests")]
-        assert len(mb.texts()) == 1 and mb.texts()[0].endswith("\nhi from bob")
+        assert len(mb.texts()) == 1 and "\nhi from bob\n<<<end of data " in mb.texts()[0]
         assert mb.texts()[0].startswith("[kaptyorka: from bob on box-1")
         assert door.calls("ack") == [{"id": 7, "ok": True}]
     finally:
@@ -324,7 +324,9 @@ def test_helper_chats_start_only_in_a_team_folder_with_the_box_settings(box):
             return None
 
     def popen(argv, **kw):
-        started.append((argv, kw["cwd"], kw["env"]))
+        fds = kw["pass_fds"]
+        tok = os.read(fds[0], 100) if fds else b""   # what claude would read on the descriptor
+        started.append((argv, kw["cwd"], kw["env"], fds, tok))
         return P()
     door = box.door(lambda call, args: {"helpers": [{"project": "proj-a", "prompt": "write the tests"},
                                                     {"project": "nope", "prompt": "x"},
@@ -336,10 +338,29 @@ def test_helper_chats_start_only_in_a_team_folder_with_the_box_settings(box):
     finally:
         p.kill()
     assert len(started) == 1
-    argv, cwd, env = started[0]
+    argv, cwd, env, fds, tok = started[0]
     assert cwd == box.cwd and argv[-2:] == ["-p", "write the tests"]
     assert "--strict-mcp-config" in argv and f"{H.BOXES}/alice/claude-settings.json" in argv
-    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "tok" and env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "1"
+    # red team round 2, observation: the token on a socket, as box-exec hands it; in no
+    # environment, and no scrub flag (claude refuses it without bubblewrap)
+    assert "tok" not in json.dumps(env) and "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB" not in env
+    assert env["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"] == str(fds[0]) and tok == b"tok\n"
+    with pytest.raises(OSError):
+        os.fstat(fds[0])   # the helper kept no copy
+
+
+def test_no_helper_chat_when_the_box_can_read_the_claude_program(box, monkeypatch):
+    monkeypatch.setattr(H, "token_readable_problem", lambda prog: "the claude program can be read by the box")
+    started = []
+    door = box.door(lambda call, args: {"helpers": [{"project": "proj-a", "prompt": "x"}]})
+    p = live_chat(box)
+    try:
+        H.Helper("alice", door.path, box.state, box.home, token="tok",
+                 popen=lambda *a, **k: started.append(a), agents_json=False).step()
+    finally:
+        p.kill()
+    assert started == []
 
 
 def test_team_skills_go_into_the_box_home_only(box):

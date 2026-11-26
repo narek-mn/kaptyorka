@@ -148,11 +148,17 @@ def view_path(person: str, name: str) -> str:
     return f"{view_root(person)}/{check_name(name, allow_memory=True)}"
 
 
-def shown(s) -> str:
-    """A value for a message: printable, short."""
-    s = str(s)
-    s = "".join(c if c.isprintable() else "?" for c in s)
-    return repr(s[:80])
+def term(s) -> str:
+    """One line that is safe at the person's terminal: every character that is not printable
+    (escape and control characters, line breaks, tabs, direction overrides and other format
+    characters) becomes '?', so no name or text can move the cursor, set the title or the
+    clipboard, or start a forged line (red team round 2, finding 1)."""
+    return "".join(c if c.isprintable() else "?" for c in str(s))
+
+
+def shown(s, most: int = 80) -> str:
+    """An untrusted value (a file name, an argument) for a message: printable, short, quoted."""
+    return repr(term(s)[:most])
 
 
 def unit_escape(s: str) -> str:

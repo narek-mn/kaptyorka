@@ -1715,7 +1715,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
 
     def box_brief(agent: Agent, principal: Principal) -> str:
         return brief.compose(store, ws, ms, agent, principal,
-                             rules_text=rules_mod.rules_text(rs.current()["text"]))[0]
+                             rules_text=rules_mod.rules_text(rs.current()["text"]), box=True)[0]
 
     box = hub_box.BoxHub(store, closing, rs, ms, box_send, wake_bridges, box_brief)
 

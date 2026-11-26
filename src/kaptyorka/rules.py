@@ -5,6 +5,7 @@ import re
 from typing import Dict, List, Optional
 
 from kaptyorka.store import KaptyorkaError, Principal, Store
+from kaptyorka.tricks import check_tricks
 
 SCOPE = "team"
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -135,7 +136,17 @@ class RulesStore:
         summary = {"added": added, "changed": changed, "removed": removed}
         if added or changed or removed:
             self.store.log_add(by, "skills", str(summary))
+        held = {n: why for n in added + changed for why in [check_tricks(items[n])] if why}
+        if held:  # a personal laptop's box never gets them (hub_box.box_skills)
+            summary["not_for_boxes"] = held
+            for n, why in held.items():
+                self.store.log_add(by, "skill_held", f"{n} is not sent to personal laptops' boxes: it has {why}")
         return summary
+
+    def box_skills(self, scope: str = SCOPE) -> List[dict]:
+        """The skills a personal laptop's box gets: every one but those the trick filter
+        matches (red team round 2, finding 2), which a box chat would read as instructions."""
+        return [k for k in self.skills(scope) if check_tricks(k["text"]) is None]
 
     def skills_version(self, scope: str = SCOPE) -> str:
         rows = self.skills(scope)

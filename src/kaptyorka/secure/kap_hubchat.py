@@ -131,7 +131,7 @@ def scan_secrets(top_fd: int, limit: int = 200000):
 
 
 def show_found(found, most: int = 30):
-    lines = [f"  {p}: {why}" for p, why, _ in found[:most]]
+    lines = [f"  {kc.shown(p, 200)}: {why}" for p, why, _ in found[:most]]
     return lines + (["  ..."] if len(found) > most else [])
 
 
@@ -430,7 +430,7 @@ def remove(person: str, target: str) -> None:
            "  If a team chat may have sent the box's Claude token away, give it a new one: hubchat token-rotate")
     if traps:
         kr.say("  Team chats wrote these files, which can run code when a program of yours opens them. "
-               "Read them before you trust the folder:", *[f"    {t}" for t in traps])
+               "Read them before you trust the folder:", *[f"    {kc.shown(t, 200)}" for t in traps])
 
 
 def human(n: int) -> str:
@@ -485,7 +485,8 @@ def list_all(person: str) -> None:
             finally:
                 os.close(fd)
             if traps:
-                kr.say("    files that can run code, written by team chats: " + ", ".join(traps[:20]))
+                kr.say("    files that can run code, written by team chats: "
+                       + ", ".join(kc.shown(t, 200) for t in traps[:20]))
             secrets_found = [f for f in scan_secrets_path(real) if f[2] != "link"]
             if secrets_found:
                 kr.say("    WARNING: these look like secrets and team chats can read them:",
@@ -562,7 +563,7 @@ def main(argv) -> int:
     try:
         person = kr.caller_person()
         if not argv or argv[0] in ("help", "-h", "--help"):
-            kr.say(USAGE)
+            kr.say(*USAGE.splitlines())
             return 0
         cmd, rest = argv[0], argv[1:]
         opts = {"--name": "", "--separate": False, "--yes": False, "--force": False}
@@ -592,7 +593,7 @@ def main(argv) -> int:
             raise Refuse("hubchat has four commands: add, remove, list, token-rotate (hubchat help)")
         return 0
     except Refuse as e:
-        print(f"hubchat: {e}", file=sys.stderr)
+        print(kc.term(f"hubchat: {e}"), file=sys.stderr)
         return 2
 
 

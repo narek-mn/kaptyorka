@@ -37,7 +37,7 @@ def notices(person: str, box: str, name: str) -> None:
         folders = kr.load_folders(person)
         shorts = [f["shortcut"] for f in folders.values() if f.get("shortcut")]
         for w in kc.safe_directory_warnings(kr.git_safe_lines(person), shorts):
-            print("enter: " + w, file=sys.stderr)
+            print(kc.term("enter: " + w), file=sys.stderr)
         if name == kc.MEMORY:
             return
         stamp = f"{kc.box_root(box)}/.seen-{name}"
@@ -52,7 +52,8 @@ def notices(person: str, box: str, name: str) -> None:
             os.close(fd)
         if changed:
             print("enter: team chats changed files that can run code when you open this folder yourself: "
-                  + ", ".join(changed[:12]) + ". Look before you trust them in an editor.", file=sys.stderr)
+                  + ", ".join(kc.shown(c, 200) for c in changed[:12]) + ". Look before you trust them in an editor.",
+                  file=sys.stderr)
         kr.write_file(stamp, "", 0o600)
     except (kc.Refuse, OSError, KeyError, ValueError):
         pass
@@ -102,7 +103,7 @@ def main(argv) -> int:
         problems = kr.outside_check(person, boxes)
         if problems:
             for p in problems:
-                print(f"enter: self-check: {p}", file=sys.stderr)
+                print(kc.term(f"enter: self-check: {p}"), file=sys.stderr)
             print("enter: a wall is missing, so the team chat was not started.", file=sys.stderr)
             return 3
         notices(person, box, name)
@@ -111,7 +112,7 @@ def main(argv) -> int:
         tty = os.isatty(0) and os.isatty(1)
         cmd = build(person, box, tool, args, cwd, tty, os.environ.get("TERM", ""))
     except kc.Refuse as e:
-        print(f"enter: {e}", file=sys.stderr)
+        print(kc.term(f"enter: {e}"), file=sys.stderr)
         return 2
     env = dict(kr.CLEAN_ENV)
     if tty and kc.TERM_RX.fullmatch(os.environ.get("TERM", "")):

@@ -1,7 +1,7 @@
 import pytest
 
 from conftest import start_hub  # noqa: F401
-from helpers import call, call_error, person, run
+from helpers import call, call_error, fenced, person, run
 from kaptyorka import http, paths
 from kaptyorka.store import MAX_FILE, KaptyorkaError
 
@@ -173,7 +173,7 @@ def test_attachment_line_and_fetch_by_message_id(hub, home):
     run(call(hub, ia, "send", to=bname, text="look", file=f"id:{fid}"))
     line = f"[attached: pic.png (2 KB) — get it with fetch_file({fid})]"
     [item] = [o for o in hub.store.offer("pc") if o["kind"] == "message"]
-    assert f"look\n{line}\nAnswer with send(to=" in item["text"]
+    assert f"{fenced('look')}\n{line}\nAnswer with send(to=" in item["text"]
     hub.store.ack(item["id"], False)  # not read: still in the inbox
     hub.token = bob_t
     rows = run(call(hub, ib, "inbox"))

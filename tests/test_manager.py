@@ -416,7 +416,7 @@ def test_message_to_sleeping_manager_wakes_and_reaches_it(store, ms, clock):
     assert ms.may_launch(clock[0]) == (True, "")
     wake(store, mgr, admin, clock)
     items = store.offer(HOST, "0.8.0", principal=admin)
-    assert [(i["key"], "\n\nhi\n" in i["text"]) for i in items] == [("claude:m2", True)]
+    assert [(i["key"], "\nhi\n" in i["text"]) for i in items] == [("claude:m2", True)]
 
 
 def test_a_run_that_ended_after_long_starts_again_without_a_message(store, ms, clock):

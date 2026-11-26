@@ -132,8 +132,8 @@ DEPS: Tuple[Dep, ...] = (
         " Claude Code reads the OAuth token up to a newline, closes it and drops the variable"
         " (read in 2.1.332; not in its documentation); the probe looks for the name in the"
         " claude program",
-        "the box hands its Claude token without any environment", "the box's claude cannot sign in",
-        "no box chats", True),
+        "the box hands its Claude token without any environment (box-exec, and the helper's"
+        " helper chats)", "the box's claude cannot sign in", "no box chats", True),
     # OpenCode
     Dep("opencode.version", "opencode", "`opencode --version` prints X.Y.Z", "V1 or V2 handling",
         "`opencode --version` output changed", "treated as V1", True),

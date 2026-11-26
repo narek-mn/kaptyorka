@@ -767,7 +767,7 @@ def test_shell_hook_defines_functions_in_bash_only_outside_posix_mode(tmp_path):
 def test_programs_import_only_the_standard_library_and_each_other():
     import ast
     import sys as _sys
-    ours = {"kapcommon", "kaproot", "kap_hubchat", "proxybridge"}  # proxybridge: kap_proxybridge.py, installed so
+    ours = {"kapcommon", "kaproot", "kap_hubchat", "proxybridge", "fence", "kap_fence"}  # kap_proxybridge.py, kap_fence.py: installed so
     for name in os.listdir(SECURE):
         if not name.endswith(".py"):
             continue
@@ -842,3 +842,45 @@ def test_token_rotate_writes_the_new_token_and_ends_claude_chats(tmp_path, monke
     monkeypatch.setattr(hc, "read_new_token", lambda: "not a token; rm -rf")
     with pytest.raises(kc.Refuse, match="does not look like a token"):
         hc.token_rotate("alice")
+
+
+# red team round 2, finding 1: a name the box chose never reaches the person's terminal raw
+EVIL_NAMES = ["id_rsa\x1b]0;PWNED-TITLE\x07\x1b[31mFAKE\x1b[0m.pem",
+              "a.pem\n$ hubchat list   # all clean",
+              "x\x1b]52;c;cm0gLXJmIH4=\x07.key", "b‮gnp.pem", "c\x9b2J.pem", "d\r\x08\x08.pem"]
+
+
+def _terminal_safe(out: str) -> bool:
+    return all(c.isprintable() or c == "\n" for c in out)
+
+
+@pytest.mark.parametrize("name", EVIL_NAMES)
+def test_show_found_and_say_print_no_terminal_control(name, capsys):
+    lines = hc.show_found([(name, "its name looks like a secret", "name")])
+    assert len(lines) == 1 and all(c.isprintable() for c in lines[0])
+    kr.say("found:", *lines, "trap: " + name)     # the trap listings print raw names through say
+    out = capsys.readouterr().out
+    assert _terminal_safe(out) and out.count("\n") == 3
+
+
+def test_hubchat_and_enter_errors_are_one_safe_line(monkeypatch, capsys):
+    monkeypatch.setattr(hc.kr, "caller_person", lambda: "alice")
+
+    def refuse(*a, **k):
+        raise kc.Refuse("a\x1b]0;x\x07b\nforged line")
+    monkeypatch.setattr(hc, "list_all", refuse)
+    assert hc.main(["list"]) == 2
+    err = capsys.readouterr().err
+    assert _terminal_safe(err) and err.count("\n") == 1
+    monkeypatch.setattr(en.kr, "caller_person", lambda: "alice")
+    monkeypatch.setattr(en.kc, "filter_args", refuse)
+    assert en.main(["claude"]) == 2
+    err = capsys.readouterr().err
+    assert _terminal_safe(err) and err.count("\n") == 1
+
+
+def test_wallcheck_fail_prints_one_safe_line(capsys):
+    with pytest.raises(SystemExit):
+        wc.fail("W1", "/x\x1b[2J\nwallcheck ok: 15 walls")
+    err = capsys.readouterr().err
+    assert _terminal_safe(err) and err.count("\n") == 1

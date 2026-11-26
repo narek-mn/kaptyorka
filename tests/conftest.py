@@ -142,6 +142,18 @@ def no_real_gpu(monkeypatch):
     monkeypatch.setattr(usage, "_nvidia_smi", lambda: None)
 
 
+FENCE = "f0f0f0f0f0f0f0f0"  # every data fence's boundary in tests, so texts can be compared whole
+
+
+@pytest.fixture(autouse=True)
+def fixed_fence(monkeypatch):
+    """A message's data fence has a random boundary per delivery; tests that compare a whole
+    text get FENCE instead (tests/test_fence.py checks the random one)."""
+    from kaptyorka.secure import kap_fence
+
+    monkeypatch.setattr(kap_fence, "new_boundary", lambda: FENCE)
+
+
 @pytest.fixture(autouse=True)
 def hub_home(tmp_path, monkeypatch):
     """A hub's tick writes the manager's files under KAPTYORKA_HOME: never the real one."""

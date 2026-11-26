@@ -35,7 +35,7 @@ def test_offer_only_to_own_sessions(two):
     s.send("r1", "alice@pc/codex/proj-a", "for alice")
     assert s.offer("alice@pc", "", pb) == []  # bob names alice's machine: nothing
     items = s.offer("alice@pc", "", pa)
-    assert ["\n\nfor alice\n" in i["text"] for i in items] == [True]
+    assert ["\nfor alice\n" in i["text"] for i in items] == [True]
 
 
 def test_offer_respects_the_device(two, tmp_path):

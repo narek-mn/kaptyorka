@@ -1,12 +1,15 @@
 """The start brief: ordered sections within a character budget, cached per session."""
 import time
+from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Tuple
 
 from kaptyorka import __version__
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.hub_feed import session_row
 from kaptyorka.rules import HEADING as RULES_HEADING, TRAILER as RULES_TRAILER
-from kaptyorka.store import Agent, KaptyorkaError, Store, attach_line
+from kaptyorka.secure.kap_fence import fence, inline
+from kaptyorka.tricks import check_tricks
+from kaptyorka.store import Agent, KaptyorkaError, Note, Store, attach_line
 
 BUDGET = 6000  # characters
 CACHE_S = 10
@@ -46,9 +49,32 @@ def _request_lines(store: Store, principal) -> str:
 
 
 def message_text(m) -> str:
+    """A message for a chat: the origin line, then the sender's words in a data fence
+    (kap_fence: they cannot close it or forge a kaptyorka line). The hub's own notices are not
+    fenced: the hub wrote them."""
     return m.text if m.kind != "message" else \
         f"Kaptyorka message from {m.sender}{' (web page)' if m.from_web else ''}" \
-        f"{f' (reply to {m.reply_to})' if m.reply_to else ''}:\n\n{m.text}{attach_line(m.file)}"
+        f"{f' (reply to {m.reply_to})' if m.reply_to else ''}:\n\n{m.text if m.from_hub else fence(m.text)}{attach_line(m.file)}"
+
+
+def note_origin(note) -> str:
+    """Who wrote a note and when, for a box chat (red team round 2, finding 2)."""
+    day = datetime.fromtimestamp(note.time, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    where = f" of {inline(note.project, 100)}" if note.project else " on the team board"
+    return f"[kaptyorka: note {inline(note.topic, 100)}{where}, last written by {inline(note.author, 64)} on {day}.]"
+
+
+def note_text(note) -> str:
+    """A note for a box chat: its origin line, then its text in a data fence."""
+    return note_origin(note) + "\n" + fence(note.text, "note")
+
+
+def _guarded(part: str, what: str) -> str:
+    """A brief part built from people's words, for a box chat: left out with a plain reason
+    when the trick filter matches it."""
+    why = check_tricks(part) if part else None
+    return part if why is None else (f"[kaptyorka: the {what} was left out here: it has {why}."
+                                     " A person can read it on the hub page.]")
 
 
 def _ago(s: float) -> str:
@@ -111,18 +137,18 @@ def _projects(store, principal) -> str:
     return "Projects you may read:\n" + "\n".join(lines) if lines else ""
 
 
-def _here(store, ws, ms, agent: Agent, principal) -> Tuple[str, str, str]:
-    """Section 4 for the session's project: (project, state note text, git block)."""
+def _here(store, ws, ms, agent: Agent, principal) -> Tuple[str, Optional[Note], str]:
+    """Section 4 for the session's project: (project, state note or None, git block)."""
     if principal is None:
-        return "", "", ""
+        return "", None, ""
     folders = ws.folders(principal.device_id)
     project = ms.session_project(agent.cwd, agent.project, folders)
     if not project:  # "" would read the team board's notes
-        return "", "", ""
+        return "", None, ""
     try:
         note = store.notes_read("state", principal, project)
     except KaptyorkaError:  # not registered, or no access: nothing about it here
-        return project, "", ""
+        return project, None, ""
     now = store.clock()
     lines = [f'- {g["person"]} on {g["branch"]}: "{g["subject"]}" ({_ago(now - g["time"])})'
              for g in ms.git_recent(project, days=7)]
@@ -131,28 +157,40 @@ def _here(store, ws, ms, agent: Agent, principal) -> Tuple[str, str, str]:
     if branches:
         git += ("\n" if git else "") + "Branches with open sessions: " + ", ".join(
             f"{b or '?'} ({', '.join(names)})" for b, names in branches.items())
-    return project, note.text if note is not None else "", git
+    return project, note, git
 
 
 def build(store, ws, ms, agent: Agent, principal, rules_text: str = "") -> str:
     return compose(store, ws, ms, agent, principal, rules_text)[0]
 
 
-def compose(store, ws, ms, agent: Agent, principal, rules_text: str = "") -> Tuple[str, int]:
-    """The brief, and how many unread messages it delivered (they are now marked read)."""
+def compose(store, ws, ms, agent: Agent, principal, rules_text: str = "",
+            box: bool = False) -> Tuple[str, int]:
+    """The brief, and how many unread messages it delivered (they are now marked read).
+    `box`: for a personal laptop's box chat. The brief is the hub's own text, but some parts
+    carry people's words (titles, knocks, project descriptions, commit subjects, the state
+    note): each such part is left out when the trick filter matches it, and the state note
+    comes with its origin line in a data fence. The team rules are the admin's and stay."""
     worker = ws.by_key(agent.key)
     young = agent.started is not None and agent.started > store.clock() - WORKER_BRIEF_S
     # some tools cannot take the worker's task on the command line
     first = ws.first_message(worker["name"]) if worker is not None and young else ""
-    project, state, git = _here(store, ws, ms, agent, principal)
+    project, note, git = _here(store, ws, ms, agent, principal)
+    state = note.text if note is not None else ""
     projects = _projects(store, principal)
     unread = store.inbox(agent.key)
     you = _you(store, ws, agent, principal, len(unread))
     mail = "Unread messages:\n\n" + "\n\n".join(message_text(m) for m in unread) if unread else ""
     head = f"State of {project}:\n"
+    if box:
+        first, you = _guarded(first, "task text"), _guarded(you, "list of sessions")
+        projects, git = _guarded(projects, "project list"), _guarded(git, "git activity")
+        if note is not None:
+            head = f"State of {project}:\n{note_origin(note)}\n"
 
     def text(rules, projects, git, state) -> str:
-        parts = [first, rules, you, projects, head + state if state else "", git, mail]
+        shown = fence(state, "note") if box and state else state
+        parts = [first, rules, you, projects, head + shown if state else "", git, mail]
         return "\n\n".join(p for p in parts if p)
 
     return _fit(text, rules_text, projects, git, state), len(unread)

@@ -964,10 +964,12 @@ def tree_size(path: str) -> int:
 
 
 def say(*lines: str) -> None:
+    """Lines for the person's terminal, each made safe (kc.term): a name the box chose that
+    reaches a message anyway cannot carry an escape sequence or a line break."""
     for ln in lines:
-        print(ln, flush=True)
+        print(kc.term(ln), flush=True)
 
 
 def die(msg: str, code: int = 2) -> None:
-    print(f"{os.path.basename(sys.argv[0])}: {msg}", file=sys.stderr, flush=True)
+    print(kc.term(f"{os.path.basename(sys.argv[0])}: {msg}"), file=sys.stderr, flush=True)
     sys.exit(code)

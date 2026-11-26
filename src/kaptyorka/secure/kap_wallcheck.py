@@ -38,6 +38,7 @@ LOCKED = ("state/claude/settings.json", "state/codex/config.toml", "state/codex/
 
 
 def fail(wall: str, what: str) -> None:
+    what = "".join(c if c.isprintable() else "?" for c in str(what))   # a box-made name: one safe line
     print(f"wallcheck: wall {wall} is missing: {what}. The tool was not started.", file=sys.stderr, flush=True)
     sys.exit(1)
 

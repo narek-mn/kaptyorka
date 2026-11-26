@@ -45,7 +45,7 @@ def test_held_send_reaches_the_session_on_its_next_report(team):
     assert [m.read for m in team.s.messages() if m.to == "box-1/codex/proj-a-2"] == [False, False]
     team.t[0] += 60
     team.beat("bob")  # back: the next report pushes both
-    assert [o["text"].split("\n\n")[1].split("\n")[0] for o in team.s.offer("box-1")
+    assert [o["text"].split("\n\n")[1].split("\n")[1] for o in team.s.offer("box-1")
             if o["key"] == team.keys["bob"]] == ["hi", "again"]
 
 

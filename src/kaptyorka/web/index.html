@@ -2919,7 +2919,7 @@ a.p-main { color: inherit; text-decoration: none; }
     (feed.held || []).forEach(function (h) {  /* the trick filter kept it back: Yes delivers it unchanged */
       out.push({ key: "h:" + h.id, t: h.created, who: h.from,
                  what: ["wrote to ", el("b", { text: h.to }), ", held: it has " + h.reason], why: h.text.length > 300 ? h.text.slice(0, 300) + "\u2026" : h.text,
-                 tip: h.text + "\n\nRelease delivers it as written. Drop throws it away.",
+                 tip: h.text + "\n\nRelease " + (h.kind === "note" ? "saves the note" : "delivers it") + " as written. Drop throws it away.",
                  yes: function () { return api("/api/held/" + h.id, { release: true }); },
                  no: function () { return api("/api/held/" + h.id, { release: false }); } });
     });

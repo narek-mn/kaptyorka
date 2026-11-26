@@ -1127,7 +1127,7 @@ def test_manager_between_runs_gets_the_admin_page(hub, clock):
     b = ended_manager(hub, clock)
     assert http.request("POST", hub.url + "/api/send", b.token,
                         {"to": MGR_NAME, "text": "from root"})[0] == 200
-    assert any("\n\nfrom root\n" in t for t in woken(hub, b))
+    assert any("\nfrom root\n" in t for t in woken(hub, b))
 
 
 def test_manager_between_runs_gets_a_member_page(hub, clock):
@@ -1135,7 +1135,7 @@ def test_manager_between_runs_gets_a_member_page(hub, clock):
     _, btok, _ = plain(hub, "bob")
     assert http.request("POST", hub.url + "/api/send", btok,
                         {"to": MGR_NAME, "text": "from bob"})[0] == 200
-    assert any("\n\nfrom bob\n" in t for t in woken(hub, b))
+    assert any("\nfrom bob\n" in t for t in woken(hub, b))
 
 
 def test_manager_between_runs_gets_a_member_session(hub, clock):
@@ -1145,7 +1145,7 @@ def test_manager_between_runs_gets_a_member_session(hub, clock):
     run(call(bob, B, "inbox"))
     assert run(call(bob, B, "send", to=MGR_NAME, text="from bob's session")) \
         == "sent to 1 session"
-    assert any("\n\nfrom bob's session\n" in t for t in woken(hub, b))
+    assert any("\nfrom bob's session\n" in t for t in woken(hub, b))
 
 
 def test_manager_between_runs_gets_a_hub_notice(hub, clock):
