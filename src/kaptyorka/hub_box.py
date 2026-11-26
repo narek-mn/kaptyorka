@@ -370,7 +370,7 @@ class BoxHub:
         for m in msgs:
             out.append({"id": m.id, "chat": chat, "kind": "page" if m.from_web else "chat",
                         **origin.get(m.id, {}),
-                        "text": brief_mod.message_text(m), "body": m.text,
+                        "text": brief_mod.message_text(m, box=True), "body": m.text,
                         **({} if m.from_hub else {"reply": clean(m.reply_to or m.sender, 128)}),
                         **({"files": [{"id": m.file["id"], "name": m.file["name"],
                                        "size": m.file["size"]}]} if m.file else {})})

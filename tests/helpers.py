@@ -338,8 +338,9 @@ def scratch_dir(prefix: str):
     return Path(tempfile.mkdtemp(prefix=prefix, dir=base.parent))
 
 
-def fenced(text: str, what: str = "message") -> str:
-    """`text` in the data fence a delivery puts it in (the tests' fixed boundary)."""
+def fenced(text: str, what: str = "message", strict: bool = False) -> str:
+    """`text` in the data fence a delivery puts it in (the tests' fixed boundary); strict: a
+    box chat's wording, False (most tests): a team machine's."""
     from conftest import FENCE
     from kaptyorka.secure.kap_fence import fence
-    return fence(text, what, boundary=FENCE)
+    return fence(text, what, boundary=FENCE, strict=strict)

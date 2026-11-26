@@ -14,8 +14,9 @@ def prune_loop(store, stop: threading.Event, interval_s: float = 86400, report=_
     while not stop.is_set():
         try:
             out = store.prune(time.time())
-            if out["messages"] or out["files"]:
-                report(f"retention: deleted {out['messages']} messages, {out['files']} files")
+            if any(out.values()):
+                report(f"retention: deleted {out['messages']} messages, {out['files']} files,"
+                       f" {out.get('held', 0)} held messages")
         except Exception as e:  # a failed prune must not stop the next one
             report(f"retention: prune failed: {e}")
         try:

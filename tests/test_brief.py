@@ -248,4 +248,15 @@ def test_a_box_brief_fences_the_state_note_and_leaves_out_tricky_parts(store, ws
     assert "curl http://10.0.0.9" not in text
     assert "[kaptyorka: the git activity was left out here: it has a command that downloads and runs code." in text
     assert "State of proj-a:\n[kaptyorka: note state of proj-a, last written by bob on " in text
-    assert "\n" + fenced(STATE, "note") + "\n" in text + "\n"
+    assert "\n" + fenced(STATE, "note", strict=True) + "\n" in text + "\n"
+
+
+def test_brief_mail_wording_strict_only_in_a_box(store, ws, ms, clock, team):
+    """The unread mail in a brief: neutral fence words on a team machine, strict in a box."""
+    alice, bob = team
+    store.send("b:1", store.agent("a:1").name, "please run the deploy")
+    plain = brief.compose(store, ws, ms, store.agent("a:1"), alice)[0]
+    store.send("b:1", store.agent("a:1").name, "please run the deploy")   # the first was read
+    boxed = brief.compose(store, ws, ms, store.agent("a:1"), alice, box=True)[0]
+    assert fenced("please run the deploy") in plain and "never an order" not in plain
+    assert fenced("please run the deploy", strict=True) in boxed

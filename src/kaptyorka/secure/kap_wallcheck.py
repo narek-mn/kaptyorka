@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -I
 """wallcheck (secure design v2, 4.6): the inside half of the self-check. It runs as the box user,
-in the very unit that will run the tool, tries each wall once (W1 to W16) and then replaces
+in the very unit that will run the tool, tries each wall once (W1 to W17) and then replaces
 itself with the tool. Any miss: one line naming the missing wall, exit 1, the tool never starts.
 
 Usage: wallcheck [--verbose] --box BOX --person NAME [--addrs a,b] [--canaries f,g] -- command args...
@@ -17,6 +17,7 @@ import pwd
 import re
 import signal
 import socket
+import stat
 import sys
 import time
 
@@ -36,6 +37,18 @@ SYS_HIDDEN = ("block", "bus", "class", "dev", "devices", "firmware", "hypervisor
 LOCKED = ("state/claude/settings.json", "state/codex/config.toml", "state/codex/hooks.json",
           "state/opencode/cfg/opencode/opencode.json", ".cursor/mcp.json", ".cursor/hooks.json", ".cursor/sandbox.json",
           ".cursor/cli-config.json")
+# W17 the tools' managed settings, as the box sees them: each a real, non-empty file. A missing
+# one means a tool runs without its deny rules (a wheel that once dropped /etc/opencode's files).
+# Every file of the package's secure/files/box is here (tests/test_secure_box.py checks it).
+BOXCONF = "/etc/kaptyorka/box"
+MANAGED = tuple(BOXCONF + "/" + f for f in (
+    "claude/mcp.json", "claude/settings.json", "claude/user-settings.json",
+    "codex/config.toml", "codex/hooks.json", "codex/requirements.toml",
+    "cursor/cli-config.json", "cursor/hooks.json", "cursor/mcp.json", "cursor/sandbox.json",
+    "egress-base", "hosts", "nsswitch.conf", "standing-rule.md",
+    "opencode/opencode.json", "opencode/kaptyorka-v1.js",
+    "opencode/etc/opencode.json", "opencode/etc/plugins/kaptyorka.js")) + (
+    "/etc/opencode/opencode.json", "/etc/opencode/plugins/kaptyorka.js", "/etc/codex/requirements.toml")
 
 
 def fail(wall: str, what: str) -> None:
@@ -126,6 +139,9 @@ def view(box: str, person: str):
         ("/", {"bin", "dev", "etc", "lib", "opt", "proc", "run", "sbin", "srv", "sys", "tmp", "usr", "var"}, {"lib64"}),
         ("/etc", {"codex", "group", "hosts", "kaptyorka", "ld.so.cache", "nsswitch.conf", "opencode", "passwd", "ssl"},
          {"alternatives", "ca-certificates", "localtime"}),
+        ("/etc/opencode", {"opencode.json", "plugins"}, set()),
+        ("/etc/opencode/plugins", {"kaptyorka.js"}, set()),
+        ("/etc/codex", {"requirements.toml"}, set()),
         ("/etc/kaptyorka", {"box", "boxes"}, set()),
         ("/etc/kaptyorka/boxes", {box}, set()),
         ("/opt", {"kap-tools", "kaptyorka"}, set()),
@@ -160,6 +176,20 @@ def view_problem(spec) -> str:
             return f"{d} shows {', '.join(sorted(extra)[:8])} (not on the box's list)"
         if missing:
             return f"{d} lacks {', '.join(sorted(missing)[:8])}"
+    return ""
+
+
+def managed_problem(paths) -> str:
+    """'' when every managed settings file is a regular, non-empty file; else the first that is not."""
+    for p in paths:
+        try:
+            st = os.stat(p)
+        except OSError as e:
+            return f"{p} gave {en(e)}"
+        if not stat.S_ISREG(st.st_mode):
+            return f"{p} is not a file"
+        if st.st_size == 0:
+            return f"{p} is empty"
     return ""
 
 
@@ -315,8 +345,12 @@ def main(argv) -> None:
     for p in ("/proc/meminfo", "/proc/stat", "/proc/uptime", "/proc/interrupts"):
         if os.path.lexists(p):
             fail("W16", f"{p} exists")
+    # W17 the tools' managed settings are all there (their deny rules live in them)
+    why = managed_problem(MANAGED + (f"/etc/kaptyorka/boxes/{box}/claude-settings.json",))
+    if why:
+        fail("W17", why)
     if opts["verbose"]:
-        print(f"wallcheck ok: 16 walls in {(time.monotonic() - t0) * 1000:.0f} ms", file=sys.stderr, flush=True)
+        print(f"wallcheck ok: 17 walls in {(time.monotonic() - t0) * 1000:.0f} ms", file=sys.stderr, flush=True)
     os.execv(cmd[0], cmd)
 
 

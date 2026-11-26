@@ -906,6 +906,31 @@ def test_wallcheck_relay_door(tmp_path):
     assert wc.relay_answers(str(tmp_path / "none.sock"))
 
 
+def test_wallcheck_needs_every_managed_tool_file(tmp_path):
+    """W17 lists every file the package installs into /etc/kaptyorka/box, plus the two system
+    places they are bound to (/etc/opencode, /etc/codex); W2 allows nothing else in those."""
+    files = os.path.join(os.path.dirname(kc.__file__), "files", "box")
+    shipped = set()
+    for dirpath, _, names in os.walk(files):
+        for n in names:
+            shipped.add(os.path.relpath(os.path.join(dirpath, n), files))
+    want = {f"{wc.BOXCONF}/{r}" for r in shipped}
+    want |= {"/etc/opencode/" + os.path.relpath(r, "opencode/etc") for r in shipped if r.startswith("opencode/etc/")}
+    want.add("/etc/codex/requirements.toml")
+    assert wc.BOXCONF == kc.BOXCONF and set(wc.MANAGED) == want
+    v = {d: need | may for d, need, may in wc.view("alice", "alice")}
+    assert v["/etc/opencode"] == {"opencode.json", "plugins"} and v["/etc/opencode/plugins"] == {"kaptyorka.js"}
+    assert v["/etc/codex"] == {"requirements.toml"}
+    good, empty, d = tmp_path / "good", tmp_path / "empty", tmp_path / "dir"
+    good.write_text("{}")
+    empty.write_text("")
+    d.mkdir()
+    assert wc.managed_problem([str(good)]) == ""
+    assert "is empty" in wc.managed_problem([str(good), str(empty)])
+    assert "is not a file" in wc.managed_problem([str(d)])
+    assert "ENOENT" in wc.managed_problem([str(tmp_path / "none")])
+
+
 def test_wallcheck_constants_match_kapcommon():
     assert wc.CANARY_FILES == kc.CANARY_FILES and wc.CANARY_SHM_KEY == kc.CANARY_SHM_KEY
     assert wc.CANARY_SHARED_RX.pattern == kc.CANARY_SHARED_RX.pattern

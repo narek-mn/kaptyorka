@@ -48,13 +48,13 @@ def _request_lines(store: Store, principal) -> str:
     return out
 
 
-def message_text(m) -> str:
+def message_text(m, box: bool = False) -> str:
     """A message for a chat: the origin line, then the sender's words in a data fence
     (kap_fence: they cannot close it or forge a kaptyorka line). The hub's own notices are not
-    fenced: the hub wrote them."""
+    fenced: the hub wrote them. `box`: a box chat's strict fence wording; else the neutral one."""
     return m.text if m.kind != "message" else \
         f"Kaptyorka message from {m.sender}{' (web page)' if m.from_web else ''}" \
-        f"{f' (reply to {m.reply_to})' if m.reply_to else ''}:\n\n{m.text if m.from_hub else fence(m.text)}{attach_line(m.file)}"
+        f"{f' (reply to {m.reply_to})' if m.reply_to else ''}:\n\n{m.text if m.from_hub else fence(m.text, strict=box)}{attach_line(m.file)}"
 
 
 def note_origin(note) -> str:
@@ -180,7 +180,7 @@ def compose(store, ws, ms, agent: Agent, principal, rules_text: str = "",
     projects = _projects(store, principal)
     unread = store.inbox(agent.key)
     you = _you(store, ws, agent, principal, len(unread))
-    mail = "Unread messages:\n\n" + "\n\n".join(message_text(m) for m in unread) if unread else ""
+    mail = "Unread messages:\n\n" + "\n\n".join(message_text(m, box) for m in unread) if unread else ""
     head = f"State of {project}:\n"
     if box:
         first, you = _guarded(first, "task text"), _guarded(you, "list of sessions")

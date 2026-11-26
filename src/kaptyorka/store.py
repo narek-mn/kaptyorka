@@ -28,6 +28,11 @@ MAX_FILE = 5_000_000
 FILE_TYPES = ("png", "jpg", "jpeg", "gif", "webp", "svg", "txt", "md", "log", "json", "csv", "pdf",
               "mp4", "webm", "mov", "m4v", "ogg")
 RATE = (30, 60)
+# held messages and notes (the trick filter): each counts as a send, one sender keeps at most
+# HELD_OPEN_CAP waiting at once, and a held row (and the file it holds) goes after HELD_KEEP_S
+HELD_OPEN_CAP = 20
+HELD_KEEP_DAYS = 30
+HELD_KEEP_S = HELD_KEEP_DAYS * 86400
 REPLY_S = 86400  # a session may answer one that messaged it this recently, whoever it is
 SCHEMA_VERSION = 2
 INVITE_TTL_S = 7 * 86400
@@ -1419,10 +1424,14 @@ class Store:
         self.log_add(by, "settings", f"close_left={'on' if on else 'off'}")
 
     def prune(self, now: float) -> dict:
-        """Delete old messages and their files, and unsent uploads older than a day.
-        Notes, the log, requests, doors and knocks are never touched."""
+        """Delete old messages and their files, unsent uploads older than a day (unless a held
+        message still waits with it), and held messages and notes after HELD_KEEP_DAYS (or the
+        retention, when shorter), released, dropped or still waiting. Notes, the log, requests,
+        doors and knocks are never touched."""
         cutoff = now - self.retention_s()
         with self.lock:
+            held = self.db.execute("DELETE FROM held WHERE created < ?",
+                                   (max(cutoff, now - HELD_KEEP_S),)).rowcount
             old = [r["id"] for r in self.db.execute(
                 "SELECT id FROM messages WHERE created < ?", (cutoff,))]
             file_ids = set()
@@ -1433,14 +1442,16 @@ class Store:
                     f"SELECT id FROM files WHERE message_id IN ({marks})", chunk))
                 self.db.execute(f"DELETE FROM messages WHERE id IN ({marks})", chunk)
             file_ids.update(r["id"] for r in self.db.execute(
-                "SELECT id FROM files WHERE message_id IS NULL AND created < ?", (now - 86400,)))
+                "SELECT id FROM files WHERE message_id IS NULL AND created < ? AND id NOT IN"
+                " (SELECT file_id FROM held WHERE decided_at IS NULL AND file_id IS NOT NULL)",
+                (now - 86400,)))
             for fid in file_ids:
                 self.db.execute("DELETE FROM files WHERE id=?", (fid,))
                 try:
                     (paths.files_dir() / str(fid)).unlink()
                 except FileNotFoundError:
                     pass
-            return {"messages": len(old), "files": len(file_ids)}
+            return {"messages": len(old), "files": len(file_ids), "held": held}
 
     # agents
 
@@ -1848,6 +1859,7 @@ class Store:
         reason = check_tricks(text)
         if reason is None:
             return
+        self._hold_room(sender_key, now)
         rows = [{k: t[k] for k in ("key", "name", "machine", "tool", "project")} for t in targets]
         hid = self.db.execute(
             "INSERT INTO held (sender_key, sender_name, to_name, targets, text, file_id, reason,"
@@ -1855,8 +1867,60 @@ class Store:
             (sender_key, sender_name, to, json.dumps(rows), text, file_id, reason, now)).lastrowid
         self.db.execute("INSERT INTO log (time, person, kind, detail) VALUES (?,?,?,?)",
                         (now, sender_name, "message_held", f"#{hid} to {to}: {reason}"))
+        self._rate_hit(sender_key, now)   # a held send is a send: it counts toward the rate limit
         raise MessageHeld(f"not sent: held for a person to look at, because it has {reason}."
                           " An admin can release it; nothing was delivered.")
+
+    def _hold_room(self, sender_key, now) -> None:
+        """Lock held. Refuse a new hold when this sender already has HELD_OPEN_CAP waiting: a
+        tricked chat cannot fill the admin's list."""
+        n = self.db.execute("SELECT COUNT(*) FROM held WHERE sender_key=? AND decided_at IS NULL",
+                            (sender_key,)).fetchone()[0]
+        if n >= HELD_OPEN_CAP:
+            raise KaptyorkaError(f"not sent: {n} of your messages already wait for an admin to look at;"
+                                 " nothing more is held until an admin releases or drops them.")
+
+    def _held_sender(self, row):
+        """Lock held. The held row's sender as _may_message reads it, as of now; None when it is
+        gone (a session the hub forgot, or a person no longer on the team)."""
+        if row["sender_key"].startswith("web:"):
+            me = self._as_target({"key": row["sender_key"]})
+            return me if me["person_id"] is not None else None
+        a = self.db.execute("SELECT key, person_id FROM agents WHERE key=?", (row["sender_key"],)).fetchone()
+        return {"key": a["key"], "person_id": a["person_id"]} if a else None
+
+    def _held_still_allowed(self, row) -> None:
+        """Lock held. Rights are checked again at release: a door that closed or a role that was
+        taken away since the hold means the held text is not delivered or saved."""
+        sender = self._held_sender(row)
+        if sender is None:
+            raise KaptyorkaError(f"not released: {row['sender_name']} is not on the hub any more; drop it")
+        if row["kind"] == "note":
+            if sender["person_id"] is None:
+                if row["project"] is not None:
+                    raise KaptyorkaError(f"not released: {row['sender_name']} has no access to"
+                                         f" project {row['project']} now; drop it")
+                return
+            try:
+                self._check_project(row["project"], self._person_principal(sender["person_id"]), write=True)
+            except KaptyorkaError as e:
+                raise KaptyorkaError(f"not released: {row['sender_name']} may not write it now ({e}); drop it")
+            return
+        self._expire_doors(self.clock())
+        for t in json.loads(row["targets"]):
+            if t["key"].startswith("web:"):
+                target = self._as_target(t)
+            else:
+                a = self.db.execute("SELECT person_id FROM agents WHERE key=?", (t["key"],)).fetchone()
+                target = {"key": t["key"], "person_id": a["person_id"] if a else None}
+            if not self._may_message(sender, target):
+                raise KaptyorkaError(f"not released: {row['sender_name']} may not write to {t['name']}"
+                                     " now; drop it")
+        if row["file_id"] is not None:
+            f = self.db.execute("SELECT message_id FROM files WHERE id=?", (row["file_id"],)).fetchone()
+            if f is None or f["message_id"] is not None or not (paths.files_dir() / str(row["file_id"])).is_file():
+                raise KaptyorkaError("not released: its attached file is gone; drop it and ask for it"
+                                     " to be sent again")
 
     def held_messages(self) -> List[dict]:
         """Messages waiting for an admin, oldest first. `text` shows hidden characters as
@@ -1880,6 +1944,7 @@ class Store:
         with self.lock:
             row = self._held_open(hid)
             now = self.clock()
+            self._held_still_allowed(row)
             if row["kind"] == "note":
                 self._note(row["topic"], row["text"], row["sender_name"], row["project"])
                 n = 1
@@ -1894,7 +1959,7 @@ class Store:
             return n
 
     def held_drop(self, hid: int, by: str) -> None:
-        """Discard a held message; the text is kept only until the hub's retention prunes it."""
+        """Discard a held message; the row is kept until prune removes it (HELD_KEEP_DAYS)."""
         with self.lock:
             row = self._held_open(hid)
             self.db.execute("UPDATE held SET decided_at=?, decision='dropped', decided_by=?"
@@ -1932,10 +1997,10 @@ class Store:
                     targets = [t for t in targets if self._may_message(me, self._as_target(t))]
                 elif not all(self._may_message(me, self._as_target(t)) for t in targets):
                     raise KaptyorkaError(UNREACHABLE.format(to=to))
-                self.hold_if_tricky(key, name, to, targets, text, file_id, now)
-                if to != "all":  # so the session can reply to the page; a broadcast is one-way
-                    opened = [t["name"] for t in targets if self._reply_door(key, person_id, t, now)]
-            self.hold_if_tricky(key, name, to, targets, text, file_id, now)  # no person_id: the page
+            # before the reply door below: a held message opens no door
+            self.hold_if_tricky(key, name, to, targets, text, file_id, now)
+            if person_id is not None and to != "all":  # so the session can reply to the page
+                opened = [t["name"] for t in targets if self._reply_door(key, person_id, t, now)]
             n = self._insert(key, name, targets, text, now, file_id)
         for other in opened:
             self.log_add(name, "door_open", f"{key} <-> {other}")
@@ -2270,7 +2335,7 @@ class Store:
                     self._bind(m, t["key"])
                     shown, reply = self._from_for(m, t["person_id"])
                     sender = f"{shown} (reply to {reply})" if reply else _sender(m)
-                    text = (f"Kaptyorka message from {_one_line(sender)}:\n\n{m['text'] if m['sender_key'].startswith('hub:') else fence(m['text'])}"
+                    text = (f"Kaptyorka message from {_one_line(sender)}:\n\n{m['text'] if m['sender_key'].startswith('hub:') else fence(m['text'], strict=t['key'].startswith('box:'))}"
                             f"{attach_line(self._file_info(m['file_id']))}"
                             f"{'' if m['sender_key'].startswith('hub:') else reply_line(reply or m['sender_name'])}"
                             if m["kind"] == "message" else m["text"])  # knocks and doors: as written
@@ -2878,12 +2943,15 @@ class Store:
             return
         where = f"note {topic} of {project}" if project else f"note {topic} on the team board"
         now = self.clock()
+        self._rate_check(key, now)
+        self._hold_room(key, now)
         hid = self.db.execute(
             "INSERT INTO held (sender_key, sender_name, to_name, targets, text, file_id, reason, created,"
             " kind, topic, project) VALUES (?,?,?,'[]',?,NULL,?,?,'note',?,?)",
             (key, author, where, text, reason, now, topic, project)).lastrowid
         self.db.execute("INSERT INTO log (time, person, kind, detail) VALUES (?,?,?,?)",
                         (now, author, "note_held", f"#{hid} {where}: {reason}"))
+        self._rate_hit(key, now)
         raise MessageHeld(f"not saved: held for a person to look at, because it has {reason}."
                           " An admin can release it; the note was not changed.")
 

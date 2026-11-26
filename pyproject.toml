@@ -25,8 +25,8 @@ kaptyorka = "kaptyorka.cli:entry"
 where = ["src"]
 
 [tool.setuptools.package-data]
-kaptyorka = ["web/*.html", "web/fonts/*", "relay/units/*", "secure/files/*", "secure/files/units/*",
-             "secure/files/box/*", "secure/files/box/*/*"]
+# recursive: every file under these folders ships (tests/test_package_files.py checks a real wheel)
+kaptyorka = ["web/*.html", "web/fonts/*", "relay/units/**/*", "secure/files/**/*"]
 
 [tool.pytest.ini_options]
 markers = ["slow: tests that call real agent tools",

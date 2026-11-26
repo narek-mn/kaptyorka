@@ -285,7 +285,7 @@ def test_prune_deletes_old_messages_and_files_keeps_notes(tmp_path, home):
     s.heartbeat("m", [{"key": "k2", "tool": "codex", "project": "p", "activity": "x"}],
                 principal=s.authenticate(tb), facts=_facts("h1"))
     s.send_from_web("u1", "all", "new one")
-    assert s.prune(clock[0]) == {"messages": 0, "files": 1}  # only the stale unsent upload
+    assert s.prune(clock[0]) == {"messages": 0, "files": 1, "held": 0}  # only the stale unsent upload
     assert not (paths.files_dir() / str(orphan_old)).exists()
     assert (paths.files_dir() / str(orphan_new)).exists()
     clock[0] += 180 * 86400 - 90_000 + 10  # the first message passes 180 days, the second not

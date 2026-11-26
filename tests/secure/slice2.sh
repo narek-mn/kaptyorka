@@ -292,7 +292,7 @@ EOF
   ;;
 
 install)
-  t "I-0 installer, personal mode (the product's kap_setup.py)" "rc 0, self-check passes" 're:^rc=0 .*Self-check: all walls in place.*wallcheck ok: 16 walls' \
+  t "I-0 installer, personal mode (the product's kap_setup.py)" "rc 0, self-check passes" 're:^rc=0 .*Self-check: all walls in place.*wallcheck ok: 17 walls' \
     "$SETUP install --personal --person alice --hub-ip 10.77.0.1 --hub-port 8443 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name box-1 --device-token-file /root/devtok --claude-token-file /root/claudetok --runtime-max 60s --tools-from /root/tools"
   t "I-0b installer again (idempotent)" "rc 0" 're:^rc=0 .*Self-check: all walls in place' \
     "$SETUP install --personal --person alice --hub-ip 10.77.0.1 --hub-port 8443 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name box-1 --device-token-file /root/devtok --runtime-max 60s"
@@ -737,7 +737,7 @@ hubchat)
 wallcheck)
   CAN=$(tr '\n' ',' < /run/kaptyorka/wall-canaries)
   WC="$L/wallcheck --verbose --box alice --person alice --addrs $ETH,203.0.113.5 --canaries $CAN -- /bin/echo TOOL-STARTED"
-  t "W-0 all walls present (product props)" "wallcheck ok, tool starts" 're:wallcheck ok: 16 walls in [0-9]+ ms.*TOOL-STARTED' "rawbox $WC 2>&1"
+  t "W-0 all walls present (product props)" "wallcheck ok, tool starts" 're:wallcheck ok: 17 walls in [0-9]+ ms.*TOOL-STARTED' "rawbox $WC 2>&1"
   wv() { # name, wall, DROP, ADD
     TL=45 t "W-1 remove: $1" "refused at $2, tool not started" "re:wall $2 is missing" "DROP='$3' ADD='$4' rawbox $WC 2>&1; echo rc=\$?"
     local last; last=$(tail -1 "$RES" | cut -f5); [[ $last == *TOOL-STARTED* ]] && rec "W-1 $1: tool started anyway" FAIL "no TOOL-STARTED" "-" "$last"
