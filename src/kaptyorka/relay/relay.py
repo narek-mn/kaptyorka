@@ -5,13 +5,18 @@ over TLS, accepting the hub only by its pinned certificate fingerprint. It is a 
 pipe: every field of every call is checked both ways and anything not in the table below is
 dropped (secure design v2, sections 4.3 and 6).
 
+Each door belongs to one person's box. Chats, messages and files are kept per door: a box
+sees, acks and fetches only what came in through its own door, and its chat ids are hashed
+with the person inside, so one box can never act for another person's chats.
+
 Python standard library only. It imports nothing from the rest of kaptyorka, so it can be read
 and audited on its own. It runs as `python3 -I relay.py /etc/kaptyorka/relay.conf` under
 kaptyorka-relay.service, with its doors passed in by systemd (one Unix socket per person,
 kaptyorka-relay-box@<person>.socket) and its secrets passed in with LoadCredential=.
 
 The box speaks one JSON line per connection: {"call": "<name>", "args": {...}}. The relay
-answers one JSON line, {"ok": true, "result": {...}} or {"ok": false, "error": "<one line>"},
+answers one JSON line, {"ok": true, "result": {...}} or {"ok": false, "error": "<one line>"}
+(a refusal by the hub may add "hub_said": the hub's own words, cleaned, never the relay's),
 and closes. To the hub it sends POST /box/v1/<call> with a JSON body built only from the
 filtered fields, the device token, the version and the mode.
 """
@@ -20,7 +25,6 @@ import hashlib
 import hmac
 import http.client
 import json
-import math
 import os
 import pwd
 import re
@@ -31,13 +35,22 @@ import struct
 import sys
 import threading
 import time
+import unicodedata
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 MAX_REQUEST = 2_621_440      # one line from the box: a 1 MiB file in base64 plus text
 MAX_ANSWER = 2_097_152       # one answer from the hub
-MAX_CLIENTS = 16             # connections handled at once; more are closed at once
+MAX_CLIENTS = 16             # connections handled at once; more get "busy" and are closed
+MAX_PER_DOOR = 6             # of those, at most this many from one door
+BIG = 256 * 1024             # a request or answer larger than this is "large"
+MAX_BIG = 2                  # large requests handled at once (MemoryMax=200M)
+BIG_WAIT = 20                # seconds a large request may wait for its turn
+MAX_BARE = 65536             # bytes of JSON outside strings: numbers, keys' quotes, brackets
+MAX_PARTS = 2000             # objects and lists in one JSON line
 READ_TIMEOUT = 15            # seconds for the box to send its line
-HUB_TIMEOUT = 20             # seconds for the hub to answer
+HUB_TIMEOUT = 20             # seconds for each read from the hub
+HUB_TOTAL = 30               # seconds for the whole hub exchange, connect to last byte
+SEEN_MAX = 4096              # chats, message ids and file ids kept per door
 TEXT_FILE_MAX = 256 * 1024   # 6.3: text files up to 256 KB
 BIN_FILE_MAX = 1024 * 1024   # 6.3: other files up to 1 MB
 PERSON_RX = re.compile(r"[a-z_][a-z0-9_-]{0,30}")   # same rule as `enter` (4.7)
@@ -47,23 +60,36 @@ class Bad(ValueError):
     """A field or a whole call that the table does not allow. The text is one plain line."""
 
 
+BUSY = {"ok": False, "error": "the relay is busy, try again"}
+FAILED = {"ok": False, "error": "the relay could not handle this request"}
+
+
 # ---------------------------------------------------------------------------- text cleaning
 
-_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]"            # CSI: colours, cursor, reports
-                   r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?"  # OSC: titles, clipboard (52), links
-                   r"|\x1b[PX^_][^\x1b]*(?:\x1b\\)?"       # DCS, SOS, PM, APC
-                   r"|\x1b[ -/]*[0-~]?")                   # any other escape
-_BIDI = "؜‎‏‪‫‬‭‮⁦⁧⁨⁩"
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]"                         # CSI: colours, cursor
+                   r"|\x1b\][^\x07\x1b\n]{0,256}(?:\x07|\x1b\\)?"       # OSC: titles, clipboard
+                   r"|\x1b[PX^_][^\x1b\n]{0,256}(?:\x1b\\)?"            # DCS, SOS, PM, APC
+                   r"|\x1b[ -/]*[0-~]?")                                # any other escape
+# Invisible and line-breaking characters: every format character (Cf: direction marks and
+# overrides, zero-width spaces and joiners, soft hyphen, word joiner, BOM, ...) and the line
+# and paragraph separators (Zl, Zp). No Cf, Zl or Zp lies above U+1FFFF except the tag block,
+# which _HIDDEN covers whole. Unassigned characters (Cn) stay: Python's Unicode table is older
+# than the newest emoji.
+_INVISIBLE = {cp: None for cp in range(0x20000) if unicodedata.category(chr(cp)) in ("Cf", "Zl", "Zp")}
+# Lone surrogates (cannot be sent as UTF-8), private use, and the tag characters U+E0000-E007F
+# that show nothing on screen but read as letters to an AI model.
+_HIDDEN = re.compile("[\ud800-\udfff-\U000e0000-\U000e007f\U000f0000-\U0010ffff]+")
 _CTRL_ALL = {c: None for c in list(range(0, 32)) + list(range(127, 160))}
-_CTRL_ALL.update({ord(c): None for c in _BIDI})
-_CTRL_KEEP_LINES = {k: v for k, v in _CTRL_ALL.items() if k not in (9, 10)}
+_CTRL_ALL.update(_INVISIBLE)
+_CTRL_KEEP_LINES = {k: v for k, v in _CTRL_ALL.items() if k not in (9, 10, 0x200C, 0x200D)}
 
 
 def plain(s: str, lines: bool) -> str:
-    """Terminal escape codes, control characters and direction overrides removed. With lines,
-    tabs and line breaks stay."""
+    """Terminal escape codes, control characters, direction overrides and invisible characters
+    removed. With lines, tabs and line breaks stay, and the zero-width joiners that some
+    scripts and emoji need."""
     s = _ANSI.sub("", s.replace("\r\n", "\n"))
-    return s.translate(_CTRL_KEEP_LINES if lines else _CTRL_ALL)
+    return _HIDDEN.sub("", s.translate(_CTRL_KEEP_LINES if lines else _CTRL_ALL))
 
 
 def cut(s: str, max_bytes: int) -> str:
@@ -72,14 +98,41 @@ def cut(s: str, max_bytes: int) -> str:
     return s if len(b) <= max_bytes else b[:max_bytes].decode("utf-8", "ignore")
 
 
+_STRING = re.compile(rb'"[^"\\]*(?:\\.[^"\\]*)*"')
+
+
+def parse_json(raw: bytes) -> Any:
+    """json.loads, after a cheap check that the line is not mostly structure: each "[" or "{"
+    costs far more memory than its one byte. Raises Bad."""
+    bare = _STRING.sub(b'""', raw)
+    if len(bare) > MAX_BARE or bare.count(b"[") + bare.count(b"{") > MAX_PARTS:
+        raise Bad("the request has too many parts")
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        raise Bad("the request is not JSON") from None
+
+
 # ---------------------------------------------------------------------------- field kinds
 # Each kind is a function (value, ctx, way) -> cleaned value; it raises Bad when the value
 # is not allowed. way is "out" (box to hub) or "in" (hub to box). ctx is the call's Context.
 
 class Context:
-    def __init__(self, relay: "Relay"):
-        self.relay = relay
-        self.strings: List[str] = []  # every outgoing string, for the token-shape check
+    def __init__(self, relay: "Relay", person: str):
+        self.relay, self.person = relay, person
+        self.strings: List[str] = []           # every outgoing string, for the token-shape check
+        self.chats: Dict[str, str] = {}        # hash -> session id named in this call (out)
+        self.got_msgs: List[int] = []          # message ids in this answer (in)
+        self.got_files: List[int] = []         # file ids in this answer (in)
+        self.unknown_chats = 0                 # items dropped for a chat this door never named
+
+    def holds_secret(self, s: str) -> bool:
+        return any(x in s for x in self.relay.secrets)
+
+    def scrub(self, s: str) -> str:
+        for x in self.relay.secrets:
+            s = s.replace(x, "[removed]")
+        return s
 
 
 def Id(rx: str) -> Callable:
@@ -87,6 +140,10 @@ def Id(rx: str) -> Callable:
 
     def f(v, ctx, way):
         if not isinstance(v, str) or not pat.fullmatch(v):
+            raise Bad("not a valid name or id")
+        if way == "out":
+            ctx.strings.append(v)
+        elif ctx.holds_secret(v):
             raise Bad("not a valid name or id")
         return v
     return f
@@ -100,21 +157,26 @@ def Text(max_bytes: int, lines: bool = True) -> Callable:
     def f(v, ctx, way):
         if not isinstance(v, str):
             raise Bad("not text")
-        v = cut(plain(v, lines), max_bytes)
+        v = plain(v, lines)
         if way == "out":
+            v = cut(v, max_bytes)
             ctx.strings.append(v)
-        return v
+            return v
+        return cut(ctx.scrub(v), max_bytes)
     return f
 
 
 def Label(max_chars: int) -> Callable:
     """A short one-line name (a person, a machine, a send target): refused, not cut, when it
-    is too long or holds control characters, because a cut name names someone else."""
+    is too long or holds control or invisible characters, because a cut name names someone
+    else."""
     def f(v, ctx, way):
         if not isinstance(v, str) or not v or len(v) > max_chars or plain(v, False) != v:
             raise Bad("not a valid name")
         if way == "out":
             ctx.strings.append(v)
+        elif ctx.holds_secret(v):
+            raise Bad("not a valid name")
         return v
     return f
 
@@ -134,8 +196,8 @@ def Int(v, ctx, way):
 
 
 def Num(v, ctx, way):
-    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) \
-            or not 0 <= v < 2 ** 53:
+    # the range test first: it is exact for any int and false for nan and inf
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v < 2 ** 53:
         raise Bad("not a number")
     return v
 
@@ -144,6 +206,16 @@ def Bool(v, ctx, way):
     if not isinstance(v, bool):
         raise Bad("not true or false")
     return v
+
+
+def Received(kind: str) -> Callable:
+    """A message or file id. Out: only one that came in through this door (ack, fetch_file)."""
+    def f(v, ctx, way):
+        v = Int(v, ctx, way)
+        if way == "out" and not ctx.relay.has_seen(ctx.person, kind, v):
+            raise Bad(f"not a {kind} this box received")
+        return v
+    return f
 
 
 FILE_NAME = Id(r"[A-Za-z0-9_][A-Za-z0-9._ -]{0,127}")
@@ -163,11 +235,19 @@ def FileContent(v, ctx, way):
             raise Bad("file larger than 1 MB")
         if way == "out":
             ctx.strings.append(raw.decode("latin-1"))
+        elif ctx.holds_secret(raw.decode("latin-1")):
+            raise Bad("the file holds this computer's key")
         return "base64:" + base64.b64encode(raw).decode()
-    if len(v.encode("utf-8", "replace")) > TEXT_FILE_MAX:
+    try:
+        size = len(v.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise Bad("text file with a broken character") from None
+    if size > TEXT_FILE_MAX:
         raise Bad("text file larger than 256 KB")
     if way == "out":
         ctx.strings.append(v)
+    elif ctx.holds_secret(v):
+        raise Bad("the file holds this computer's key")
     return v
 
 
@@ -177,21 +257,25 @@ HASH_RX = re.compile(r"[0-9a-f]{16}")
 
 def Chat(v, ctx, way):
     """A chat of this box. Out: the tool's session id, sent as a keyed hash (16 characters).
-    In: a hash this relay handed out, turned back into the session id; any other is refused."""
+    In: a hash this door's box sent, turned back into the session id; any other is refused."""
     if way == "out":
         if not isinstance(v, str) or not CHAT_RX.fullmatch(v):
             raise Bad("not a valid chat id")
-        return ctx.relay.hash_chat(v)
-    raw = ctx.relay.unhash_chat(v) if isinstance(v, str) else None
+        h = ctx.relay.hash_chat(ctx.person, v)
+        ctx.chats[h] = v
+        return h
+    raw = ctx.relay.unhash_chat(ctx.person, v) if isinstance(v, str) else None
     if raw is None:
+        ctx.unknown_chats += 1
         raise Bad("not a chat of this box")
     return raw
 
 
 def AnyChat(v, ctx, way):
-    """A chat the hub names (in: only). One of this box is turned back; others stay opaque."""
-    raw = ctx.relay.unhash_chat(v) if isinstance(v, str) else None
-    return raw if raw is not None else HUBID(v, ctx, way)
+    """A chat the hub names (in: only): ("mine", session id) for one of this box, else
+    ("hub", the hub's opaque id)."""
+    raw = ctx.relay.unhash_chat(ctx.person, v) if isinstance(v, str) else None
+    return ("mine", raw) if raw is not None else ("hub", HUBID(v, ctx, way))
 
 
 def Obj(fields: Dict[str, Tuple[Callable, bool]]) -> Callable:
@@ -244,16 +328,41 @@ ONE_LINE = Text(500, lines=False)
 CALLER = {"chat": R(Chat), "project": R(NAME)}   # which chat of this box is calling (6.2)
 OK = Obj({"ok": O(Bool), "reply": O(ONE_LINE)})
 
-MESSAGE = Obj({  # 6.5: a message for a chat
+_MESSAGE = Obj({  # 6.5: a message for a chat
     "id": R(Int), "chat": R(Chat), "text": R(TEXT),
     "person": O(Label(64)), "machine": O(Label(64)), "kind": O(Choice("chat", "page", "manager")),
     "files": O(List_(Obj({"id": R(Int), "name": R(FILE_NAME), "size": R(Int)}), 10, True)),
 })
+
+
+def MESSAGE(v, ctx, way):
+    """A message that passed; its id and its files' ids are what this door may ack and fetch."""
+    m = _MESSAGE(v, ctx, way)
+    ctx.got_msgs.append(m["id"])
+    ctx.got_files.extend(f["id"] for f in m.get("files", []))
+    return m
+
+
 MESSAGES = List_(MESSAGE, 50, True)
 
-# call: (what the box may send, what the hub may answer)
+_WHO_ROW = Obj({
+    "chat": R(AnyChat), "person": O(Label(64)), "machine": O(Label(64)), "project": O(NAME),
+    "name": O(Text(80, lines=False)), "state": O(Choice("busy", "idle", "ended"))})
+
+
+def WHO_ROW(v, ctx, way):
+    """One chat of the team. A chat of this box comes back as its session id with mine: true;
+    any other as "hub:<the hub's id>", so the two can never be mixed up."""
+    row = _WHO_ROW(v, ctx, way)
+    whose, chat = row["chat"]
+    row["chat"] = chat if whose == "mine" else "hub:" + chat
+    row["mine"] = whose == "mine"
+    return row
+
+
+# call: (what the box may send, what the hub may answer). No `join`: that is the installer's
+# step (6.1), never a chat's.
 CALLS: Dict[str, Tuple[Callable, Callable]] = {
-    "join": (Obj({}), OK),
     "report": (
         Obj({"chats": R(List_(Obj({
             "chat": R(Chat), "project": R(NAME), "name": O(Text(80, lines=False)),
@@ -262,7 +371,7 @@ CALLS: Dict[str, Tuple[Callable, Callable]] = {
              "close": O(List_(Obj({"chat": R(Chat)}), 20, True)),
              "helpers": O(List_(Obj({"project": R(NAME), "prompt": R(Text(32768))}), 5, True)),
              "skills": O(List_(Obj({"name": R(NAME), "text": R(TEXT)}), 50, True))})),
-    "ack": (Obj({"id": R(Int), "ok": O(Bool)}), OK),
+    "ack": (Obj({"id": R(Received("message")), "ok": O(Bool)}), OK),
     "brief": (Obj(CALLER), Obj({"text": O(TEXT)})),
     "send": (Obj({**CALLER, "to": R(Label(128)), "text": R(TEXT),
                   "file_name": O(FILE_NAME), "file_content": O(FileContent)}),
@@ -271,26 +380,27 @@ CALLS: Dict[str, Tuple[Callable, Callable]] = {
     "state_write": (Obj({**CALLER, "topic": O(NAME), "text": R(TEXT)}), OK),
     "status": (Obj({**CALLER, "topic": O(NAME), "text": R(ONE_LINE)}), OK),
     "inbox": (Obj(CALLER), Obj({"messages": O(MESSAGES)})),
-    "who": (Obj(CALLER), Obj({"chats": O(List_(Obj({
-        "chat": R(AnyChat), "person": O(Label(64)), "machine": O(Label(64)), "project": O(NAME),
-        "name": O(Text(80, lines=False)), "state": O(Choice("busy", "idle", "ended"))}),
-        200, True))})),
+    "who": (Obj(CALLER), Obj({"chats": O(List_(WHO_ROW, 200, True))})),
     "projects": (Obj(CALLER), Obj({"projects": O(List_(NAME, 200, True))})),
     "notes_read": (Obj({**CALLER, "topic": R(NAME)}),
                    Obj({"topic": O(NAME), "text": O(Text(TEXT_FILE_MAX))})),
     "notes_list": (Obj(CALLER), Obj({"topics": O(List_(NAME, 500, True))})),
-    "fetch_file": (Obj({**CALLER, "id": R(Int)}),
+    "fetch_file": (Obj({**CALLER, "id": R(Received("file"))}),
                    Obj({"name": R(FILE_NAME), "size": O(Int), "content": R(FileContent)})),
     "work": (Obj({**CALLER, "prompt": R(Text(32768))}), OK),
     "close_worker": (Obj({**CALLER, "worker": R(Chat)}), OK),
 }
 
-# Token shapes that must never leave in a chat's text (K-5). The device token and the chat key
-# themselves are checked too.
+# Token shapes that must never leave in any outgoing string (K-5): text, names, file names
+# and file contents. The device token and the chat key themselves are checked too.
 TOKEN_RX = re.compile(
     r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}|\bgh[pousr]_[A-Za-z0-9]{30,}"
     r"|github_pat_[A-Za-z0-9_]{40,}|glpat-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}"
-    r"|\bAKIA[0-9A-Z]{16}\b|-----BEGIN [A-Z ]*PRIVATE KEY-----")
+    r"|\bAKIA[0-9A-Z]{16}\b|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}"         # a JWT
+    r"|\bAIza[0-9A-Za-z_-]{35}|\bhf_[A-Za-z0-9]{30,}|\bnpm_[A-Za-z0-9]{36}"
+    r"|\bpypi-AgE[A-Za-z0-9_-]{50,}|\b[sr]k_live_[0-9A-Za-z]{24,}|\bxapp-\d-[A-Za-z0-9-]{10,}"
+    r"|b3BlbnNzaC1rZXktdjE")                                   # the body of an OpenSSH key
 
 
 # ---------------------------------------------------------------------------- the box side
@@ -344,23 +454,46 @@ class PinnedConnection(http.client.HTTPSConnection):
 
     def connect(self):
         super().connect()
-        got = hashlib.sha256(self.sock.getpeercert(binary_form=True)).hexdigest()
+        der = self.sock.getpeercert(binary_form=True)
+        if not der:  # a cipher without a certificate
+            self.sock.close()
+            raise CertMismatch("none")
+        got = hashlib.sha256(der).hexdigest()
         if not any(hmac.compare_digest(got, p) for p in self._pins):
             self.sock.close()
             raise CertMismatch(got)
 
 
-def hub_error(status: int, body: bytes) -> str:
-    """One plain line from a hub's refusal."""
+HUB_REFUSALS = {400: "the hub did not accept the request",
+                401: "the hub does not accept this computer's key",
+                403: "the hub does not accept this computer's key",
+                404: "the hub does not know this call",
+                413: "the request is too large for the hub",
+                429: "the hub is busy, try again later"}
+
+
+def hub_error(status: int, body: bytes, ctx: Context) -> Dict[str, Any]:
+    """The box's answer to a hub's refusal: a fixed line written by the relay, and the hub's
+    own words apart in "hub_said", one plain line with this computer's key removed."""
+    if status in HUB_REFUSALS:
+        line = HUB_REFUSALS[status]
+    elif status >= 500:
+        line = "the hub has a problem, try again later"
+    else:
+        line = "the hub refused the call"
+    answer = {"ok": False, "error": f"{line} ({status})"}
     text = ""
     try:
         data = json.loads(body.decode("utf-8"))
         if isinstance(data, dict) and isinstance(data.get("error"), str):
             text = data["error"]
-    except ValueError:
+    except (ValueError, RecursionError):
         text = body.decode("utf-8", "replace")
-    text = plain(text.strip().split("\n", 1)[0] if text.strip() else "", False)[:200]
-    return f"the hub refused ({status}): {text}" if text else f"the hub refused ({status})"
+    text = text.strip().split("\n", 1)[0] if text.strip() else ""
+    text = cut(ctx.scrub(plain(text, False)), 200).strip()
+    if text:
+        answer["hub_said"] = text
+    return answer
 
 
 # ---------------------------------------------------------------------------- the relay
@@ -377,6 +510,8 @@ def load_conf(path: str) -> Dict[str, Any]:
     socket.inet_pton(socket.AF_INET6 if ":" in conf["hub_ip"] else socket.AF_INET, conf["hub_ip"])
     out["hub_ip"] = conf["hub_ip"]   # an address: the relay has no DNS (IPAddressAllow= only)
     out["hub_port"] = int(conf["hub_port"])
+    if not 1 <= out["hub_port"] <= 65535:
+        raise ValueError("hub_port must be 1 to 65535")
     pins = [p.strip().lower().replace(":", "") for p in conf["hub_sha256"].split(",") if p.strip()]
     if not pins or not all(re.fullmatch(r"[0-9a-f]{64}", p) for p in pins):
         raise ValueError("hub_sha256 must be one or more SHA-256 fingerprints")
@@ -388,62 +523,140 @@ def load_conf(path: str) -> Dict[str, Any]:
     if not re.fullmatch(r"[0-9A-Za-z.+-]{1,32}", out["version"]):
         raise ValueError("version is not a version")
     out["idle_exit"] = float(conf.get("idle_exit", "600"))
+    if not 1 <= out["idle_exit"] <= 86400:   # also false for nan
+        raise ValueError("idle_exit must be 1 to 86400 seconds")
+    # box_uids = alice:1001, bob:1002 (written by the installer): then no user list is read
+    if "box_uids" in conf:
+        uids = {}
+        for item in conf["box_uids"].split(","):
+            person, _, uid = item.strip().partition(":")
+            if not PERSON_RX.fullmatch(person) or not uid.isdigit() or int(uid) == 0:
+                raise ValueError("box_uids must be person:uid, ...")
+            uids[person] = int(uid)
+        out["box_uids"] = uids
     return out
+
+
+def read_chat_key(raw: bytes) -> bytes:
+    """The chat key file holds hex text (the installer writes `openssl rand -hex 32`)."""
+    text = raw.decode("ascii", "replace").strip()
+    if not re.fullmatch(r"(?:[0-9a-fA-F]{2}){16,}", text):
+        raise ValueError("the chat key must be at least 32 hex characters")
+    return bytes.fromhex(text)
+
+
+class _Door:
+    """What one door's box has named or received, each bounded, oldest out first."""
+
+    def __init__(self):
+        self.chats: Dict[str, str] = {}    # hash -> session id
+        self.message: Dict[int, None] = {}
+        self.file: Dict[int, None] = {}
+
+
+def _remember(d: Dict, k, v=None) -> None:
+    d.pop(k, None)
+    d[k] = v
+    while len(d) > SEEN_MAX:
+        d.pop(next(iter(d)))
 
 
 class Relay:
     def __init__(self, conf: Dict[str, Any], device_token: str, chat_key: bytes,
                  log: Callable[[str], None] = lambda s: print(s, flush=True)):
-        if not device_token or not re.fullmatch(r"[\x21-\x7e]+", device_token):
-            raise ValueError("the device token is empty or not plain ASCII")
+        if not re.fullmatch(r"[\x21-\x7e]{16,}", device_token):
+            raise ValueError("the device token is shorter than 16 or not plain ASCII")
         if len(chat_key) < 16:
             raise ValueError("the chat key is too short")
         self.conf, self.token, self.key, self.log = conf, device_token, chat_key, log
-        self.chats: Dict[str, str] = {}   # hash -> session id, learned from what the box sent
+        self.secrets = tuple(s for s in (device_token, chat_key.decode("latin-1"), chat_key.hex()) if s)
+        self.doors: Dict[str, _Door] = {}
         self.lock = threading.Lock()
+        self.big = threading.BoundedSemaphore(MAX_BIG)
 
-    # chat ids
-    def hash_chat(self, raw: str) -> str:
-        h = hmac.new(self.key, raw.encode(), hashlib.sha256).hexdigest()[:16]
-        with self.lock:
-            self.chats.pop(h, None)
-            self.chats[h] = raw
-            while len(self.chats) > 4096:
-                self.chats.pop(next(iter(self.chats)))
-        return h
+    def _door(self, person: str) -> _Door:
+        # callers hold self.lock
+        if person not in self.doors:
+            self.doors[person] = _Door()
+        return self.doors[person]
 
-    def unhash_chat(self, h: str) -> Optional[str]:
+    # chat ids: one keyed hash per person and chat, so a session id guessed by another box
+    # gives another hash, and each door looks only in its own map
+    def hash_chat(self, person: str, raw: str) -> str:
+        return hmac.new(self.key, person.encode() + b"\0" + raw.encode(), hashlib.sha256).hexdigest()[:16]
+
+    def unhash_chat(self, person: str, h: str) -> Optional[str]:
         if not HASH_RX.fullmatch(h):
             return None
         with self.lock:
-            return self.chats.get(h)
+            d = self.doors.get(person)
+            return d.chats.get(h) if d else None
+
+    def learn(self, ctx: Context) -> None:
+        """The chats a call named, kept once the hub took the call (200), so calls that never
+        reach the hub cannot push real chats out."""
+        with self.lock:
+            d = self._door(ctx.person)
+            for h, raw in ctx.chats.items():
+                _remember(d.chats, h, raw)
+
+    def has_seen(self, person: str, kind: str, i: int) -> bool:
+        with self.lock:
+            d = self.doors.get(person)
+            return d is not None and i in getattr(d, kind)
 
     # one call
-    def filter_out(self, call: str, args: Any) -> Dict[str, Any]:
+    def filter_out(self, person: str, call: str, args: Any) -> Tuple[Dict[str, Any], Context]:
         """The body for the hub, built only from allowed fields. Raises Bad."""
         if call not in CALLS:
-            raise Bad(f"unknown call {plain(str(call), False)[:40]!r}")
-        ctx = Context(self)
+            raise Bad("unknown call")
+        ctx = Context(self, person)
         body = CALLS[call][0](args, ctx, "out")
-        secrets = (self.token, self.key.decode("latin-1"))
         for s in ctx.strings:
-            if any(x and x in s for x in secrets) or TOKEN_RX.search(s):
+            if ctx.holds_secret(s) or TOKEN_RX.search(s):
                 raise Bad("refused: the text holds something shaped like a key or token")
-        if call == "join":
-            body = {"name": self.conf["name"]}
-        return body
+        return body, ctx
 
-    def filter_in(self, call: str, answer: Any) -> Dict[str, Any]:
-        """What the box may see of the hub's answer. Raises Bad."""
-        return CALLS[call][1](answer, Context(self), "in")
+    def filter_in(self, person: str, call: str, answer: Any) -> Dict[str, Any]:
+        """What the box may see of the hub's answer. Raises Bad. The message and file ids that
+        pass become what this door may ack and fetch."""
+        ctx = Context(self, person)
+        result = CALLS[call][1](answer, ctx, "in")
+        with self.lock:
+            d = self._door(person)
+            for i in ctx.got_msgs:
+                _remember(d.message, i)
+            for i in ctx.got_files:
+                _remember(d.file, i)
+        if ctx.unknown_chats:
+            self.log(f"relay: {person} {call}: {ctx.unknown_chats} item(s) for unknown chats dropped")
+        return result
 
     def ask_hub(self, call: str, body: Dict[str, Any]) -> Tuple[int, bytes, str]:
         c = PinnedConnection(self.conf["hub_ip"], self.conf["hub_port"], self.conf["pins"],
                              HUB_TIMEOUT)
+        late = threading.Event()
+
+        def stop():  # the whole exchange is over HUB_TOTAL: cut the socket under http.client
+            late.set()
+            sock = c.sock
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+        killer = threading.Timer(HUB_TOTAL, stop)
+        killer.daemon = True
+        killer.start()
         try:
+            c.connect()
+            if late.is_set():
+                raise OSError("the hub took too long")
             data = json.dumps(body, ensure_ascii=True).encode()
+            ip = self.conf["hub_ip"]
             c.putrequest("POST", "/box/v1/" + call, skip_host=True, skip_accept_encoding=True)
-            for k, v in (("Host", self.conf["hub_ip"]), ("Authorization", "Bearer " + self.token),
+            for k, v in (("Host", f"[{ip}]" if ":" in ip else ip),
+                         ("Authorization", "Bearer " + self.token),
                          ("X-Kaptyorka-Version", self.conf["version"]),
                          ("X-Kaptyorka-Mode", "personal"), ("Content-Type", "application/json"),
                          ("Content-Length", str(len(data))), ("Connection", "close")):
@@ -451,15 +664,21 @@ class Relay:
             c.endheaders(data)
             r = c.getresponse()
             raw = r.read(MAX_ANSWER + 1)
+            if late.is_set():
+                raise OSError("the hub took too long")
             return r.status, raw, r.getheader("Content-Type", "") or ""
         finally:
+            killer.cancel()
             c.close()
 
-    def call(self, call: str, args: Any) -> Dict[str, Any]:
-        """One whole call: filter out, ask the hub, filter in. Always returns the box's answer."""
+    def call(self, person: str, call: str, args: Any, holding_big: bool = False) -> Dict[str, Any]:
+        """One whole call: filter out, ask the hub, filter in. Always returns the box's answer.
+        Error lines name only the table's call name, never what the box sent as the name."""
         try:
-            body = self.filter_out(call, args)
+            body, ctx = self.filter_out(person, call, args)
         except Bad as e:
+            if call not in CALLS:
+                return {"ok": False, "error": "unknown call"}
             return {"ok": False, "error": f"{call}: {e}"}
         try:
             status, raw, ctype = self.ask_hub(call, body)
@@ -472,18 +691,26 @@ class Relay:
         if status // 100 == 3:
             return {"ok": False, "error": "the hub answered with a redirect; dropped"}
         if status != 200:
-            return {"ok": False, "error": hub_error(status, raw[:4096])}
+            return hub_error(status, raw[:4096], ctx)
+        self.learn(ctx)
         if len(raw) > MAX_ANSWER:
             return {"ok": False, "error": "the hub's answer is too large; dropped"}
         if not ctype.split(";")[0].strip().lower() == "application/json":
             return {"ok": False, "error": "the hub's answer is not JSON; dropped"}
+        took = len(raw) > BIG and not holding_big
+        if took and not self.big.acquire(timeout=BIG_WAIT):
+            return BUSY
         try:
-            return {"ok": True, "result": self.filter_in(call, json.loads(raw.decode("utf-8")))}
-        except (ValueError, Bad):
+            return {"ok": True, "result": self.filter_in(person, call, parse_json(raw))}
+        except Bad:
             return {"ok": False, "error": "the hub's answer did not have the expected shape; dropped"}
+        finally:
+            if took:
+                self.big.release()
 
     # one connection
     def serve_conn(self, conn: socket.socket, person: str, want_uid: Optional[int]) -> None:
+        name = "-"
         try:
             try:
                 uid = peer_uid(conn)
@@ -494,32 +721,51 @@ class Relay:
                 self._answer(conn, {"ok": False, "error": "refused: you are not this box's user"})
                 return
             try:
-                req = json.loads(read_line(conn).decode("utf-8"))
-                if not isinstance(req, dict) or not isinstance(req.get("call"), str):
-                    raise Bad("send one JSON object with a call and its args")
-                call, args = req["call"], req.get("args", {})
-            except (ValueError, Bad) as e:
-                self._answer(conn, {"ok": False, "error": str(e) if isinstance(e, Bad)
-                                    else "the request is not JSON"})
+                line = read_line(conn)
+            except Bad as e:
+                self._answer(conn, {"ok": False, "error": str(e)})
                 return
-            answer = self.call(call, args)
-            self.log(f"relay: {person} {plain(call, False)[:40]} "
-                     f"{'ok' if answer['ok'] else 'refused'}")
+            big = len(line) > BIG
+            if big and not self.big.acquire(timeout=BIG_WAIT):
+                self._answer(conn, BUSY)
+                return
+            try:
+                try:
+                    req = parse_json(line)
+                    if not isinstance(req, dict) or not isinstance(req.get("call"), str):
+                        raise Bad("send one JSON object with a call and its args")
+                    call, args = req["call"], req.get("args", {})
+                except Bad as e:
+                    self._answer(conn, {"ok": False, "error": str(e)})
+                    return
+                name = call if call in CALLS else "unknown"
+                answer = self.call(person, call, args, holding_big=big)
+            finally:
+                if big:
+                    self.big.release()
+            self.log(f"relay: {person} {name} {'ok' if answer['ok'] else 'refused'}")
             self._answer(conn, answer)
         except OSError:
             pass
+        except Exception as e:  # one plain line for the box, the class name for the journal
+            self.log(f"relay: {person} {name} failed: {type(e).__name__}")
+            try:
+                self._answer(conn, FAILED)
+            except OSError:
+                pass
         finally:
             conn.close()
 
     @staticmethod
     def _answer(conn: socket.socket, answer: Dict[str, Any]) -> None:
         conn.settimeout(READ_TIMEOUT)
-        conn.sendall(json.dumps(answer, ensure_ascii=False).encode() + b"\n")
+        conn.sendall(json.dumps(answer, ensure_ascii=False).encode("utf-8", "replace") + b"\n")
 
 
 # ---------------------------------------------------------------------------- systemd
 
-def doors_from_systemd(env=os.environ) -> List[Tuple[socket.socket, str]]:
+def doors_from_systemd(env=os.environ, log: Callable[[str], None] = lambda s: print(s, flush=True)
+                       ) -> List[Tuple[socket.socket, str]]:
     """The listening sockets systemd passed in, with the person each one belongs to
     (FileDescriptorName=box-<person>)."""
     if env.get("LISTEN_PID") != str(os.getpid()):
@@ -532,17 +778,29 @@ def doors_from_systemd(env=os.environ) -> List[Tuple[socket.socket, str]]:
         s = socket.socket(fileno=3 + i)
         person = name[4:] if name.startswith("box-") else ""
         if s.family != socket.AF_UNIX or not PERSON_RX.fullmatch(person):
+            log(f"relay: socket {i + 1} of {n} is not a box door; skipped")
             s.close()
             continue
         doors.append((s, person))
     return doors
 
 
-def box_uid(person: str) -> Optional[int]:
+def box_uid(person: str, conf: Optional[Dict[str, Any]] = None) -> Optional[int]:
+    if conf and "box_uids" in conf:
+        return conf["box_uids"].get(person)
     try:
         return pwd.getpwnam("kap-" + person).pw_uid
     except KeyError:
         return None
+
+
+def _say_busy(conn: socket.socket) -> None:
+    try:
+        conn.setblocking(False)
+        conn.send(json.dumps(BUSY).encode() + b"\n")
+    except OSError:
+        pass
+    conn.close()
 
 
 def serve(relay: Relay, doors: List[Tuple[socket.socket, str]]) -> None:
@@ -550,8 +808,8 @@ def serve(relay: Relay, doors: List[Tuple[socket.socket, str]]) -> None:
     for s, person in doors:
         s.setblocking(False)
         sel.register(s, selectors.EVENT_READ, person)
-    slots = threading.BoundedSemaphore(MAX_CLIENTS)
     busy = [0]
+    per_door: Dict[str, int] = {}
     last = [time.monotonic()]
     lock = threading.Lock()
 
@@ -561,8 +819,8 @@ def serve(relay: Relay, doors: List[Tuple[socket.socket, str]]) -> None:
         finally:
             with lock:
                 busy[0] -= 1
+                per_door[person] -= 1
                 last[0] = time.monotonic()
-            slots.release()
 
     relay.log(f"relay: up, doors for {', '.join(p for _, p in doors) or 'nobody'}")
     while True:
@@ -571,14 +829,18 @@ def serve(relay: Relay, doors: List[Tuple[socket.socket, str]]) -> None:
                 conn, _ = key.fileobj.accept()
             except (BlockingIOError, InterruptedError):
                 continue
-            conn.setblocking(True)
-            if not slots.acquire(blocking=False):
-                conn.close()
-                continue
-            with lock:
-                busy[0] += 1
             person = key.data
-            threading.Thread(target=run, args=(conn, person, box_uid(person)), daemon=True).start()
+            with lock:
+                full = busy[0] >= MAX_CLIENTS or per_door.get(person, 0) >= MAX_PER_DOOR
+                if not full:
+                    busy[0] += 1
+                    per_door[person] = per_door.get(person, 0) + 1
+            if full:
+                _say_busy(conn)
+                continue
+            conn.setblocking(True)
+            threading.Thread(target=run, args=(conn, person, box_uid(person, relay.conf)),
+                             daemon=True).start()
         with lock:
             idle = busy[0] == 0 and time.monotonic() - last[0] > relay.conf["idle_exit"]
         if idle:  # no chat is talking: no connection, nothing running. systemd starts it again.
@@ -594,7 +856,7 @@ def main(argv: List[str]) -> int:
     with open(os.path.join(cred, "device-token"), encoding="ascii") as f:
         token = f.read().strip()
     with open(os.path.join(cred, "chat-key"), "rb") as f:
-        key = f.read().strip()
+        key = read_chat_key(f.read())
     relay = Relay(conf, token, key)
     serve(relay, doors_from_systemd())
     return 0
