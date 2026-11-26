@@ -225,14 +225,47 @@ def pump(a, b) -> None:
             pass
 
 
+# What this program may see (its unit's RootDirectory= and binds). ExecStartPre= runs
+# `egress.py --viewcheck` inside the same sandbox: anything more in these folders means a setting
+# systemd dropped without a word, and the egress does not start.
+SYS_HIDDEN = ("block", "bus", "class", "dev", "devices", "firmware", "hypervisor", "kernel", "module", "power")
+VIEW = [("/", {"bin", "dev", "etc", "lib", "lib64", "opt", "proc", "root", "run", "sbin", "sys", "tmp", "usr", "var"}),
+        ("/etc", {"alternatives", "gai.conf", "host.conf", "hosts", "kaptyorka", "ld.so.cache",
+                  "nsswitch.conf", "resolv.conf"}),
+        ("/etc/kaptyorka", {"allow"}),
+        ("/opt", {"kaptyorka"}), ("/opt/kaptyorka", {"egress"}), ("/var", {"tmp"}),
+        ("/run", {"credentials", "host", "systemd"}), ("/usr/local", set()), ("/sys", set(SYS_HIDDEN) | {"fs"}),
+        ("/sys/fs/cgroup", set())] + [("/sys/" + d, set()) for d in SYS_HIDDEN]
+
+
+def view_problem(view) -> str:
+    """'' when no folder in view shows more than it may; else the first extra."""
+    for d, may in view:
+        try:
+            extra = set(os.listdir(d)) - may
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            return f"{d} cannot be listed ({e.strerror})"
+        if extra:
+            return f"{d} shows {', '.join(sorted(extra)[:8])}"
+    return ""
+
+
 def main(argv) -> int:
-    if len(argv) < 2 or not BOX_RX.fullmatch(argv[1]):
-        print("egress: usage: egress.py <box>", file=sys.stderr)
+    if argv[1:2] == ["--viewcheck"]:
+        why = view_problem(VIEW)
+        if why:
+            print(f"egress: its sandbox is not as set: {why}. The forwarder was not started.", file=sys.stderr)
+            return 1
+        return 0
+    if len(argv) < 2 or not BOX_RX.fullmatch(argv[1]) or (len(argv) > 2 and not argv[2].startswith("/")):
+        print("egress: usage: egress.py <box> [allow-file]", file=sys.stderr)
         return 2
     if os.environ.get("LISTEN_PID") != str(os.getpid()) or os.environ.get("LISTEN_FDS") != "1":
         print("egress: start it through kaptyorka-egress@<box>.socket", file=sys.stderr)
         return 2
-    fwd = Forwarder(f"/etc/kaptyorka/boxes/{argv[1]}/egress-allow")
+    fwd = Forwarder(argv[2] if len(argv) > 2 else f"/etc/kaptyorka/boxes/{argv[1]}/egress-allow")
     fwd.serve(socket.socket(fileno=3))
     return 0
 

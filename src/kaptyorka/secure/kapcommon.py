@@ -40,8 +40,13 @@ TOOLS = ("claude", "opencode", "codex", "cursor-agent", "git")
 
 # The canaries (4.6): one service holds them, enter proves them alive, wallcheck proves them gone.
 CANARY_MARK = b"KAPTYORKA-WALL-CANARY"
-CANARY_FILES = ("/home/.kaptyorka-wall-canary", "/tmp/kaptyorka-wall-canary",
-                "/dev/shm/kaptyorka-wall-canary")
+# Fixed canary files sit in folders only root can write (the top of the disk, /home, /run/kaptyorka),
+# so nobody can put a file or a link there first. /tmp and /dev/shm are open to every user: there
+# each canary gets a fresh name nobody can guess (made with O_EXCL), recorded in CANARY_STATE.
+CANARY_FILES = ("/.kaptyorka-wall-canary", "/home/.kaptyorka-wall-canary", "/run/kaptyorka/wall-canary")
+CANARY_SHARED_DIRS = ("/tmp", "/dev/shm")
+CANARY_STATE = "/run/kaptyorka/wall-canaries"
+CANARY_SHARED_RX = re.compile(r"/(tmp|dev/shm)/kaptyorka-wall-canary-[0-9a-f]{16}")
 CANARY_SHM_KEY = 0x4B415031
 CANARY_ABSTRACT = b"\0kaptyorka-wall-canary"
 CANARY_TCP_LO = 47991
@@ -248,6 +253,10 @@ LOCKED_FILES = (  # (source in /etc/kaptyorka/box, place in the box home): read-
     ("cursor/sandbox.json", ".cursor/sandbox.json"),
 )
 STATE_DIRS = ("state/claude", "state/codex", "state/opencode", "state/ssh", ".cursor", ".cache")
+# /sys: ProtectKernelTunables= mounts the real /sys again over a TemporaryFileSystem=/sys
+# (measured, systemd 255), so each of its standard folders gets its own empty tmpfs instead. The
+# box keeps only the CPU list (the C library counts processors from it).
+SYS_HIDDEN = ("block", "bus", "class", "dev", "devices", "firmware", "hypervisor", "kernel", "module", "power")
 
 
 def box_props(person: str, box: str, runtime_max: str = "7d") -> List[str]:
@@ -264,10 +273,15 @@ def box_props(person: str, box: str, runtime_max: str = "7d") -> List[str]:
     locked = " ".join(f"{BOXCONF}/{src}:{home}/{dst}" for src, dst in LOCKED_FILES)
     return [
         f"User={u}", f"Group={u}", f"SupplementaryGroups={g}", f"Slice={slice_name(box)}", "UMask=0007",
-        # files: an empty root, then named folders added
+        # files: an empty root, then named folders added. Measured on systemd 255: ProtectSystem=
+        # (and DynamicUser=, which implies it) makes systemd drop TemporaryFileSystem=/ without a
+        # word, so neither may ever be added here. wallcheck (W1, W2) proves the real view each start.
         "TemporaryFileSystem=/:ro",
         "BindReadOnlyPaths=/usr /bin /sbin /lib -/lib64 /etc/ssl -/etc/ca-certificates -/etc/alternatives "
         "/etc/ld.so.cache -/etc/localtime",
+        "TemporaryFileSystem=/usr/local:ro", f"BindReadOnlyPaths={LIBEXEC}",   # not the computer's own /usr/local
+        "TemporaryFileSystem=" + " ".join(f"/sys/{d}:ro" for d in SYS_HIDDEN),
+        "BindReadOnlyPaths=/sys/devices/system/cpu",
         f"BindReadOnlyPaths={BOXES}/{box}/passwd:/etc/passwd {BOXES}/{box}/group:/etc/group "
         f"{BOXCONF}/nsswitch.conf:/etc/nsswitch.conf {BOXCONF}/hosts:/etc/hosts",
         f"BindReadOnlyPaths={TOOLS_DIR} {OPT}/box {BOXCONF} {BOXES}/{box}",

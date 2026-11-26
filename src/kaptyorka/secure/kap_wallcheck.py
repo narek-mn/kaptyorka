@@ -3,7 +3,7 @@
 in the very unit that will run the tool, tries each wall once (W1 to W15) and then replaces
 itself with the tool. Any miss: one line naming the missing wall, exit 1, the tool never starts.
 
-Usage: wallcheck [--verbose] --box BOX --person NAME [--addrs a,b] -- command args...
+Usage: wallcheck [--verbose] --box BOX --person NAME [--addrs a,b] [--canaries f,g] -- command args...
 Installed as /usr/local/libexec/kaptyorka/wallcheck. Standard library only, no other kaptyorka
 file, so it reads the same inside every box.
 """
@@ -21,7 +21,8 @@ import sys
 import time
 
 # The same constants as kapcommon (the canary service holds these; enter proves them alive).
-CANARY_FILES = ("/home/.kaptyorka-wall-canary", "/tmp/kaptyorka-wall-canary", "/dev/shm/kaptyorka-wall-canary")
+CANARY_FILES = ("/.kaptyorka-wall-canary", "/home/.kaptyorka-wall-canary", "/run/kaptyorka/wall-canary")
+CANARY_SHARED_RX = re.compile(r"/(tmp|dev/shm)/kaptyorka-wall-canary-[0-9a-f]{16}")
 CANARY_SHM_KEY = 0x4B415031
 CANARY_ABSTRACT = b"\0kaptyorka-wall-canary"
 CANARY_TCP_LO, CANARY_TCP_ANY = 47991, 47992
@@ -31,6 +32,7 @@ PERSON_RX = re.compile(r"[a-z_][a-z0-9_-]{0,30}")
 ENV_OK = {"LANG", "PATH", "USER", "LOGNAME", "HOME", "SHELL", "INVOCATION_ID", "TERM", "SYSTEMD_EXEC_PID",
           "MEMORY_PRESSURE_WATCH", "MEMORY_PRESSURE_WRITE", "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY",
           "LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES", "PWD", "JOURNAL_STREAM", "MANAGERPID"}
+SYS_HIDDEN = ("block", "bus", "class", "dev", "devices", "firmware", "hypervisor", "kernel", "module", "power")
 LOCKED = ("state/claude/settings.json", "state/codex/config.toml", "state/codex/hooks.json",
           "state/opencode/cfg/opencode/opencode.json", ".cursor/mcp.json", ".cursor/hooks.json", ".cursor/sandbox.json")
 
@@ -45,19 +47,21 @@ def en(e: OSError) -> str:
 
 
 def parse(argv):
-    a, opts = list(argv), {"verbose": False, "addrs": [], "box": None, "person": None}
+    a, opts = list(argv), {"verbose": False, "addrs": [], "canaries": [], "box": None, "person": None}
     while a and a[0] != "--":
         x = a.pop(0)
         if x == "--verbose":
             opts["verbose"] = True
-        elif x in ("--addrs", "--box", "--person") and a:
+        elif x in ("--addrs", "--canaries", "--box", "--person") and a:
             v = a.pop(0)
-            opts[x[2:]] = [s for s in v.split(",") if s] if x == "--addrs" else v
+            opts[x[2:]] = [s for s in v.split(",") if s] if x in ("--addrs", "--canaries") else v
         else:
             break
     if not a or a[0] != "--" or len(a) < 2 or not opts["box"] or not opts["person"] \
-            or not BOX_RX.fullmatch(opts["box"]) or not PERSON_RX.fullmatch(opts["person"]):
-        print("wallcheck: usage: wallcheck [--verbose] --box BOX --person NAME [--addrs a,b] -- command",
+            or not BOX_RX.fullmatch(opts["box"]) or not PERSON_RX.fullmatch(opts["person"]) \
+            or not all(CANARY_SHARED_RX.fullmatch(c) for c in opts["canaries"]):
+        print("wallcheck: usage: wallcheck [--verbose] --box BOX --person NAME [--addrs a,b] [--canaries f,g] "
+              "-- command",
               file=sys.stderr)
         sys.exit(2)
     return opts, a[1:]
@@ -104,14 +108,60 @@ def forwarder_answers(path: str) -> str:
     return "" if r.startswith(b"HTTP/1.1 403") else f"forwarder answered {r[:40]!r}"
 
 
+def view(box: str, person: str):
+    """What the box may see, folder by folder: (folder, entries that must be there, entries that
+    may be there). Anything else in these folders means a wall that systemd dropped or that was
+    never set (TemporaryFileSystem=/ is ignored without a word next to ProtectSystem=)."""
+    u = "kap-" + box
+    return [
+        ("/", {"bin", "dev", "etc", "lib", "opt", "proc", "run", "sbin", "srv", "sys", "tmp", "usr", "var"}, {"lib64"}),
+        ("/etc", {"group", "hosts", "kaptyorka", "ld.so.cache", "nsswitch.conf", "passwd", "ssl"},
+         {"alternatives", "ca-certificates", "localtime"}),
+        ("/etc/kaptyorka", {"box", "boxes"}, set()),
+        ("/etc/kaptyorka/boxes", {box}, set()),
+        ("/opt", {"kap-tools", "kaptyorka"}, set()),
+        ("/opt/kaptyorka", {"box"}, set()),
+        ("/var", {"lib", "tmp"}, set()),
+        ("/var/lib", {"kap-team"}, set()),
+        ("/var/lib/kap-team", {u}, set()),
+        ("/var/lib/kap-team/" + u, {"home"}, set()),
+        ("/srv", {"team"}, set()),
+        ("/srv/team", {person}, set()),
+        ("/run", {"egress.sock", "kapbox", "kaptyorka"}, {"systemd"}),
+        ("/run/kaptyorka", {"relay"}, set()),
+        ("/run/kaptyorka/relay", {box + ".sock"}, set()),
+        ("/run/systemd", set(), {"incoming"}),
+        ("/usr/local", {"libexec"}, set()),
+        ("/usr/local/libexec", {"kaptyorka"}, set()),
+        ("/sys", set(), set(SYS_HIDDEN) | {"fs"}),
+        ("/sys/devices", {"system"}, set()),
+        ("/sys/devices/system", {"cpu"}, set()),
+    ] + [("/sys/" + d, set(), set()) for d in SYS_HIDDEN if d != "devices"]
+
+
+def view_problem(spec) -> str:
+    """'' when every folder shows exactly what spec allows; else the first difference."""
+    for d, need, may in spec:
+        try:
+            seen = set(os.listdir(d))
+        except OSError as e:
+            return f"{d} cannot be listed ({en(e)})"
+        extra, missing = seen - need - may, need - seen
+        if extra:
+            return f"{d} shows {', '.join(sorted(extra)[:8])} (not on the box's list)"
+        if missing:
+            return f"{d} lacks {', '.join(sorted(missing)[:8])}"
+    return ""
+
+
 def main(argv) -> None:
     t0 = time.monotonic()
     opts, cmd = parse(argv)
     box, person = opts["box"], opts["person"]
     user, share = "kap-" + box, "kapshare-" + box
     home = os.environ.get("HOME", "")
-    # W1 the canary files
-    for f in CANARY_FILES:
+    # W1 the canary files (the fixed ones, and the ones with fresh names in /tmp and /dev/shm)
+    for f in CANARY_FILES + tuple(opts["canaries"]):
         try:
             open(f, "rb").close()
         except FileNotFoundError:
@@ -119,10 +169,13 @@ def main(argv) -> None:
         except OSError as e:
             fail("W1", f"{f} gives {en(e)}, not 'No such file or directory'")
         fail("W1", f"{f} is readable")
-    # W2 personal and system places
+    # W2 personal and system places, and the whole view: each folder holds exactly the box's list
     for d in ("/home", "/root", "/run/user", "/mnt", "/media", "/var/log", "/data"):
         if os.path.lexists(d):
             fail("W2", f"{d} exists")
+    why = view_problem(view(box, person))
+    if why:
+        fail("W2", why)
     # W3 the canary SysV segment
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.shmget(CANARY_SHM_KEY, 0, 0) != -1:

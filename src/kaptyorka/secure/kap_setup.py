@@ -164,6 +164,32 @@ def install_code(ver: str) -> None:
         os.replace(tmp, cur)
     kr.mkdir(kc.TOOLS_DIR, 0o755)
     kr.mkdir(kc.TOOLS_DIR + "/bin", 0o755)
+    install_roots()
+
+
+# The root folders of the relay and the forwarder (their units' RootDirectory=): root-owned and
+# empty but for the places their binds go. systemd makes any other mount point it needs.
+ROOTS = {
+    "relay-root": ("bin dev etc/alternatives etc/kaptyorka lib lib64 opt/kaptyorka/relay proc run sbin sys tmp usr "
+                   "var/tmp", "etc/passwd etc/ld.so.cache etc/kaptyorka/relay.conf"),
+    "egress-root": ("bin dev etc/alternatives etc/kaptyorka/allow lib lib64 opt/kaptyorka/egress proc run sbin sys tmp "
+                    "usr var/tmp", "etc/ld.so.cache etc/hosts etc/resolv.conf etc/nsswitch.conf etc/gai.conf "
+                                   "etc/host.conf"),
+}
+
+
+def install_roots() -> None:
+    for root, (dirs, files) in ROOTS.items():
+        top = f"{kc.OPT}/{root}"
+        kr.mkdir(top, 0o755)
+        for d in dirs.split():
+            p = top
+            for part in d.split("/"):
+                p += "/" + part
+                kr.mkdir(p, 0o755)
+        for f in files.split():
+            if not os.path.lexists(f"{top}/{f}"):
+                kr.write_file(f"{top}/{f}", "", 0o644)
 
 
 def install_tools(src: str) -> None:
@@ -327,7 +353,8 @@ def install(a) -> int:
     r = kr.run(["systemd-run", "--quiet", "--collect", "--pipe", "--wait", "--expand-environment=no",
                 f"--working-directory={kc.view_root(person)}", *kr.props_args(person, person), "--",
                 kc.WALLCHECK, "--verbose", "--box", person, "--person", person,
-                "--addrs", ",".join(kr.host_addrs()), "--", "/bin/true"], check=False)
+                "--addrs", ",".join(kr.host_addrs()), "--canaries", ",".join(kr.shared_canaries()),
+                "--", "/bin/true"], check=False)
     if r.returncode != 0:
         say("Self-check (inside the box): PROBLEMS", "  " + (r.stderr or r.stdout).strip()[-400:])
         return 3
@@ -402,6 +429,9 @@ def remove(a) -> int:
         for p in ("/etc/tmpfiles.d/kaptyorka.conf", "/etc/profile.d/kaptyorka.sh", "/etc/fish/conf.d/kaptyorka.fish",
                   "/usr/local/bin/hubchat", *kc.CANARY_FILES):
             if os.path.lexists(p):
+                os.unlink(p)
+        for p in kr.read_text(kc.CANARY_STATE).split():   # ours only: a name in the list, root's file
+            if kc.CANARY_SHARED_RX.fullmatch(p) and kr.canary_ok(p):
                 os.unlink(p)
         for sl in ("kapbox.slice", "system-kapbox\\x2dbase.slice", "system-kaptyorka\\x2degress.slice",
                    "system-kaptyorka\\x2drelay\\x2dbox.slice"):   # parents of the units above, now empty

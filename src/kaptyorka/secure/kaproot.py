@@ -452,28 +452,99 @@ def make_safe_for_git(dfd: int, rel: str = "", notes: Optional[List[str]] = None
 
 # ---------------------------------------------------------------------------- the outside half of the self-check (4.6)
 
-def _canary_file_ok(path: str) -> Optional[str]:
+def canary_ok(path: str) -> bool:
+    """path is root's canary: a plain root-owned file (never a link) holding the mark."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    except FileNotFoundError:   # cleaned away (a reboot of /tmp): make it again, as root
-        try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-            os.write(fd, kc.CANARY_MARK + b"\n")
-            os.fchmod(fd, 0o644)
-            os.close(fd)
-            return None
-        except OSError as e:
-            return f"canary file {path} cannot be made: {os.strerror(e.errno)}"
-    except OSError as e:
-        return f"canary file {path}: {os.strerror(e.errno)}"
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return False
     try:
         st = os.fstat(fd)
-        data = os.read(fd, 64)
+        return st.st_uid == 0 and stat.S_ISREG(st.st_mode) and kc.CANARY_MARK in os.read(fd, 64)
     finally:
         os.close(fd)
-    if st.st_uid != 0 or not stat.S_ISREG(st.st_mode) or kc.CANARY_MARK not in data:
-        return f"canary file {path} is not root's canary"
-    return None
+
+
+def _make_canary(path: str) -> None:
+    """A new canary at path; O_EXCL with O_NOFOLLOW, so a file or link already there is never used."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644)
+    try:
+        os.write(fd, kc.CANARY_MARK + b"\n")
+        os.fchmod(fd, 0o644)
+    finally:
+        os.close(fd)
+
+
+def _canary_file_ok(path: str) -> Optional[str]:
+    """A fixed canary, in a folder only root can write: there when it should be, made again when
+    it was cleaned away."""
+    d = os.path.dirname(path)
+    try:
+        st = os.lstat(d)
+    except OSError as e:
+        return f"canary folder {d}: {os.strerror(e.errno)}"
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
+        return f"canary folder {d} is not a root-owned folder only root can write"
+    if canary_ok(path):
+        return None
+    try:
+        if os.path.lexists(path):
+            os.unlink(path)   # only root writes here, so this is a damaged one of ours
+        _make_canary(path)
+        return None
+    except OSError as e:
+        return f"canary file {path} cannot be made: {os.strerror(e.errno)}"
+
+
+def shared_canaries(bad: Optional[List[str]] = None) -> List[str]:
+    """The canaries in /tmp and /dev/shm, which every user can write. Each has a name nobody can
+    guess, made with O_EXCL by root: a file or link someone made first is never taken for ours,
+    and once made, the sticky bit stops others from removing or replacing it. The names live in
+    CANARY_STATE (in /run/kaptyorka, which only root can write). A missing one (a reboot, a /tmp
+    cleaner) is made anew."""
+    try:
+        old = [p for p in read_text(kc.CANARY_STATE).split() if kc.CANARY_SHARED_RX.fullmatch(p)]
+    except OSError:
+        old = []
+    out = []
+    for d in kc.CANARY_SHARED_DIRS:
+        have = [p for p in old if os.path.dirname(p) == d and canary_ok(p)]
+        if have:
+            out.append(have[0])
+            continue
+        try:
+            st = os.lstat(d)
+        except OSError as e:
+            if bad is not None:
+                bad.append(f"canary folder {d}: {os.strerror(e.errno)}")
+            continue
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or not st.st_mode & stat.S_ISVTX:
+            if bad is not None:
+                bad.append(f"{d} is not a root-owned folder with the sticky bit")
+            continue
+        for _ in range(8):
+            p = f"{d}/kaptyorka-wall-canary-{secrets.token_hex(8)}"
+            try:
+                _make_canary(p)
+                out.append(p)
+                break
+            except FileExistsError:
+                continue
+            except OSError as e:
+                if bad is not None:
+                    bad.append(f"canary file in {d} cannot be made: {os.strerror(e.errno)}")
+                break
+        else:
+            if bad is not None:
+                bad.append(f"no free canary name in {d}")
+    if sorted(out) != sorted(old):
+        try:
+            os.makedirs(os.path.dirname(kc.CANARY_STATE), 0o755, exist_ok=True)
+            write_file(kc.CANARY_STATE, "".join(p + "\n" for p in out), 0o644)
+        except OSError as e:
+            if bad is not None:
+                bad.append(f"{kc.CANARY_STATE} cannot be written: {os.strerror(e.errno)}")
+    return out
 
 
 def _recv(fam: int, addr, timeout: float = 1.0) -> bytes:
@@ -531,6 +602,7 @@ def outside_check(person: str, boxes: List[str]) -> List[str]:
         p = _canary_file_ok(f)
         if p:
             bad.append(p)
+    shared_canaries(bad)
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.shmget(kc.CANARY_SHM_KEY, 0, 0) < 0:
         bad.append("canary SysV segment is not reachable (kaptyorka-canary.service)")
@@ -642,7 +714,8 @@ def start_helper(person: str, box: str) -> None:
     systemctl("reset-failed", unit, check=False)
     run(["systemd-run", "--quiet", "--collect", "--expand-environment=no", f"--unit={unit}",
          f"--working-directory={kc.view_root(person)}", *props_args(person, box), "--",
-         kc.WALLCHECK, "--box", box, "--person", person, "--addrs", ",".join(host_addrs()), "--",
+         kc.WALLCHECK, "--box", box, "--person", person, "--addrs", ",".join(host_addrs()),
+         "--canaries", ",".join(shared_canaries()), "--",
          "/usr/bin/python3", "-I", kc.BOXCODE + "/proxybridge.py", "--idle", "600"], check=False)
     for _ in range(40):   # wait until the bridge listens in the box's namespace
         r = run(["nsenter", f"--net=/run/netns/kapbox-{box}", "--", "ss", "-Hltn", "sport = :3128"], check=False)

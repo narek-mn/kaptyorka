@@ -120,7 +120,8 @@ def test_folders_round_trip_and_strict():
 def test_box_props_carry_every_wall_and_the_slice0_changes():
     props = kc.box_props("alice", "alice", "60s")
     text = "\n".join(props)
-    for line in ("TemporaryFileSystem=/:ro", "PrivateIPC=yes", "PrivateDevices=yes", "ProtectProc=invisible",
+    for line in ("TemporaryFileSystem=/:ro", "TemporaryFileSystem=/usr/local:ro", "BindReadOnlyPaths=" + kc.LIBEXEC,
+                 "BindReadOnlyPaths=/sys/devices/system/cpu", "PrivateIPC=yes", "PrivateDevices=yes", "ProtectProc=invisible",
                  "TemporaryFileSystem=/sys/fs/cgroup:ro", "TemporaryFileSystem=/dev/shm:mode=1777",
                  "NetworkNamespacePath=/run/netns/kapbox-alice", "NoNewPrivileges=yes", "CapabilityBoundingSet=",
                  "RestrictNamespaces=yes", "SystemCallFilter=@pkey", "KillMode=control-group", "RuntimeMaxSec=60s",
@@ -128,6 +129,10 @@ def test_box_props_carry_every_wall_and_the_slice0_changes():
                  "ReadOnlyPaths=/var/lib/kap-team/kap-alice/home"):
         assert line in props, line
     assert "ProtectControlGroups" not in text          # D1
+    # measured on systemd 255: next to these, systemd drops TemporaryFileSystem=/ without a word
+    assert "ProtectSystem" not in text and "DynamicUser" not in text and "RootDirectory" not in text
+    tl = next(p for p in props if p.startswith("TemporaryFileSystem=/sys/block"))
+    assert {x.split(":")[0] for x in tl.split("=", 1)[1].split()} == {"/sys/" + d for d in kc.SYS_HIDDEN}
     assert "PrivateUsers" not in text
     assert "/home" not in text.replace("/var/lib/kap-team/kap-alice/home", "")
     assert "BindPaths=/var/lib/kap-team/kap-alice/projects:/srv/team/alice" in props
@@ -533,6 +538,7 @@ def _fd_open(fd):
 def test_enter_builds_pty_or_pipe(monkeypatch):
     monkeypatch.setattr(kr, "runtime_max", lambda: "60s")
     monkeypatch.setattr(kr, "host_addrs", lambda: ["203.0.113.5"])
+    monkeypatch.setattr(kr, "shared_canaries", lambda: ["/tmp/kaptyorka-wall-canary-0123456789abcdef"])
     monkeypatch.setattr(en.os.path, "isfile", lambda p: p.endswith("claude-oauth-token"))
     c = en.build("alice", "alice", "claude", ["-c"], "/srv/team/alice/proj-a", True, "xterm-256color")
     assert "--pty" in c and "--expand-environment=no" in c and "--pipe" not in c
@@ -541,6 +547,7 @@ def test_enter_builds_pty_or_pipe(monkeypatch):
     i = c.index("--")
     assert c[i + 1:i + 3] == [kc.WALLCHECK, "--box"] and c[-3:] == [kc.BOX_EXEC, "claude", "-c"]
     assert c[i + 6:i + 8] == ["--addrs", "203.0.113.5"]
+    assert c[i + 8:i + 10] == ["--canaries", "/tmp/kaptyorka-wall-canary-0123456789abcdef"]
     c = en.build("alice", "alice", "git", ["status"], "/srv/team/alice/proj-a", False, "x;y")
     assert "--pipe" in c and "--wait" in c and not any(x.startswith("OpenFile") for x in c)
     assert not any("TERM=" in x for x in c)
@@ -553,6 +560,60 @@ def test_wallcheck_usage_is_strict():
         wc.parse(["--box", "../x", "--person", "alice", "--", "/bin/true"])
     opts, cmd = wc.parse(["--box", "alice", "--person", "alice", "--addrs", "1.2.3.4,", "--", "/bin/true", "x"])
     assert opts["addrs"] == ["1.2.3.4"] and cmd == ["/bin/true", "x"]
+    c = "/tmp/kaptyorka-wall-canary-0123456789abcdef,/dev/shm/kaptyorka-wall-canary-fedcba9876543210"
+    opts, _ = wc.parse(["--box", "alice", "--person", "alice", "--canaries", c, "--", "/bin/true"])
+    assert opts["canaries"] == c.split(",")
+    for bad in ("/etc/shadow", "/tmp/kaptyorka-wall-canary", "/tmp/../etc/kaptyorka-wall-canary-0123456789abcdef"):
+        with pytest.raises(SystemExit):
+            wc.parse(["--box", "alice", "--person", "alice", "--canaries", bad, "--", "/bin/true"])
+
+
+def test_wallcheck_view_is_an_exact_list(tmp_path):
+    (tmp_path / "usr").mkdir()
+    spec = [(str(tmp_path), {"usr"}, {"lib64"})]
+    assert wc.view_problem(spec) == ""
+    (tmp_path / "lib64").mkdir()
+    assert wc.view_problem(spec) == ""
+    (tmp_path / "kaptest-extra").mkdir()           # an extra folder: the empty root was dropped
+    assert "shows kaptest-extra" in wc.view_problem(spec)
+    assert "lacks etc" in wc.view_problem([(str(tmp_path), {"usr", "etc"}, {"lib64", "kaptest-extra"})])
+    assert "cannot be listed" in wc.view_problem([(str(tmp_path / "none"), set(), set())])
+    v = dict((d, need | may) for d, need, may in wc.view("alice", "alice"))
+    assert "home" not in v["/"] and "mnt" not in v["/"] and v["/srv/team"] == {"alice"}
+    assert v["/run/kaptyorka/relay"] == {"alice.sock"} and v["/usr/local"] == {"libexec"}
+    assert wc.SYS_HIDDEN == kc.SYS_HIDDEN == eg.SYS_HIDDEN
+
+
+def test_canary_files_are_never_a_link_or_a_file_made_first(tmp_path):
+    good = tmp_path / "c"
+    kr._make_canary(str(good))
+    assert kc.CANARY_MARK in good.read_bytes() and oct(good.stat().st_mode & 0o777) == "0o644"
+    with pytest.raises(FileExistsError):           # someone made the name first: never taken
+        kr._make_canary(str(good))
+    link = tmp_path / "l"
+    link.symlink_to(good)
+    with pytest.raises(FileExistsError):
+        kr._make_canary(str(link))
+    assert not kr.canary_ok(str(link))             # a link to a canary is not one
+    assert not kr.canary_ok(str(good))             # not root's (tests run as a user)
+    assert not kr.canary_ok(str(tmp_path / "none"))
+    fifo = tmp_path / "f"
+    os.mkfifo(fifo)
+    assert not kr.canary_ok(str(fifo))             # opened without blocking, refused
+    for p in ("/tmp/kaptyorka-wall-canary-0123456789abcdef", "/dev/shm/kaptyorka-wall-canary-0123456789abcdef"):
+        assert kc.CANARY_SHARED_RX.fullmatch(p)
+    assert not kc.CANARY_SHARED_RX.fullmatch("/tmp/kaptyorka-wall-canary")
+    for p in kc.CANARY_FILES:                      # fixed names only where only root can write
+        assert os.path.dirname(p) in ("/", "/home", "/run/kaptyorka")
+
+
+def test_forwarder_viewcheck(tmp_path):
+    (tmp_path / "etc").mkdir()
+    assert eg.view_problem([(str(tmp_path), {"etc"})]) == ""
+    (tmp_path / "home").mkdir()
+    assert eg.view_problem([(str(tmp_path), {"etc"})]) == f"{tmp_path} shows home"
+    assert eg.main(["egress.py", "--viewcheck"]) == 1
+    assert eg.main(["egress.py", "alice", "relative/path"]) == 2
 
 
 def test_wallcheck_relay_door(tmp_path):
@@ -580,6 +641,7 @@ def test_wallcheck_relay_door(tmp_path):
 
 def test_wallcheck_constants_match_kapcommon():
     assert wc.CANARY_FILES == kc.CANARY_FILES and wc.CANARY_SHM_KEY == kc.CANARY_SHM_KEY
+    assert wc.CANARY_SHARED_RX.pattern == kc.CANARY_SHARED_RX.pattern
     assert wc.CANARY_ABSTRACT == kc.CANARY_ABSTRACT and wc.CANARY_PROC.decode() == kc.CANARY_PROC
     assert (wc.CANARY_TCP_LO, wc.CANARY_TCP_ANY) == (kc.CANARY_TCP_LO, kc.CANARY_TCP_ANY)
     assert set(wc.LOCKED) == {dst for _, dst in kc.LOCKED_FILES}

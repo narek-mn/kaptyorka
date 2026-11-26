@@ -70,7 +70,7 @@ def build(person: str, box: str, tool: str, args, cwd: str, tty: bool, term: str
     if tty and kc.TERM_RX.fullmatch(term or ""):
         cmd += ["-p", f"Environment=TERM={term}"]
     cmd += ["--", kc.WALLCHECK, "--box", box, "--person", person, "--addrs", ",".join(kr.host_addrs()),
-            "--", kc.BOX_EXEC, tool, *args]
+            "--canaries", ",".join(kr.shared_canaries()), "--", kc.BOX_EXEC, tool, *args]
     return cmd
 
 

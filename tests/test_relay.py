@@ -71,23 +71,39 @@ def test_the_units_keep_the_slice0_changes_and_hard_limits():
     lines = [l.strip() for l in svc.splitlines() if l.strip() and not l.startswith("#")]
     assert not any(l.startswith(("ProtectControlGroups=", "PrivateUsers=")) for l in lines)  # D1, D2
     for need in ("DynamicUser=yes", "KillMode=control-group", "MemorySwapMax=0", "PrivateIPC=yes",
-                 "TemporaryFileSystem=/etc:ro /var:ro /opt:ro", "TemporaryFileSystem=/dev/shm",
+                 "RootDirectory=/opt/kaptyorka/relay-root", "TemporaryFileSystem=/dev/shm",
+                 "TemporaryFileSystem=/usr/local:ro",
+                 "ExecStartPre=/usr/bin/python3 -I /opt/kaptyorka/relay/current/relay.py --viewcheck",
                  "SocketBindDeny=any",
                  "RestrictAddressFamilies=AF_INET AF_INET6", "IPAddressDeny=any",
                  "LoadCredential=device-token:/etc/kaptyorka/secret/device-token",
                  "LoadCredential=chat-key:/etc/kaptyorka/secret/chat-key"):
         assert need in lines, need
     assert any(l.startswith("RuntimeMaxSec=") for l in lines)
-    # measured on systemd 255: "/" as a TemporaryFileSystem= is ignored, and a /sys tmpfs is
-    # undone by ProtectKernelTunables=yes; /sys is hidden with InaccessiblePaths= instead
+    # measured on systemd 255: next to DynamicUser= a TemporaryFileSystem=/ is dropped, and a /sys
+    # tmpfs or InaccessiblePaths=/sys is undone by ProtectKernelTunables=yes; so a root folder, and
+    # one tmpfs per /sys folder
     assert not any(l.startswith("TemporaryFileSystem=/:") or l == "TemporaryFileSystem=/" for l in lines)
-    assert not any(l.startswith("TemporaryFileSystem=/sys") for l in lines)
-    assert any(l.startswith("InaccessiblePaths=/sys ") for l in lines)
+    assert not any(l.startswith(("TemporaryFileSystem=/sys ", "TemporaryFileSystem=/sys:", "InaccessiblePaths="))
+                   for l in lines)
+    tl = next(l for l in lines if l.startswith("TemporaryFileSystem=/sys/"))
+    assert {x.split(":")[0][5:] for x in tl.split("=", 1)[1].split()} == set(R.SYS_HIDDEN) | {"fs/cgroup"}
     sock = (RELAY_DIR / "units" / "kaptyorka-relay-box@.socket").read_text()
     for need in ("ListenStream=/run/kaptyorka/relay/%i.sock", "SocketUser=root",
                  "SocketGroup=kap-%i", "SocketMode=0660", "FileDescriptorName=box-%i",
                  "Service=kaptyorka-relay.service"):
         assert need in sock, need
+
+
+
+def test_viewcheck_names_the_first_extra(tmp_path):
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "passwd").write_text("")
+    view = [(str(tmp_path), {"etc"}), (str(tmp_path / "etc"), {"passwd"}), (str(tmp_path / "none"), set())]
+    assert R.view_problem(view) == ""
+    (tmp_path / "data").mkdir()                    # an extra folder of the laptop shows through
+    assert R.view_problem(view) == f"{tmp_path} shows data"
+    assert R.main(["relay.py", "--viewcheck"]) == 1   # this test machine's / is not the relay's
 
 
 # ---------------------------------------------------------------- box to hub

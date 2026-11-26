@@ -5,17 +5,25 @@
 Description=kaptyorka forwarder for the box %i
 
 [Service]
-ExecStart=/usr/bin/python3 -I /opt/kaptyorka/egress/current/egress.py %i
+ExecStartPre=/usr/bin/python3 -I /opt/kaptyorka/egress/current/egress.py --viewcheck
+ExecStart=/usr/bin/python3 -I /opt/kaptyorka/egress/current/egress.py %i /etc/kaptyorka/allow/egress-allow
 DynamicUser=yes
 ProtectHome=yes
 ProtectSystem=strict
+# Files: a root-owned skeleton root with only what python3 and name lookups need, and this box's
+# allow list (its folder, so a new list written by rename is seen). As for the relay (measured on
+# systemd 255): TemporaryFileSystem=/ is dropped next to DynamicUser=, RootDirectory= is not, and
+# /sys needs a tmpfs per folder. ExecStartPre= checks the real view; anything more and it stops.
+RootDirectory=/opt/kaptyorka/egress-root
+BindReadOnlyPaths=/usr /bin /sbin /lib -/lib64 /opt/kaptyorka/egress /etc/kaptyorka/boxes/%i:/etc/kaptyorka/allow
+BindReadOnlyPaths=-/etc/ld.so.cache -/etc/alternatives -/etc/hosts -/etc/resolv.conf -/etc/nsswitch.conf -/etc/gai.conf -/etc/host.conf
+TemporaryFileSystem=/usr/local:ro
+TemporaryFileSystem=/sys/block:ro /sys/bus:ro /sys/class:ro /sys/dev:ro /sys/devices:ro /sys/firmware:ro /sys/hypervisor:ro /sys/kernel:ro /sys/module:ro /sys/power:ro /sys/fs/cgroup:ro
 PrivateTmp=yes
 PrivateDevices=yes
 PrivateIPC=yes
 TemporaryFileSystem=/dev/shm
-TemporaryFileSystem=/sys/fs/cgroup:ro
 ProtectProc=invisible
-InaccessiblePaths=-/run/dbus -/run/user -/var/lib/kap-team -/srv -/run/kapbox -/mnt -/media -/etc/kaptyorka/secret -/run/docker.sock
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes

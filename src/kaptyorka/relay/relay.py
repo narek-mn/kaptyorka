@@ -848,7 +848,39 @@ def serve(relay: Relay, doors: List[Tuple[socket.socket, str]]) -> None:
             return
 
 
+# What this program may see (its unit's RootDirectory= and binds). ExecStartPre= runs
+# `relay.py --viewcheck` inside the same sandbox: anything more in these folders means a setting
+# systemd dropped without a word, and the relay does not start.
+SYS_HIDDEN = ("block", "bus", "class", "dev", "devices", "firmware", "hypervisor", "kernel", "module", "power")
+VIEW = [("/", {"bin", "dev", "etc", "lib", "lib64", "opt", "proc", "root", "run", "sbin", "sys", "tmp", "usr", "var"}),
+        ("/etc", {"alternatives", "kaptyorka", "ld.so.cache", "passwd"}),
+        ("/etc/kaptyorka", {"relay.conf"}),
+        ("/opt", {"kaptyorka"}), ("/opt/kaptyorka", {"relay"}), ("/var", {"tmp"}),
+        ("/run", {"credentials", "host", "systemd"}), ("/usr/local", set()), ("/sys", set(SYS_HIDDEN) | {"fs"}),
+        ("/sys/fs/cgroup", set())] + [("/sys/" + d, set()) for d in SYS_HIDDEN]
+
+
+def view_problem(view) -> str:
+    """'' when no folder in view shows more than it may; else the first extra."""
+    for d, may in view:
+        try:
+            extra = set(os.listdir(d)) - may
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            return f"{d} cannot be listed ({e.strerror})"
+        if extra:
+            return f"{d} shows {', '.join(sorted(extra)[:8])}"
+    return ""
+
+
 def main(argv: List[str]) -> int:
+    if argv[1:2] == ["--viewcheck"]:
+        why = view_problem(VIEW)
+        if why:
+            print(f"relay: its sandbox is not as set: {why}. The relay was not started.", file=sys.stderr)
+            return 1
+        return 0
     conf = load_conf(argv[1] if len(argv) > 1 else "/etc/kaptyorka/relay.conf")
     cred = os.environ.get("CREDENTIALS_DIRECTORY", "")
     if not cred:
