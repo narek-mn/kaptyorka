@@ -368,6 +368,8 @@ install)
     "ls -d /etc/kaptyorka /usr/local/libexec/kaptyorka /opt/kaptyorka /etc/sudoers.d/kaptyorka-* /etc/systemd/system/kap* /etc/profile.d/kaptyorka.sh 2>/dev/null; getent passwd kap-alice; true"
   # the hub's invite page (finding 5a): the link and the release page of the hub's own version, never a command
   curl -sk "https://127.0.0.1:8443/i/$(cat /etc/kaptest/invite)" > /root/page.html
+  python3 -I -c 'import html, re; m = re.search(r"<pre>(.*?)</pre>", open("/root/page.html").read(), re.S)
+open("/root/page.link", "w").write(html.unescape(m.group(1)).strip() if m else "")'
   t "I-page the hub's invite page shows the link and the release page of its own version, and no command" \
     "the link; releases/tag/v<hub version>; none of sudo, curl, python3, sha256sum, &&, --personal" \
     "re:^rc=0 link=https://127\\.0\\.0\\.1:8443/i/$(cat /etc/kaptest/invite)#sha256=$(cat /etc/kaptest/hub.fp) page=https://github\\.com/narek-mn/kaptyorka/releases/tag/v$($HUBPY -c 'import kaptyorka; print(kaptyorka.__version__)' | sed 's/\./\\./g') none\$" \
@@ -377,8 +379,9 @@ bad = [w for w in (\"sudo\", \"curl\", \"python3\", \"sha256sum\", \"&&\", \"--p
 print(\"link=\" + (html.unescape(m.group(1)) if m else \"-\"), \"page=\" + (r.group(0) if r else \"-\"), \" \".join(bad) or \"none\")'"
   t "I-nogit no kaptyorka source on the laptop side: the installer file is all there is" "only the hub's venv has kap_setup.py" 're:^rc=0 $' \
     "find / -xdev \\( -path /proc -o -path /opt/hubvenv \\) -prune -o \\( -name kap_setup.py -o -name 'kaptyorka-*.whl' \\) -print 2>/dev/null | grep -v '^/root/hubwheel/'; ls -d /root/bundle /root/src 2>/dev/null; true"
-  # the README's step 3 with the link in it; its downloads are skipped (no network: the release's two files are there)
-  python3 -I -c 'import sys; link = open("/etc/kaptest/link").read().strip()
+  # the README's step 3 with the link the page shows (checked in I-page); its downloads are skipped (no network: the
+  # release's two files are there)
+  python3 -I -c 'import sys; link = open("/root/page.link").read().strip()
 cmds = [c for c in open("/etc/kaptest/readme.cmds").read().splitlines() if c.strip() and not c.startswith("curl ")]
 open("/root/readme.run", "w").write("\n".join(c.replace("<link>", link) for c in cmds) + "\n")'
   t "I-readme the README's step 3: two downloads from the release of a version, then the check and the install with the link" \

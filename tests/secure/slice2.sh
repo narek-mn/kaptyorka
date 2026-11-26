@@ -295,14 +295,15 @@ EOF
   ;;
 
 install)
+  # --tools none: the box gets the stub tools from --tools-from only, never a vendor installer (no network here)
   t "I-0 installer, personal mode (the product's kap_setup.py)" "rc 0, self-check passes" 're:^rc=0 .*Self-check: all walls in place.*wallcheck ok: 17 walls' \
-    "$SETUP install --personal --person alice --hub-ip 10.77.0.1 --hub-port 8443 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name box-1 --device-token-file /root/devtok --claude-token-file /root/claudetok --runtime-max 60s --tools-from /root/tools"
+    "$SETUP install --personal --person alice --hub-ip 10.77.0.1 --hub-port 8443 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name box-1 --device-token-file /root/devtok --claude-token-file /root/claudetok --runtime-max 60s --tools-from /root/tools --tools none"
   t "I-0b installer again (idempotent)" "rc 0" 're:^rc=0 .*Self-check: all walls in place' \
-    "$SETUP install --personal --person alice --hub-ip 10.77.0.1 --hub-port 8443 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name box-1 --device-token-file /root/devtok --runtime-max 60s"
+    "$SETUP install --personal --person alice --hub-ip 10.77.0.1 --hub-port 8443 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name box-1 --device-token-file /root/devtok --runtime-max 60s --tools none"
   touch /etc/kaptest/i1-marker; sleep 1
   t "I-1 installer refuses bad outside values before writing anything" "refused, 5 times" 're:^rc=0 (refused ){5}$' \
     "for a in '--hub-ip 10.77.0.1;id' '--hub-port 8443x' '--hub-sha256 zz' '--name a\"],\"x' '--person ../root'; do
-       base='--personal --person alice --hub-ip 10.77.0.1 --hub-port 8443 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name box-1 --device-token-file /root/devtok'
+       base='--personal --person alice --hub-ip 10.77.0.1 --hub-port 8443 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name box-1 --device-token-file /root/devtok --tools none'
        $SETUP install \$base \$a >/dev/null 2>&1 && echo -n 'ACCEPTED ' || echo -n 'refused '; done; find /etc/kaptyorka /etc/systemd/system /usr/local/libexec/kaptyorka -newer /etc/kaptest/i1-marker | head -3"
   t "I-2 a team-machine install is refused (no --personal)" "refused" 're:say --personal' \
     "$SETUP install --person alice --hub-ip 10.77.0.1 --hub-port 1 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name x --device-token-file /root/devtok"
