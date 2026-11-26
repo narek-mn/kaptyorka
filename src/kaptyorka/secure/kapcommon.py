@@ -1,0 +1,630 @@
+"""kapcommon: the pure part shared by the root programs of a personal laptop (secure design v2,
+sections 4 and 7): names, paths, the decision "is this a team folder", the box's walls as one
+list, the tool arguments `enter` lets through, git URLs, the forwarder's allow list, and the
+git config that `hubchat remove` keeps.
+
+Nothing here touches the system: no file writes, no programs, no network. Root actions are in
+kaproot.py. Python standard library only; installed as /usr/local/libexec/kaptyorka/kapcommon.py
+and imported from that fixed, root-owned folder. Every value from a person, a file or a folder
+name is checked here against a strict pattern before root uses it. Nothing comes from the hub.
+"""
+import ipaddress
+import json
+import re
+from typing import Dict, List, Optional, Tuple
+
+# ---------------------------------------------------------------------------- fixed places (4.2)
+
+LIBEXEC = "/usr/local/libexec/kaptyorka"
+ETC = "/etc/kaptyorka"
+PEOPLE = ETC + "/people"          # people/<person>/folders.json  (written only by hubchat-root)
+BOXES = ETC + "/boxes"            # boxes/<box>/passwd, group, claude-settings.json, egress-allow
+BOXCONF = ETC + "/box"            # tool configs shared by every box; no secret inside
+SECRET = ETC + "/secret"          # root only: device-token, chat-key, <person>/claude-oauth-token
+MODE_FILE = ETC + "/mode"
+LIMITS_FILE = ETC + "/box.conf"
+TEAM = "/var/lib/kap-team"        # TEAM/kap-<box>/{home,memory,projects}
+VIEW = "/srv/team"                # VIEW/<person>/<folder>: the person's view, one mount each
+RUNBOX = "/run/kapbox"            # RUNBOX/<box>/{tmp,vartmp,run,pub}
+RELAY_DOORS = "/run/kaptyorka/relay"
+OPT = "/opt/kaptyorka"
+BOXCODE = OPT + "/box/current"
+TOOLS_DIR = "/opt/kap-tools"
+WALLCHECK = LIBEXEC + "/wallcheck"
+BOX_EXEC = LIBEXEC + "/box-exec"
+ENTER = LIBEXEC + "/enter"
+HUBCHAT_ROOT = LIBEXEC + "/hubchat-root"
+MEMORY = "_memory"
+
+TOOLS = ("claude", "opencode", "codex", "cursor-agent", "git")
+
+# The canaries (4.6): one service holds them, enter proves them alive, wallcheck proves them gone.
+CANARY_MARK = b"KAPTYORKA-WALL-CANARY"
+CANARY_FILES = ("/home/.kaptyorka-wall-canary", "/tmp/kaptyorka-wall-canary",
+                "/dev/shm/kaptyorka-wall-canary")
+CANARY_SHM_KEY = 0x4B415031
+CANARY_ABSTRACT = b"\0kaptyorka-wall-canary"
+CANARY_TCP_LO = 47991
+CANARY_TCP_ANY = 47992
+CANARY_PROC = "KAPTYORKA_WALL_CANARY_PROC"
+
+# Files of a team folder that can run code when the person opens the folder (7.2).
+TRAP_FILES = (".envrc", ".claude/settings.json", ".claude/settings.local.json", "opencode.json",
+              "Makefile", "makefile", "GNUmakefile", "package.json", ".mise.toml", "mise.toml",
+              ".tool-versions", ".nvmrc", ".python-version", ".exrc", ".nvim.lua", ".nvimrc",
+              ".dir-locals.el", ".git/config", ".gitattributes", ".mcp.json")
+TRAP_DIRS = (".vscode", ".cursor", ".codex", ".idea", ".git/hooks", ".claude/hooks", ".opencode")
+
+PERSON_RX = re.compile(r"[a-z_][a-z0-9_-]{0,30}")
+NAME_RX = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,63}")
+BOX_RX = re.compile(r"[a-z_][a-z0-9_-]{0,27}")          # kap-<box> stays within 32 characters
+RUNTIME_RX = re.compile(r"[1-9][0-9]{0,6}(s|min|h|d)?|infinity")
+TERM_RX = re.compile(r"[A-Za-z0-9._+-]{1,64}")
+
+
+class Refuse(Exception):
+    """A plain one-line reason. The programs print it and stop."""
+
+
+# ---------------------------------------------------------------------------- names
+
+def check_person(name: str) -> str:
+    if not isinstance(name, str) or not PERSON_RX.fullmatch(name):
+        raise Refuse("not a valid user name")
+    return name
+
+
+def check_name(name: str, allow_memory: bool = False) -> str:
+    """A team folder's name: letters, digits, '.', '_', '-'; not starting with '.' or '-'."""
+    if allow_memory and name == MEMORY:
+        return name
+    if not isinstance(name, str) or not NAME_RX.fullmatch(name) or name == MEMORY or name.endswith(".lock"):
+        raise Refuse(f"{shown(name)} is not a usable team folder name (letters, digits, '.', '_', '-')")
+    return name
+
+
+def box_id(person: str, separate: Optional[str] = None) -> str:
+    """The box of a person: '<person>', or '<person>-<folder>' for a --separate box."""
+    check_person(person)
+    if separate is None:
+        return person
+    b = (person + "-" + separate).lower()
+    if not BOX_RX.fullmatch(b):
+        raise Refuse(f"{shown(separate)} cannot name a separate box: use a short lower-case name")
+    return b
+
+
+def check_box(box: str) -> str:
+    if not isinstance(box, str) or not BOX_RX.fullmatch(box):
+        raise Refuse("not a valid box name")
+    return box
+
+
+def box_user(box: str) -> str:
+    return "kap-" + check_box(box)
+
+
+def share_group(box: str) -> str:
+    return "kapshare-" + check_box(box)
+
+
+def box_root(box: str) -> str:
+    return f"{TEAM}/kap-{check_box(box)}"
+
+
+def box_home(box: str) -> str:
+    return box_root(box) + "/home"
+
+
+def box_projects(box: str) -> str:
+    return box_root(box) + "/projects"
+
+
+def box_memory(box: str) -> str:
+    return box_root(box) + "/memory"
+
+
+def view_root(person: str) -> str:
+    return f"{VIEW}/{check_person(person)}"
+
+
+def view_path(person: str, name: str) -> str:
+    return f"{view_root(person)}/{check_name(name, allow_memory=True)}"
+
+
+def shown(s) -> str:
+    """A value for a message: printable, short."""
+    s = str(s)
+    s = "".join(c if c.isprintable() else "?" for c in s)
+    return repr(s[:80])
+
+
+def unit_escape(s: str) -> str:
+    """systemd-escape of one string: '/' becomes '-', anything but [A-Za-z0-9:_.] (and a leading
+    '.') becomes \\xNN. So 'proj-a' gives 'proj\\x2da'."""
+    out = []
+    for i, ch in enumerate(s):
+        if ch == "/":
+            out.append("-")
+        elif ch.isascii() and (ch.isalnum() or ch in ":_.") and not (i == 0 and ch == "."):
+            out.append(ch)
+        else:
+            out.extend(f"\\x{b:02x}" for b in ch.encode())
+    return "".join(out)
+
+
+def unit_escape_path(path: str) -> str:
+    """systemd-escape --path: the name of a .mount unit for this mount point."""
+    p = "/".join(x for x in path.split("/") if x)
+    return unit_escape(p) if p else "-"
+
+
+def view_mount_unit(person: str, name: str) -> str:
+    return unit_escape_path(view_path(person, name)) + ".mount"
+
+
+def mount_unit_text(person: str, name: str, what: str) -> str:
+    """The person's view of one team folder (4.10): a bind with nosymfollow,noexec,nosuid,nodev,
+    so box-made symlinks are not followed and box-made programs do not run for the person."""
+    where = view_path(person, name)
+    for p in (what, where):
+        if not p.startswith("/") or any(c in p for c in " \t\n\\%$\"'") or "/../" in p + "/":
+            raise Refuse("bad mount path")
+    return (f"# Written by hubchat-root. {person}'s view of the team folder {name}.\n"
+            "[Unit]\n"
+            f"Description=kaptyorka: {person}'s view of team folder {name}\n"
+            "[Mount]\n"
+            f"What={what}\nWhere={where}\nType=none\n"
+            "Options=bind,nosymfollow,noexec,nosuid,nodev\n"
+            "[Install]\nWantedBy=local-fs.target\n")
+
+
+def slice_name(box: str) -> str:
+    """One flat slice per box (a '-' in a slice name would nest it under another box)."""
+    return "kapbox-" + unit_escape(check_box(box)) + ".slice"
+
+
+# ---------------------------------------------------------------------------- the team-folder decision (4.7)
+
+def team_folder(real: str, person: str) -> Optional[Tuple[str, str]]:
+    """(folder name, path inside it) when the real path `real` is /srv/team/<person>/<name> or
+    below; otherwise None. A folder is a team folder only by where it really is; only root can
+    put a folder there. No list from the hub is asked."""
+    check_person(person)
+    if not isinstance(real, str) or not real.startswith("/") or "\0" in real:
+        return None
+    base = f"{VIEW}/{person}/"
+    if not real.startswith(base):
+        return None
+    name, _, sub = real[len(base):].partition("/")
+    if name != MEMORY and not NAME_RX.fullmatch(name):
+        return None
+    if sub and any(p in ("", ".", "..") for p in sub.rstrip("/").split("/")):
+        return None
+    return name, sub.rstrip("/")
+
+
+def under(path: str, top: str) -> bool:
+    """path is top or below it (plain string test on normalised absolute paths)."""
+    return path == top or path.startswith(top.rstrip("/") + "/")
+
+
+# ---------------------------------------------------------------------------- folders.json
+
+def parse_folders(text: str) -> Dict[str, dict]:
+    """The person's team folders, by name. Strict: an entry that does not fit is an error, so a
+    damaged file stops `enter` instead of being guessed at."""
+    data = json.loads(text) if text.strip() else {"folders": []}
+    out: Dict[str, dict] = {}
+    for e in data.get("folders", []):
+        name = check_name(e["name"])
+        box = check_box(e["box"])
+        short = e.get("shortcut", "")
+        if short and (not isinstance(short, str) or not short.startswith("/") or "\0" in short
+                      or "/../" in short + "/" or len(short) > 4096):
+            raise Refuse(f"folders.json: bad shortcut for {name}")
+        source = e.get("source", "")
+        if source and parse_git_url(source)[0] != source:
+            raise Refuse(f"folders.json: bad source for {name}")
+        out[name] = {"name": name, "box": box, "shortcut": short, "source": source,
+                     "separate": bool(e.get("separate", False))}
+    return out
+
+
+def dump_folders(folders: Dict[str, dict]) -> str:
+    rows = [folders[k] for k in sorted(folders)]
+    return json.dumps({"folders": rows}, indent=1, sort_keys=True) + "\n"
+
+
+# ---------------------------------------------------------------------------- the walls (4.4)
+
+LOCKED_FILES = (  # (source in /etc/kaptyorka/box, place in the box home): read-only file binds (5.2)
+    ("claude/user-settings.json", "state/claude/settings.json"),
+    ("codex/config.toml", "state/codex/config.toml"),
+    ("codex/hooks.json", "state/codex/hooks.json"),
+    ("opencode/opencode.json", "state/opencode/cfg/opencode/opencode.json"),
+    ("cursor/mcp.json", ".cursor/mcp.json"),
+    ("cursor/hooks.json", ".cursor/hooks.json"),
+    ("cursor/sandbox.json", ".cursor/sandbox.json"),
+)
+STATE_DIRS = ("state/claude", "state/codex", "state/opencode", "state/ssh", ".cursor", ".cache")
+
+
+def box_props(person: str, box: str, runtime_max: str = "7d") -> List[str]:
+    """The settings of every box unit (each chat, the helper, each git call), one per line:
+    design v2 4.4 with the slice-0 changes D1 (no ProtectControlGroups=), D3 (@pkey), D4 (own
+    exec-able tmpfs for /tmp), D5 (OpenCode config folder writable, its file locked), D10 (a
+    writable ~/.cache). The same list for all, so the walls are the same everywhere."""
+    check_person(person)
+    check_box(box)
+    if not RUNTIME_RX.fullmatch(runtime_max):
+        raise Refuse("bad runtime limit")
+    u, g, home = box_user(box), share_group(box), box_home(box)
+    run = f"{RUNBOX}/{box}"
+    locked = " ".join(f"{BOXCONF}/{src}:{home}/{dst}" for src, dst in LOCKED_FILES)
+    return [
+        f"User={u}", f"Group={u}", f"SupplementaryGroups={g}", f"Slice={slice_name(box)}", "UMask=0007",
+        # files: an empty root, then named folders added
+        "TemporaryFileSystem=/:ro",
+        "BindReadOnlyPaths=/usr /bin /sbin /lib -/lib64 /etc/ssl -/etc/ca-certificates -/etc/alternatives "
+        "/etc/ld.so.cache -/etc/localtime",
+        f"BindReadOnlyPaths={BOXES}/{box}/passwd:/etc/passwd {BOXES}/{box}/group:/etc/group "
+        f"{BOXCONF}/nsswitch.conf:/etc/nsswitch.conf {BOXCONF}/hosts:/etc/hosts",
+        f"BindReadOnlyPaths={TOOLS_DIR} {OPT}/box {BOXCONF} {BOXES}/{box}",
+        f"BindPaths={home}",
+        f"ReadOnlyPaths={home}",
+        "ReadWritePaths=" + " ".join(f"{home}/{d}" for d in STATE_DIRS),
+        f"BindReadOnlyPaths={locked}",
+        f"BindPaths={box_projects(box)}:{VIEW}/{person}",
+        f"BindPaths={box_memory(box)}:{VIEW}/{person}/{MEMORY}",
+        f"BindPaths={run}/tmp:/tmp {run}/vartmp:/var/tmp {run}/run:/run/kapbox",
+        f"BindPaths={RELAY_DOORS}/{box}.sock {run}/pub/egress.sock:/run/egress.sock",
+        # memory, devices, processes
+        "TemporaryFileSystem=/dev/shm:mode=1777", "PrivateIPC=yes", "PrivateDevices=yes",
+        "ProtectProc=invisible", "TemporaryFileSystem=/sys/fs/cgroup:ro", "KeyringMode=private",
+        # network: own namespace with only lo; the relay and the forwarder are socket files
+        f"NetworkNamespacePath=/run/netns/kapbox-{box}",
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+        # rights
+        "NoNewPrivileges=yes", "CapabilityBoundingSet=", "AmbientCapabilities=", "RestrictSUIDSGID=yes",
+        "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectKernelLogs=yes",
+        "ProtectClock=yes", "ProtectHostname=yes", "LockPersonality=yes", "SystemCallArchitectures=native",
+        "SystemCallFilter=@system-service", "SystemCallFilter=@pkey",
+        "SystemCallFilter=~@debug @module @reboot @swap @raw-io @cpu-emulation @obsolete @clock",
+        "SystemCallFilter=~process_vm_readv process_vm_writev kcmp pidfd_getfd",
+        "RestrictNamespaces=yes", "LimitCORE=0",
+        # limits and a hard end for the whole tree
+        "TasksMax=4096", "MemoryMax=75%", "MemorySwapMax=0", "KillMode=control-group",
+        "TimeoutStopSec=5", f"RuntimeMaxSec={runtime_max}",
+        "Environment=PATH=/opt/kap-tools/bin:/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8",
+        "Environment=HTTPS_PROXY=http://127.0.0.1:3128 HTTP_PROXY=http://127.0.0.1:3128 "
+        "ALL_PROXY=http://127.0.0.1:3128 NO_PROXY=",
+    ]
+
+
+def parse_limits(text: str) -> str:
+    """runtime_max from /etc/kaptyorka/box.conf (root-owned); default 7d."""
+    for line in text.splitlines():
+        k, _, v = line.partition("=")
+        if k.strip() == "runtime_max":
+            v = v.strip()
+            if not RUNTIME_RX.fullmatch(v):
+                raise Refuse("box.conf: bad runtime_max")
+            return v
+    return "7d"
+
+
+# ---------------------------------------------------------------------------- tool arguments (4.7 step 4)
+
+MODEL_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/\[\]@-]{0,99}")
+ID_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+
+
+def _choice(*xs):
+    return re.compile("|".join(re.escape(x) for x in xs))
+
+
+# per tool: plain flags, flags with a value (value pattern), flags with an optional id,
+# and first words that are subcommands the box must not run (sign-in, servers, settings).
+ARGS = {
+    "claude": {
+        "flags": {"-c", "--continue", "-p", "--print", "--verbose", "-v", "--version", "-h", "--help",
+                  "--fork-session"},
+        "valued": {"--model": MODEL_RX, "--output-format": _choice("text", "json", "stream-json"),
+                   "--input-format": _choice("text", "stream-json"),
+                   "--permission-mode": _choice("default", "acceptEdits", "plan")},
+        "optional": {"-r": ID_RX, "--resume": ID_RX},
+        "refused_sub": {"mcp", "plugin", "plugins", "config", "install", "update", "upgrade",
+                        "setup-token", "login", "logout", "migrate-installer", "remote-control"},
+    },
+    "codex": {
+        "flags": {"-h", "--help", "-V", "--version", "--last"},
+        "valued": {"-m": MODEL_RX, "--model": MODEL_RX},
+        "optional": {},
+        "refused_sub": {"login", "logout", "mcp", "mcp-server", "app-server", "proto", "apply", "a",
+                        "cloud", "sandbox", "debug", "responses-api-proxy", "features", "completion"},
+    },
+    "opencode": {
+        "flags": {"-c", "--continue", "-h", "--help", "-v", "--version"},
+        "valued": {"-s": ID_RX, "--session": ID_RX, "-m": MODEL_RX, "--model": MODEL_RX,
+                   "--agent": ID_RX, "--format": _choice("default", "json")},
+        "optional": {},
+        "refused_sub": {"auth", "serve", "web", "mcp", "upgrade", "uninstall", "acp", "github",
+                        "debug", "import", "attach", "plugin"},
+    },
+    "cursor-agent": {
+        "flags": {"-p", "--print", "-h", "--help", "-v", "--version"},
+        "valued": {"--model": MODEL_RX, "--output-format": _choice("text", "json", "stream-json")},
+        "optional": {"--resume": ID_RX},
+        "refused_sub": {"login", "logout", "mcp", "update", "upgrade", "install-shell-integration",
+                        "uninstall-shell-integration"},
+    },
+}
+
+
+def filter_args(tool: str, args: List[str]) -> List[str]:
+    """The tool's arguments when every flag is on the tool's short list; otherwise Refuse with
+    one line. Prompts (plain words) pass as they are. git's arguments pass as they are: git runs
+    inside the box. Values are never changed, only checked."""
+    if tool not in TOOLS:
+        raise Refuse(f"{shown(tool)} is not offered in team folders")
+    if tool == "git":
+        return list(args)
+    spec = ARGS[tool]
+    out: List[str] = []
+    i, first_word, rest_plain = 0, True, False
+    while i < len(args):
+        a = args[i]
+        if rest_plain or a == "-" or not a.startswith("-"):
+            if first_word and a in spec["refused_sub"]:
+                raise Refuse(f"{tool} {a} is not offered in team folders")
+            first_word = False
+            out.append(a)
+            i += 1
+            continue
+        if a == "--":
+            rest_plain = True
+            out.append(a)
+            i += 1
+            continue
+        flag, eq, val = a.partition("=")
+        if flag in spec["flags"] and not eq:
+            out.append(a)
+            i += 1
+        elif flag in spec["valued"]:
+            if not eq:
+                if i + 1 >= len(args):
+                    raise Refuse(f"{tool} {flag} needs a value")
+                val = args[i + 1]
+            if not spec["valued"][flag].fullmatch(val):
+                raise Refuse(f"{tool} {flag}: value {shown(val)} is not offered")
+            out.extend([a] if eq else [a, val])
+            i += 1 if eq else 2
+        elif flag in spec["optional"]:
+            if eq:
+                if not spec["optional"][flag].fullmatch(val):
+                    raise Refuse(f"{tool} {flag}: value {shown(val)} is not offered")
+                out.append(a)
+                i += 1
+            elif i + 1 < len(args) and spec["optional"][flag].fullmatch(args[i + 1]):
+                out.extend([a, args[i + 1]])
+                i += 2
+            else:
+                out.append(a)
+                i += 1
+        else:
+            raise Refuse(f"{tool} {flag} is not offered in team folders (it could load settings, "
+                         "plugins or folders from outside the box)")
+    return out
+
+
+# ---------------------------------------------------------------------------- git URLs (4.9)
+
+_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+# a host NAME: dotted labels, the last one not all digits (so never an IP address)
+HOST_RX = re.compile(rf"(?=.{{1,253}}$){_LABEL}(?:\.{_LABEL})*\.(?![0-9]+$){_LABEL}")
+_PART = r"[A-Za-z0-9_][A-Za-z0-9._~-]{0,99}"
+GPATH_RX = re.compile(rf"{_PART}(?:/{_PART}){{0,9}}")
+GIT_URL_RX = [
+    ("https", re.compile(rf"https://(?P<host>[a-z0-9.-]+)(?::(?P<port>443))?/(?P<path>[^?#\s]+)")),
+    ("ssh", re.compile(rf"ssh://git@(?P<host>[a-z0-9.-]+)(?::(?P<port>22))?/(?P<path>[^?#\s]+)")),
+    ("scp", re.compile(rf"git@(?P<host>[a-z0-9.-]+):(?P<path>[^?#\s]+)")),
+]
+
+
+def parse_git_url(url: str) -> Tuple[str, str, int, str]:
+    """(url, host, port, default folder name) for https://host/path, ssh://git@host/path or
+    git@host:path, and nothing else: no ext::, file://, local paths, options, user names,
+    credentials, IP addresses, '..' or other ports. Refuse otherwise."""
+    if not isinstance(url, str) or len(url) > 400 or url.startswith("-"):
+        raise Refuse("not an allowed git URL")
+    for kind, rx in GIT_URL_RX:
+        m = rx.fullmatch(url)
+        if not m:
+            continue
+        host, path = m.group("host"), m.group("path")
+        if not HOST_RX.fullmatch(host):
+            break
+        try:
+            ipaddress.ip_address(host)
+            break  # names only: the forwarder's allow list is by name
+        except ValueError:
+            pass
+        if not GPATH_RX.fullmatch(path):
+            break
+        port = 443 if kind == "https" else 22
+        name = path.rsplit("/", 1)[-1]
+        if name.endswith(".git"):
+            name = name[:-4]
+        return url, host, port, name
+    raise Refuse("not an allowed git URL (use https://host/path, ssh://git@host/path or git@host:path)")
+
+
+def looks_like_url(s: str) -> bool:
+    return "://" in s or bool(re.match(r"[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:", s))
+
+
+# ---------------------------------------------------------------------------- the forwarder's allow list (4.5)
+
+def parse_allow(text: str) -> Dict[str, set]:
+    """host -> allowed ports. Lines: 'host' (port 443) or 'host:22'; '#' starts a comment.
+    Lines that do not fit are ignored (the file is root-owned; a bad line allows nothing)."""
+    out: Dict[str, set] = {}
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip().lower()
+        if not line:
+            continue
+        host, _, port = line.partition(":")
+        if not HOST_RX.fullmatch(host) or port not in ("", "443", "22"):
+            continue
+        out.setdefault(host, set()).add(int(port) if port else 443)
+    return out
+
+
+def allow_line(host: str, port: int) -> str:
+    if not HOST_RX.fullmatch(host) or port not in (443, 22):
+        raise Refuse("not an allowed host")
+    return host if port == 443 else f"{host}:22"
+
+
+def allow_add(text: str, host: str, port: int) -> Tuple[str, bool]:
+    """(new text, whether it changed)."""
+    if port in parse_allow(text).get(host, set()):
+        return text, False
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text + allow_line(host, port) + "  # hubchat add\n", True
+
+
+def allow_remove(text: str, host: str, port: int) -> str:
+    want = allow_line(host, port)
+    keep = [ln for ln in text.splitlines() if ln.split("#", 1)[0].strip().lower() != want]
+    return "\n".join(keep) + ("\n" if keep else "")
+
+
+# ---------------------------------------------------------------------------- git made safe (4.9, 7.1)
+
+_GBOOL = re.compile(r"true|false|yes|no|on|off|1|0")
+_GKEEP = {  # (section, key) -> value pattern; a section with a subsection is marked by '*'
+    ("core", "repositoryformatversion"): re.compile(r"[01]"),
+    ("core", "filemode"): _GBOOL, ("core", "bare"): _GBOOL, ("core", "ignorecase"): _GBOOL,
+    ("core", "logallrefupdates"): re.compile(r"true|false|always"),
+    ("core", "symlinks"): _GBOOL, ("core", "precomposeunicode"): _GBOOL,
+    ("extensions", "objectformat"): re.compile(r"sha1|sha256"),
+    ("extensions", "refstorage"): re.compile(r"files|reftable"),
+    ("remote*", "url"): None, ("remote*", "pushurl"): None,
+    ("remote*", "fetch"): re.compile(r"\+?[A-Za-z0-9/_.*:-]{1,200}"),
+    ("branch*", "remote"): re.compile(r"[A-Za-z0-9._-]{1,100}"),
+    ("branch*", "merge"): re.compile(r"refs/[A-Za-z0-9/_.-]{1,200}"),
+    ("branch*", "rebase"): re.compile(r"true|false|merges|interactive"),
+}
+_SUBNAME = re.compile(r"[A-Za-z0-9._/-]{1,100}")
+
+
+def safe_git_config(text: str) -> Tuple[str, List[str]]:
+    """A repository config with only plain keys: format version, remotes (safe URLs only),
+    branch tracking. Everything else (fsmonitor, hooksPath, sshCommand, pager, aliases,
+    includes, filters, credential helpers, uploadpack ...) is dropped. Returns (new text, names
+    of dropped keys). Parsed here by a small strict reader, never by git (root never runs git on
+    box-written data); lines it does not understand are dropped."""
+    keep: List[Tuple[str, Optional[str], str, str]] = []
+    dropped: List[str] = []
+    section, sub = None, None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line[0] in "#;":
+            continue
+        m = re.fullmatch(r'\[\s*([A-Za-z0-9.-]+)\s*(?:"([^"\\]*)")?\s*\]\s*(?:[#;].*)?', line)
+        if m:
+            section, sub = m.group(1).lower(), m.group(2)
+            if "." in section:   # [section.sub] old form: not kept
+                section, sub = section + "?", None
+            continue
+        if line.startswith("["):
+            section, sub = None, None
+            dropped.append(line[:60])
+            continue
+        m = re.fullmatch(r'([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?', line)
+        if not m or section is None:
+            dropped.append(line[:60])
+            continue
+        key, val = m.group(1).lower(), (m.group(2) or "true").strip()
+        name = f"{section}.{sub + '.' if sub else ''}{key}"
+        if val.endswith("\\") or re.search(r'\s[#;]', val):
+            dropped.append(name)
+            continue
+        if len(val) >= 2 and val[0] == val[-1] == '"' and "\\" not in val and '"' not in val[1:-1]:
+            val = val[1:-1]
+        elif '"' in val or "\\" in val:
+            dropped.append(name)
+            continue
+        rule_key = (section + ("*" if sub is not None else ""), key)
+        if rule_key not in _GKEEP or (sub is not None and not _SUBNAME.fullmatch(sub)):
+            dropped.append(name)
+            continue
+        rx = _GKEEP[rule_key]
+        if rx is None:
+            try:
+                parse_git_url(val)
+            except Refuse:
+                dropped.append(name)
+                continue
+        elif not rx.fullmatch(val):
+            dropped.append(name)
+            continue
+        keep.append((section, sub, key, val))
+    out: List[str] = []
+    last = None
+    for section, sub, key, val in keep:
+        head = (section, sub)
+        if head != last:
+            out.append(f'[{section}]' if sub is None else f'[{section} "{sub}"]')
+            last = head
+        out.append(f"\t{key} = {val}")
+    return ("\n".join(out) + "\n") if out else "", dropped
+
+
+# ---------------------------------------------------------------------------- hubchat add checks (4.9)
+
+SECRET_NAMES = re.compile(
+    r"\.env(\..+)?|id_(rsa|dsa|ecdsa|ed25519)(_sk)?|.+\.(pem|key|p12|pfx|kdbx|ovpn)|\.npmrc|\.netrc"
+    r"|\.pypirc|\.git-credentials|credentials(\.json)?|\.credentials\.json|auth\.json|secrets?\.(json|ya?ml|toml)"
+    r"|.*\.tfstate|kubeconfig|\.dockercfg|config\.json\.bak")
+SYNC_NAMES = {"dropbox", "nextcloud", "owncloud", "onedrive", "google drive", "googledrive",
+              "pcloud", "pclouddrive", "mega", "megasync", "sync", "icloud drive", "box sync", "seafile"}
+SYNC_MARKERS = (".dropbox", ".dropbox.cache", ".stfolder", ".sync", ".nextcloudsync.log",
+                ".owncloudsync.log", ".sync_journal.db", ".seafile-data")
+
+
+def is_secret_name(name: str) -> bool:
+    return bool(SECRET_NAMES.fullmatch(name)) and not name.endswith(".pub")
+
+
+def in_synced_folder(parts: List[str]) -> Optional[str]:
+    """parts: the path components from the home down to the folder. A component named like a
+    sync tool's folder."""
+    for p in parts:
+        if p.lower() in SYNC_NAMES or p.lower().startswith(("dropbox (", "nextcloud-", "onedrive -")):
+            return p
+    return None
+
+
+# ---------------------------------------------------------------------------- safe.directory (7.1)
+
+def safe_directory_warnings(lines: List[Tuple[str, str]], shortcuts: List[str]) -> List[str]:
+    """lines: (origin file, value) of every safe.directory entry the person's git sees.
+    A warning for each entry that switches git's ownership check off for a team folder."""
+    out = []
+    for origin, value in lines:
+        v = value.strip()
+        if v.endswith("*"):        # '*' (everything) or '<dir>/*' (everything below, git 2.46+)
+            top = v[:-1].rstrip("/") or "/"
+            bad = any(under(t, top) or under(top, t) for t in (VIEW, TEAM)) or any(under(s, top) for s in shortcuts)
+        else:
+            p = v.rstrip("/") or "/"
+            bad = under(p, VIEW) or under(p, TEAM) or p in shortcuts
+        if bad:
+            out.append(f"WARNING: git's ownership check is switched off for team folders by "
+                       f"'safe.directory = {v}' in {origin}. Team chats could then run code as you "
+                       f"through git. Remove that line.")
+    return out

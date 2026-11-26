@@ -1,0 +1,30 @@
+# Things a box must never reach (secure design v2, 4.6). enter checks they answer from outside;
+# wallcheck checks the box cannot reach them.
+[Unit]
+Description=kaptyorka wall canaries
+
+[Service]
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/kaptyorka/canary KAPTYORKA_WALL_CANARY_PROC
+DynamicUser=yes
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+SystemCallFilter=@system-service
+# reachable from this computer only (the listener on the wildcard address is for W5)
+IPAddressDeny=any
+IPAddressAllow=localhost
+MemoryMax=50M
+TasksMax=16
+KillMode=control-group
+Restart=always
+RestartSec=1
+RuntimeMaxSec=1d
+
+[Install]
+WantedBy=multi-user.target

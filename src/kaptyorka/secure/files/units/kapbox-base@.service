@@ -1,0 +1,15 @@
+# The box's network namespace (only lo) and runtime folders (secure design v2, 4.2, 4.5).
+[Unit]
+Description=kaptyorka: base of the team box %i
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/kaptyorka/kapbox-base start %i
+ExecStop=/usr/local/libexec/kaptyorka/kapbox-base stop %i
+TimeoutSec=30
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

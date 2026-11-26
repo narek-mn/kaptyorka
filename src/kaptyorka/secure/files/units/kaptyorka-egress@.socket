@@ -1,0 +1,15 @@
+# The forwarder's door for one box (secure design v2, 4.5). Only root and kap-<box> can connect.
+[Unit]
+Description=kaptyorka forwarder door for the box %i
+Requires=kapbox-base@%i.service
+After=kapbox-base@%i.service
+
+[Socket]
+ListenStream=/run/kapbox/%i/pub/egress.sock
+SocketUser=root
+SocketGroup=kap-%i
+SocketMode=0660
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

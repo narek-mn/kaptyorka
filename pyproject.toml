@@ -25,7 +25,8 @@ kaptyorka = "kaptyorka.cli:entry"
 where = ["src"]
 
 [tool.setuptools.package-data]
-kaptyorka = ["web/*.html", "web/fonts/*", "relay/units/*"]
+kaptyorka = ["web/*.html", "web/fonts/*", "relay/units/*", "secure/files/*", "secure/files/units/*",
+             "secure/files/box/*", "secure/files/box/*/*"]
 
 [tool.pytest.ini_options]
 markers = ["slow: tests that call real agent tools",

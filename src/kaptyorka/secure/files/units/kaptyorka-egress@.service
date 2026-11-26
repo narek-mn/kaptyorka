@@ -1,0 +1,48 @@
+# The forwarder (secure design v2, 4.5, with D1 and D6): the box's only way to the internet.
+# Allowed host names only (/etc/kaptyorka/boxes/%i/egress-allow); never loopback, private,
+# link-local or this computer's addresses, in its code and again here (IPAddressDeny=).
+[Unit]
+Description=kaptyorka forwarder for the box %i
+
+[Service]
+ExecStart=/usr/bin/python3 -I /opt/kaptyorka/egress/current/egress.py %i
+DynamicUser=yes
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+TemporaryFileSystem=/dev/shm
+TemporaryFileSystem=/sys/fs/cgroup:ro
+ProtectProc=invisible
+InaccessiblePaths=-/run/dbus -/run/user -/var/lib/kap-team -/srv -/run/kapbox -/mnt -/media -/etc/kaptyorka/secret -/run/docker.sock
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug
+SystemCallFilter=~process_vm_readv process_vm_writev kcmp pidfd_getfd
+UMask=0077
+LimitCORE=0
+RestrictAddressFamilies=AF_INET AF_INET6
+IPAddressDeny=0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.168.0.0/16 198.18.0.0/15 224.0.0.0/4 240.0.0.0/4 ::1/128 fc00::/7 fe80::/10 ff00::/8
+# D6: the system resolver (systemd-resolved) on 127.0.0.53; an address, the filter has no ports
+IPAddressAllow=127.0.0.53/32
+MemoryMax=200M
+MemorySwapMax=0
+TasksMax=128
+CPUQuota=50%
+KillMode=control-group
+TimeoutStopSec=5
+RuntimeMaxSec=12h

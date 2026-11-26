@@ -1,0 +1,16 @@
+#!/bin/sh
+# kaptyorka launcher (secure design v2, 4.7). Root-owned; runs as the person. No network, reads
+# no file. A folder is a team folder only by where it really is: /srv/team/<you>/<name>, where
+# only root can put a folder. There the tool starts in the box; anywhere else your own tool.
+tool=$1
+case $tool in
+  claude|opencode|codex|cursor-agent|git) shift ;;
+  *) echo "launch: unknown tool" >&2; exit 2 ;;
+esac
+here=$(pwd -P 2>/dev/null) || here=
+me=$(id -un)
+case "$here/" in
+  "/srv/team/$me/"?*) exec sudo -n /usr/local/libexec/kaptyorka/enter "$tool" "$@" ;;
+esac
+# personal: the next "$tool" on PATH (shell functions do not reach this script)
+exec "$tool" "$@"

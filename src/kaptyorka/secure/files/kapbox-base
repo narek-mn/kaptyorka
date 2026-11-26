@@ -1,0 +1,28 @@
+#!/bin/sh
+# kapbox-base start|stop <box> (secure design v2, 4.2 and 4.5): the box's own network namespace
+# with only lo, and its runtime folders: /tmp and /var/tmp each their own tmpfs (nosuid,nodev,
+# not noexec: D4), run/, and pub/ for the forwarder's door. Root, from kapbox-base@<box>.service.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+cmd=${1:-}; box=${2:-}
+printf '%s' "$box" | grep -Eqx '[a-z_][a-z0-9_-]{0,27}' || { echo "kapbox-base: bad box name" >&2; exit 2; }
+u=kap-$box
+r=/run/kapbox/$box
+case $cmd in
+start)
+  uid=$(id -u "$u"); gid=$(id -g "$u")
+  [ -e "/run/netns/kapbox-$box" ] || ip netns add "kapbox-$box"
+  ip -n "kapbox-$box" link set lo up
+  install -d -m 0755 -o root -g root /run/kapbox "$r"
+  install -d -m 0750 -o root -g "$u" "$r/pub"
+  install -d -m 0700 -o "$u" -g "$u" "$r/run" "$r/tmp" "$r/vartmp"
+  for d in tmp vartmp; do
+    mountpoint -q "$r/$d" || mount -t tmpfs -o "mode=0700,uid=$uid,gid=$gid,nosuid,nodev,size=25%" "kapbox-$box-$d" "$r/$d"
+  done ;;
+stop)
+  for d in tmp vartmp; do mountpoint -q "$r/$d" && umount -l "$r/$d"; done
+  rm -rf --one-file-system "$r"
+  [ -e "/run/netns/kapbox-$box" ] && ip netns del "kapbox-$box"
+  true ;;
+*) echo "usage: kapbox-base start|stop <box>" >&2; exit 2 ;;
+esac

@@ -1,0 +1,14 @@
+{
+ "permissions": {
+  "deny": ["SendMessage", "ListAgents", "RemoteTrigger", "Artifact", "SendUserFile",
+           "mcp__claude-in-chrome", "mcp__computer-use"],
+  "disableBypassPermissionsMode": "disable"
+ },
+ "disableClaudeAiConnectors": true,
+ "enableArtifact": false,
+ "remoteControlAtStartup": false,
+ "crossSessionInbound": "accept",
+ "isolatePeerMachines": true,
+ "sandbox": {"enabled": false},
+ "autoUpdates": false
+}
