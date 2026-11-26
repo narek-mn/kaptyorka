@@ -44,17 +44,19 @@ SYSTEMD = kr.SYSTEMD
 HOOK_BEGIN, HOOK_END = "# >>> kaptyorka >>>", "# <<< kaptyorka <<<"
 FP_RX = re.compile(r"[0-9a-f]{64}")
 CNAME_RX = re.compile(r"[A-Za-z0-9._-]{1,32}")
-TOKEN_RX = re.compile(r"[A-Za-z0-9_-]{20,400}")
+TOKEN_RX = kc.TOKEN_RX
 PROGRAMS = (  # (source in this folder, name in /usr/local/libexec/kaptyorka, mode)
     ("kap_enter.py", "enter", 0o755), ("kap_hubchat.py", "hubchat-root", 0o755),
     ("kap_hubchat.py", "kap_hubchat.py", 0o644), ("kap_wallcheck.py", "wallcheck", 0o755),
     ("kap_box_exec.py", "box-exec", 0o755), ("kap_canary.py", "canary", 0o755),
+    ("kap_addrwatch.py", "addrwatch", 0o755),
     ("kap_setup.py", "kaptyorka-secure-setup", 0o755), ("kapcommon.py", "kapcommon.py", 0o644),
     ("kaproot.py", "kaproot.py", 0o644), ("files/launch", "launch", 0o755),
     ("files/kapbox-base", "kapbox-base", 0o755),
 )
 OUR_UNITS = ("kapbox-base@.service", "kaptyorka-egress@.socket", "kaptyorka-egress@.service",
-             "kaptyorka-canary.service", "kaptyorka-relay.service", "kaptyorka-relay-box@.socket")
+             "kaptyorka-canary.service", "kaptyorka-relay.service", "kaptyorka-relay-box@.socket",
+             "kaptyorka-addrwatch.service")
 
 
 def version() -> str:
@@ -207,6 +209,17 @@ def install_tools(src: str) -> None:
                 os.symlink(os.readlink(s), d)
             else:
                 copy(s, d, (os.stat(s).st_mode & 0o755) | 0o444)
+    claude_execute_only()
+
+
+def claude_execute_only() -> None:
+    """The claude program execute-only (0711): the kernel then makes claude non-dumpable, so the
+    commands it runs (same box user) cannot read its token from /proc/<pid>/environ or its memory
+    (red team round 1, finding 1; measured with Claude Code 2.1.332). box-exec refuses to hand the
+    token to a claude it can read."""
+    p = os.path.realpath(f"{kc.TOOLS_DIR}/bin/claude")
+    if kc.under(p, kc.TOOLS_DIR) and os.path.isfile(p) and not os.path.islink(p):
+        os.chmod(p, 0o711)
 
 
 def install_etc(ver: str) -> None:
@@ -236,6 +249,8 @@ def install_units() -> None:
     kr.systemctl("daemon-reload")
     kr.run(["systemd-tmpfiles", "--create", "/etc/tmpfiles.d/kaptyorka.conf"], check=False)
     kr.systemctl("enable", "--now", "kaptyorka-canary.service")
+    kr.systemctl("enable", "kaptyorka-addrwatch.service")
+    kr.systemctl("restart", "kaptyorka-addrwatch.service", check=False)   # a new release runs its new code
 
 
 def check_relay_values(a) -> dict:
@@ -339,6 +354,7 @@ def install(a) -> int:
     install_code(ver)
     if a.get("--tools-from"):
         install_tools(a["--tools-from"])
+    claude_execute_only()
     install_etc(ver)
     kr.write_file(kc.LIMITS_FILE, f"runtime_max={rt}\n", 0o644)
     install_units()
@@ -420,7 +436,7 @@ def remove(a) -> int:
             pass
     left = [p for p in os.listdir(kc.PEOPLE)] if os.path.isdir(kc.PEOPLE) else []
     if not left:
-        kr.systemctl("disable", "--now", "kaptyorka-canary.service", check=False)
+        kr.systemctl("disable", "--now", "kaptyorka-canary.service", "kaptyorka-addrwatch.service", check=False)
         kr.systemctl("stop", "kaptyorka-relay.service", check=False)
         for n in OUR_UNITS:
             if os.path.lexists(f"{SYSTEMD}/{n}"):
@@ -452,9 +468,9 @@ def remove(a) -> int:
                     pass
     say("Removed." if not failed else "Removed, except:", *[f"  {f}" for f in failed],
         *([] if delete_home else [f"The box homes were kept in {kc.TEAM}; delete them with sudo when you are sure."]),
-        "Now revoke what the box used: the Claude token at claude.ai (Settings, Claude Code), the box's",
-        "Codex, Cursor and OpenCode sessions in each vendor's account page, the box's SSH key in your git",
-        "account, and ask an admin to remove this computer on the hub page.")
+        "Now revoke what the box used: the box's Codex, Cursor and OpenCode sessions in each vendor's",
+        "account page, the box's SSH key in your git account, and ask an admin to remove this computer on",
+        "the hub page.", *kc.REVOKE_CLAUDE_TOKEN)
     return 1 if failed else 0
 
 

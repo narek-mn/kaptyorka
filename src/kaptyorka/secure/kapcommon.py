@@ -65,6 +65,17 @@ NAME_RX = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,63}")
 BOX_RX = re.compile(r"[a-z_][a-z0-9_-]{0,27}")          # kap-<box> stays within 32 characters
 RUNTIME_RX = re.compile(r"[1-9][0-9]{0,6}(s|min|h|d)?|infinity")
 TERM_RX = re.compile(r"[A-Za-z0-9._+-]{1,64}")
+TOKEN_RX = re.compile(r"[A-Za-z0-9_-]{20,400}")     # a token from `claude setup-token`
+
+# How to end a Claude setup-token. Anthropic's docs (code.claude.com/docs/en/authentication,
+# "Generate a long-lived token", read 2026-11-26) say it lasts one year and name no command or
+# page that revokes it; `claude setup-token` only makes new ones. The claude.ai page below is
+# where people report finding it; the docs do not confirm it.
+REVOKE_CLAUDE_TOKEN = (
+    "To end the old Claude token: sign in at claude.ai, open Settings, then Claude Code, and remove",
+    "the token there if it is listed. Anthropic's documentation names no revoke command for setup-tokens,",
+    "so if it is not listed, ask Anthropic support; otherwise it works until about a year after it was made.",
+)
 
 
 class Refuse(Exception):
@@ -295,6 +306,10 @@ def box_props(person: str, box: str, runtime_max: str = "7d") -> List[str]:
         f"BindPaths={RELAY_DOORS}/{box}.sock {run}/pub/egress.sock:/run/egress.sock",
         # memory, devices, processes
         "TemporaryFileSystem=/dev/shm:mode=1777", "PrivateIPC=yes", "PrivateDevices=yes",
+        # No ProcSubset=pid (red team round 1, B-17: the box reads /proc/meminfo, /proc/stat, the
+        # uptime). Measured in slice 2 with it: Claude, OpenCode and Cursor start, but Codex 0.172
+        # stops at its first screen ("failed to read start time for pid-managed app server"; a
+        # process start time needs the boot time from /proc/stat). Recorded as a small leak.
         "ProtectProc=invisible", "TemporaryFileSystem=/sys/fs/cgroup:ro", "KeyringMode=private",
         # network: own namespace with only lo; the relay and the forwarder are socket files
         f"NetworkNamespacePath=/run/netns/kapbox-{box}",
@@ -612,6 +627,43 @@ SYNC_MARKERS = (".dropbox", ".dropbox.cache", ".stfolder", ".sync", ".nextclouds
 
 def is_secret_name(name: str) -> bool:
     return bool(SECRET_NAMES.fullmatch(name)) and not name.endswith(".pub")
+
+
+# What a secret looks like inside a file, whatever its name (red team round 1, finding 2: a hard
+# link to ~/.ssh/id_ed25519 named "hardlink-to-key" passed the name check). Only the first
+# CONTENT_SAMPLE bytes of a file are read; a file over CONTENT_MAX_SIZE or with a NUL byte in the
+# sample is not looked into.
+CONTENT_SAMPLE = 4096
+CONTENT_MAX_SIZE = 1 << 20
+SECRET_CONTENT = (
+    (re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"), "a private key"),
+    (re.compile(rb"sk-ant-[A-Za-z0-9_-]{16,}"), "an Anthropic key or token (sk-ant-)"),
+    (re.compile(rb"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}|\bgithub_pat_[A-Za-z0-9_]{30,}"), "a GitHub token"),
+    (re.compile(rb"\bglpat-[A-Za-z0-9_-]{20,}"), "a GitLab token (glpat-)"),
+    (re.compile(rb"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), "an AWS access key (AKIA)"),
+    (re.compile(rb"\bxox[abposr]-[A-Za-z0-9-]{10,}"), "a Slack token (xox)"),
+    (re.compile(rb"\bAIza[0-9A-Za-z_-]{35}"), "a Google API key (AIza)"),
+    (re.compile(rb"\bhf_[A-Za-z0-9]{30,}"), "a Hugging Face token (hf_)"),
+    (re.compile(rb"\bnpm_[A-Za-z0-9]{36}\b"), "an npm token (npm_)"),
+    (re.compile(rb'"(?:accessToken|refreshToken|access_token|refresh_token|oauth[A-Za-z_]*|password|'
+                rb'client_secret|private_key|privateKey|clientSecret)"\s*:\s*"[^"\s]{6,}"', re.I),
+     "credentials in JSON (a token, password or client secret)"),
+    # upper-case names only, as environment files write them (code's max_tokens = ... is not one)
+    (re.compile(rb"(?m)^[ \t]*(?:export[ \t]+)?[A-Z_][A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|"
+                rb"PRIVATE_?KEY|ACCESS_?KEY|CREDENTIALS?)[A-Z0-9_]*[ \t]*=[ \t]*[\"']?[^\s\"'#$]{8,}"),
+     "a KEY=secret line (.env style)"),
+)
+
+
+def secret_in_content(sample: bytes) -> Optional[str]:
+    """The reason a file's first bytes look like a secret, or None. Binary-looking samples
+    (a NUL byte) are not looked into."""
+    if b"\0" in sample:
+        return None
+    for rx, reason in SECRET_CONTENT:
+        if rx.search(sample):
+            return reason
+    return None
 
 
 def in_synced_folder(parts: List[str]) -> Optional[str]:

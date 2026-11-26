@@ -3,6 +3,7 @@ checks of the root programs, the tool flags enter lets through, git URLs, the fo
 list and checks, the git config hubchat remove keeps, the tree hand-over without following
 links, and wallcheck's doors. Everything that needs root, systemd or a second user runs in a
 throw-away container (secure-design/testbox/slice2.sh), never here."""
+import ipaddress
 import json
 import os
 import shutil
@@ -22,6 +23,7 @@ from kaptyorka.secure import kap_enter as en
 from kaptyorka.secure import kap_hubchat as hc
 from kaptyorka.secure import kap_wallcheck as wc
 from kaptyorka.secure import kap_setup as setup
+from kaptyorka.secure import kap_addrwatch as aw
 
 SECURE = os.path.dirname(kc.__file__)
 
@@ -129,6 +131,7 @@ def test_box_props_carry_every_wall_and_the_slice0_changes():
                  "ReadOnlyPaths=/var/lib/kap-team/kap-alice/home"):
         assert line in props, line
     assert "ProtectControlGroups" not in text          # D1
+    assert "ProcSubset" not in text                    # Codex needs /proc/stat (slice 2, P-17)
     # measured on systemd 255: next to these, systemd drops TemporaryFileSystem=/ without a word
     assert "ProtectSystem" not in text and "DynamicUser" not in text and "RootDirectory" not in text
     tl = next(p for p in props if p.startswith("TemporaryFileSystem=/sys/block"))
@@ -471,9 +474,62 @@ def test_scan_secrets_walks_without_links(tmp_path):
     os.symlink(os.path.expanduser("~"), tmp_path / "home-link")
     fd = os.open(str(tmp_path), os.O_RDONLY | os.O_DIRECTORY)
     try:
-        assert hc.scan_secrets(fd) == ["a/.env"]
+        assert [(p, k) for p, _, k in hc.scan_secrets(fd)] == [("a/.env", "name")]
     finally:
         os.close(fd)
+
+
+FAKE = {   # made-up values in each shape; none is a real secret
+    "a private key": b"-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaA==\n",
+    "rsa": b"x\n-----BEGIN RSA PRIVATE KEY-----\n",
+    "pgp": b"-----BEGIN PGP PRIVATE KEY BLOCK-----\n",
+    "anthropic": b"token: sk-ant-oat01-" + b"a" * 40,
+    "github": b"ghp_" + b"A" * 36, "github_pat": b"github_pat_" + b"B" * 40,
+    "gitlab": b"glpat-" + b"c" * 20, "aws": b"key AKIAABCDEFGHIJKLMNOP end", "slack": b"xoxb-1234567890-abc",
+    "google": b"AIza" + b"d" * 35, "hf": b"hf_" + b"e" * 34, "npm": b"//registry/:_authToken=npm_" + b"f" * 36,
+    "json": b'{"claudeAiOauth": {"accessToken": "CANARY-CLAUDE-TOKEN-c0de"}}',
+    "json2": b'{"client_secret": "abcdef123456"}',
+    "env": b"# settings\nexport GITHUB_TOKEN=abcd1234efgh\n", "env2": b"DB_PASSWORD='hunter2hunter2'\n",
+}
+
+
+@pytest.mark.parametrize("name", sorted(FAKE))
+def test_secret_in_content_finds_each_shape(name):
+    assert kc.secret_in_content(FAKE[name]), name
+
+
+@pytest.mark.parametrize("text", [
+    b"# README\nNo secrets here. Use $GITHUB_TOKEN from your shell.\n",
+    b"max_tokens = 100000000\ntoken_count = 12345678\n",       # code, not an environment file
+    b"API_KEY=\nTOKEN=${TOKEN}\nPASSWORD=$PASS\n",            # empty or a variable
+    b'{"password": ""}', b"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI user@host\n",   # a public key
+    b"\0\x01-----BEGIN OPENSSH PRIVATE KEY-----",             # binary-looking: not looked into
+])
+def test_secret_in_content_leaves_plain_files(text):
+    assert kc.secret_in_content(text) is None
+
+
+def test_scan_secrets_reads_contents_and_names_hard_links(tmp_path):
+    (tmp_path / "keys").mkdir()
+    (tmp_path / "keys" / "hardlink-to-key").write_bytes(FAKE["a private key"])
+    os.link(tmp_path / "keys" / "hardlink-to-key", tmp_path / "elsewhere")          # nlink 2
+    (tmp_path / "notes.txt").write_bytes(FAKE["json"])
+    (tmp_path / "big.log").write_bytes(b"x" * (kc.CONTENT_MAX_SIZE + 1) + FAKE["anthropic"])   # over the cap
+    (tmp_path / "late.txt").write_bytes(b"x" * kc.CONTENT_SAMPLE + FAKE["anthropic"])          # past the sample
+    (tmp_path / "plain.md").write_text("hello")
+    os.symlink(tmp_path / "notes.txt", tmp_path / "link-to-notes")                  # never followed
+    os.mkfifo(tmp_path / "pipe")                                                    # never opened
+    fd = os.open(str(tmp_path), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        found = hc.scan_secrets(fd)
+    finally:
+        os.close(fd)
+    got = {(p, k) for p, _, k in found}
+    assert got == {("keys/hardlink-to-key", "content"), ("keys/hardlink-to-key", "link"),
+                   ("elsewhere", "content"), ("elsewhere", "link"), ("notes.txt", "content")}
+    assert any(why == hc.LINKED for _, why, _ in found)
+    assert any("private key" in why for p, why, _ in found if p == "keys/hardlink-to-key")
+    assert all(ln.startswith("  ") and ": " in ln for ln in hc.show_found(found))
 
 
 def test_synced_folders():
@@ -497,10 +553,11 @@ def test_box_exec_plan_per_tool():
     prog, argv, env = bx.plan("claude", ["-c"], {"PATH": "/usr/bin"}, home, "alice", "tok")
     assert prog == "/opt/kap-tools/bin/claude" and argv[-1] == "-c" and "--strict-mcp-config" in argv
     assert "/etc/kaptyorka/boxes/alice/claude-settings.json" in argv
-    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "tok" and env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "1"
+    assert env["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"] == "3" and "tok" not in env.values()
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env and "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB" not in env
     assert env["CLAUDE_CONFIG_DIR"] == home + "/state/claude"
     _, _, env = bx.plan("claude", [], {}, home, "alice", "")
-    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env and "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" not in env
     assert bx.plan("codex", [], {}, home, "alice", "x")[2]["CODEX_HOME"] == home + "/state/codex"
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in bx.plan("codex", [], {}, home, "alice", "x")[2]
     assert bx.plan("opencode", [], {}, home, "alice", "")[2]["XDG_CONFIG_HOME"] == home + "/state/opencode/cfg"
@@ -525,6 +582,29 @@ def test_box_exec_reads_and_closes_the_token_fd():
         if saved is not None:
             os.dup2(saved, 3)
             os.close(saved)
+
+
+def test_box_exec_hands_the_token_only_to_an_unreadable_claude(tmp_path):
+    prog = tmp_path / "claude"
+    prog.write_bytes(b"\x7fELF")
+    prog.chmod(0o111)              # what 0711 root-owned is for the box user: execute only
+    if os.geteuid() != 0:          # root reads everything; the box user is never root
+        assert bx.token_readable_problem(str(prog)) == ""
+    prog.chmod(0o755)
+    assert "can be read" in bx.token_readable_problem(str(prog))
+    os.symlink(prog, tmp_path / "link")
+    assert "can be read" in bx.token_readable_problem(str(tmp_path / "link"))
+
+
+def test_box_exec_hands_the_token_on_a_socket_read_once():
+    fd = 60
+    bx.hand_token("sk-ant-oat01-test", fd)
+    try:
+        assert stat.S_ISSOCK(os.fstat(fd).st_mode) and os.get_inheritable(fd)
+        assert os.read(fd, 100) == b"sk-ant-oat01-test\n"
+        assert os.read(fd, 100) == b""          # nothing left for a command that inherits it
+    finally:
+        os.close(fd)
 
 
 def _fd_open(fd):
@@ -700,3 +780,65 @@ def test_programs_import_only_the_standard_library_and_each_other():
                 mods = [node.module.split(".")[0]]
             for m in mods:
                 assert m in _sys.stdlib_module_names or m in ours, (name, m)
+
+
+# ---------------------------------------------------------------------------- addrwatch, token-rotate
+
+def test_addrwatch_adds_only_missing_addresses_and_is_restart_safe(monkeypatch):
+    shown = {"kaptyorka-egress@alice.service": "0.0.0.0/8 10.0.0.0/8 203.0.113.5/32 ::1/128",
+             "kapbox-alice.slice": ""}
+    calls = []
+
+    def fake(*args, check=True):
+        calls.append(args)
+        if args[0] == "show":
+            return subprocess.CompletedProcess(args, 0, shown[args[-1]] + "\n", "")
+        if args[0] == "set-property":
+            shown[args[2]] = (shown[args[2]] + " " + args[3].split("=", 1)[1]).strip()
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(aw.kr, "systemctl", fake)
+    monkeypatch.setattr(aw, "units", lambda: sorted(shown))
+    monkeypatch.setattr(aw.kr, "host_addrs", lambda: ["203.0.113.5", "203.0.113.77", "2001:db8::5"])
+    cache = {}
+    assert aw.sync(cache) == 2
+    sets = [c for c in calls if c[0] == "set-property"]
+    assert ("set-property", "--runtime", "kaptyorka-egress@alice.service",
+            "IPAddressDeny=203.0.113.77 2001:db8::5") in sets
+    assert ("set-property", "--runtime", "kapbox-alice.slice",
+            "IPAddressDeny=203.0.113.5 203.0.113.77 2001:db8::5") in sets
+    assert aw.missing(["10.77.0.9", "203.0.113.5"], aw.denied("kaptyorka-egress@alice.service")) == []
+    calls.clear()
+    assert aw.sync(cache) == 0 and not calls                    # nothing new: not even a question
+    assert aw.sync({}) == 0 and not [c for c in calls if c[0] == "set-property"]   # a restart adds nothing twice
+    assert aw.missing(["2001:db8:0::5"], {ipaddress.ip_network("2001:db8::5")}) == []
+
+
+def test_addrwatch_listens_for_address_changes():
+    s = aw.listener()
+    try:
+        assert s.family == socket.AF_NETLINK
+    finally:
+        s.close()
+
+
+def test_token_rotate_writes_the_new_token_and_ends_claude_chats(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(kc, "SECRET", str(tmp_path))
+    monkeypatch.setattr(hc.kr, "mkdir", lambda p, mode, uid=0, gid=0: os.makedirs(p, exist_ok=True))
+    monkeypatch.setattr(hc.kr, "write_file", lambda p, d, mode=0o644, uid=0, gid=0: open(p, "w").write(d))
+    monkeypatch.setattr(hc.kr, "boxes_of", lambda person: ["alice"])
+    monkeypatch.setattr(hc.kr, "chats", lambda box: [("kapbox-alice-chat-claude-1.service", "claude", "/x"),
+                                                     ("kapbox-alice-chat-codex-2.service", "codex", "/x")])
+    stopped = []
+    monkeypatch.setattr(hc.kr, "systemctl", lambda *a, check=True: stopped.append(a))
+    new = "sk-ant-oat01-" + "n" * 30
+    monkeypatch.setattr(hc, "read_new_token", lambda: new)
+    hc.token_rotate("alice")
+    assert open(tmp_path / "alice" / "claude-oauth-token").read() == new + "\n"
+    assert stopped == [("stop", "kapbox-alice-chat-claude-1.service")]
+    out = capsys.readouterr().out
+    assert "1 running Claude chat" in out and "claude.ai" in out and "Anthropic support" in out
+    with pytest.raises(kc.Refuse, match="the token the box has now"):
+        hc.token_rotate("alice")
+    monkeypatch.setattr(hc, "read_new_token", lambda: "not a token; rm -rf")
+    with pytest.raises(kc.Refuse, match="does not look like a token"):
+        hc.token_rotate("alice")
