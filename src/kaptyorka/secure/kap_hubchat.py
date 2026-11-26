@@ -180,6 +180,11 @@ def check_source(person: str, path: str):
     return real, pfd, fd, st
 
 
+COVERED = ("  In your view, the tool folders and files at its top (.opencode, .claude, .codex, .cursor, .vscode,",
+           "  opencode.json, .mcp.json, .envrc, .git/hooks) look empty: your own tools must not load what team chats",
+           "  write there. The box keeps the real ones; change them through a team chat.")
+
+
 def add_folder(person: str, path: str, name: str, separate: bool, yes: bool, force: bool = False) -> None:
     folders = kr.load_folders(person)
     real, pfd, fd, st = check_source(person, path)
@@ -222,6 +227,7 @@ def add_folder(person: str, path: str, name: str, separate: bool, yes: bool, for
                 os.fchmod(fd, 0o2770)
                 kr.set_default_acl(fd, sgid)
                 rep = kr.take_tree(fd, buid, sgid, team=True)
+                kr.write_file(kr.since_stamp(box, name), "", 0o600)   # after the hand-over: what changes later counts
                 kr.add_view_mount(person, name, f"{kc.box_projects(box)}/{name}")
                 view = kc.view_path(person, name)
                 os.symlink(view, base, dir_fd=pfd)
@@ -253,7 +259,7 @@ def add_folder(person: str, path: str, name: str, separate: bool, yes: bool, for
     kr.say(f"{name} is now a team folder{' in its own box' if separate else ''}.",
            f"  your shortcut: {real} -> {view}",
            "  Run claude, codex, opencode, cursor-agent or git there as usual: they start in the box.",
-           *[f"  {n}" for n in notes])
+           *COVERED, *[f"  {n}" for n in notes])
     warn_all(person)
 
 
@@ -302,6 +308,7 @@ def add_git(person: str, url: str, name: str, separate: bool) -> None:
                 stdin=subprocess.DEVNULL, env=kr.CLEAN_ENV, timeout=3600)
             if r.returncode != 0:
                 raise Refuse(f"git clone failed inside the box (exit {r.returncode}); nothing was kept")
+            kr.write_file(kr.since_stamp(box, name), "", 0o600)
             kr.add_view_mount(person, name, top)
             os.symlink(view, name, dir_fd=pfd)
             os.chown(name, pw.pw_uid, pw.pw_gid, dir_fd=pfd, follow_symlinks=False)
@@ -318,7 +325,7 @@ def add_git(person: str, url: str, name: str, separate: bool) -> None:
         os.close(pfd)
     kr.say(f"{name} is now a team folder, cloned inside the box{' (its own box)' if separate else ''}.",
            f"  your shortcut: {os.path.join(here, name)} -> {view}",
-           f"  the box may now reach {host}{':22' if port == 22 else ''}.")
+           f"  the box may now reach {host}{':22' if port == 22 else ''}.", *COVERED)
     warn_all(person)
 
 
@@ -385,6 +392,7 @@ def remove(person: str, target: str) -> None:
     for unit, _, wd in kr.chats(box):
         if kc.under(wd, view):
             kr.systemctl("stop", unit, check=False)
+    since = kr.read_since(box, name)
     fd = kr.open_dir(real)
     try:
         os.fchown(fd, 0, 0)
@@ -396,7 +404,7 @@ def remove(person: str, target: str) -> None:
         kr.drop_view_mount(person, name)
         # 2. made safe for git, then the person's again, then back at the shortcut's place
         notes = kr.make_safe_for_git(fd)
-        traps = kr.trap_files(fd, buid)
+        traps = kr.trap_files(fd, since, git=False)   # git's own were just made safe
         kr.take_tree(fd, pw.pw_uid, pw.pw_gid, team=False)
         kr.drop_acls(fd)
         src = kr.open_dir(kc.box_projects(box))
@@ -415,6 +423,10 @@ def remove(person: str, target: str) -> None:
         os.close(fd)
     del folders[name]
     kr.save_folders(person, folders)
+    try:
+        os.unlink(kr.since_stamp(box, name))
+    except OSError:
+        pass
     if entry.get("source"):
         _, host, port, _ = kc.parse_git_url(entry["source"])
         if not any(f.get("source") and kc.parse_git_url(f["source"])[1:3] == (host, port)
@@ -429,8 +441,9 @@ def remove(person: str, target: str) -> None:
            *[f"  {n}" for n in notes],
            "  If a team chat may have sent the box's Claude token away, give it a new one: hubchat token-rotate")
     if traps:
-        kr.say("  Team chats wrote these files, which can run code when a program of yours opens them. "
-               "Read them before you trust the folder:", *[f"    {kc.shown(t, 200)}" for t in traps])
+        kr.say("  Team chats may have changed these files, which can run code when a program of yours opens "
+               "them (your own AI tool, your editor, a build). Read them before you trust the folder:",
+               *[f"    {kc.shown(t, 200)}" for t in traps])
 
 
 def human(n: int) -> str:
@@ -481,12 +494,13 @@ def list_all(person: str) -> None:
         try:
             fd = kr.open_dir(real)
             try:
-                traps = kr.trap_files(fd, kr.uid_of(kc.box_user(f["box"])))
+                traps = kr.trap_files(fd, kr.read_since(f["box"], name))
             finally:
                 os.close(fd)
             if traps:
-                kr.say("    files that can run code, written by team chats: "
-                       + ", ".join(kc.shown(t, 200) for t in traps[:20]))
+                kr.say("    WARNING: files that can run code when your own tools, editor or a build open them,",
+                       "    changed while this was a team folder (your view covers the tool ones at its top): "
+                       + kr.trap_notice(traps, 20))
             secrets_found = [f for f in scan_secrets_path(real) if f[2] != "link"]
             if secrets_found:
                 kr.say("    WARNING: these look like secrets and team chats can read them:",

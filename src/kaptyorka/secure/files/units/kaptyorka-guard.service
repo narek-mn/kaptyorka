@@ -1,0 +1,26 @@
+# kaptyorka-guard (red team round 3): covers the tool folders and files at the top of each person's
+# view of a team folder the moment the box makes, renames or removes one, and keeps the relay's
+# copy of each box's sign-in values current. Root, in the computer's own mount namespace: its
+# covers are mounts in the person's view, so no mount-namespace setting (ProtectSystem=,
+# PrivateTmp=, ProtectHome= ...) may be added here. It reads no file of any person.
+[Unit]
+Description=kaptyorka: cover tool files in team folder views; current box sign-ins for the relay
+After=local-fs.target
+
+[Service]
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/kaptyorka/guard
+NoNewPrivileges=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+MemoryMax=64M
+TasksMax=16
+CPUQuota=20%
+KillMode=control-group
+TimeoutStopSec=5
+Restart=always
+RestartSec=1
+RuntimeMaxSec=1d
+
+[Install]
+WantedBy=multi-user.target

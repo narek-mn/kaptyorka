@@ -96,7 +96,7 @@ def test_unit_names_match_systemd_escape():
 
 def test_mount_unit_has_the_four_flags():
     t = kc.mount_unit_text("alice", "proj-a", "/var/lib/kap-team/kap-alice/projects/proj-a")
-    assert "Options=bind,nosymfollow,noexec,nosuid,nodev\n" in t
+    assert "Options=bind,nosymfollow,noexec,nosuid,nodev,private\n" in t
     assert "Where=/srv/team/alice/proj-a\n" in t
     with pytest.raises(kc.Refuse):
         kc.mount_unit_text("alice", "proj-a", "/var/lib/x y")
@@ -441,20 +441,205 @@ def test_open_dir_refuses_a_symlink_on_the_way(tmp_path):
         kr.open_dir("relative/path")
 
 
-def test_trap_files_names_only_box_written_files(tmp_path):
-    (tmp_path / ".vscode").mkdir()
-    (tmp_path / ".vscode" / "tasks.json").write_text("{}")
-    (tmp_path / ".envrc").write_text("x")
-    (tmp_path / "README.md").write_text("x")
-    os.symlink("/etc", tmp_path / ".idea")
-    fd = os.open(str(tmp_path), os.O_RDONLY | os.O_DIRECTORY)
+def _trap(top, **kw):
+    fd = os.open(str(top), os.O_RDONLY | os.O_DIRECTORY)
     try:
-        mine = kr.trap_files(fd, os.getuid())
-        none = kr.trap_files(fd, os.getuid() + 12345)
+        return kr.trap_files(fd, **kw)
     finally:
         os.close(fd)
-    assert ".envrc" in mine and ".vscode/tasks.json" in mine and "README.md" not in mine
-    assert not any(m.startswith(".idea/") for m in mine) and none == []
+
+
+def _put(top, rel, text="x"):
+    p = top / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+
+
+def test_trap_files_find_code_files_at_any_depth_whoever_made_the_folder(tmp_path):
+    """Red team round 3, finding 1: the box wrote .opencode/plugin/pwn.js inside a folder the
+    person had made, and the old notice (only the direct entries of each tool folder, by owner)
+    named nothing. Now every file in a tool folder, at any depth, the tool files anywhere, git's
+    hooks and configs, and (build=True) Makefiles and package.json, are named."""
+    for rel in (".opencode/plugin/pwn.js", ".cursor/rules/r.mdc", ".codex/prompts/p.md", ".vscode/sub/tasks.json",
+                ".claude/hooks/h.sh", "sub/.opencode/agent/a.md", "sub/deep/opencode.json", ".envrc",
+                ".git/hooks/pre-commit", ".git/hooks/pre-push.sample", ".git/config", "lib/.git/config",
+                "Makefile", "web/package.json", "README.md", "src/main.py", ".git/objects/ab/cd",
+                "node_modules/x/.vscode/settings.json", ".opencode/node_modules/p/index.js"):
+        _put(tmp_path, rel)
+    os.symlink("/etc", tmp_path / ".idea")
+    got = _trap(tmp_path)
+    assert got == sorted([".claude/hooks/h.sh", ".codex/prompts/p.md", ".cursor/rules/r.mdc", ".envrc",
+                          ".git/config", ".git/hooks/pre-commit", ".opencode/node_modules/p/index.js",
+                          ".opencode/plugin/pwn.js", ".vscode/sub/tasks.json", "Makefile", "lib/.git/config",
+                          "sub/.opencode/agent/a.md", "sub/deep/opencode.json", "web/package.json"])
+    assert "Makefile" not in _trap(tmp_path, build=False) and ".git/config" not in _trap(tmp_path, git=False)
+
+
+def test_trap_files_count_only_what_changed_after_the_hand_over(tmp_path):
+    _put(tmp_path, ".opencode/plugin/old.js")
+    st = os.stat(tmp_path / ".opencode/plugin/old.js")
+    since = max(st.st_ctime, st.st_mtime) + 0.001
+    assert _trap(tmp_path, since=since) == []
+    import time as _t
+    _t.sleep(0.02)
+    _put(tmp_path, ".opencode/plugin/pwn.js")                 # the box writes later
+    assert _trap(tmp_path, since=since) == [".opencode/plugin/pwn.js"]
+    os.chmod(tmp_path / ".opencode/plugin/old.js", 0o644)      # any change moves the ctime
+    assert ".opencode/plugin/old.js" in _trap(tmp_path, since=since)
+
+
+def test_trap_files_are_bounded_and_say_so(tmp_path, monkeypatch):
+    for i in range(30):
+        _put(tmp_path, f".vscode/f{i:02}.json")
+    monkeypatch.setattr(kc, "TRAP_MAX", 10)
+    got = _trap(tmp_path)
+    assert len(got) == 11 and got[-1] == "..."
+    line = kr.trap_notice(got, most=3)
+    assert line.startswith("'.vscode/f00.json', '.vscode/f01.json', '.vscode/f02.json' and ") and line.endswith("more+")
+    deep = tmp_path / "d"
+    p = deep
+    for i in range(kc.TRAP_DEPTH + 3):
+        p = p / "a"
+    _put(p, ".envrc")
+    assert not any(x.endswith(".envrc") for x in _trap(tmp_path))
+
+
+def test_trap_notice_shows_names_safely():
+    line = kr.trap_notice([".opencode/plugin/\x1b]0;x\x07.js"])
+    assert "\x1b" not in line and "\x07" not in line and line.startswith("'.opencode/plugin/")
+
+
+def test_hides_wanted_only_real_tool_folders_and_files_at_the_top(tmp_path):
+    for rel in (".opencode/plugin/p.js", "opencode.json", ".mcp.json", ".git/hooks/pre-commit", "sub/.claude/x"):
+        _put(tmp_path, rel)
+    (tmp_path / ".envrc").mkdir()                    # a folder with a file's name: not a file cover
+    os.symlink("/etc", tmp_path / ".claude")         # a link: not followed in the view (nosymfollow)
+    fd = os.open(str(tmp_path), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        want = kr.hides_wanted(fd)
+    finally:
+        os.close(fd)
+    assert want == {".opencode": "dir", "opencode.json": "file", ".mcp.json": "file", ".git/hooks": "dir"}
+
+
+MI = """22 1 8:1 / / rw shared:1 - ext4 /dev/sda1 rw
+50 22 8:1 /var/lib/kap-team/kap-alice/projects/proj-a {view} rw,nosuid,nodev,noexec,nosymfollow {tag} - ext4 /dev/sda1 rw
+{extra}"""
+
+
+def _hide_env(tmp_path, monkeypatch, extra="", tag="shared:7"):
+    monkeypatch.setattr(kc, "VIEW", str(tmp_path / "srv"))
+    monkeypatch.setattr(kc, "TEAM", str(tmp_path / "team"))
+    back = tmp_path / "team" / "kap-alice" / "projects" / "proj-a"
+    back.mkdir(parents=True)
+    view = tmp_path / "srv" / "alice" / "proj-a"
+    view.parent.mkdir(parents=True)
+    os.symlink(back, view)       # stands in for the bind: the same folder
+    calls = []
+    monkeypatch.setattr(kr, "_mount", lambda src, target, fstype, flags, data=None:
+                        calls.append(("mount", src, os.path.basename(os.readlink(target)) if target.startswith("/proc/")
+                                      else target, fstype, flags, data)))
+    monkeypatch.setattr(kr, "_umount", lambda target: calls.append(("umount", target)))
+    monkeypatch.setattr(kr, "person_home", lambda p: type("pw", (), {"pw_uid": 1001, "pw_gid": 1001})())
+    monkeypatch.setattr(kr, "open_dir", lambda p: os.open(p, os.O_RDONLY | os.O_DIRECTORY))
+    mi = kr.mounts(MI.format(view=str(view), tag=tag, extra=extra))
+    return back, str(view), mi, calls
+
+
+def test_hide_view_makes_the_view_private_then_covers_each_tool_folder_and_file(tmp_path, monkeypatch):
+    back, view, mi, calls = _hide_env(tmp_path, monkeypatch)
+    _put(back, ".opencode/plugin/pwn.js")
+    _put(back, "opencode.json", '{"plugin": ["./evil.js"]}')
+    _put(back, ".envrc")
+    done = kr.hide_view("alice", "proj-a", "alice", mi)
+    assert calls[0] == ("mount", None, view, None, kr.MS_PRIVATE, None)
+    mounted = {c[2]: c for c in calls[1:]}
+    assert mounted[".opencode"][1:4] == (kc.HIDE_TMPFS, ".opencode", "tmpfs")
+    assert "uid=1001,gid=1001" in mounted[".opencode"][5] and "mode=0700" in mounted[".opencode"][5]
+    assert mounted[".opencode"][4] & (kr.MS_NOEXEC | kr.MS_NOSUID | kr.MS_NODEV) == kr.MS_NOEXEC | kr.MS_NOSUID | kr.MS_NODEV
+    assert mounted["opencode.json"][1] == kc.HIDE_JSON and mounted[".envrc"][1] == kc.HIDE_FILE
+    assert done == ["private", "+.envrc", "+.opencode", "+opencode.json"]
+
+
+def test_hide_view_uncovers_what_the_box_renamed_and_keeps_what_is_covered(tmp_path, monkeypatch):
+    extra = ("60 50 0:40 / {v}/.opencode rw - tmpfs kaptyorka-hide rw\n"
+             "61 50 0:41 / {v}/.opencode.old rw - tmpfs kaptyorka-hide rw\n")
+    back, view, _, calls = _hide_env(tmp_path, monkeypatch, tag="")
+    mi = kr.mounts(MI.format(view=view, tag="", extra=extra.format(v=view)))
+    _put(back, ".opencode/plugin/x.js")
+    _put(back, ".opencode.old/plugin/pwn.js")
+    done = kr.hide_view("alice", "proj-a", "alice", mi)
+    assert calls == [("umount", view + "/.opencode.old")] and done == ["-.opencode.old"]
+    assert kr.hidden_problem("alice", "proj-a", "alice", mi) is None
+    _put(back, ".claude/settings.json")
+    assert "'.claude' not covered" in kr.hidden_problem("alice", "proj-a", "alice", mi)
+
+
+def test_hidden_problem_names_a_shared_view(tmp_path, monkeypatch):
+    back, view, mi, _ = _hide_env(tmp_path, monkeypatch)
+    assert "is shared" in kr.hidden_problem("alice", "proj-a", "alice", mi)
+
+
+def test_mountinfo_names_with_spaces():
+    m = kr.mounts("5 1 0:1 / /srv/team/a/p/x\\040y rw - tmpfs t rw\n")
+    assert m[0]["point"] == "/srv/team/a/p/x y"
+
+
+def test_take_tree_hands_every_folder_to_the_box_even_tool_folders(tmp_path, monkeypatch):
+    """(round 3, d) hubchat add leaves no folder of the person's inside a team folder: the case
+    the attacker used, a .opencode/plugin the person made before, goes to the box too."""
+    for rel in (".opencode/plugin/ok.js", ".cursor/rules/r.mdc", "a/b/c/d.txt"):
+        _put(tmp_path, rel)
+    owned = {}
+    real_fchown = os.fchown
+    monkeypatch.setattr(os, "fchown", lambda fd, u, g: owned.__setitem__(os.readlink(f"/proc/self/fd/{fd}"), u))
+    fd = os.open(str(tmp_path), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        kr.take_tree(fd, 4242, os.getgid(), team=True)
+    finally:
+        os.close(fd)
+    monkeypatch.setattr(os, "fchown", real_fchown)
+    every = {str(p) for p in tmp_path.rglob("*")}
+    assert every == set(owned) and set(owned.values()) == {4242}
+
+
+def test_signin_values_take_the_secrets_of_each_tool_s_file():
+    codex = json.dumps({"OPENAI_API_KEY": None, "tokens": {"id_token": "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.sig12345abc",
+                                                            "access_token": "AccEss9Token8Value7XyZ", "refresh_token": "rt_9QwErTyUiOp1234"},
+                        "last_refresh": "2026-11-26T10:00:00.123456Z"})
+    assert kc.signin_values(codex) == ["rt_9QwErTyUiOp1234", "AccEss9Token8Value7XyZ",
+                                       "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.sig12345abc"] or \
+        set(kc.signin_values(codex)) == {"rt_9QwErTyUiOp1234", "AccEss9Token8Value7XyZ",
+                                         "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.sig12345abc"}
+    oc = json.dumps({"opencode": {"type": "api", "key": "CANARY-BOX-OPENCODE-AUTH-0c0c"},
+                     "anthropic": {"type": "oauth", "refresh": "ref-Ab12Cd34Ef56Gh78", "expires": 1764000000000}})
+    assert set(kc.signin_values(oc)) == {"CANARY-BOX-OPENCODE-AUTH-0c0c", "ref-Ab12Cd34Ef56Gh78"}
+    key = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\nBBBBccccDDDD\n-----END OPENSSH PRIVATE KEY-----\n"
+    assert kc.signin_values(key) == ["b3BlbnNzaC1rZXktdjEAAAAABBBBccccDDDD"]
+    for plain in ("https://api.openai.com/v1/xyz123ABC", "alice@example.com", "/home/x/abcdefABCDEF123",
+                  "aaaaaaaaaaaaaaaaaaaa", "short1A"):
+        assert not kc.secret_like(plain)
+
+
+def test_write_box_secrets_keeps_new_values_first_and_old_ones(tmp_path, monkeypatch):
+    monkeypatch.setattr(kc, "TEAM", str(tmp_path / "team"))
+    monkeypatch.setattr(kc, "BOX_SECRETS", str(tmp_path / "run" / "box-secrets"))
+    monkeypatch.setattr(kc, "SECRET", str(tmp_path / "secret"))
+    monkeypatch.setattr(kr, "gid_of", lambda g: os.getgid())
+    monkeypatch.setattr(kr, "mkdir", lambda p, mode, uid=0, gid=0: os.makedirs(p, exist_ok=True))
+    (tmp_path / "run").mkdir()
+    home = tmp_path / "team" / "kap-alice" / "home"
+    _put(home, "state/codex/auth.json", json.dumps({"tokens": {"refresh_token": "rt_FIRST9value8XyZ"}}))
+    os.symlink("/etc/shadow", home / ".cursor")      # a link the box made: never followed
+    _put(tmp_path / "secret" / "alice", "claude-oauth-token", "sk-ant-oat01-ABCdef123456789\n")
+    monkeypatch.setattr(kr, "open_dir", lambda p: os.open(p, os.O_RDONLY | os.O_DIRECTORY))
+    assert kr.write_box_secrets("alice", "alice") == 2
+    _put(home, "state/codex/auth.json", json.dumps({"tokens": {"refresh_token": "rt_SECOND9value8XyZ"}}))
+    assert kr.write_box_secrets("alice", "alice") == 3
+    f = tmp_path / "run" / "box-secrets" / "alice"
+    assert json.loads(f.read_text())["values"] == ["rt_SECOND9value8XyZ", "sk-ant-oat01-ABCdef123456789",
+                                                   "rt_FIRST9value8XyZ"]
+    assert stat.S_IMODE(f.stat().st_mode) == 0o640
 
 
 # ---------------------------------------------------------------------------- hubchat add checks
@@ -742,6 +927,55 @@ def test_launcher_runs_the_personal_tool_outside_team_folders(tmp_path):
     assert r.returncode == 2
 
 
+def _launch_copy(tmp_path, team):
+    """The real launcher with its team area at `team` (the real one is /srv/team, root's)."""
+    text = open(os.path.join(SECURE, "files", "launch")).read()
+    assert text.count('team="/srv/team/$me/"') == 1
+    p = tmp_path / "launch"
+    p.write_text(text.replace('team="/srv/team/$me/"', f'team="{team}/$me/"'))
+    return str(p)
+
+
+def test_launcher_refuses_a_team_folder_named_in_the_arguments(tmp_path):
+    """Round 3 (a): `opencode ~/team/x` or `codex -C ~/team/x` from outside would load that
+    folder's plugins and settings as the person."""
+    me = subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip()
+    team = tmp_path / "srv"
+    (team / me / "proj-a" / "sub").mkdir(parents=True)
+    home = tmp_path / "home"
+    home.mkdir()
+    os.symlink(team / me / "proj-a", home / "proj-a")      # the shortcut hubchat leaves
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    for t in ("opencode", "codex", "sudo"):
+        (bin_ / t).write_text(f"#!/bin/sh\necho {t.upper()} \"$@\"\n")
+        (bin_ / t).chmod(0o755)
+    launch = _launch_copy(tmp_path, team)
+    env = {"PATH": f"/usr/local/libexec/kaptyorka/shims:{bin_}:/usr/bin:/bin"}
+    run = lambda *a, cwd=home: subprocess.run(["sh", launch, *a], cwd=str(cwd), env=env, capture_output=True, text=True)
+    for args in (("opencode", "proj-a"), ("opencode", str(team / me / "proj-a" / "sub")), ("codex", "-C", "proj-a"),
+                 ("codex", "--cd=proj-a"), ("opencode", "run", "hi", "proj-a/sub")):
+        r = run(*args)
+        assert r.returncode == 2 and "team folder; cd into it" in r.stderr and "OPENCODE" not in r.stdout, args
+    r = run("opencode", "run", "fix proj-a please")          # a prompt is not a path
+    assert r.stdout.strip() == "OPENCODE run fix proj-a please"
+    r = run("opencode", cwd=home / "proj-a")                 # inside: the box, through sudo enter
+    assert r.stdout.startswith("SUDO -n /usr/local/libexec/kaptyorka/enter opencode")
+
+
+def test_the_shell_hook_puts_the_shims_first_once_and_hands_functions_to_bash_children(tmp_path):
+    hook = open(os.path.join(SECURE, "files", "shell-hook.sh")).read().replace(
+        "/etc/kaptyorka/launcher.sh", os.path.join(SECURE, "files", "launcher.sh"))
+    p = tmp_path / "hook.sh"
+    p.write_text(hook)
+    r = subprocess.run(["bash", "-c", f". {p}; . {p}; echo $PATH; bash -c 'type -t opencode; [ \"$(type -t git)\" = function ] && echo fgit || echo nogit'"],
+                       capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    path, *types = r.stdout.split()
+    assert path == "/usr/local/libexec/kaptyorka/shims:/usr/bin:/bin" and types == ["function", "nogit"]
+    r = subprocess.run(["sh", "-c", f". {p}; echo $PATH"], capture_output=True, text=True, env={"PATH": "/bin"})
+    assert r.stdout.strip() == "/usr/local/libexec/kaptyorka/shims:/bin"
+
+
 def test_setup_strips_only_its_own_hook(tmp_path, monkeypatch):
     f = tmp_path / "bash.bashrc"
     hook = open(os.path.join(SECURE, "files", "shell-hook.sh")).read()
@@ -885,3 +1119,30 @@ def test_wallcheck_fail_prints_one_safe_line(capsys):
         wc.fail("W1", "/x\x1b[2J\nwallcheck ok: 15 walls")
     err = capsys.readouterr().err
     assert _terminal_safe(err) and err.count("\n") == 1
+
+
+# ---------------------------------------------------------------------------- kaptyorka-guard (round 3)
+
+def test_guard_sees_a_tool_folder_made_at_once(tmp_path):
+    from kaptyorka.secure import kap_guard as gd
+    ino = gd.Inotify()
+    try:
+        ino.add(str(tmp_path), gd.DIR_EVENTS, "folder", "alice/proj-a")
+        ino.add(str(tmp_path / "missing"), gd.DIR_EVENTS, "folder", "x")      # not there: no watch, no error
+        assert ino.read() == ([], False)
+        (tmp_path / ".opencode").mkdir()
+        os.rename(tmp_path / ".opencode", tmp_path / ".x")
+        hits, lost = ino.read()
+        assert set(hits) == {("folder", "alice/proj-a")} and not lost
+    finally:
+        os.close(ino.fd)
+
+
+def test_guard_unit_stays_in_the_computer_s_mount_namespace():
+    text = open(os.path.join(SECURE, "files", "units", "kaptyorka-guard.service")).read()
+    lines = [l for l in text.splitlines() if l and not l.startswith("#")]
+    for bad in ("ProtectSystem=", "PrivateTmp=", "ProtectHome=", "PrivateDevices=", "TemporaryFileSystem=",
+                "RootDirectory=", "PrivateMounts=", "ReadOnlyPaths=", "BindPaths="):
+        assert not any(l.startswith(bad) for l in lines), bad
+    assert "ExecStart=/usr/bin/python3 -I /usr/local/libexec/kaptyorka/guard" in lines
+    assert ("kap_guard.py", "guard", 0o755) in setup.PROGRAMS and "kaptyorka-guard.service" in setup.OUR_UNITS

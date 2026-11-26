@@ -77,7 +77,8 @@ def test_the_units_keep_the_slice0_changes_and_hard_limits():
                  "SocketBindDeny=any",
                  "RestrictAddressFamilies=AF_INET AF_INET6", "IPAddressDeny=any",
                  "LoadCredential=device-token:/etc/kaptyorka/secret/device-token",
-                 "LoadCredential=chat-key:/etc/kaptyorka/secret/chat-key"):
+                 "LoadCredential=chat-key:/etc/kaptyorka/secret/chat-key",
+                 "SupplementaryGroups=kaprelay-secrets", "BindReadOnlyPaths=-/run/kaptyorka/box-secrets"):
         assert need in lines, need
     assert any(l.startswith("RuntimeMaxSec=") for l in lines)
     # measured on systemd 255: next to DynamicUser= a TemporaryFileSystem=/ is dropped, and a /sys
@@ -730,3 +731,108 @@ def test_the_chat_key_file_is_hex_text():
     for bad in (b"\x00 binary \n" * 4, b"abc", b"ab" * 8):
         with pytest.raises(ValueError):
             R.read_chat_key(bad)
+
+
+# ---------------------------------------------------------------- a box's own sign-ins (red team round 3, finding 2)
+
+OPAQUE = "tk_bbbbXq9Lm2Pz7Wc4Rt8Yu1Io5As3Df6Gh0Jk3Lp8Zx2Cv"            # no public token shape
+OPENAI = "sk-proj-" + "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5bC7dE9fG"
+HEXTOK = "9f2c4e6a8b0d1f3e5c7a9b1d3f5e7c9a1b3d5f7e9c1a3b5d"            # 48 hex characters
+
+
+def relay_with_secrets(tmp_path, values, person="alice"):
+    (tmp_path / person).write_text(json.dumps({"values": values}))
+    relay = R.Relay({"hub_ip": "127.0.0.1", "hub_port": 1, "pins": ["0" * 64], "name": "box-1",
+                     "version": "0.9.39", "idle_exit": 600}, DEVICE, KEY, log=lambda s: None,
+                    secrets_dir=str(tmp_path))
+    return relay
+
+
+def encodings(value: str):
+    v = value.encode()
+    hx = v.hex()
+    return {
+        "raw": f"here it is: {value} ok",
+        "base64": base64.b64encode(v).decode(),
+        "base64 after one byte": "x" + base64.b64encode(b"a" + v).decode(),
+        "base64 after two bytes": base64.b64encode(b"ab" + v).decode(),
+        "base64 url-safe": base64.urlsafe_b64encode(b"\xfb\xff" + v).decode(),
+        "base64 wrapped at 76": base64.encodebytes(b"token=" + v).decode(),
+        "hex": hx,
+        "HEX with colons": ":".join(hx[i:i + 2] for i in range(0, len(hx), 2)).upper(),
+        "reversed": value[::-1],
+        "in a file": None,
+    }
+
+
+@pytest.mark.parametrize("value", [OPAQUE, OPENAI, HEXTOK])
+@pytest.mark.parametrize("form", list(encodings(OPAQUE)))
+def test_a_box_sign_in_value_never_leaves_raw_or_encoded(tmp_path, value, form):
+    """The red team's three that passed TOKEN_RX (base64 of sk-proj-, an opaque token, 48 hex
+    characters), and the other encodings, once the box's sign-in values are the relay's."""
+    relay = relay_with_secrets(tmp_path, [value])
+    text = encodings(value)[form]
+    if text is None:
+        args = {**caller(), "to": "bob", "text": "f", "file_name": "k.bin",
+                "file_content": "base64:" + base64.b64encode(base64.b64encode(value.encode())).decode()}
+    else:
+        args = {**caller(), "to": "bob", "text": text}
+    with pytest.raises(R.Bad, match="key or token|sign-in of this computer or its box"):
+        relay.filter_out("alice", "send", args)
+    for call, a in (("notes_write", {**caller(), "topic": "t", "text": text or value}),
+                    ("status", {**caller(), "text": (text or value).replace("\n", "")[:400]})):
+        with pytest.raises(R.Bad):
+            relay.filter_out("alice", call, a)
+
+
+def test_without_the_box_values_the_encoded_copies_passed(tmp_path):
+    """The relay as round 3 found it (only TOKEN_RX): base64 and opaque copies went out."""
+    relay = relay_with_secrets(tmp_path, [], person="nobody")
+    for text in (base64.b64encode(OPENAI.encode()).decode(), OPAQUE, HEXTOK):
+        relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": text})
+
+
+def test_other_text_and_another_box_s_values_pass(tmp_path):
+    relay = relay_with_secrets(tmp_path, [OPAQUE])
+    for text in ("a normal message about tk_ prefixes and base64", base64.b64encode(b"hello world" * 8).decode(),
+                 "a1b2c3d4e5f6a7b8" * 4):
+        relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": text})
+    relay.filter_out("bob", "send", {**caller(), "to": "carol", "text": OPAQUE})   # bob's box has none
+    # the honest limit: short pieces get through (a backstop, not a wall); spaces do not hide them
+    relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": ",".join(OPAQUE[i:i + 10] for i in range(0, 50, 10))})
+    with pytest.raises(R.Bad):
+        relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": " ".join(OPAQUE[i:i + 10] for i in range(0, 50, 10))})
+
+
+def test_the_values_are_read_again_when_root_rewrites_the_file(tmp_path):
+    relay = relay_with_secrets(tmp_path, [OPAQUE])
+    fresh = "rt_" + "Zq8" * 10 + "Lm4Pw7"
+    relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": fresh})
+    time.sleep(0.01)
+    (tmp_path / "alice").write_text(json.dumps({"values": [fresh, OPAQUE]}))
+    os.utime(tmp_path / "alice", ns=(time.time_ns() + 10**9,) * 2)
+    with pytest.raises(R.Bad, match="sign-in"):
+        relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": base64.b64encode(fresh.encode()).decode()})
+
+
+def test_the_relay_s_own_secrets_are_refused_encoded_too(tmp_path):
+    relay = relay_with_secrets(tmp_path, [])
+    with pytest.raises(R.Bad):
+        relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": base64.b64encode(DEVICE.encode()).decode()})
+
+
+@pytest.mark.parametrize("raw", [b"[1, 2]", b'{"values": "x"}', b'{"values": ["short"]}', b"not json",
+                                 json.dumps({"values": ["a" * 20] * 300}).encode()])
+def test_a_bad_secrets_file_is_refused_whole(raw):
+    with pytest.raises(ValueError):
+        R.parse_secrets(raw)
+
+
+def test_secret_forms_cover_every_base64_alignment():
+    v = OPAQUE.encode()
+    forms, hexes = R.secret_forms(v)
+    for k in range(3):
+        for pre in (b"", b"q", b"qq", b"qqq")[:k + 1]:
+            enc = base64.b64encode(pre + v).decode()
+            assert any(f and f in enc for f in forms[2:]), (k, pre)
+    assert hexes == [v.hex()]

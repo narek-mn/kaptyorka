@@ -53,12 +53,76 @@ CANARY_TCP_LO = 47991
 CANARY_TCP_ANY = 47992
 CANARY_PROC = "KAPTYORKA_WALL_CANARY_PROC"
 
-# Files of a team folder that can run code when the person opens the folder (7.2).
-TRAP_FILES = (".envrc", ".claude/settings.json", ".claude/settings.local.json", "opencode.json",
-              "Makefile", "makefile", "GNUmakefile", "package.json", ".mise.toml", "mise.toml",
-              ".tool-versions", ".nvmrc", ".python-version", ".exrc", ".nvim.lua", ".nvimrc",
-              ".dir-locals.el", ".git/config", ".gitattributes", ".mcp.json")
-TRAP_DIRS = (".vscode", ".cursor", ".codex", ".idea", ".git/hooks", ".claude/hooks", ".opencode")
+# Files of a team folder that can run code when the person opens the folder (7.2), at any depth.
+# TOOL_DIRS and TOOL_FILES: what an AI tool or an editor of the person's loads by itself when it
+# starts in the folder (OpenCode runs .opencode/plugin/*.js and opencode.json's plugins with no
+# prompt: red team round 3, finding 1). Everything inside a TOOL_DIR counts, at any depth.
+TOOL_DIRS = (".opencode", ".claude", ".codex", ".cursor", ".vscode", ".idea", ".zed", ".devcontainer")
+TOOL_FILES = ("opencode.json", "opencode.jsonc", ".mcp.json", ".envrc", ".nvim.lua", ".nvimrc", ".exrc",
+              ".dir-locals.el")
+# what a build or a version manager may run (listed by hubchat list and remove, not at every start)
+BUILD_FILES = ("Makefile", "makefile", "GNUmakefile", "package.json", ".mise.toml", "mise.toml",
+               ".tool-versions", ".nvmrc", ".python-version", ".gitattributes")
+TRAP_MAX = 500                 # names reported at most
+TRAP_BUDGET = 200000           # entries looked at at most (a huge tree is cut, never hangs enter)
+TRAP_DEPTH = 32
+# In the person's view of a team folder (/srv/team/<person>/<name>), the TOOL_DIRS and
+# TOOL_FILES at the top and .git/hooks are covered: a folder by an empty private tmpfs of the
+# person's own (her tool may write its scratch there; it never reaches the box), a file by an
+# empty or "{}" read-only file. The box keeps the real ones. kaptyorka-guard redoes it the moment
+# the box makes, renames or removes one (inotify).
+HIDE_GIT = ".git/hooks"
+HIDE_FILE = LIBEXEC + "/hide-empty"
+HIDE_JSON = LIBEXEC + "/hide-empty.json"
+HIDE_TMPFS = "kaptyorka-hide"
+SHIMS = LIBEXEC + "/shims"     # first on the person's PATH: claude, opencode, codex, cursor-agent
+
+# A box's tool sign-ins (red team round 3, finding 2): their current values are given to the
+# relay, which refuses any outgoing text that holds one, raw or encoded.
+SIGNIN_FILES = ("state/codex/auth.json", "state/opencode/data/opencode/auth.json", ".cursor/auth.json",
+                ".config/cursor/auth.json", ".ssh/id_ed25519")
+BOX_SECRETS = "/run/kaptyorka/box-secrets"   # <box>: root:kaprelay-secrets 0640, read by the relay
+RELAY_GROUP = "kaprelay-secrets"             # the relay's only extra group; nobody is in it
+SECRETS_KEEP = 64                            # values kept per box (old ones too: a copy taken before a refresh)
+_ISO_TIME = re.compile(r"\d{4}-\d\d-\d\d[T ][0-9:.]+(Z|[+-]\d\d:?\d\d)?")
+
+
+def secret_like(v) -> bool:
+    """A value from a sign-in file that is worth guarding: long, no spaces, letters and digits,
+    not a time stamp, a URL or a path."""
+    if not isinstance(v, str) or not 16 <= len(v) <= 8192 or any(c.isspace() for c in v):
+        return False
+    if _ISO_TIME.fullmatch(v) or v.startswith(("http://", "https://", "/")) or "@" in v and "." in v.split("@")[-1]:
+        return False
+    kinds = sum((any(c.islower() for c in v), any(c.isupper() for c in v), any(c.isdigit() for c in v)))
+    return kinds >= 2 and len(set(v)) >= 10
+
+
+def signin_values(text: str) -> List[str]:
+    """The secret-like values of one sign-in file: every string in it when it is JSON, else every
+    word (an SSH key's base64 body is one value)."""
+    out: List[str] = []
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if data is not None:
+        stack = [data]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, dict):
+                stack.extend(x.values())
+            elif isinstance(x, list):
+                stack.extend(x)
+            elif secret_like(x):
+                out.append(x)
+    elif "PRIVATE KEY-----" in text:
+        body = "".join(ln.strip() for ln in text.splitlines() if ln.strip() and "-----" not in ln)
+        if body:
+            out.append(body[:8192])
+    else:
+        out = [w for w in text.split() if secret_like(w)]
+    return list(dict.fromkeys(out))
 
 PERSON_RX = re.compile(r"[a-z_][a-z0-9_-]{0,30}")
 NAME_RX = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,63}")
@@ -187,7 +251,8 @@ def view_mount_unit(person: str, name: str) -> str:
 
 def mount_unit_text(person: str, name: str, what: str) -> str:
     """The person's view of one team folder (4.10): a bind with nosymfollow,noexec,nosuid,nodev,
-    so box-made symlinks are not followed and box-made programs do not run for the person."""
+    so box-made symlinks are not followed and box-made programs do not run for the person, and
+    private, so the covers kaproot.hide_view mounts in it never show in the box's own copy."""
     where = view_path(person, name)
     for p in (what, where):
         if not p.startswith("/") or any(c in p for c in " \t\n\\%$\"'") or "/../" in p + "/":
@@ -197,7 +262,7 @@ def mount_unit_text(person: str, name: str, what: str) -> str:
             f"Description=kaptyorka: {person}'s view of team folder {name}\n"
             "[Mount]\n"
             f"What={what}\nWhere={where}\nType=none\n"
-            "Options=bind,nosymfollow,noexec,nosuid,nodev\n"
+            "Options=bind,nosymfollow,noexec,nosuid,nodev,private\n"
             "[Install]\nWantedBy=local-fs.target\n")
 
 

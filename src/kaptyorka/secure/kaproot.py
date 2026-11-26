@@ -362,29 +362,311 @@ def lstat_rel(top_fd: int, rel: str) -> Optional[os.stat_result]:
             os.close(f)
 
 
-def trap_files(top_fd: int, box_uid: int, since: float = 0.0) -> List[str]:
-    """Files from the fixed list (7.2) that the box wrote (owner = box user), newer than since."""
-    out = []
-    for rel in kc.TRAP_FILES:
-        st = lstat_rel(top_fd, rel)
-        if st and st.st_uid == box_uid and st.st_mtime > since:
-            out.append(rel)
-    for d in kc.TRAP_DIRS:
-        st = lstat_rel(top_fd, d)
-        if not st or not stat.S_ISDIR(st.st_mode):
-            continue
-        try:
-            fd = open_rel_dir(top_fd, d)
-        except OSError:
-            continue
-        try:
-            for name in sorted(os.listdir(fd))[:200]:
-                s = os.stat(name, dir_fd=fd, follow_symlinks=False)
-                if s.st_uid == box_uid and s.st_mtime > since and not name.endswith(".sample"):
-                    out.append(f"{d}/{name}")
-        finally:
+def trap_files(top_fd: int, since: float = 0.0, build: bool = True, git: bool = True) -> List[str]:
+    """Files that can run code when a program of the person's opens the folder (7.2), at any
+    depth, changed after `since` (their ctime: no user can set it back, and it moves whoever
+    owns the file, so a box write into a folder the person made counts too; red team round 3,
+    finding 1). Everything inside a tool's folder (.opencode, .claude, .codex, .cursor, .vscode,
+    ...), the tool files (opencode.json, .mcp.json, .envrc, ...), with git: every git hook and
+    repository config, with build: Makefiles, package.json and version files. Walked without
+    following a link, at most TRAP_DEPTH deep and TRAP_BUDGET entries; at most TRAP_MAX names,
+    sorted, the last one '...' when there were more."""
+    out: List[str] = []
+    seen = 0
+    stack = [(os.dup(top_fd), "", False, 0)]
+    try:
+        while stack:
+            fd, rel, tool, depth = stack.pop()
+            try:
+                names = sorted(os.listdir(fd))
+            except OSError:
+                os.close(fd)
+                continue
+            try:
+                for name in names:
+                    seen += 1
+                    if seen > kc.TRAP_BUDGET:
+                        break
+                    try:
+                        st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    except OSError:
+                        continue
+                    path = rel + name
+                    in_git = rel == ".git/" or rel.endswith("/.git/")
+                    if stat.S_ISDIR(st.st_mode):
+                        if depth >= kc.TRAP_DEPTH or (in_git and name == "objects") or \
+                                (name == "node_modules" and not tool):
+                            continue
+                        child_tool = tool or name in kc.TOOL_DIRS or (in_git and name == "hooks" and git)
+                        try:
+                            stack.append((os.open(name, O_DIR, dir_fd=fd), path + "/", child_tool, depth + 1))
+                        except OSError:
+                            pass
+                        continue
+                    if not stat.S_ISREG(st.st_mode) or max(st.st_ctime, st.st_mtime) <= since:
+                        continue
+                    hit = (tool and not name.endswith(".sample")) or name in kc.TOOL_FILES \
+                        or (git and in_git and name in ("config", "config.worktree")) \
+                        or (build and name in kc.BUILD_FILES)
+                    if hit:
+                        out.append(path)
+            finally:
+                os.close(fd)
+    finally:
+        for fd, *_ in stack:
             os.close(fd)
+    out.sort()
+    return out[:kc.TRAP_MAX] + (["..."] if len(out) > kc.TRAP_MAX or seen > kc.TRAP_BUDGET else [])
+
+
+def trap_notice(traps: List[str], most: int = 12) -> str:
+    """The trap files as one line for the person's terminal (every name through kc.shown)."""
+    more = [t for t in traps if t != "..."]
+    shown = ", ".join(kc.shown(t, 200) for t in more[:most])
+    left = len(more) - most + (1 if traps and traps[-1] == "..." else 0)
+    return shown + (f" and {left} more{'+' if traps[-1:] == ['...'] else ''}" if left > 0 else "")
+
+
+def since_stamp(box: str, name: str) -> str:
+    """Root's mark of when a folder became a team folder: trap files changed after it count."""
+    return f"{kc.box_root(box)}/.since-{kc.check_name(name)}"
+
+
+def read_since(box: str, name: str) -> float:
+    try:
+        return os.lstat(since_stamp(box, name)).st_mtime
+    except OSError:
+        return 0.0
+
+
+# ---------------------------------------------------------------------------- the person's view: tool files covered
+
+MS_RDONLY, MS_NOSUID, MS_NODEV, MS_NOEXEC, MS_REMOUNT, MS_BIND, MS_PRIVATE = 1, 2, 4, 8, 32, 4096, 1 << 18
+MNT_DETACH = 2
+
+
+def _libc():
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.mount.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_ulong, ctypes.c_char_p]
+    libc.umount2.argtypes = [ctypes.c_char_p, ctypes.c_int]
+    return libc
+
+
+def _mount(src, target: str, fstype, flags: int, data=None) -> None:
+    enc = (lambda s: s.encode() if isinstance(s, str) else s)
+    if _libc().mount(enc(src), enc(target), enc(fstype), flags, enc(data)) != 0:
+        e = ctypes.get_errno()
+        raise OSError(e, f"mount {target}: {os.strerror(e)}")
+
+
+def _umount(target: str) -> None:
+    if _libc().umount2(target.encode(), MNT_DETACH) != 0:
+        e = ctypes.get_errno()
+        raise OSError(e, f"umount {target}: {os.strerror(e)}")
+
+
+def _unoctal(s: str) -> str:
+    """mountinfo writes space, tab, newline and backslash as \\ooo."""
+    out, i = [], 0
+    while i < len(s):
+        if s[i] == "\\" and i + 4 <= len(s) and s[i + 1:i + 4].isdigit():
+            out.append(chr(int(s[i + 1:i + 4], 8)))
+            i += 4
+        else:
+            out.append(s[i])
+            i += 1
+    return "".join(out)
+
+
+def mounts(text: Optional[str] = None) -> List[dict]:
+    """This process's mounts: id, parent, mount point, its propagation tags, file system type."""
+    if text is None:
+        with open("/proc/self/mountinfo") as f:
+            text = f.read()
+    out = []
+    for line in text.splitlines():
+        f = line.split()
+        if len(f) < 7 or "-" not in f[6:]:
+            continue
+        dash = f.index("-", 6)
+        out.append({"id": int(f[0]), "parent": int(f[1]), "point": _unoctal(f[4]),
+                    "tags": f[6:dash], "fstype": f[dash + 1] if dash + 1 < len(f) else "",
+                    "source": _unoctal(f[dash + 2]) if dash + 2 < len(f) else ""})
     return out
+
+
+def hides_wanted(top_fd: int) -> Dict[str, str]:
+    """What must be covered in the view of this folder: relative path -> "dir" or "file". Only
+    real folders and plain files (a link is not followed in the view: nosymfollow)."""
+    want: Dict[str, str] = {}
+    for n in kc.TOOL_DIRS + kc.TOOL_FILES + (kc.HIDE_GIT,):
+        st = lstat_rel(top_fd, n)
+        if st is None:
+            continue
+        if stat.S_ISDIR(st.st_mode) and n not in kc.TOOL_FILES:
+            want[n] = "dir"
+        elif stat.S_ISREG(st.st_mode) and n in kc.TOOL_FILES:
+            want[n] = "file"
+    return want
+
+
+def hide_view(person: str, name: str, box: str, mi: Optional[List[dict]] = None) -> List[str]:
+    """Cover the tool folders and files at the top of the person's view of one team folder (and
+    its .git/hooks), so her own tools started there load nothing the box wrote; uncover what
+    is no longer there. The view is made private first: a mount below it then stays in the
+    view and never shows in the box's own copy of the folder (measured: on a shared view, a
+    mount at the view's .opencode also appeared over the box's). Returns what it changed."""
+    where = kc.view_path(person, name)
+    mi = mounts() if mi is None else mi
+    view = [m for m in mi if m["point"] == where]
+    if not view:
+        return []
+    vm = view[-1]
+    done: List[str] = []
+    if any(t.startswith("shared:") for t in vm["tags"]):
+        _mount(None, where, None, MS_PRIVATE)
+        done.append("private")
+    fd = open_dir(f"{kc.box_projects(box)}/{name}")
+    try:
+        want = hides_wanted(fd)
+    finally:
+        os.close(fd)
+    have = {m["point"][len(where) + 1:]: m for m in mi if m["parent"] == vm["id"]
+            and m["point"].startswith(where + "/")}
+    for rel, m in sorted(have.items()):
+        kind = "dir" if m["fstype"] == "tmpfs" else "file"
+        if want.get(rel) != kind:
+            try:
+                _umount(f"{where}/{rel}")
+                done.append(f"-{rel}")
+            except OSError:
+                pass
+    pw = person_home(person)
+    for rel, kind in sorted(want.items()):
+        if rel in have and ("dir" if have[rel]["fstype"] == "tmpfs" else "file") == kind:
+            continue
+        # the place opened without following a link, then mounted on through /proc/self/fd:
+        # a link the box swaps in between is never followed
+        try:
+            vfd = open_dir(where + "/" + os.path.dirname(rel)) if "/" in rel else open_dir(where)
+        except Refuse:
+            continue
+        try:
+            tfd = os.open(os.path.basename(rel), os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=vfd)
+        except OSError:
+            os.close(vfd)
+            continue
+        try:
+            st = os.fstat(tfd)
+            target = f"/proc/self/fd/{tfd}"
+            if kind == "dir" and stat.S_ISDIR(st.st_mode):
+                _mount(kc.HIDE_TMPFS, target, "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC,
+                       f"mode=0700,uid={pw.pw_uid},gid={pw.pw_gid},size=128m,nr_inodes=40000")
+            elif kind == "file" and stat.S_ISREG(st.st_mode):
+                src = kc.HIDE_JSON if rel.endswith((".json", ".jsonc")) else kc.HIDE_FILE
+                _mount(src, target, None, MS_BIND)
+            else:
+                continue
+            done.append(f"+{rel}")
+        except OSError:
+            pass
+        finally:
+            os.close(tfd)
+            os.close(vfd)
+    return done
+
+
+def hidden_problem(person: str, name: str, box: str, mi: List[dict]) -> Optional[str]:
+    """The view is shared, or a tool folder or file at its top is not covered."""
+    where = kc.view_path(person, name)
+    view = [m for m in mi if m["point"] == where]
+    if not view:
+        return None
+    if any(t.startswith("shared:") for t in view[-1]["tags"]):
+        return f"the view {where} is shared (its covers would show in the box)"
+    try:
+        fd = open_dir(f"{kc.box_projects(box)}/{name}")
+    except Refuse:
+        return None
+    try:
+        want = hides_wanted(fd)
+    finally:
+        os.close(fd)
+    have = {m["point"][len(where) + 1:] for m in mi if m["parent"] == view[-1]["id"]}
+    missing = sorted(set(want) - have)
+    if missing:
+        return f"in the view {where}, {', '.join(kc.shown(m) for m in missing[:6])} not covered"
+    return None
+
+
+# ---------------------------------------------------------------------------- the box's sign-ins, for the relay
+
+def _read_box_file(home_fd: int, rel: str, limit: int = 256 * 1024) -> str:
+    """A file below the box home, every folder on the way and the file opened without following
+    a link; '' if it is not a plain file of at most `limit` bytes."""
+    parts = rel.split("/")
+    fd, opened = home_fd, []
+    try:
+        for p in parts[:-1]:
+            fd = os.open(p, O_DIR, dir_fd=fd)
+            opened.append(fd)
+        ffd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=fd)
+    except OSError:
+        return ""
+    finally:
+        for f in opened:
+            os.close(f)
+    try:
+        st = os.fstat(ffd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+            return ""
+        return os.read(ffd, limit).decode("utf-8", "replace")
+    finally:
+        os.close(ffd)
+
+
+def box_secret_values(person: str, box: str) -> List[str]:
+    """The current secret values of one box: its tools' sign-in files, its SSH key, the Claude
+    token root hands it."""
+    out: List[str] = []
+    try:
+        hfd = open_dir(kc.box_home(box))
+    except Refuse:
+        hfd = None
+    if hfd is not None:
+        try:
+            for rel in kc.SIGNIN_FILES:
+                out += kc.signin_values(_read_box_file(hfd, rel))
+        finally:
+            os.close(hfd)
+    tok = read_text(f"{kc.SECRET}/{kc.check_person(person)}/claude-oauth-token").strip()
+    if tok:
+        out.append(tok)
+    return list(dict.fromkeys(out))
+
+
+def write_box_secrets(person: str, box: str) -> int:
+    """/run/kaptyorka/box-secrets/<box> for the relay: the box's current secret values first,
+    then the ones it had before (a copy a chat took before a refresh is still that account's),
+    at most SECRETS_KEEP. root:kaprelay-secrets 0640 in a 0750 folder; only the relay is in that
+    group. Returns how many values it holds."""
+    try:
+        gid = gid_of(kc.RELAY_GROUP)
+    except KeyError:
+        gid = 0
+    os.makedirs(os.path.dirname(kc.BOX_SECRETS), 0o755, exist_ok=True)
+    mkdir(kc.BOX_SECRETS, 0o750, 0, gid)
+    path = f"{kc.BOX_SECRETS}/{kc.check_box(box)}"
+    try:
+        old = json.loads(read_text(path) or "{}").get("values", [])
+    except (ValueError, AttributeError):
+        old = []
+    new = box_secret_values(person, box)
+    values = list(dict.fromkeys(new + [v for v in old if isinstance(v, str)]))[:kc.SECRETS_KEEP]
+    data = json.dumps({"values": values}) + "\n"
+    if read_text(path) != data:
+        write_file(path, data, 0o640 if gid else 0o600, 0, gid)
+    return len(values)
 
 
 def open_rel_dir(top_fd: int, rel: str) -> int:
@@ -675,12 +957,26 @@ def outside_check(person: str, boxes: List[str]) -> List[str]:
         p = _tree_problem(top)
         if p:
             bad.append(p)
+    try:
+        members = grp.getgrnam(kc.RELAY_GROUP).gr_mem
+        if members:
+            bad.append(f"group {kc.RELAY_GROUP} has members {members}; it must have none")
+    except KeyError:
+        bad.append(f"group {kc.RELAY_GROUP} is missing (run the installer again)")
+    if not is_active("kaptyorka-guard.service"):
+        bad.append("kaptyorka-guard.service is not running (it covers tool files in your views)")
     flags = mount_flags()
     try:
-        names = sorted(load_folders(person)) + [kc.MEMORY]
+        folders = load_folders(person)
+        names = sorted(folders) + [kc.MEMORY]
     except (Refuse, ValueError, KeyError) as e:
-        names = [kc.MEMORY]
+        folders, names = {}, [kc.MEMORY]
         bad.append(f"folders.json: {e}")
+    mi = mounts()
+    for name in sorted(folders):
+        p = hidden_problem(person, name, folders[name]["box"], mi)
+        if p:
+            bad.append(p)
     for name in names:
         where = kc.view_path(person, name)
         have = flags.get(where)
@@ -815,6 +1111,18 @@ def add_view_mount(person: str, name: str, what: str) -> None:
     write_file(f"{SYSTEMD}/{unit}", kc.mount_unit_text(person, name, what), 0o644)
     systemctl("daemon-reload")
     systemctl("enable", "--now", unit)
+    if name != kc.MEMORY:
+        hide_view(person, name, box_of_projects(what))
+        systemctl("kill", "--signal=HUP", "kaptyorka-guard.service", check=False)   # watch it now
+
+
+def box_of_projects(what: str) -> str:
+    """The box of a path /var/lib/kap-team/kap-<box>/projects/<name>."""
+    rest = what[len(kc.TEAM) + 1:] if what.startswith(kc.TEAM + "/") else ""
+    top = rest.split("/", 1)[0]
+    if not top.startswith("kap-"):
+        raise Refuse("not a team folder of a box")
+    return kc.check_box(top[4:])
 
 
 def drop_view_mount(person: str, name: str) -> None:
@@ -963,6 +1271,10 @@ def drop_box(person: str, box: str, delete_home: bool = True) -> None:
         shutil.rmtree(kc.box_root(box), ignore_errors=True)
     for p in (f"{kc.RUNBOX}/{box}",):
         shutil.rmtree(p, ignore_errors=True)
+    try:
+        os.unlink(f"{kc.BOX_SECRETS}/{box}")
+    except OSError:
+        pass
 
 
 def boxes_of(person: str) -> List[str]:

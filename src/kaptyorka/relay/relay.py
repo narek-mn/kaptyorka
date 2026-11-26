@@ -405,6 +405,87 @@ TOKEN_RX = re.compile(
     r"|b3BlbnNzaC1rZXktdjE")                                   # the body of an OpenSSH key
 
 
+# ---------------------------------------------------------------------------- a box's own sign-ins (red team round 3, finding 2)
+# The tools' sign-in files in a box (OpenCode, Codex, Cursor) can be read by the chat's own
+# commands, and TOKEN_RX knows only public token shapes: a base64, hex or opaque copy passed.
+# So the relay is told each box's actual secret values (root writes them per box door into
+# SECRETS_DIR/<box>, from enter and kaptyorka-guard; the relay never reads a box file) and
+# refuses outgoing text that holds one raw, reversed, in hex (any case, any separators) or in
+# base64 (standard or URL-safe, at any alignment, wrapped or not). Matching is by aligned
+# pieces of CHUNK characters: any run of 2 * CHUNK - 1 characters of such a form is found.
+#
+# This is a backstop, not a wall: a tricked model that cuts a value into short pieces, or
+# encodes it in a way not listed here (another alphabet, a cipher, one character per message),
+# gets it out. The standing rule and the trick filter are the first line; ending the box's
+# sign-ins at the vendor after a suspected leak is the remedy.
+
+SECRETS_DIR = "/run/kaptyorka/box-secrets"
+SECRETS_FILE_MAX = 4 * 1024 * 1024
+MAX_SECRET_VALUES = 256
+CHUNK = 16
+_WS = re.compile(r"\s+")
+_NOT_HEX = re.compile(r"[^0-9a-f]")
+_URLSAFE = str.maketrans("+/", "-_")
+
+
+def secret_forms(value: bytes) -> Tuple[List[str], List[str]]:
+    """(forms to find in the text as it is, forms to find in its hex digits) of one value."""
+    text = value.decode("latin-1")
+    forms = [text, text[::-1]]
+    for k in (0, 1, 2):   # base64 of the value at each of the three byte offsets in a longer text
+        n = k + len(value)
+        e = base64.b64encode(b"\0" * k + value).decode()
+        core = e[(0, 2, 3)[k]:4 * (n // 3) + (8 * (n % 3)) // 6]
+        forms += [core, core.translate(_URLSAFE)]
+    return forms, [value.hex()]
+
+
+def _chunks(form: str) -> List[str]:
+    if len(form) < CHUNK:
+        return []
+    return [form[i:i + CHUNK] for i in range(0, len(form) - CHUNK + 1, CHUNK)] + [form[-CHUNK:]]
+
+
+def _scan(t: str, pieces: set) -> bool:
+    return any(t[i:i + CHUNK] in pieces for i in range(len(t) - CHUNK + 1))
+
+
+class SecretGuard:
+    """The known secret values of one door, as pieces to look for."""
+
+    def __init__(self, values: List[bytes]):
+        self.plain: set = set()
+        self.hex: set = set()
+        for v in values:
+            forms, hexes = secret_forms(v)
+            for f in forms:
+                self.plain.update(_chunks(f))
+            for f in hexes:
+                self.hex.update(_chunks(f))
+
+    def holds(self, s: str) -> bool:
+        if not self.plain:
+            return False
+        squeezed = _WS.sub("", s)
+        if _scan(s, self.plain) or (squeezed != s and _scan(squeezed, self.plain)):
+            return True
+        return _scan(_NOT_HEX.sub("", s.lower()), self.hex)
+
+
+def parse_secrets(raw: bytes) -> List[bytes]:
+    """The values in one box's file, strictly: {"values": [text, ...]}. Raises ValueError."""
+    data = json.loads(raw.decode("utf-8"))
+    vals = data.get("values") if isinstance(data, dict) else None
+    if not isinstance(vals, list) or len(vals) > MAX_SECRET_VALUES:
+        raise ValueError("not a list of values")
+    out = []
+    for v in vals:
+        if not isinstance(v, str) or not 8 <= len(v) <= 8192:
+            raise ValueError("a value is not text of 8 to 8192 characters")
+        out.append(v.encode("utf-8"))
+    return out
+
+
 # ---------------------------------------------------------------------------- the box side
 
 def peer_uid(conn: socket.socket) -> int:
@@ -565,13 +646,16 @@ def _remember(d: Dict, k, v=None) -> None:
 
 class Relay:
     def __init__(self, conf: Dict[str, Any], device_token: str, chat_key: bytes,
-                 log: Callable[[str], None] = lambda s: print(s, flush=True)):
+                 log: Callable[[str], None] = lambda s: print(s, flush=True), secrets_dir: str = SECRETS_DIR):
         if not re.fullmatch(r"[\x21-\x7e]{16,}", device_token):
             raise ValueError("the device token is shorter than 16 or not plain ASCII")
         if len(chat_key) < 16:
             raise ValueError("the chat key is too short")
         self.conf, self.token, self.key, self.log = conf, device_token, chat_key, log
         self.secrets = tuple(s for s in (device_token, chat_key.decode("latin-1"), chat_key.hex()) if s)
+        self.own = [device_token.encode(), chat_key, chat_key.hex().encode()]
+        self.secrets_dir = secrets_dir
+        self.guards: Dict[str, Tuple[Any, SecretGuard]] = {}
         self.doors: Dict[str, _Door] = {}
         self.lock = threading.Lock()
         self.big = threading.BoundedSemaphore(MAX_BIG)
@@ -607,6 +691,30 @@ class Relay:
             d = self.doors.get(person)
             return d is not None and i in getattr(d, kind)
 
+    def guard(self, person: str) -> SecretGuard:
+        """This door's secret values: its box's file (read again when it changed) and the relay's own."""
+        path = os.path.join(self.secrets_dir, person)
+        try:
+            st = os.stat(path)
+            key: Any = (st.st_ino, st.st_mtime_ns, st.st_size)
+        except OSError:
+            key = None
+        with self.lock:
+            have = self.guards.get(person)
+        if have and have[0] == key:
+            return have[1]
+        values: List[bytes] = []
+        if key is not None:
+            try:
+                with open(path, "rb") as f:
+                    values = parse_secrets(f.read(SECRETS_FILE_MAX + 1)[:SECRETS_FILE_MAX])
+            except (OSError, ValueError, RecursionError) as e:
+                self.log(f"relay: {person}'s sign-in values cannot be read ({type(e).__name__})")
+        g = SecretGuard(values + self.own)
+        with self.lock:
+            self.guards[person] = (key, g)
+        return g
+
     # one call
     def filter_out(self, person: str, call: str, args: Any) -> Tuple[Dict[str, Any], Context]:
         """The body for the hub, built only from allowed fields. Raises Bad."""
@@ -614,9 +722,12 @@ class Relay:
             raise Bad("unknown call")
         ctx = Context(self, person)
         body = CALLS[call][0](args, ctx, "out")
+        guard = self.guard(person)
         for s in ctx.strings:
             if ctx.holds_secret(s) or TOKEN_RX.search(s):
                 raise Bad("refused: the text holds something shaped like a key or token")
+            if guard.holds(s):
+                raise Bad("refused: the text holds a sign-in of this computer or its box (as it is or encoded)")
         return body, ctx
 
     def filter_in(self, person: str, call: str, answer: Any) -> Dict[str, Any]:
@@ -858,7 +969,8 @@ VIEW = [("/", {"bin", "dev", "etc", "lib", "lib64", "opt", "proc", "root", "run"
         ("/etc", {"alternatives", "kaptyorka", "ld.so.cache", "passwd"}),
         ("/etc/kaptyorka", {"relay.conf"}),
         ("/opt", {"kaptyorka"}), ("/opt/kaptyorka", {"relay"}), ("/var", {"tmp"}),
-        ("/run", {"credentials", "host", "systemd"}), ("/usr/local", set()), ("/sys", set(SYS_HIDDEN) | {"fs"}),
+        ("/run", {"credentials", "host", "kaptyorka", "systemd"}), ("/run/kaptyorka", {"box-secrets"}),
+        ("/usr/local", set()), ("/sys", set(SYS_HIDDEN) | {"fs"}),
         ("/sys/fs/cgroup", set())] + [("/sys/" + d, set()) for d in SYS_HIDDEN]
 
 

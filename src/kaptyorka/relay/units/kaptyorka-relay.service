@@ -31,6 +31,11 @@ ExecStart=/usr/bin/python3 -I /opt/kaptyorka/relay/current/relay.py /etc/kaptyor
 DynamicUser=yes
 LoadCredential=device-token:/etc/kaptyorka/secret/device-token
 LoadCredential=chat-key:/etc/kaptyorka/secret/chat-key
+# Each box's current tool sign-in values (red team round 3, finding 2), written by root (enter,
+# kaptyorka-guard) as /run/kaptyorka/box-secrets/<box>, root:kaprelay-secrets 0640, read again
+# whenever one changes: the relay refuses outgoing text that holds one, raw or encoded. Nobody
+# else is in that group (enter's self-check).
+SupplementaryGroups=kaprelay-secrets
 
 # Files: nothing of any person, and of the host only what python3 needs. The root is a
 # root-owned skeleton folder made by the installer, with /usr, /lib, the relay's code, its config,
@@ -45,6 +50,7 @@ LoadCredential=chat-key:/etc/kaptyorka/secret/chat-key
 RootDirectory=/opt/kaptyorka/relay-root
 BindReadOnlyPaths=/usr /bin /sbin /lib -/lib64
 BindReadOnlyPaths=/opt/kaptyorka/relay /etc/kaptyorka/relay.conf /etc/passwd -/etc/ld.so.cache -/etc/alternatives
+BindReadOnlyPaths=-/run/kaptyorka/box-secrets
 TemporaryFileSystem=/usr/local:ro
 TemporaryFileSystem=/sys/block:ro /sys/bus:ro /sys/class:ro /sys/dev:ro /sys/devices:ro /sys/firmware:ro /sys/hypervisor:ro /sys/kernel:ro /sys/module:ro /sys/power:ro /sys/fs/cgroup:ro
 ExecStartPre=/usr/bin/python3 -I /opt/kaptyorka/relay/current/relay.py --viewcheck

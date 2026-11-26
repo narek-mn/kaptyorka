@@ -31,8 +31,10 @@ else:
 
 
 def notices(person: str, box: str, name: str) -> None:
-    """Warnings that do not stop the start: git's ownership check switched off, and files that
-    can run code which the box changed since the last start (7.1, 7.2)."""
+    """Warnings that do not stop the start, at every start: git's ownership check switched off,
+    and the files that can run code in the person's own tools or editor which changed since the
+    folder became a team folder (7.1, 7.2; red team round 3, finding 1: at any depth, whoever
+    owns the folder they are in). The covers in her view are the wall; this is so she knows."""
     try:
         folders = kr.load_folders(person)
         shorts = [f["shortcut"] for f in folders.values() if f.get("shortcut")]
@@ -40,21 +42,30 @@ def notices(person: str, box: str, name: str) -> None:
             print(kc.term("enter: " + w), file=sys.stderr)
         if name == kc.MEMORY:
             return
-        stamp = f"{kc.box_root(box)}/.seen-{name}"
-        try:
-            since = os.lstat(stamp).st_mtime
-        except FileNotFoundError:
-            since = 0.0
         fd = kr.open_dir(f"{kc.box_projects(box)}/{name}")
         try:
-            changed = kr.trap_files(fd, kr.uid_of(kc.box_user(box)), since)
+            changed = kr.trap_files(fd, kr.read_since(box, name), build=False)
         finally:
             os.close(fd)
         if changed:
-            print("enter: team chats changed files that can run code when you open this folder yourself: "
-                  + ", ".join(kc.shown(c, 200) for c in changed[:12]) + ". Look before you trust them in an editor.",
-                  file=sys.stderr)
-        kr.write_file(stamp, "", 0o600)
+            print("enter: team chats may have changed files that run code when your own tools or editor open "
+                  "this folder: " + kr.trap_notice(changed) + ". Your view of the folder covers the ones at its "
+                  "top; look before you open a subfolder with your own tools.", file=sys.stderr)
+    except (kc.Refuse, OSError, KeyError, ValueError):
+        pass
+
+
+def repair(person: str, box: str, name: str) -> None:
+    """Before the self-check: the covers in the person's view of this folder, and the relay's copy
+    of the box's sign-ins (red team round 3, findings 1 and 2). kaptyorka-guard does both as soon
+    as something changes; here they are certain before a chat starts."""
+    if name != kc.MEMORY:
+        try:
+            kr.hide_view(person, name, box)
+        except (kc.Refuse, OSError):
+            pass
+    try:
+        kr.write_box_secrets(person, box)
     except (kc.Refuse, OSError, KeyError, ValueError):
         pass
 
@@ -100,6 +111,7 @@ def main(argv) -> int:
         if kc.view_path(person, name) not in kr.mount_flags():
             raise kc.Refuse(f"the team folder {name} is not mounted (run hubchat list)")
         boxes = sorted({box, person})
+        repair(person, box, name)
         problems = kr.outside_check(person, boxes)
         if problems:
             for p in problems:

@@ -49,14 +49,14 @@ PROGRAMS = (  # (source in this folder, name in /usr/local/libexec/kaptyorka, mo
     ("kap_enter.py", "enter", 0o755), ("kap_hubchat.py", "hubchat-root", 0o755),
     ("kap_hubchat.py", "kap_hubchat.py", 0o644), ("kap_wallcheck.py", "wallcheck", 0o755),
     ("kap_box_exec.py", "box-exec", 0o755), ("kap_canary.py", "canary", 0o755),
-    ("kap_addrwatch.py", "addrwatch", 0o755),
+    ("kap_addrwatch.py", "addrwatch", 0o755), ("kap_guard.py", "guard", 0o755),
     ("kap_setup.py", "kaptyorka-secure-setup", 0o755), ("kapcommon.py", "kapcommon.py", 0o644),
     ("kaproot.py", "kaproot.py", 0o644), ("files/launch", "launch", 0o755),
     ("files/kapbox-base", "kapbox-base", 0o755),
 )
 OUR_UNITS = ("kapbox-base@.service", "kaptyorka-egress@.socket", "kaptyorka-egress@.service",
              "kaptyorka-canary.service", "kaptyorka-relay.service", "kaptyorka-relay-box@.socket",
-             "kaptyorka-addrwatch.service")
+             "kaptyorka-addrwatch.service", "kaptyorka-guard.service")
 
 
 def version() -> str:
@@ -151,6 +151,13 @@ def install_code(ver: str) -> None:
     for src, name, mode in PROGRAMS:
         copy(os.path.join(HERE, src), f"{kc.LIBEXEC}/{name}", mode)
     copy(os.path.join(FILES, "hubchat"), "/usr/local/bin/hubchat", 0o755)
+    # what covers a tool file in a person's view (kaproot.hide_view), and the shims first on her PATH
+    kr.write_file(kc.HIDE_FILE, "", 0o444)
+    kr.write_file(kc.HIDE_JSON, "{}\n", 0o444)
+    kr.mkdir(kc.SHIMS, 0o755)
+    for tool in ("claude", "opencode", "codex", "cursor-agent"):
+        kr.write_file(f"{kc.SHIMS}/{tool}", f"#!/bin/sh\n# kaptyorka: {tool} through the launcher (a team folder: the box)\n"
+                                            f"exec {kc.LIBEXEC}/launch {tool} \"$@\"\n", 0o755)
     kr.mkdir(kc.OPT, 0o755)
     for part, files in (("egress", {"kap_egress.py": "egress.py"}), ("box", {"kap_proxybridge.py": "proxybridge.py",
                                                                          "kap_helper.py": "helper.py",
@@ -175,8 +182,8 @@ def install_code(ver: str) -> None:
 # The root folders of the relay and the forwarder (their units' RootDirectory=): root-owned and
 # empty but for the places their binds go. systemd makes any other mount point it needs.
 ROOTS = {
-    "relay-root": ("bin dev etc/alternatives etc/kaptyorka lib lib64 opt/kaptyorka/relay proc run sbin sys tmp usr "
-                   "var/tmp", "etc/passwd etc/ld.so.cache etc/kaptyorka/relay.conf"),
+    "relay-root": ("bin dev etc/alternatives etc/kaptyorka lib lib64 opt/kaptyorka/relay proc run/kaptyorka/box-secrets "
+                   "sbin sys tmp usr var/tmp", "etc/passwd etc/ld.so.cache etc/kaptyorka/relay.conf"),
     "egress-root": ("bin dev etc/alternatives etc/kaptyorka/allow lib lib64 opt/kaptyorka/egress proc run sbin sys tmp "
                     "usr var/tmp", "etc/ld.so.cache etc/hosts etc/resolv.conf etc/nsswitch.conf etc/gai.conf "
                                    "etc/host.conf"),
@@ -245,6 +252,10 @@ def install_etc(ver: str) -> None:
 
 
 def install_units() -> None:
+    try:
+        grp.getgrnam(kc.RELAY_GROUP)
+    except KeyError:     # the relay's group for the box sign-in values (kaproot.write_box_secrets)
+        kr.run(["groupadd", "--system", kc.RELAY_GROUP])
     for n in os.listdir(os.path.join(FILES, "units")):
         copy(os.path.join(FILES, "units", n), f"{SYSTEMD}/{n}", 0o644)
     for n in ("kaptyorka-relay.service", "kaptyorka-relay-box@.socket"):
@@ -253,8 +264,9 @@ def install_units() -> None:
     kr.systemctl("daemon-reload")
     kr.run(["systemd-tmpfiles", "--create", "/etc/tmpfiles.d/kaptyorka.conf"], check=False)
     kr.systemctl("enable", "--now", "kaptyorka-canary.service")
-    kr.systemctl("enable", "kaptyorka-addrwatch.service")
-    kr.systemctl("restart", "kaptyorka-addrwatch.service", check=False)   # a new release runs its new code
+    kr.systemctl("enable", "kaptyorka-addrwatch.service", "kaptyorka-guard.service")
+    # a new release runs its new code
+    kr.systemctl("restart", "kaptyorka-addrwatch.service", "kaptyorka-guard.service", check=False)
 
 
 def check_relay_values(a) -> dict:
@@ -301,9 +313,9 @@ def install_hooks() -> None:
     kr.write_file("/etc/profile.d/kaptyorka.sh", hook, 0o644)
     targets = ["/etc/bash.bashrc"] + (["/etc/zsh/zshenv"] if os.path.isdir("/etc/zsh") else [])
     for t in targets:
+        strip_hook(t)            # an older release's lines make way for this one's
         text = kr.read_text(t)
-        if HOOK_BEGIN not in text:
-            kr.write_file(t, text + ("" if text.endswith("\n") or not text else "\n") + hook, 0o644)
+        kr.write_file(t, text + ("" if text.endswith("\n") or not text else "\n") + hook, 0o644)
     if os.path.isdir("/etc/fish/conf.d"):
         kr.write_file("/etc/fish/conf.d/kaptyorka.fish", f"{HOOK_BEGIN}\nsource {kc.ETC}/launcher.fish\n{HOOK_END}\n")
 
@@ -440,7 +452,8 @@ def remove(a) -> int:
             pass
     left = [p for p in os.listdir(kc.PEOPLE)] if os.path.isdir(kc.PEOPLE) else []
     if not left:
-        kr.systemctl("disable", "--now", "kaptyorka-canary.service", "kaptyorka-addrwatch.service", check=False)
+        kr.systemctl("disable", "--now", "kaptyorka-canary.service", "kaptyorka-addrwatch.service",
+                     "kaptyorka-guard.service", check=False)
         kr.systemctl("stop", "kaptyorka-relay.service", check=False)
         for n in OUR_UNITS:
             if os.path.lexists(f"{SYSTEMD}/{n}"):
@@ -460,6 +473,7 @@ def remove(a) -> int:
         kr.systemctl("reset-failed", check=False)
         for t in ("/etc/bash.bashrc", "/etc/zsh/zshenv"):
             strip_hook(t)
+        kr.run(["groupdel", kc.RELAY_GROUP], check=False)
         for p in (kc.ETC, kc.OPT, kc.TOOLS_DIR, kc.LIBEXEC, kc.RUNBOX, "/run/kaptyorka"):
             shutil.rmtree(p, ignore_errors=True)
         for p in (kc.VIEW, kc.TEAM) if delete_home else (kc.VIEW,):
