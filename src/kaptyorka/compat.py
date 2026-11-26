@@ -23,7 +23,9 @@ Every feature here degrades on its own when its internal breaks (the adapters sk
 cannot read; tests/test_compat.py checks each); this module makes the break visible."""
 import json
 import os
+import mmap
 import re
+import shutil
 import stat
 import time
 from dataclasses import dataclass
@@ -125,6 +127,13 @@ DEPS: Tuple[Dep, ...] = (
         "closing a terminal session from the page", "", "", False, probed=False),
     Dep("claude.rm", "claude-code", "`claude rm <8 hex>` removes a stopped background session",
         "cleaning up after tests", "`claude rm` failed", "stopped sessions stay listed", False),
+    Dep("claude.token_fd", "claude-code",
+        "the env var CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR names a file descriptor from which"
+        " Claude Code reads the OAuth token up to a newline, closes it and drops the variable"
+        " (read in 2.1.332; not in its documentation); the probe looks for the name in the"
+        " claude program",
+        "the box hands its Claude token without any environment", "the box's claude cannot sign in",
+        "no box chats", True),
     # OpenCode
     Dep("opencode.version", "opencode", "`opencode --version` prints X.Y.Z", "V1 or V2 handling",
         "`opencode --version` output changed", "treated as V1", True),
@@ -704,6 +713,20 @@ def p_codex_title(ctx: Ctx):
         (BROKEN, f"thread name is {type(t['name']).__name__}")
 
 
+def p_claude_token_fd(ctx: Ctx):
+    """The variable's name is still in the claude program (cheap: a search in the mapped file).
+    Where the program cannot be read (the box makes it execute-only) there is no evidence."""
+    exe = shutil.which("claude")
+    if exe is None:
+        return UNKNOWN, "claude not found"
+    try:
+        with open(exe, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
+            found = m.find(b"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR") >= 0
+    except (OSError, ValueError) as e:  # unreadable, or empty
+        return UNKNOWN, str(e)[:100]
+    return (OK, "") if found else (BROKEN, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR not in the claude program")
+
+
 PROBES: Dict[str, Callable[[Ctx], Tuple[str, str]]] = {
     "claude.version": p_claude_version, "claude.cli": p_claude_cli, "claude.auth": p_claude_auth,
     "claude.session_file": p_claude_session_file, "claude.status": p_claude_status,
@@ -711,6 +734,7 @@ PROBES: Dict[str, Callable[[Ctx], Tuple[str, str]]] = {
     "claude.transcript": p_claude_transcript, "claude.title": p_claude_title,
     "claude.tasks": p_claude_tasks, "claude.derived_from": p_claude_derived_from,
     "claude.child_notes": p_claude_child_notes, "claude.refusal": p_claude_refusal,
+    "claude.token_fd": p_claude_token_fd,
     **{k: _live(k) for k in ("claude.bg_launch", "claude.bg_isolation", "claude.push",
                              "claude.stop", "claude.rm")},
     "opencode.version": p_opencode_version, "opencode.v1_server": p_opencode_v1,

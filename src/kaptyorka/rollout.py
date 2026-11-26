@@ -51,7 +51,8 @@ def _devices(store: Store, night_keys=frozenset()) -> List[dict]:
             "SELECT d.id, d.host, d.os_user, d.name, d.token_hash, d.bridge_seen, d.version,"
             " p.team, f.facts FROM devices d JOIN people p ON p.id=d.person_id"
             " LEFT JOIN device_facts f ON f.device_id=d.id"
-            " WHERE d.revoked_at IS NULL AND d.legacy=0 AND p.removed_at IS NULL").fetchall()
+            " WHERE d.revoked_at IS NULL AND d.legacy=0 AND d.mode!='personal'"
+            " AND p.removed_at IS NULL").fetchall()
         busy = {r["device_id"]: (r["n"], r["working"]) for r in store.db.execute(
             "SELECT device_id, COUNT(*) AS n, SUM(activity NOT IN ('', 'idle')) AS working"
             " FROM agents WHERE last_seen > ? AND device_id IS NOT NULL GROUP BY device_id",

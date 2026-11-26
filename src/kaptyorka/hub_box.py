@@ -176,6 +176,9 @@ class BoxHub:
                 take.append((chat, project, c))  # any other chat never reaches the hub
         with s.lock:
             now = s.clock()
+            # the laptop's own heartbeat for the page; a personal device is left out of every
+            # place that reads bridge_seen for rollouts, workers and the transport line
+            s.db.execute("UPDATE devices SET bridge_seen=? WHERE id=?", (now, principal.device_id))
             for chat, project, c in take:
                 state = c["state"]
                 key = box_key(principal.device_id, chat)

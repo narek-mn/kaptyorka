@@ -1,15 +1,27 @@
-# Hosts every box may reach (secure design v2, 4.5): the model providers of the four tools.
-# UNVERIFIED (probe P-4): the exact host list each tool needs. 'host' means port 443.
+# Hosts every box may reach: the model providers of the four tools. 'host' means port 443.
+# Claude Code, from https://code.claude.com/docs/en/network-config ("Network access requirements"):
+#   api.anthropic.com   "Claude API requests"
+#   claude.ai           "claude.ai account authentication"
+#   platform.claude.com "OAuth token exchange, refresh, and revocation also go to this host for
+#                        claude.ai accounts, so both Console and claude.ai sign-ins require it"
+# The telemetry hosts (the two datadog intakes) are not listed: the box's claude settings set
+# CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC. statsig.anthropic.com is in no current list.
 api.anthropic.com
 claude.ai
-console.anthropic.com
-statsig.anthropic.com
+platform.claude.com
+# Cursor, from https://cursor.com/docs/enterprise/network-configuration (the granular list):
+#   api2.cursor.sh "most API requests"; api5.cursor.sh "agent requests";
+#   authenticate.cursor.sh "authorization endpoint"; prod.authentication.cursor.sh "production
+#   token issuer"; authentication.cursor.sh "backend JWT issuer". It lists no CLI-only hosts.
+api2.cursor.sh
+api5.cursor.sh
+authenticate.cursor.sh
+prod.authentication.cursor.sh
+authentication.cursor.sh
+# Codex and OpenCode: their vendor docs give no host list (UNVERIFIED, probe P-4).
 api.openai.com
 chatgpt.com
 auth.openai.com
-api2.cursor.sh
-api.cursor.com
-cursor.com
 opencode.ai
 models.dev
 # Extra hosts (package registries and so on) are yours to add, here, with sudo. Each one is

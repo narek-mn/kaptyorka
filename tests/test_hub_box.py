@@ -154,6 +154,21 @@ def test_a_personal_device_sends_no_host_and_is_never_shared_moved_or_a_team_mac
     assert w.s.authenticate(w.token).shared is False
 
 
+def test_a_box_report_marks_the_laptop_seen_and_gives_it_nothing_else(w):
+    from kaptyorka import rollout, tls
+    dev = [d for d in w.s.devices(w.alice) if d["mode"] == "personal"][0]
+    assert w.s.db.execute("SELECT bridge_seen FROM devices WHERE id=?", (dev["id"],)).fetchone()[0] is None
+    report(w)
+    seen = w.s.db.execute("SELECT bridge_seen FROM devices WHERE id=?", (dev["id"],)).fetchone()[0]
+    assert seen is not None and abs(seen - w.s.clock()) < 30
+    me = {m["id"]: m for m in admin_ops.account(w.s, w.s.authenticate(w.token))["machines"]}
+    assert me[dev["id"]]["online"] is True  # what the page shows
+    assert dev["id"] not in {d["id"] for d in rollout._devices(w.s)}
+    assert [m["who"] for m in tls.machines(w.s)] == ["team@box-1"]  # the team machine only
+    p = w.s.authenticate(w.token)
+    assert p.personal and not p.shared
+
+
 @pytest.mark.parametrize("method,path", [("GET", "/api/me"), ("POST", "/bridge/heartbeat"),
                                          ("GET", "/bridge/poll?machine=x"), ("POST", "/mcp"),
                                          ("GET", "/api/brief"), ("GET", "/api/feed")])

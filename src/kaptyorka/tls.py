@@ -448,7 +448,8 @@ def machines(store) -> List[dict]:
         rows = store.db.execute(
             "SELECT d.host, d.os_user, d.bridge_seen, f.facts FROM devices d"
             " LEFT JOIN device_facts f ON f.device_id=d.id"
-            " WHERE d.revoked_at IS NULL AND d.legacy=0 AND d.bridge_seen IS NOT NULL").fetchall()
+            " WHERE d.revoked_at IS NULL AND d.legacy=0 AND d.mode!='personal'"
+            " AND d.bridge_seen IS NOT NULL").fetchall()
     out = []
     for r in rows:
         try:

@@ -111,6 +111,21 @@ def test_a_sound_claude_install_passes_every_cheap_probe(home, sock):
     assert "claude.bg_launch" not in res  # starts a session: only the slow test
 
 
+def test_token_fd_probe_looks_for_the_variable_in_the_claude_program(tmp_path, monkeypatch):
+    exe = tmp_path / "claude"
+    ctx = compat.Ctx(tmp_path, SOUND)
+    dep = compat.BY_ID["claude.token_fd"]
+    monkeypatch.setattr(compat.shutil, "which", lambda name: str(exe))
+    exe.write_bytes(b"\0\0x CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR \0")
+    assert compat.probe(dep, ctx) == (compat.OK, "")
+    exe.write_bytes(b"\0\0 CLAUDE_CODE_OAUTH_TOKEN \0")
+    assert compat.probe(dep, ctx)[0] == compat.BROKEN
+    exe.write_bytes(b"")  # nothing to read is no evidence
+    assert compat.probe(dep, ctx)[0] == compat.UNKNOWN
+    monkeypatch.setattr(compat.shutil, "which", lambda name: None)
+    assert compat.probe(dep, ctx)[0] == compat.UNKNOWN
+
+
 def _add_line(home, rec):
     with open(home / ".claude" / "projects" / "-w-proj-a" / f"sid-{os.getpid()}.jsonl", "a") as f:
         f.write(json.dumps(rec) + "\n")
