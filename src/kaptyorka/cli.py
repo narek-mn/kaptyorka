@@ -514,7 +514,10 @@ def _invite(args) -> int:
         return 1
     print(f"send this link to {args.person} (works once, for 7 days): {got[1]['url']}"
           + ("\nit is for a personal laptop in the secure mode: its installer takes it, never"
-             " `kaptyorka join`" if personal else ""))
+             " `kaptyorka join`:  sudo python3 -I kap_setup.py install --personal '<link>'"
+             + ("" if str(got[1]['url']).startswith("https://") else
+                "\nthis hub has no encrypted connections, and the installer refuses http links:"
+                " run  kaptyorka tls on  first") if personal else ""))
     return 0
 
 

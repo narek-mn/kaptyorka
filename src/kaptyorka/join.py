@@ -94,6 +94,10 @@ def redeem(url: str, name: str) -> Optional[Tuple[str, str, str, str]]:
         why = {"no such invite": "it was cancelled, or it ran out (links last 7 days)",
                "invite already used": "it was already used (a link works once)"}
         said = body if isinstance(body, str) else f"the hub answered {status}"
+        if said.startswith("this invite is for a personal laptop"):  # nothing was used
+            print("this link is for a personal laptop: it is installed with the secure installer, not"
+                  " kaptyorka join (README, \"Personal laptop\")", file=sys.stderr)
+            return None
         print(f"this invite link did not work: {why.get(said, said)}; ask your admin for a new one",
               file=sys.stderr)
         return None
