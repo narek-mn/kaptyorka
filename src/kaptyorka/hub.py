@@ -28,6 +28,7 @@ from kaptyorka.gitlab import GitLabError, GitLabSource
 from kaptyorka import overnight as overnight_mod
 from kaptyorka import rules as rules_mod
 from kaptyorka.secrets_check import PATTERNS as SECRET_PATTERNS
+from kaptyorka.secure import kap_installer
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
@@ -2617,8 +2618,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return PlainTextResponse(str(e), status_code=400)
         url = invite_url(request, code)
         return JSONResponse({"code": code, "url": url, "expires": admin_ops.invite_expires(store, code),
-                             **({"install": hub_box.install_commands(url)}
-                                if store.invite_kind(code) == "personal" else {})})
+                             **({"version": __version__} if store.invite_kind(code) == "personal" else {})})
 
     @server.custom_route("/api/team-machines", methods=["POST"])
     @_bad_request
@@ -3257,22 +3257,15 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                     + INVITE_GITLAB.format(action=html.escape(f"/i/{code}/gitlab")))
             return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)
         if store.invite_kind(code) == "personal":
-            # a personal laptop installs with the secure installer from the project page (design v2,
-            # 9.2), never a command this page offers to run as root; the link alone is shown
+            # a personal laptop installs with the secure installer from the release page (design v2,
+            # 9.2; finding 5a): the link and one fixed sentence, never a command, since a hostile
+            # hub could print any command to run as root; the commands are in the README
             link = invite_url(request, code)
-            cmds = hub_box.install_commands(link)
             body = ("<h1>Set up your personal laptop</h1>"
                     + (INVITE_GITLAB.format(action=html.escape(f"/i/{code}/gitlab")) if on else "")
-                    + (("<p>On your laptop, in a terminal, as yourself: get the installer of this hub's"
-                        " kaptyorka version from the project's GitHub release, then check it and install"
-                        " (the install runs only when the check says OK):</p>"
-                        f"<pre>{html.escape(chr(10).join(cmds))}</pre>"
-                        "<p>The SHA-256 above is the one this hub computes from its own kaptyorka; the same"
-                        " number is on the project's release page. If they differ, do not run it.</p>"
-                        if cmds else
-                        "<p>Get the secure installer from the kaptyorka project page (README, \"Personal"
-                        " laptop\") and give it this link:</p>" f"<pre>{html.escape(link)}</pre>")
-                       + "<p>This link works for 7 days, once.</p>" if link.startswith("https://") else
+                    + (f"<p>Your link:</p><pre>{html.escape(link)}</pre>"
+                       f"<p>{html.escape(kap_installer.install_sentence(__version__))}</p>"
+                       "<p>This link works for 7 days, once.</p>" if link.startswith("https://") else
                        "<p>This hub has no encrypted connections yet, and a personal laptop joins only over"
                        " one: ask your admin to switch them on and send a new link.</p>"))
             return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)

@@ -1,10 +1,9 @@
 """The personal-mode installer as one file (secure design v2, 9.2): a Python zip application
 holding kap_setup and every secure/ and relay/ file it installs, standard library only.
 
-Built the same way, byte for byte, by the release workflow (the GitHub release asset), by a
-hub (to print its SHA-256 next to the download command; never fetched from the network) and by
-the installer itself (the copy it keeps in /usr/local/libexec/kaptyorka for rejoin and repair):
-fixed names in sorted order, stored (no compression, so no zlib version changes a byte), one
+Built the same way, byte for byte, by the release workflow (the GitHub release asset, with its
+.sha256 next to it) and by the installer itself (the copy it keeps in /usr/local/libexec/kaptyorka
+for rejoin and repair): fixed names in sorted order, stored (no compression, so no zlib version changes a byte), one
 fixed time and mode. The same package files give the same file and the same hash.
 
   python3 -I kap_installer.py build OUT.pyz      # prints the SHA-256
@@ -18,7 +17,7 @@ import sys
 import zipfile
 
 NAME = "kaptyorka-secure-setup.pyz"
-RELEASES = "https://github.com/narek-mn/kaptyorka/releases/download"
+RELEASES = "https://github.com/narek-mn/kaptyorka/releases"
 SHEBANG = b"#!/usr/bin/python3 -I\n"
 STAMP = (1980, 1, 1, 0, 0, 0)
 VERSION_RX = re.compile(r"[0-9][0-9A-Za-z.+-]{0,30}")
@@ -103,16 +102,18 @@ def version(pkg: str = "") -> str:
     return m.group(1) if m and VERSION_RX.fullmatch(m.group(1)) else ""
 
 
-def download_url(ver: str) -> str:
-    return f"{RELEASES}/v{ver}/{NAME}"
+def release_page(ver: str) -> str:
+    """The kaptyorka release page of this version (the installer and its .sha256 are on it);
+    the list of releases for a version that does not look like one."""
+    return f"{RELEASES}/tag/v{ver}" if VERSION_RX.fullmatch(ver or "") else RELEASES
 
 
-def commands(ver: str, digest: str, link: str):
-    """The two commands a person runs, for this kaptyorka version and its installer's hash:
-    download from the project's GitHub release, then check the hash and install in one line
-    (the install runs only when the check passed)."""
-    return [f"curl -fLO {download_url(ver)}",
-            f"echo '{digest}  {NAME}' | sha256sum -c && sudo python3 -I {NAME} install --personal '{link}'"]
+def install_sentence(ver: str) -> str:
+    """The one fixed sentence a hub's personal invite page and `kaptyorka invite --personal` show
+    next to the link (design v2, 9.2; finding 5a): never a command, since a hostile hub could
+    print any command to run as root. The commands are in the README and on the release page."""
+    return (f"Install with the steps on the kaptyorka release page {release_page(ver)}: download the"
+            f" installer, check its hash against the .sha256 file on that page, then run it with this link.")
 
 
 def main(argv) -> int:

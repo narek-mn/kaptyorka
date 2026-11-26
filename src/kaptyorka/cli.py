@@ -520,15 +520,11 @@ def _invite(args) -> int:
         print(f"personal link for {args.person}: {url}\nthis hub has no encrypted connections, and the installer"
               " refuses http links: run  kaptyorka tls on  first, then make a new link")
         return 0
-    cmds = [str(c) for c in got[1].get("install") or []]
+    from kaptyorka.secure import kap_installer
+    ver = got[1].get("version")
     print(f"send this to {args.person} (the link works once, for 7 days). It is for a personal laptop in the"
           " secure mode: its installer takes the link, never `kaptyorka join`.")
-    if cmds:
-        print("On the laptop, as yourself (the second command checks the installer's SHA-256 first):")
-        for c in cmds:
-            print("  " + c)
-    else:
-        print(f"  link: {url}\n  installer: the kaptyorka project's GitHub release (README, \"Personal laptop\")")
+    print(f"  link: {url}\n  " + kap_installer.install_sentence(ver if isinstance(ver, str) else ""))
     return 0
 
 

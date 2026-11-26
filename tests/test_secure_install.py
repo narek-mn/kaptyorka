@@ -82,13 +82,18 @@ def test_a_damaged_installer_file_stops_before_running_anything(tmp_path):
     assert "damaged" in r.stderr and "ran" not in r.stdout
 
 
-def test_the_two_commands_download_the_hubs_own_version_and_check_its_hash_before_root():
-    link = f"https://hub:8444/i/abc#sha256={FP}"
-    one, two = ki.commands("0.9.40", "f" * 64, link)
-    assert one == ("curl -fLO https://github.com/narek-mn/kaptyorka/releases/download/v0.9.40/"
-                   "kaptyorka-secure-setup.pyz")
-    assert two == (f"echo '{'f' * 64}  kaptyorka-secure-setup.pyz' | sha256sum -c && sudo python3 -I "
-                   f"kaptyorka-secure-setup.pyz install --personal '{link}'")
+def test_the_hub_s_sentence_names_only_the_release_page_never_a_command():
+    """Finding 5a (design 9.2): a hostile hub could print any command, so the hub prints none:
+    one fixed sentence that sends the person to the release page of its version."""
+    got = ki.install_sentence("0.9.40")
+    assert got == ("Install with the steps on the kaptyorka release page https://github.com/narek-mn/kaptyorka/"
+                   "releases/tag/v0.9.40: download the installer, check its hash against the .sha256 file on "
+                   "that page, then run it with this link.")
+    for word in ("sudo", "curl", "python3", "sha256sum", "&&", "|", "'"):
+        assert word not in got
+    for bad in ("", "x; sudo rm -rf /", "1.0 && curl evil", "../../evil", None):
+        assert ki.release_page(bad) == "https://github.com/narek-mn/kaptyorka/releases"
+        assert "evil" not in ki.install_sentence(bad) and "sudo" not in ki.install_sentence(bad)
     from kaptyorka import __version__
     assert ki.version() == __version__
 

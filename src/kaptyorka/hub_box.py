@@ -16,7 +16,6 @@ itself: a helper chat starts only for a box chat of that same box that asked for
 Every text a box chat sends goes through the same store calls as any session's, so the rights
 checks and the trick filter (tricks.py, through store.send) apply."""
 import base64
-import functools
 import re
 import threading
 from typing import Callable, Dict, List, Optional
@@ -26,29 +25,6 @@ from kaptyorka.memory import check_state
 from kaptyorka.store import (ONLINE_S, KaptyorkaError, MessageHeld, Principal, Store, clean,
                               clean_title, session_id)
 from kaptyorka.tricks import check_tricks
-
-@functools.lru_cache(maxsize=1)
-def _installer() -> tuple:
-    """(version, SHA-256) of the personal-mode installer of this hub's own kaptyorka, built from
-    its own installed files (kap_installer builds byte for byte what the release carries); never
-    from the network. ("", "") when this hub's files cannot build it."""
-    from kaptyorka.secure import kap_installer
-    try:
-        return kap_installer.version(), kap_installer.sha256()
-    except OSError:
-        return "", ""
-
-
-def install_commands(link: str) -> List[str]:
-    """The two commands a person runs for a personal invite link (design v2, 9.2): the
-    installer of the hub's own version from the project's GitHub release, its hash checked
-    before it runs as root. [] for a link the installer would refuse (not https)."""
-    from kaptyorka.secure import kap_installer
-    ver, digest = _installer()
-    if not ver or not digest or not link.startswith("https://"):
-        return []
-    return kap_installer.commands(ver, digest, link)
-
 
 PREFIX = "box:"
 TOOL = "box"  # the relay sends no tool name (design v2, 6.4): every box chat is a "box" chat

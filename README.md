@@ -115,14 +115,15 @@ On your own laptop, kaptyorka can keep the team away from your personal files. O
 
 **2. Make a Claude token for the box** (in a terminal, as yourself): `claude setup-token`. Keep the token it prints; the installer asks for it. You can also skip it and add it later with `hubchat token-rotate`.
 
-**3. Get the installer and install.** The installer is one file, `kaptyorka-secure-setup.pyz` (Python standard library only), attached to each GitHub release of kaptyorka. Its SHA-256 is in the release notes and next to it as `kaptyorka-secure-setup.pyz.sha256`. The hub's invite page (open your link in a browser) and the admin's `kaptyorka invite <you> --personal` print the two commands for the hub's own kaptyorka version, ready to copy. In a terminal, as yourself (keep the quotes):
+**3. Get the installer and install.** The installer is one file, `kaptyorka-secure-setup.pyz` (Python standard library only), attached to each GitHub release of kaptyorka next to its hash file `kaptyorka-secure-setup.pyz.sha256`; the SHA-256 is in the release notes too. The hub's invite page (open your link in a browser) and the admin's `kaptyorka invite <you> --personal` show your link and the release page of the hub's own kaptyorka version, `https://github.com/narek-mn/kaptyorka/releases/tag/v<version>`, and nothing else: never a command. In a terminal, as yourself, in an empty folder (put that version in for `<version>` and your link in the quotes):
 
 ```bash
 curl -fLO https://github.com/narek-mn/kaptyorka/releases/download/v<version>/kaptyorka-secure-setup.pyz
-echo '<sha256>  kaptyorka-secure-setup.pyz' | sha256sum -c && sudo python3 -I kaptyorka-secure-setup.pyz install --personal 'https://192.0.2.10:8444/i/<code>#sha256=<fingerprint>'
+curl -fLO https://github.com/narek-mn/kaptyorka/releases/download/v<version>/kaptyorka-secure-setup.pyz.sha256
+sha256sum -c kaptyorka-secure-setup.pyz.sha256 && sudo python3 -I kaptyorka-secure-setup.pyz install --personal '<link>'
 ```
 
-The install runs only when `sha256sum -c` says `OK`. **The trust step, honestly:** this runs once as root, so you trust this one file. The hash on the invite page comes from the hub itself (it builds the same file from its own kaptyorka, byte for byte, and hashes it; it never fetches it). That protects you from a damaged or swapped download, but not from a hostile hub, which could show you any command. So compare the hash with the one on the project's release page (or ask your admin over another channel). If they differ, do not run it. There is no signed package yet.
+The install runs only when `sha256sum -c` says `OK`. **The trust step, honestly:** this runs once as root, so you trust this one file, and the release page is what you trust for it. The hub only names the version: it never prints a command, because a hostile hub could print any command. Copy the commands from here or from the release page, never from a message or a page that someone sent you. If you want a second check, compare the hash with the one in the release notes (or ask your admin over another channel). There is no signed package yet.
 
 It asks for a name for this computer on the hub (choose one, such as `laptop-2`; not your user or host name), for the Claude token, and which AI tools go into the box (default: the ones you already have; it looks for them by name only and never runs or copies yours). Then it joins the hub and sets everything up. It ends with `Self-check: all walls in place` and `Done.`. To answer without questions: `--name laptop-2 --claude-token-file ~/claude-token.txt --tools claude,codex` (delete that file afterwards; `--tools none` installs no tool).
 

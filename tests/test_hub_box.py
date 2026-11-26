@@ -5,8 +5,10 @@ invite. Box chats show like other chats; nothing reaches them but report and inb
 personal device is never shared and reaches nothing else."""
 import asyncio
 import hashlib
+import html
 import http.client
 import json
+import re
 import shutil
 import ssl
 import subprocess
@@ -188,27 +190,24 @@ def test_the_invite_page_of_a_personal_link_offers_no_join_command(w):
     c.close()
     assert "personal laptop" in page and "kaptyorka join" not in page
     assert w.s.invite_valid(code)
-    # the two commands: this hub's own version from the project's release, the hash of the
-    # installer its own files build (kap_installer), the install only after the check passed
+    # finding 5a (design 9.2): the link and one fixed sentence pointing at the release page of
+    # this hub's own version; never a command to run (a hostile hub could print any)
     from kaptyorka import __version__
     from kaptyorka.secure import kap_installer
-    digest = kap_installer.sha256()
-    assert (f"curl -fLO https://github.com/narek-mn/kaptyorka/releases/download/v{__version__}/"
-            "kaptyorka-secure-setup.pyz") in page
-    assert (f"echo &#x27;{digest}  kaptyorka-secure-setup.pyz&#x27; | sha256sum -c &amp;&amp; sudo python3 -I "
-            "kaptyorka-secure-setup.pyz install --personal &#x27;https://") in page
-    assert f"/i/{code}&#x27;" in page or f"/i/{code}#sha256=" in page
+    assert re.search(rf"<pre>https://[^<]*/i/{code}(#sha256=[0-9a-f]{{64}})?</pre>", page)
+    assert html.escape(kap_installer.install_sentence(__version__)) in page
+    assert f"https://github.com/narek-mn/kaptyorka/releases/tag/v{__version__}" in page
+    for word in ("sudo", "curl", "python3", "sha256sum", "&amp;&amp;", "--personal"):
+        assert word not in page
 
 
-def test_the_admins_new_personal_invite_carries_the_install_commands(w):
-    from kaptyorka.secure import kap_installer
+def test_the_admins_new_personal_invite_carries_the_version_and_no_command(w):
+    from kaptyorka import __version__
     status, text = post(w.port, "/api/invites", {"person": "alice", "kind": "personal"}, w.s.device_add(w.admin, "desk"))
     got = json.loads(text)
-    assert status == 200 and len(got["install"]) == 2
-    assert got["install"][1].startswith(f"echo '{kap_installer.sha256()}  kaptyorka-secure-setup.pyz' | sha256sum -c && ")
-    assert got["install"][1].endswith(f"install --personal '{got['url']}'")
+    assert status == 200 and got["version"] == __version__ and "install" not in got
     status, text = post(w.port, "/api/invites", {"person": "alice"}, w.s.device_add(w.admin, "desk2"))
-    assert "install" not in json.loads(text)
+    assert "version" not in json.loads(text)
 
 
 def test_a_personal_device_sends_no_host_and_is_never_shared_moved_or_a_team_machine(w):
