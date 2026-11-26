@@ -389,11 +389,11 @@ def box_props(person: str, box: str, runtime_max: str = "7d") -> List[str]:
         f"BindPaths={RELAY_DOORS}/{box}.sock {run}/pub/egress.sock:/run/egress.sock",
         # memory, devices, processes
         "TemporaryFileSystem=/dev/shm:mode=1777", "PrivateIPC=yes", "PrivateDevices=yes",
-        # No ProcSubset=pid (red team round 1, B-17: the box reads /proc/meminfo, /proc/stat, the
-        # uptime). Measured in slice 2 with it: Claude, OpenCode and Cursor start, but Codex 0.172
-        # stops at its first screen ("failed to read start time for pid-managed app server"; a
-        # process start time needs the boot time from /proc/stat). Recorded as a small leak.
-        "ProtectProc=invisible", "TemporaryFileSystem=/sys/fs/cgroup:ro", "KeyringMode=private",
+        # ProcSubset=pid: the box sees only process folders in /proc, not the computer's memory,
+        # CPU counters, uptime or interrupts (red team round 1, B-17). Codex once stopped at its
+        # first screen with it (its own pid-managed app-server needs the boot time from /proc/stat);
+        # box-exec now opens Codex with --remote on the chat's own app-server, which never asks.
+        "ProtectProc=invisible", "ProcSubset=pid", "TemporaryFileSystem=/sys/fs/cgroup:ro", "KeyringMode=private",
         # network: own namespace with only lo; the relay and the forwarder are socket files
         f"NetworkNamespacePath=/run/netns/kapbox-{box}",
         "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",

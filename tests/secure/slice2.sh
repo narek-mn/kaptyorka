@@ -292,7 +292,7 @@ EOF
   ;;
 
 install)
-  t "I-0 installer, personal mode (the product's kap_setup.py)" "rc 0, self-check passes" 're:^rc=0 .*Self-check: all walls in place.*wallcheck ok: 15 walls' \
+  t "I-0 installer, personal mode (the product's kap_setup.py)" "rc 0, self-check passes" 're:^rc=0 .*Self-check: all walls in place.*wallcheck ok: 16 walls' \
     "$SETUP install --personal --person alice --hub-ip 10.77.0.1 --hub-port 8443 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name box-1 --device-token-file /root/devtok --claude-token-file /root/claudetok --runtime-max 60s --tools-from /root/tools"
   t "I-0b installer again (idempotent)" "rc 0" 're:^rc=0 .*Self-check: all walls in place' \
     "$SETUP install --personal --person alice --hub-ip 10.77.0.1 --hub-port 8443 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name box-1 --device-token-file /root/devtok --runtime-max 60s"
@@ -417,7 +417,8 @@ walls2)
       "inb 'python3 -I $TK/syscall.py $sc; echo rc=\$?'"
   done
   t "B-16 a crash leaves no core file" "no core" 're:^rc=0 .*no-core' "inb 'cd /tmp; bash -c \"kill -SEGV \\\$\\\$\"; ls /tmp/core* /var/crash 2>/dev/null || echo no-core'"
-  t "B-17 /proc/meminfo, /proc/stat readable (no ProcSubset=pid: Codex needs /proc/stat, P-17 of round 1)" "info" info "inb 'head -2 /proc/meminfo; head -1 /proc/stat'"
+  t "B-17 /proc/meminfo, /proc/stat, /proc/uptime, /proc/interrupts (ProcSubset=pid, P-17 of round 1)" "absent 4x" \
+    're:^rc=0 (absent ){4}$' "inb 'for f in /proc/meminfo /proc/stat /proc/uptime /proc/interrupts; do [ -e \$f ] && echo -n \"PRESENT-\$f \" || echo -n \"absent \"; done'"
   t "B-18 limits on a running chat unit (not stress-tested)" "TasksMax 4096, MemoryMax set, swap 0, RuntimeMax 60s" \
     're:^rc=0 RuntimeMaxUSec=1min MemoryMax=[0-9]+ MemorySwapMax=0 TasksMax=4096 KillMode=control-group' \
     "inb 'sleep 6' >/dev/null & sleep 3; u=\$(systemctl list-units --plain --no-legend 'kapbox-alice-chat-*' | awk '{print \$1}' | head -1); systemctl show -p TasksMax -p MemoryMax -p MemorySwapMax -p RuntimeMaxUSec -p KillMode \"\$u\" | tr '\n' ' '; wait"
@@ -454,36 +455,35 @@ tools-*)
   ;;
 
 b17)
-  # B-17: why the box units have no ProcSubset=pid. Before slice 5, Codex 0.172 stopped at its first screen with it
-  # ("failed to read start time for pid-managed app server"). Now box-exec runs its window with --remote on the chat's
-  # own app-server, so that path is not taken: this phase checks a whole turn. A fake API key: a turn that reaches
-  # OpenAI ends in 401. The same turn without it is the control. Real codex, real launcher; the stub comes back after.
+  # B-17: the box units carry ProcSubset=pid. Before slice 5, Codex 0.172 stopped at its first screen with it ("failed to
+  # read start time for pid-managed app server": its own app-server's start time needs the boot time from /proc/stat).
+  # box-exec now opens its window with --remote on the chat's own app-server, so that path is not taken: this phase checks
+  # a whole turn with the wall on. A fake API key: a turn that reaches OpenAI ends in 401.
+  # Real codex, real launcher; the stub comes back after. Run as its own phase (box slices killed first): the box helper,
+  # which holds the box's proxy on 127.0.0.1:3128, ends at the test's RuntimeMaxSec=60s, and a turn across that end
+  # shows "Connection refused" (measured: 5 of 40 back-to-back turns at RuntimeMaxSec=60s; 0 of 20 at 600s, wall on).
   [ -L /root/real/bin/codex ] || { rec "B-17c" FAIL "the real codex was downloaded" "toolsdl" "missing"; exit 0; }
   [ -e /opt/kap-tools/real/.copied ] || { mkdir -p /opt/kap-tools/real; cp -a /root/real/. /opt/kap-tools/real/
     chown -R root:root /opt/kap-tools/real; chmod -R go-w /opt/kap-tools/real; touch /opt/kap-tools/real/.copied; }
   mkdir -p /root/stubs; [ -e /root/stubs/codex ] || cp -a /opt/kap-tools/bin/codex /root/stubs/codex
   ln -sfn /opt/kap-tools/real/bin/codex /opt/kap-tools/bin/codex
   inb "printf sk-FAKE-B17-KEY | $L/box-exec codex login --with-api-key" >/dev/null 2>&1
-  K=$L/kapcommon.py; cp $K /root/kc.saved
-  turn() { # one Codex turn at a pty (its own tmux server); prints whether ProcSubset=pid is on the units and the result
+  turn() { # one Codex turn at a pty (its own tmux server); prints the chat unit's ProcSubset and the result
     tmux -L b17 kill-server 2>/dev/null
     tmux -L b17 new-session -d -s psx -x 120 -y 40 "runuser -u alice -- bash -c 'cd ~/team/proj-a && $L/launch codex'; sleep 40"
     for i in $(seq 24); do tmux -L b17 capture-pane -p -t psx 2>/dev/null | grep -q 'Ask Codex' && break; sleep 0.5; done
+    u=$(systemctl list-units --plain --no-legend 'kapbox-alice-chat-*' | awk '{print $1}' | head -1)
+    ps=$(systemctl show -p ProcSubset --value "$u" 2>/dev/null)
     tmux -L b17 send-keys -t psx -l "hello B17"; sleep 0.5; tmux -L b17 send-keys -t psx Enter
     E='failed to read start time|Connection refused|401 Unauthorized'
     for i in $(seq 40); do tmux -L b17 capture-pane -p -t psx 2>/dev/null | grep -q -E "$E" && break; sleep 0.5; done
     r=$(tmux -L b17 capture-pane -p -t psx 2>/dev/null | grep -o -m1 -E "$E")
-    echo "procsubset=$(grep -c '"ProcSubset=pid"' $K) ${r:-none: $(tmux -L b17 capture-pane -p -t psx 2>&1 | grep -v '^\s*$' | tail -4)}"
+    echo "procsubset=${ps:-none} ${r:-none: $(tmux -L b17 capture-pane -p -t psx 2>&1 | grep -v '^\s*$' | tail -4)}"
     tmux -L b17 kill-server 2>/dev/null; systemctl kill --signal=KILL 'kapbox-alice-chat-*' 2>/dev/null; sleep 1
   }
-  export -f turn; export K
-  sed -i 's/"ProtectProc=invisible", "TemporaryFileSystem=\/sys\/fs\/cgroup:ro"/"ProtectProc=invisible", "ProcSubset=pid", "TemporaryFileSystem=\/sys\/fs\/cgroup:ro"/' $K
-  # The design's reason (07, B-17): Codex fails with it. A FAIL here means that reason is gone and the leak is open by choice.
-  TL=40 t "B-17c with ProcSubset=pid added, Codex fails (its first screen or its turn), so it is not on the box units" \
-    "start-time error or no connection" 're:^rc=0 procsubset=1 (failed to read start time|Connection refused)$' "turn"
-  cp /root/kc.saved $K
-  TL=40 t "B-17d control: the same turn without it reaches OpenAI (401 for the fake key)" "401" \
-    're:^rc=0 procsubset=0 401 Unauthorized$' "turn"
+  export -f turn
+  TL=40 t "B-17c with ProcSubset=pid on the chat unit, a Codex turn reaches OpenAI (401 for the fake key)" "pid 401" \
+    're:^rc=0 procsubset=pid 401 Unauthorized$' "turn"
   rm -f $BH/state/codex/auth.json /opt/kap-tools/bin/codex; cp -a /root/stubs/codex /opt/kap-tools/bin/codex
   ;;
 
@@ -734,7 +734,7 @@ hubchat)
 wallcheck)
   CAN=$(tr '\n' ',' < /run/kaptyorka/wall-canaries)
   WC="$L/wallcheck --verbose --box alice --person alice --addrs $ETH,203.0.113.5 --canaries $CAN -- /bin/echo TOOL-STARTED"
-  t "W-0 all walls present (product props)" "wallcheck ok, tool starts" 're:wallcheck ok: 15 walls in [0-9]+ ms.*TOOL-STARTED' "rawbox $WC 2>&1"
+  t "W-0 all walls present (product props)" "wallcheck ok, tool starts" 're:wallcheck ok: 16 walls in [0-9]+ ms.*TOOL-STARTED' "rawbox $WC 2>&1"
   wv() { # name, wall, DROP, ADD
     TL=45 t "W-1 remove: $1" "refused at $2, tool not started" "re:wall $2 is missing" "DROP='$3' ADD='$4' rawbox $WC 2>&1; echo rc=\$?"
     local last; last=$(tail -1 "$RES" | cut -f5); [[ $last == *TOOL-STARTED* ]] && rec "W-1 $1: tool started anyway" FAIL "no TOOL-STARTED" "-" "$last"
@@ -749,6 +749,7 @@ wallcheck)
   wv "PrivateIPC=yes"                                 W3  '^PrivateIPC=' ''
   wv "NetworkNamespacePath="                          W4  '^NetworkNamespacePath=' ''
   wv "ProtectProc=invisible"                          W7  '^ProtectProc=' ''
+  wv "ProcSubset=pid"                                 W16 '^ProcSubset=' ''
   wv "CapabilityBoundingSet= (empty)"                 W8  '^CapabilityBoundingSet=' ''
   wv "every SystemCallFilter="                        W8  '^SystemCallFilter=' ''
   wv "TemporaryFileSystem=/sys/fs/cgroup:ro"          W9  '^TemporaryFileSystem=/sys/fs/cgroup' ''

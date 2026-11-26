@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -I
 """wallcheck (secure design v2, 4.6): the inside half of the self-check. It runs as the box user,
-in the very unit that will run the tool, tries each wall once (W1 to W15) and then replaces
+in the very unit that will run the tool, tries each wall once (W1 to W16) and then replaces
 itself with the tool. Any miss: one line naming the missing wall, exit 1, the tool never starts.
 
 Usage: wallcheck [--verbose] --box BOX --person NAME [--addrs a,b] [--canaries f,g] -- command args...
@@ -308,8 +308,13 @@ def main(argv) -> None:
     why = relay_answers(f"/run/kaptyorka/relay/{box}.sock") or forwarder_answers("/run/egress.sock")
     if why:
         fail("W15", why)
+    # W16 /proc holds only process folders (ProcSubset=pid): not the computer's memory, CPU
+    # counters, uptime or interrupts
+    for p in ("/proc/meminfo", "/proc/stat", "/proc/uptime", "/proc/interrupts"):
+        if os.path.lexists(p):
+            fail("W16", f"{p} exists")
     if opts["verbose"]:
-        print(f"wallcheck ok: 15 walls in {(time.monotonic() - t0) * 1000:.0f} ms", file=sys.stderr, flush=True)
+        print(f"wallcheck ok: 16 walls in {(time.monotonic() - t0) * 1000:.0f} ms", file=sys.stderr, flush=True)
     os.execv(cmd[0], cmd)
 
 

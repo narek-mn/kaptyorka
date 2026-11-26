@@ -128,10 +128,9 @@ def test_box_props_carry_every_wall_and_the_slice0_changes():
                  "NetworkNamespacePath=/run/netns/kapbox-alice", "NoNewPrivileges=yes", "CapabilityBoundingSet=",
                  "RestrictNamespaces=yes", "SystemCallFilter=@pkey", "KillMode=control-group", "RuntimeMaxSec=60s",
                  "MemorySwapMax=0", "User=kap-alice", "SupplementaryGroups=kapshare-alice", "UMask=0007",
-                 "ReadOnlyPaths=/var/lib/kap-team/kap-alice/home"):
+                 "ReadOnlyPaths=/var/lib/kap-team/kap-alice/home", "ProcSubset=pid"):
         assert line in props, line
     assert "ProtectControlGroups" not in text          # D1
-    assert "ProcSubset" not in text                    # Codex needs /proc/stat (slice 2, P-17)
     # measured on systemd 255: next to these, systemd drops TemporaryFileSystem=/ without a word
     assert "ProtectSystem" not in text and "DynamicUser" not in text and "RootDirectory" not in text
     tl = next(p for p in props if p.startswith("TemporaryFileSystem=/sys/block"))
