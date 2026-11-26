@@ -1,2 +1,7 @@
 cli_auth_credentials_store = "file"
 check_for_update_on_startup = false
+
+# the kaptyorka helper of this box (secure design v2, 5.1): its MCP server
+[mcp_servers.kaptyorka]
+command = "/usr/bin/python3"
+args = ["-I", "/opt/kaptyorka/box/current/helper.py", "mcp"]

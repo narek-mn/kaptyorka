@@ -31,7 +31,7 @@ from kaptyorka.secrets_check import PATTERNS as SECRET_PATTERNS
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
-from kaptyorka import compat, hub_groups, left, limits, refusal, rollout, tls
+from kaptyorka import compat, hub_box, hub_groups, left, limits, refusal, rollout, tls
 from kaptyorka.hub_feed import feed, session_row
 from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
@@ -86,6 +86,8 @@ MACHINE_ROUTES = [(m, re.compile(p)) for m, p in (
     ("DELETE", r"/api/gitlab"),
 )]
 SIGN_IN_FIRST = "the page needs a GitLab sign-in: open the hub in a browser and sign in with GitLab"
+PERSONAL_ONLY = ("a personal laptop's key reaches only its relay's box calls; open the page from a"
+                 " browser sign-in")
 
 
 def _ago(s: int) -> str:
@@ -297,6 +299,11 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             or p.hub_key
 
     def page_gate(scope, p: Principal) -> Optional[str]:
+        # a personal laptop's device reaches its relay's box calls and nothing else; no other
+        # device reaches those (secure design v2, 9.1)
+        if p.personal or scope["path"].startswith("/box/"):
+            return None if p.personal and scope["path"].startswith("/box/v1/") else (
+                PERSONAL_ONLY if p.personal else hub_box.NOT_BOX)
         if machine_route(scope.get("method", ""), scope["path"]) or page_ok(p):
             return None
         return SIGN_IN_FIRST
@@ -881,9 +888,21 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         wake_bridges()
         wait = limits.waiting_line(store, mm, identity.facts()["host"], store.clock()) \
             if limits.to_manager(store, mm, to) else ""
+        box = "; " + hub_box.DELIVERY if to_box(key, to) else ""
         if held:
-            return "; ".join(held_line(name, s) for name, s in held)
-        return f"sent to {n} session" + ("" if n == 1 else "s") + (f"; {wait}" if wait else "")
+            return "; ".join(held_line(name, s) for name, s in held) + box
+        return f"sent to {n} session" + ("" if n == 1 else "s") + (f"; {wait}" if wait else "") + box
+
+    def to_box(sender_key: str, to: str) -> bool:
+        """The send goes to a box chat of a personal laptop (hub_box.py): its helper collects it."""
+        if to == "all":
+            return False
+        with store.lock:
+            try:
+                targets = store._targets(sender_key, to, store.clock(), None)
+            except KaptyorkaError:
+                return False
+        return any(hub_box.is_box(t["key"]) for t in targets)
 
     @server.tool()
     @_tool_errors
@@ -1689,6 +1708,38 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             raise KaptyorkaError(OWN_TOKEN)
         cid = rs.conflict(principal, agent.key, session_project(agent, principal), rule_a, rule_b)
         return f"Conflict {cid} logged for the admin."
+
+    def box_send(key: str, to: str, text: str, file_id, held: list) -> int:
+        n = ws.send_via_manager(key, to, text, mm.person_id(), file_id, held)
+        return store.send(key, to, text, file_id, held) if n is None else n
+
+    def box_brief(agent: Agent, principal: Principal) -> str:
+        return brief.compose(store, ws, ms, agent, principal,
+                             rules_text=rules_mod.rules_text(rs.current()["text"]))[0]
+
+    box = hub_box.BoxHub(store, closing, rs, ms, box_send, wake_bridges, box_brief)
+
+    @server.custom_route("/box/v1/{call}", methods=["POST"])
+    async def box_call(request: Request) -> Response:
+        """A personal laptop's relay (hub_box.py). Only its device gets here (page_gate)."""
+        principal = request.scope.get("state", {}).get("principal")
+        if request.headers.get("x-kaptyorka-mode") != "personal":
+            return JSONResponse({"error": hub_box.NOT_BOX}, status_code=403)
+        try:
+            body = await request.json()
+        except ValueError:
+            return JSONResponse({"error": "send one JSON object"}, status_code=400)
+        call = request.path_params["call"]
+        try:
+            out = box.handle(principal, call, body)
+        except hub_box.Refused as e:
+            return JSONResponse({"error": str(e)}, status_code=e.status)
+        if call == "report":  # its version, for the page's machine list
+            version = clean(request.headers.get("x-kaptyorka-version") or "", 32)
+            with store.lock:
+                store.db.execute("UPDATE devices SET version=? WHERE id=?",
+                                 (version, principal.device_id))
+        return JSONResponse(out, headers=NO_STORE)
 
     @server.custom_route("/bridge/heartbeat", methods=["POST"])
     @_bad_request
@@ -2558,8 +2609,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return PlainTextResponse("no such person", status_code=404)
         principal = request.scope["state"]["principal"]
         try:  # replace: the Team row's New invite link; the person's older links stop working
+            kind = body.get("kind") or ""
             code = (admin_ops.invite_renew(store, person["name"], principal) if body.get("replace")
-                    else store.invite_create(person["id"], by=principal.person_name))
+                    else store.invite_create(person["id"], by=principal.person_name,
+                                             kind=kind if isinstance(kind, str) else "?"))
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"code": code, "url": invite_url(request, code),
@@ -3225,6 +3278,15 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             return PlainTextResponse("too many failed attempts", status_code=429)
         body = await request.json()
         person = ws.invite_person(code)  # read first: authenticating would mark the bridge seen
+        mode = store.invite_kind(code)
+        # the invite carries its kind (secure design v2, 9.1): a personal laptop's only through
+        # its installer (which says mode personal), any other never through it; nothing is used
+        if (body.get("mode") == "personal") != (mode == "personal"):
+            return PlainTextResponse(
+                "this invite is for a personal laptop: use the secure installer, not kaptyorka join"
+                if mode == "personal" else
+                "this invite is not for a personal laptop: ask the admin for a personal one",
+                status_code=400)
         try:
             token, secret = store.invite_redeem(code, str(body["device_name"]),
                                                 safe_name(str(body.get("host", ""))),
@@ -3233,7 +3295,7 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             limiter.hit(key)
             return PlainTextResponse(str(e), status_code=400)
         return JSONResponse({"token": token, "secret": secret, "hub": own_url(request),
-                             "person": person},
+                             "person": person, **({"mode": mode} if mode else {})},
                             headers={"Cache-Control": "no-store"})
 
     @server.custom_route("/i/{code}/web", methods=["POST"])

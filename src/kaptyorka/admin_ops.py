@@ -213,6 +213,8 @@ def make_team_machine(store, name: str, by: Principal) -> dict:
         if db.execute("SELECT 1 FROM gitlab_sessions g JOIN devices d ON d.id=g.device_id"
                       " WHERE g.person_id=? AND d.revoked_at IS NULL", (pid,)).fetchone():
             raise KaptyorkaError(f"{name} has browsers signed in with GitLab, so is a person")
+        if store.has_personal_device(pid):  # its box chats would turn shared (secure design 9.1)
+            raise KaptyorkaError(f"{name} has a personal laptop on the hub, so is a person")
         on = db.execute("SELECT value FROM settings WHERE key='legacy_enabled'").fetchone()
         if (on is None or on["value"] != "0") and (db.execute(
                 "SELECT 1 FROM devices WHERE person_id=? AND legacy=1 AND revoked_at IS NULL",

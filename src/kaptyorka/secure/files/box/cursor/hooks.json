@@ -1,1 +1,26 @@
-{}
+{
+ "version": 1,
+ "hooks": {
+  "sessionStart": [
+   {
+    "command": "/usr/bin/python3 -I /opt/kaptyorka/box/current/helper.py hook cursor sessionStart"
+   }
+  ],
+  "beforeSubmitPrompt": [
+   {
+    "command": "/usr/bin/python3 -I /opt/kaptyorka/box/current/helper.py hook cursor beforeSubmitPrompt"
+   }
+  ],
+  "stop": [
+   {
+    "command": "/usr/bin/python3 -I /opt/kaptyorka/box/current/helper.py hook cursor stop",
+    "loop_limit": 5
+   }
+  ],
+  "sessionEnd": [
+   {
+    "command": "/usr/bin/python3 -I /opt/kaptyorka/box/current/helper.py hook cursor sessionEnd"
+   }
+  ]
+ }
+}

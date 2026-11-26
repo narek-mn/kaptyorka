@@ -150,7 +150,8 @@ def install_code(ver: str) -> None:
         copy(os.path.join(HERE, src), f"{kc.LIBEXEC}/{name}", mode)
     copy(os.path.join(FILES, "hubchat"), "/usr/local/bin/hubchat", 0o755)
     kr.mkdir(kc.OPT, 0o755)
-    for part, files in (("egress", {"kap_egress.py": "egress.py"}), ("box", {"kap_proxybridge.py": "proxybridge.py"}),
+    for part, files in (("egress", {"kap_egress.py": "egress.py"}), ("box", {"kap_proxybridge.py": "proxybridge.py",
+                                                                         "kap_helper.py": "helper.py"}),
                         ("relay", {os.path.join(RELAY_SRC, "relay.py"): "relay.py"})):
         kr.mkdir(f"{kc.OPT}/{part}", 0o755)
         kr.mkdir(f"{kc.OPT}/{part}/{ver}", 0o755)

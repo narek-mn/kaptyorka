@@ -39,6 +39,9 @@ UNREACHABLE = ("no session named {to} that you can reach; to reach someone else,
                " message the manager")
 ASK_MANAGER = "ask the manager: send it a message saying who you need and why"
 ADMIN_OPENS = "only the admin opens doors"
+PERSONAL = "personal"  # devices.mode and invites.kind of a personal laptop (hub_box.py)
+PERSONAL_FIXED = ("a personal laptop's device stays personal: it is never shared, moved or a team"
+                  " machine; revoke it and invite again instead")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -175,6 +178,12 @@ ADDED_COLUMNS = [
     # its bridge can end it from the page (left.py), as that bridge says each beat; an older
     # bridge never says, so never
     ("agents", "closable", "INTEGER NOT NULL DEFAULT 0"),
+    # secure design v2 (9.1): "personal" for a personal laptop's device, set once from its
+    # invite and never changed; its chats are box chats (agents.box), reached only through its
+    # relay's /box/v1 calls (hub_box.py)
+    ("devices", "mode", "TEXT NOT NULL DEFAULT ''"),
+    ("invites", "kind", "TEXT NOT NULL DEFAULT ''"),
+    ("agents", "box", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -385,6 +394,7 @@ class Principal:
     shared: bool
     legacy: bool
     hub_key: bool = False  # the device in ~/.kaptyorka/admin-token on the hub machine
+    personal: bool = False  # a personal laptop's device (hub_box.py): never shared, box calls only
 
     def is_admin(self) -> bool:
         """An admin person, or the hub key: whoever is logged in on the hub machine can always
@@ -572,11 +582,13 @@ class Store:
             if who is None:
                 return None
             self.db.execute("UPDATE devices SET last_used=? WHERE id=?", (self.clock(), dev["id"]))
-            # a team machine's account is shared by its nature: it hosts everyone's workers
-            shared = bool(dev["shared"]) or self._is_team(person_id)
+            # a team machine's account is shared by its nature: it hosts everyone's workers.
+            # A personal laptop's device never is, whatever a flag or its person says
+            personal = dev["mode"] == PERSONAL
+            shared = not personal and (bool(dev["shared"]) or self._is_team(person_id))
             principal = Principal(person_id, who["name"], who["role"], dev["id"], device_name,
                                   shared, bool(dev["legacy"]),
-                                  hub_key and not dev["legacy"])
+                                  hub_key and not dev["legacy"] and not personal, personal)
         if used:
             self.log_add("system", "legacy_used", machine)
         if confirmed:
@@ -606,9 +618,13 @@ class Store:
             return dict(row) if row else None
 
     def invite_create(self, person_id: int, ttl_s: float = INVITE_TTL_S, by: str = "",
-                      log_kind: str = "invite", limit: Optional[int] = None) -> str:
+                      log_kind: str = "invite", limit: Optional[int] = None,
+                      kind: str = "") -> str:
         """A new invite. With `limit`, refused while the person already has that many unused,
-        unexpired invites."""
+        unexpired invites. kind "personal": the device it makes is a personal laptop's
+        (hub_box.py), for good; never for a team machine."""
+        if kind not in ("", PERSONAL):
+            raise KaptyorkaError('an invite\'s kind is "personal" or none')
         code = secrets.token_urlsafe(16)
         while code.startswith("-"):  # a code the command line would read as an option
             code = secrets.token_urlsafe(16)
@@ -620,15 +636,23 @@ class Store:
             if (row["name"], row["role"]) == ("manager", "manager"):  # manager.PERSON
                 # whoever redeemed it would act as the manager
                 raise KaptyorkaError("the manager account cannot be invited; it runs on the hub machine")
+            if kind == PERSONAL and self._is_team(person_id):
+                raise KaptyorkaError("a team machine joins as a team machine, never as a personal laptop")
             if limit is not None and self.db.execute(
                     "SELECT COUNT(*) FROM invites WHERE person_id=? AND used_at IS NULL"
                     " AND expires>?", (person_id, now)).fetchone()[0] >= limit:
                 raise KaptyorkaError(f"you already have {limit} unused links to add a machine;"
                                      " use one of them, or try again tomorrow")
-            self.db.execute("INSERT INTO invites (code, person_id, created, expires)"
-                            " VALUES (?,?,?,?)", (code, person_id, now, now + ttl_s))
-        self.log_add(by or row["name"], log_kind, f"invite for {row['name']}")
+            self.db.execute("INSERT INTO invites (code, person_id, created, expires, kind)"
+                            " VALUES (?,?,?,?,?)", (code, person_id, now, now + ttl_s, kind))
+        self.log_add(by or row["name"], log_kind, f"{kind + ' ' if kind else ''}invite for {row['name']}")
         return code
+
+    def invite_kind(self, code: str) -> str:
+        """The invite's kind: "personal" or ""."""
+        with self.lock:
+            row = self.db.execute("SELECT kind FROM invites WHERE code=?", (code,)).fetchone()
+            return row["kind"] if row is not None else ""
 
     def invite_valid(self, code: str) -> bool:
         """True when the code exists, is unused and has not expired."""
@@ -656,12 +680,16 @@ class Store:
                 raise KaptyorkaError("invite expired")
             who = self.db.execute("SELECT name FROM people WHERE id=?",
                                   (inv["person_id"],)).fetchone()
+            personal = inv["kind"] == PERSONAL
+            if personal and self._is_team(inv["person_id"]):
+                raise KaptyorkaError("a team machine joins as a team machine, never as a personal laptop")
             self.db.execute("UPDATE invites SET used_at=? WHERE code=?", (now, code))
-            self.db.execute(
-                "INSERT INTO devices (person_id, name, token_hash, secret_hash, created, host, os_user)"
-                " VALUES (?,?,?,?,?,?,?)",
+            self.db.execute(  # a personal laptop sends no host or account name (design v2, 6.1)
+                "INSERT INTO devices (person_id, name, token_hash, secret_hash, created, host, os_user,"
+                " mode) VALUES (?,?,?,?,?,?,?,?)",
                 (inv["person_id"], device_name, hashlib.sha256(token.encode()).hexdigest(),
-                 hashlib.sha256(secret.encode()).hexdigest(), now, host[:80], os_user[:80]))
+                 hashlib.sha256(secret.encode()).hexdigest(), now, "" if personal else host[:80],
+                 "" if personal else os_user[:80], inv["kind"]))
         self.log_add(who["name"], "join", f"device {device_name}")
         return token, secret
 
@@ -709,6 +737,8 @@ class Store:
             d = self.db.execute(
                 "SELECT d.*, p.name AS person, p.role FROM devices d JOIN people p"
                 " ON p.id=d.person_id WHERE d.id=? AND d.revoked_at IS NULL", (device_id,)).fetchone()
+            if d is not None and d["mode"] == PERSONAL:
+                raise KaptyorkaError(PERSONAL_FIXED)
             if d is None or d["expires"] is not None or d["host"] == "":
                 raise KaptyorkaError("no such machine")
             if d["legacy"]:
@@ -861,6 +891,8 @@ class Store:
 
     def device_set_shared(self, device_id: int, shared: bool, by: str = "") -> None:
         with self.lock:
+            if shared and self._personal(device_id):
+                raise KaptyorkaError(PERSONAL_FIXED)
             cur = self.db.execute("UPDATE devices SET shared=? WHERE id=?", (int(shared), device_id))
             row = self.db.execute("SELECT d.name, p.name AS person FROM devices d"
                                   " JOIN people p ON p.id=d.person_id WHERE d.id=?",
@@ -870,6 +902,16 @@ class Store:
         if row is not None:
             self.log_add(by or row["person"], "device_shared",
                          f"device {row['name']} of {row['person']} {'on' if shared else 'off'}")
+
+    def _personal(self, device_id) -> bool:
+        """Lock held. The device joined as a personal laptop."""
+        row = self.db.execute("SELECT mode FROM devices WHERE id=?", (device_id,)).fetchone()
+        return row is not None and row["mode"] == PERSONAL
+
+    def has_personal_device(self, person_id: int) -> bool:
+        """Lock held. The person has a live personal laptop's device."""
+        return self.db.execute("SELECT 1 FROM devices WHERE person_id=? AND mode=? AND"
+                               " revoked_at IS NULL LIMIT 1", (person_id, PERSONAL)).fetchone() is not None
 
     # projects
 
@@ -2201,6 +2243,10 @@ class Store:
             launched = self._launched_keys(principal)
             for m, t in self._deliverable(now):
                 if t["key"] not in launched and (t["machine"] != machine or not _owns(t, principal)):
+                    continue
+                # a box chat's messages go only to its own laptop's relay (hub_box.py), and
+                # that relay gets nothing else
+                if t["key"].startswith("box:") != (principal is not None and principal.personal):
                     continue
                 state = m["push_state"]
                 if state == "new" or (state == "offered" and now - m["offered_at"] >= LEASE_S):

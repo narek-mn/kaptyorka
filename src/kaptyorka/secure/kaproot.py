@@ -706,17 +706,22 @@ def ensure_box_running(box: str) -> None:
 
 
 def start_helper(person: str, box: str) -> None:
-    """The box helper (5.1). In slice 2 it is the in-box bridge from 127.0.0.1:3128 to the
-    forwarder's socket; slice 3 adds today's bridge in box mode. Same walls, same self-check."""
+    """The box helper (5.1): the in-box bridge from 127.0.0.1:3128 to the forwarder's socket,
+    and today's bridge in box mode (helper.py run: reports the box's chats through the relay's
+    door, delivers into their mailboxes, close, stuck check, helper chats). Same walls, same
+    self-check. It gets the Claude token as an open file, like a chat, for the helper chats it
+    starts; it ends itself ten minutes after the last chat."""
     unit = f"kapbox-{box}-helper.service"
     if is_active(unit):
         return
     systemctl("reset-failed", unit, check=False)
+    token = f"{kc.SECRET}/{person}/claude-oauth-token"
+    cred = ["-p", f"OpenFile={token}:claude-token:read-only"] if os.path.isfile(token) else []
     run(["systemd-run", "--quiet", "--collect", "--expand-environment=no", f"--unit={unit}",
-         f"--working-directory={kc.view_root(person)}", *props_args(person, box), "--",
+         f"--working-directory={kc.view_root(person)}", *props_args(person, box), *cred, "--",
          kc.WALLCHECK, "--box", box, "--person", person, "--addrs", ",".join(host_addrs()),
          "--canaries", ",".join(shared_canaries()), "--",
-         "/usr/bin/python3", "-I", kc.BOXCODE + "/proxybridge.py", "--idle", "600"], check=False)
+         "/usr/bin/python3", "-I", kc.BOXCODE + "/helper.py", "run", "--idle", "600"], check=False)
     for _ in range(40):   # wait until the bridge listens in the box's namespace
         r = run(["nsenter", f"--net=/run/netns/kapbox-{box}", "--", "ss", "-Hltn", "sport = :3128"], check=False)
         if r.stdout.strip():

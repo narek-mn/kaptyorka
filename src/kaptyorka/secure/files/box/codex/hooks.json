@@ -1,1 +1,35 @@
-{}
+{
+ "hooks": {
+  "SessionStart": [
+   {
+    "matcher": "startup|resume",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "/usr/bin/python3 -I /opt/kaptyorka/box/current/helper.py hook codex SessionStart"
+     }
+    ]
+   }
+  ],
+  "UserPromptSubmit": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "/usr/bin/python3 -I /opt/kaptyorka/box/current/helper.py hook codex UserPromptSubmit"
+     }
+    ]
+   }
+  ],
+  "Stop": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "/usr/bin/python3 -I /opt/kaptyorka/box/current/helper.py hook codex Stop"
+     }
+    ]
+   }
+  ]
+ }
+}

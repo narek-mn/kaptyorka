@@ -346,7 +346,9 @@ message the target, whether the target is online, and what became of the last me
 the asker what it says, in plain words, never a guess from `who`: when the target is offline, \
 say so; the message waits and is delivered when it reports again. Say a door is needed only \
 when `reach` says "may not"; sessions of one project and team machines' sessions in a shared \
-project never need one.
+project never need one. A session whose tool is `box` is a team chat in a personal laptop's \
+box: the hub never pushes to it; its box helper collects each message within seconds, or the \
+chat reads it on its next turn. It cannot be resumed and never hosts workers for anyone.
 - A session others depend on stopped (the hub tells you when a team machine's session hits \
 its usage limit or ends): 1) `resume_session(name, asked_by=<the asking session>)`, or \
 `when="reset"` to wait for its usage limit; it comes back as a worker of the asker, in its \

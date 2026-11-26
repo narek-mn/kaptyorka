@@ -1,1 +1,1 @@
-{"mcpServers": {}}
+{"mcpServers": {"kaptyorka": {"type": "stdio", "command": "/usr/bin/python3", "args": ["-I", "/opt/kaptyorka/box/current/helper.py", "mcp"]}}}

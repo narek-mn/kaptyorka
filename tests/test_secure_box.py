@@ -687,7 +687,7 @@ def test_shell_hook_defines_functions_in_bash_only_outside_posix_mode(tmp_path):
 def test_programs_import_only_the_standard_library_and_each_other():
     import ast
     import sys as _sys
-    ours = {"kapcommon", "kaproot", "kap_hubchat"}
+    ours = {"kapcommon", "kaproot", "kap_hubchat", "proxybridge"}  # proxybridge: kap_proxybridge.py, installed so
     for name in os.listdir(SECURE):
         if not name.endswith(".py"):
             continue

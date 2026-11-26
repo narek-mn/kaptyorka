@@ -504,13 +504,17 @@ def _invite(args) -> int:
         return 1
     if got[0] == 200:  # said out loud, so a typo in the name shows
         print(f"added {args.person} to the team")
-    got = _admin_call("POST", "/api/invites", {"person": args.person})
+    personal = getattr(args, "personal", False)
+    got = _admin_call("POST", "/api/invites", {"person": args.person,
+                                               **({"kind": "personal"} if personal else {})})
     if got is None:
         return 1
     if got[0] != 200:
         print(_problem(got), file=sys.stderr)
         return 1
-    print(f"send this link to {args.person} (works once, for 7 days): {got[1]['url']}")
+    print(f"send this link to {args.person} (works once, for 7 days): {got[1]['url']}"
+          + ("\nit is for a personal laptop in the secure mode: its installer takes it, never"
+             " `kaptyorka join`" if personal else ""))
     return 0
 
 
@@ -1388,6 +1392,8 @@ def entry() -> None:
     v.set_defaults(run=_serve)
     i = sub.add_parser("invite", help="make an invite link for a person (works once, for 7 days); adds them if new")
     i.add_argument("person", help="the person's name")
+    i.add_argument("--personal", action="store_true",
+                   help="for a personal laptop in the secure mode (its chats run in a box); fixed for good")
     i.set_defaults(run=_invite)
     pp = sub.add_parser("people", help="list the team, or remove a person or change a role")
     pp.set_defaults(run=_people)
