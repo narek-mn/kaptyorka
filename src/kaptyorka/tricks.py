@@ -11,19 +11,43 @@ S = r"\s+"  # any run of spaces, tabs or line breaks
 SHELL = r"(?:sudo\s+(?:-\S+\s+)?)?(?:ba|z|da|k|c|fi)?sh\b|python3?\b|perl\b|node\b|iex\b|invoke-expression\b"
 FETCH = r"(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\b"
 HOME = r"(?:~|\$\{?HOME\}?|/home/[\w.-]+|/Users/[\w.-]+|%USERPROFILE%|\$env:USERPROFILE)"
-GIVE = r"(?:cat|print|show|send|upload|post|paste|read|dump|echo|email|mail|attach|scp|tar|zip|curl|give|share|reveal|tell|copy|cp|forward|leak)\b"
+GIVE = (r"(?:cat|print|show|send|upload|post|paste|read|dump|echo|email|mail|attach|scp|tar|zip|curl|give|share|reveal"
+        r"|tell|copy|cp|forward|leak|message|dm|text|reply)\b")
 # an order at the start of a clause ("print auth.json", "then send me ..."), not a description
 ORDER = r"(?:^|[.;:!?,\n(]\s*|\b(?:please|then|and|now|just|also|can\s+you|could\s+you|pls)\s+)"
 # what a chat must never hand over. A bare "token" is everyday ML talk (the first 10 tokens, the
-# tokenizer, tokens per second), so it counts only after an auth word, or as someone's own
-# ("your token"); "password" and "credentials" only as the secret, not a page or a field.
+# tokenizer, tokens per second), so it counts only after an auth word, as someone's own ("your
+# token"), or as "the token" alone (red team round 4: "print the token" passed); "password",
+# "credentials", "login" and "sign in" only as the secret, not a page, a field or a flow.
 AUTH = r"(?:oauth|access|refresh|api|bearer|setup|session|secret|auth|personal" + S + r"access|github|gitlab|hf|npm|pypi|claude|codex|cursor|opencode)"
-SECRET = (r"api" + S + r"?keys?|" + AUTH + r"(?:" + S + r"|[_-])tokens?|(?<=your" + r"\s)tokens?|(?<=my\s)tokens?"
-          r"|passwords?|passphrases?|oauth|credentials|secrets?|sign-?in" + S + r"file|login" + S + r"file")
+SECRET = (r"api" + S + r"?keys?|" + AUTH + r"(?:" + S + r"|[_-])(?:tokens?|keys?|values?)|(?<=your" + r"\s)tokens?"
+          r"|(?<=my\s)tokens?|(?<=the\s)token(?!s)|passwords?|passphrases?|oauth|bearer|credentials?|secrets?"
+          r"|sign-?\s?ins?|logins?(?:" + S + r"(?:details|info|data))?|(?:session|secret|private|access)" + S + r"keys?")
 NOT_SECRET = (r"(?:count|budget|usage|limit|length|size|cost|ids?|per|rate|throughput|embeddings?|reset|field|page|form"
               r"|policy|policies|input|box|strength|hash(?:ing)?|rules?|validation|flow|route|screen|ui|component|tests?"
               r"|check|prompt|change|requirements?|manager|rotation|expiry|refresh|logic|handling|schema|error|dialog"
-              r"|label|modal|hint|step|section|docs?|parser|format)s?")
+              r"|label|modal|hint|step|section|docs?|parser|format|button|link|screen|at|index|position|type|stream|boundary"
+              r"|level|vocab|logits?|probability|auth\w*|scheme|attempt|history|time|timeout|issue|bug|fix|test|code"
+              r"|module|endpoint|handler|redirect|callback|provider|options?|config\w*|setup|process|guide|readme)s?")
+# what an environment dump may be filtered for without handing a secret over (red team round 4:
+# `env | grep CLAUDE` printed the box's Claude token, so only these names pass)
+ENV_OK = (r"(?:PATH|HOME|USER|SHELL|LANG|LC_\w*|TERM|PWD|TZ|DISPLAY|EDITOR|CUDA\w*|PYTHON\w*|ROS\w*|LD_\w*"
+          r"|NODE_ENV|NODE_PATH|JAVA_HOME|XDG_\w*|VIRTUAL_ENV|CONDA\w*|TORCH\w*|NVIDIA\w*|OMP_\w*|MAX_\w*"
+          r"|DEBUG|LOG_?LEVEL|PORT|HOSTNAME|GPU\w*|JETSON\w*|ROCM\w*|HF_HOME|TRANSFORMERS_CACHE)(?![\w-])")
+ENV_NAME = r"\w*(?:token|secret|api_?key|password|passwd|oauth|bearer|creds?|credentials|auth|session|cookie|_key)"
+# a write into what a tool or git runs by itself when it starts in a folder (red team round 4:
+# "put a file in subdir/.opencode/plugin/x.js", "echo x > .git/config" passed)
+WRITE = (r"(?:put|write|create|add|make|place|drop|save|copy|cp|mv|move|echo|printf|tee|install|plant|append"
+         r"|edit|modify|change|update|touch|mkdir|ln|overwrite|replace|generate|set\s+up)\b")
+CODE_SPOT = (r"(?:(?<=[\s/\"'`(=:])|^)(?:\.opencode/(?:plugins?|agents?|commands?|tools?|modes?)\b|opencode\.jsonc?\b"
+             r"|\.claude/(?:hooks|commands|agents|skills|settings(?:\.local)?\.json)\b|\.codex/|\.cursor/(?:rules|hooks"
+             r"|mcp\.json|commands)\b|\.vscode/(?:tasks|launch)\.json|\.mcp\.json\b|\.git/(?:hooks|config|info)\b"
+             r"|\.devcontainer/|\.idea/|\.zed/)")
+GIT_HOOK = (r"(?:pre-commit|prepare-commit-msg|commit-msg|post-commit|pre-rebase|post-checkout|post-merge|pre-push"
+            r"|pre-receive|post-receive|post-rewrite|pre-merge-commit|reference-transaction|pre-auto-gc|fsmonitor-watchman"
+            r"|push-to-checkout|sendemail-validate)")
+# core settings that only change how text is stored (everything else under core. may name a program)
+CORE_OK = r"(?:autocrlf|filemode|ignorecase|quotepath|eol|safecrlf|whitespace|symlinks|longpaths|precomposeunicode|compression|bare)"
 
 # (reason, pattern) in the order they are reported
 PATTERNS = [
@@ -34,8 +58,14 @@ PATTERNS = [
                 r"|\bmerge\s*\.\s*[\w-]+\s*\.\s*driver\b"
                 r"|\bfilter\s*\.\s*[\w.-]+\s*\.\s*(?:clean|smudge|process)\b"
                 r"|\balias\s*\.\s*[\w-]+\s*=?\s*['\"]?!"
-                r"|\bgit" + S + r"(?:-c" + S + r")?config\b[^\n]*\b(?:core\.(?:fsmonitor|hooks?path|sshcommand|pager|editor)"
-                r"|diff\.external)", I)),
+                r"|\bgit" + S + r"(?:-c" + S + r")?config\b[^\n]*\b(?:core\.(?!" + CORE_OK + r"\b)\w+"
+                r"|diff\.external|alias\.[\w-]+" + S + r"['\"]?!)"
+                r"|\binclude(?:if\s*\.[^\s=]+)?\s*\.\s*path\b", I)),
+    ("a request to plant code that a tool or git runs by itself",
+     re.compile(r"\b" + WRITE + r"[^\n]{0,120}?" + CODE_SPOT
+                + r"|>>?\s*[\"']?(?:[\w.~/-]*/)?" + CODE_SPOT.replace(r"(?:(?<=[\s/\"'`(=:])|^)", "")
+                + r"|\b" + WRITE + r"[^\n.;]{0,40}?\b" + GIT_HOOK + r"\s+hooks?\b"
+                + r"|\b" + WRITE + r"[^\n.;]{0,40}?\bgit\s+hooks?\b", I)),
     ("a command that downloads and runs code",
      re.compile(FETCH + r"[^\n]*?\|" + r"\s*(?:" + SHELL + r")"
                 r"|\b(?:ba|z|da|k)?sh" + S + r"<\(\s*" + FETCH +
@@ -73,8 +103,17 @@ PATTERNS = [
      re.compile(r"\bCLAUDE_CODE_OAUTH_TOKEN\b"
                 # an environment name that holds one (GITHUB_TOKEN, MY_SECRET), not MAX_NEW_TOKENS=256
                 r"|\b(?:printenv|env)\b" + S + r"(?:\|\s*grep" + S + r"(?:-\w+" + S + r")*)?[\"']?"
-                r"\w*(?:token|secret|api_?key|password)(?![\w=])"
-                r"|\becho" + S + r"[\"']?\$\{?\w*(?:TOKEN|SECRET|API_?KEY|PASSWORD)(?!\w)"
+                + ENV_NAME + r"(?![\w=])"
+                # the whole environment piped or written somewhere, unless grepped for a plain name
+                r"|(?<![\w$./-])(?:printenv|env|set|export" + S + r"-p|declare" + S + r"-x)\s*(?:\||>)"
+                r"(?!\s*(?:grep|rg)" + S + r"(?:-\w+" + S + r")*[\"']?(?:\^|\\b)?" + ENV_OK + r")"
+                # a bare environment dump as an order ("env", "run printenv and paste it")
+                r"|" + ORDER + r"(?:run" + S + r")?(?:printenv|env)\s*(?:$|[.;!?\n]|\b(?:and|then)\b)"
+                r"|\b(?:dump|print|show|paste|send|share|list)" + S + r"(?:me" + S + r")?(?:the|your|all)" + S
+                + r"(?:\w+" + S + r")?(?:environment|env)(?:" + S + r"var(?:iable)?s)?\b(?!" + S + r"(?:setup|file|name))"
+                r"|\becho" + S + r"[\"']?\$\{?" + ENV_NAME + r"(?!\w)"
+                r"|\bwhat(?:'s|" + S + r"is|" + S + r"are)" + S + r"(?:your|the)" + S + r"(?:\w+" + S + r"){0,2}?(?:"
+                + SECRET + r")\b(?!" + S + NOT_SECRET + r"\b)"
                 r"|\b" + GIVE + r"[^\n.;]{0,60}?\b(?:your|the|its|his|her|their|my|all)" + S +
                 r"(?:\w+" + S + r"){0,2}?(?:" + SECRET + r")\b(?!" + S + NOT_SECRET + r"\b)", I)),
 ]

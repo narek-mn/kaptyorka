@@ -500,7 +500,31 @@ def test_trap_files_are_bounded_and_say_so(tmp_path, monkeypatch):
     for i in range(kc.TRAP_DEPTH + 3):
         p = p / "a"
     _put(p, ".envrc")
-    assert not any(x.endswith(".envrc") for x in _trap(tmp_path))
+    got = _trap(tmp_path)
+    assert not any(x.endswith(".envrc") for x in got)
+    # round 4, finding 4: the cut is named, so the folder never reads as clean
+    assert got[-1] == "?deep:1" and "NOT FULLY CHECKED: 1 folders deeper than 32" in kr.trap_notice(got)
+
+
+def test_trap_files_never_report_clean_when_cut(tmp_path, monkeypatch):
+    p = tmp_path
+    for i in range(40):
+        p = p / f"d{i}"
+    _put(p, ".opencode/plugin/deep.js")          # the red team's trap 40 folders down
+    got = _trap(tmp_path)
+    assert got == ["?deep:1"] and kr.trap_notice(got).startswith("NOT FULLY CHECKED")
+    for i in range(20):
+        _put(tmp_path, f"pad/f{i}")
+    monkeypatch.setattr(kc, "TRAP_BUDGET", 10)
+    assert "?budget" in _trap(tmp_path)
+    assert "more than 10 entries" in kr.trap_cut(_trap(tmp_path))
+
+
+def test_trap_files_name_git_s_config_files_in_bare_repos_and_git_files(tmp_path):
+    for rel in ("bare/HEAD", "bare/config", "bare/objects/x", "bare/refs/x", "w/.git", ".git/commondir",
+                ".git/info/attributes", "src/config"):
+        _put(tmp_path, rel)
+    assert _trap(tmp_path) == [".git/commondir", ".git/info/attributes", "bare/config", "w/.git"]
 
 
 def test_trap_notice_shows_names_safely():
@@ -508,17 +532,52 @@ def test_trap_notice_shows_names_safely():
     assert "\x1b" not in line and "\x07" not in line and line.startswith("'.opencode/plugin/")
 
 
-def test_hides_wanted_only_real_tool_folders_and_files_at_the_top(tmp_path):
-    for rel in (".opencode/plugin/p.js", "opencode.json", ".mcp.json", ".git/hooks/pre-commit", "sub/.claude/x"):
+def test_hides_wanted_only_real_tool_folders_and_files_and_git_s_at_any_depth(tmp_path):
+    """Round 4, findings 1 and 3: git's config, config.worktree, info and commondir are covered
+    like its hooks (a box-planted alias.st = !cmd ran as the person), and tool folders in
+    subfolders too; a tool folder is covered whole, nothing inside it is looked at."""
+    for rel in (".opencode/plugin/p.js", "opencode.json", ".mcp.json", ".git/hooks/pre-commit", ".git/config",
+                ".git/config.worktree", ".git/info/attributes", ".git/commondir", ".git/objects/ab/cd",
+                "sub/.claude/x", "sub/deep/.opencode/plugin/pwn.js", "lib/.git/config", "lib/.git/hooks/post-checkout",
+                "nested/.git", "bare/HEAD", "bare/config", "bare/objects/x", "bare/refs/heads/main",
+                ".opencode/sub/.claude/x", "node_modules/a/.vscode/settings.json", "src/config", "Makefile"):
         _put(tmp_path, rel)
     (tmp_path / ".envrc").mkdir()                    # a folder with a file's name: not a file cover
     os.symlink("/etc", tmp_path / ".claude")         # a link: not followed in the view (nosymfollow)
     fd = os.open(str(tmp_path), os.O_RDONLY | os.O_DIRECTORY)
     try:
         want = kr.hides_wanted(fd)
+        top, walked, cut = kr.cover_scan(fd, deep=False)
+        _, walked_all, cut_all = kr.cover_scan(fd)
     finally:
         os.close(fd)
-    assert want == {".opencode": "dir", "opencode.json": "file", ".mcp.json": "file", ".git/hooks": "dir"}
+    assert want == {".opencode": "dir", "opencode.json": "file", ".mcp.json": "file", ".git/hooks": "dir",
+                    ".git/config": "file", ".git/config.worktree": "file", ".git/info": "dir", ".git/commondir": "file",
+                    "sub/.claude": "dir", "sub/deep/.opencode": "dir", "lib/.git/config": "file", "lib/.git/hooks": "dir",
+                    "nested/.git": "file", "bare/config": "file"}
+    assert top == {k: v for k, v in want.items() if "/" not in k or k.startswith(".git/")}
+    assert walked == [".git"] and cut == "" and cut_all == ""
+    assert "sub/deep" in walked_all and not any(w.startswith((".opencode", "node_modules", ".git/objects"))
+                                                for w in walked_all)
+
+
+def test_cover_scan_is_bounded_and_says_why(tmp_path, monkeypatch):
+    for i in range(6):
+        _put(tmp_path, f"d{i}/.opencode/x")
+    monkeypatch.setattr(kc, "COVER_MAX", 4)
+    fd = os.open(str(tmp_path), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        want, _, cut = kr.cover_scan(fd)
+        assert len(want) == 4 and "more than 4 tool folders" in cut
+        monkeypatch.setattr(kc, "COVER_MAX", 256)
+        monkeypatch.setattr(kc, "TRAP_DEPTH", 1)
+        want, _, cut = kr.cover_scan(fd)
+        assert len(want) == 6 and cut == ""
+        _put(tmp_path, "a/b/.opencode/x")
+        want, _, cut = kr.cover_scan(fd)
+        assert "a/b/.opencode" not in want and cut == "1 folders deeper than 1"
+    finally:
+        os.close(fd)
 
 
 MI = """22 1 8:1 / / rw shared:1 - ext4 /dev/sda1 rw
@@ -572,6 +631,36 @@ def test_hide_view_uncovers_what_the_box_renamed_and_keeps_what_is_covered(tmp_p
     assert kr.hidden_problem("alice", "proj-a", "alice", mi) is None
     _put(back, ".claude/settings.json")
     assert "'.claude' not covered" in kr.hidden_problem("alice", "proj-a", "alice", mi)
+
+
+def test_hide_view_covers_git_config_and_subfolder_tool_folders(tmp_path, monkeypatch):
+    """Round 4, findings 1 and 3: .git/config (alias.st = !cmd), and sub/.opencode in the view."""
+    back, view, mi, calls = _hide_env(tmp_path, monkeypatch, tag="")
+    _put(back, ".git/config", "[alias]\n  st = !touch /tmp/ALIAS_RAN\n")
+    _put(back, ".git/hooks/post-checkout")
+    _put(back, "sub/deep/.opencode/plugin/pwn.js")
+    _put(back, "package.json", '{"scripts": {"prepare": "touch /tmp/NPM_RAN"}}')
+    info = {}
+    done = kr.hide_view("alice", "proj-a", "alice", mi, info=info)
+    assert done == ["+.git/config", "+.git/hooks", "+sub/deep/.opencode"]
+    mounted = {c[2]: c for c in calls}
+    assert mounted["config"][1] == kc.HIDE_FILE and mounted[".opencode"][3] == "tmpfs"
+    assert info == {"walked": [".git", "sub", "sub/deep"], "cut": ""}
+    assert "package.json" not in str(calls)          # a build file is listed, never covered
+    calls.clear()
+    assert kr.hide_view("alice", "proj-a", "alice", mi, deep=False) == ["+.git/config", "+.git/hooks"]
+
+
+def test_hide_view_quick_pass_leaves_deep_covers_and_a_cut_walk_uncovers_nothing(tmp_path, monkeypatch):
+    extra = "60 50 0:40 / {v}/sub/.opencode rw - tmpfs kaptyorka-hide rw\n61 50 0:41 / {v}/old/.claude rw - tmpfs kaptyorka-hide rw\n"
+    back, view, _, calls = _hide_env(tmp_path, monkeypatch, tag="")
+    mi = kr.mounts(MI.format(view=view, tag="", extra=extra.format(v=view)))
+    _put(back, "sub/.opencode/x")
+    assert kr.hide_view("alice", "proj-a", "alice", mi, deep=False) == [] and calls == []
+    monkeypatch.setattr(kc, "COVER_MAX", 0)
+    assert kr.hide_view("alice", "proj-a", "alice", mi) == [] and calls == []   # cut: covers only grow
+    monkeypatch.setattr(kc, "COVER_MAX", 256)
+    assert kr.hide_view("alice", "proj-a", "alice", mi) == ["-old/.claude"]
 
 
 def test_hidden_problem_names_a_shared_view(tmp_path, monkeypatch):
@@ -1156,7 +1245,7 @@ def test_guard_sees_a_tool_folder_made_at_once(tmp_path):
     from kaptyorka.secure import kap_guard as gd
     ino = gd.Inotify()
     try:
-        ino.add(str(tmp_path), gd.DIR_EVENTS, "folder", "alice/proj-a")
+        ino.add(str(tmp_path), gd.TOP_EVENTS, "folder", "alice/proj-a")
         ino.add(str(tmp_path / "missing"), gd.DIR_EVENTS, "folder", "x")      # not there: no watch, no error
         assert ino.read() == ([], False)
         (tmp_path / ".opencode").mkdir()
@@ -1167,6 +1256,60 @@ def test_guard_sees_a_tool_folder_made_at_once(tmp_path):
         os.close(ino.fd)
 
 
+def test_guard_sees_git_config_rewritten_in_place_and_forgets_gone_folders(tmp_path):
+    """Round 4, finding 1: the guard watched .git for folder events only, so an in-place
+    rewrite of .git/config was not even noticed."""
+    from kaptyorka.secure import kap_guard as gd
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("[core]\n")
+    (tmp_path / "sub").mkdir()
+    ino = gd.Inotify()
+    try:
+        gd.watch_folder(ino, "alice/proj-a", str(tmp_path), ["sub"])
+        with open(tmp_path / ".git" / "config", "a") as f:
+            f.write("[alias]\n st = !x\n")
+        hits, _ = ino.read()
+        assert ("top", "alice/proj-a") in hits
+        (tmp_path / "sub" / ".opencode").mkdir()
+        assert ("deep", "alice/proj-a") in ino.read()[0]
+        n = len(ino.wd)
+        os.rmdir(tmp_path / "sub" / ".opencode")
+        os.rmdir(tmp_path / "sub")
+        ino.read()
+        assert len(ino.wd) == n - 1
+    finally:
+        os.close(ino.fd)
+
+
+def test_guard_main_does_the_quick_pass_at_once_and_the_full_walk_later(tmp_path, monkeypatch):
+    from kaptyorka.secure import kap_guard as gd
+    seen = []
+    monkeypatch.setattr(gd, "do_folder", lambda ino, folders, key, deep=True: seen.append((key, deep)))
+    monkeypatch.setattr(gd, "plan", lambda: ({"alice/proj-a": ("alice", "proj-a", "alice")}, {}))
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(gd, "log", lambda m: None)
+    rounds = iter([[("top", "alice/proj-a")], [], [], "stop"])
+
+    class Ino:
+        fd = 0
+        wd = {}
+        def reset(self): pass
+        def add(self, *a): pass
+        def read(self):
+            r = next(rounds)
+            if r == "stop":
+                raise KeyboardInterrupt
+            return r, False
+    monkeypatch.setattr(gd, "Inotify", Ino)
+    monkeypatch.setattr(gd.select, "select", lambda r, w, x, t: (r, [], []))
+    monkeypatch.setattr(gd.time, "sleep", lambda s: None)
+    clock = [0.0]
+    monkeypatch.setattr(gd.time, "monotonic", lambda: clock.__setitem__(0, clock[0] + 0.06) or clock[0])
+    with pytest.raises(KeyboardInterrupt):
+        gd.main()
+    assert seen[:3] == [("alice/proj-a", True), ("alice/proj-a", False), ("alice/proj-a", True)]
+
+
 def test_guard_unit_stays_in_the_computer_s_mount_namespace():
     text = open(os.path.join(SECURE, "files", "units", "kaptyorka-guard.service")).read()
     lines = [l for l in text.splitlines() if l and not l.startswith("#")]
@@ -1175,3 +1318,19 @@ def test_guard_unit_stays_in_the_computer_s_mount_namespace():
         assert not any(l.startswith(bad) for l in lines), bad
     assert "ExecStart=/usr/bin/python3 -I /usr/local/libexec/kaptyorka/guard" in lines
     assert ("kap_guard.py", "guard", 0o755) in setup.PROGRAMS and "kaptyorka-guard.service" in setup.OUR_UNITS
+
+
+def test_enter_notice_lists_build_files_and_a_cut_scan(tmp_path, monkeypatch, capsys):
+    """Round 4, finding 1: the enter notice used build=False, so a box-written Makefile or
+    package.json was not named; finding 4: a scan cut by its bounds must say so."""
+    from kaptyorka.secure import kap_enter as en
+    for rel in ("Makefile", "package.json", ".git/config"):
+        _put(tmp_path, rel)
+    monkeypatch.setattr(kr, "load_folders", lambda p: {"proj-a": {"box": "alice", "shortcut": ""}})
+    monkeypatch.setattr(kr, "git_safe_lines", lambda p: [])
+    monkeypatch.setattr(kr, "open_dir", lambda p: os.open(str(tmp_path), os.O_RDONLY | os.O_DIRECTORY))
+    monkeypatch.setattr(kr, "read_since", lambda b, n: 0.0)
+    en.notices("alice", "alice", "proj-a", "3 folders deeper than 32")
+    err = capsys.readouterr().err
+    assert "'Makefile'" in err and "'package.json'" in err and "'.git/config'" in err
+    assert "could not cover every tool folder in it (3 folders deeper than 32)" in err

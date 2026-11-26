@@ -36,6 +36,7 @@ import sys
 import threading
 import time
 import unicodedata
+import zlib
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 MAX_REQUEST = 2_621_440      # one line from the box: a 1 MiB file in base64 plus text
@@ -410,14 +411,18 @@ TOKEN_RX = re.compile(
 # commands, and TOKEN_RX knows only public token shapes: a base64, hex or opaque copy passed.
 # So the relay is told each box's actual secret values (root writes them per box door into
 # SECRETS_DIR/<box>, from enter and kaptyorka-guard; the relay never reads a box file) and
-# refuses outgoing text that holds one raw, reversed, in hex (any case, any separators) or in
-# base64 (standard or URL-safe, at any alignment, wrapped or not). Matching is by aligned
-# pieces of CHUNK characters: any run of 2 * CHUNK - 1 characters of such a form is found.
+# refuses outgoing text that holds one raw, reversed, in hex (any case, any separators), in
+# base64 (standard or URL-safe), base32 (any case) or base85/ascii85, each at any alignment,
+# wrapped or not; with any characters other than letters and digits put between (red team round
+# 4, finding 5: a dot every 8 characters hid it); or gzip/zlib-compressed and then base64 (or
+# raw, in an attached file). Matching is by aligned pieces of CHUNK characters: any run of
+# 2 * CHUNK - 1 characters of such a form is found.
 #
-# This is a backstop, not a wall: a tricked model that cuts a value into short pieces, or
-# encodes it in a way not listed here (another alphabet, a cipher, one character per message),
-# gets it out. The standing rule and the trick filter are the first line; ending the box's
-# sign-ins at the vendor after a suspected leak is the remedy.
+# This is a backstop, not a wall: a tricked model that cuts a value into short pieces, puts
+# letters or digits between its characters, or encodes it in a way not listed here (a cipher
+# such as a shifted alphabet, another compression, one character per message), gets it out.
+# The standing rule and the trick filter are the first line; ending the box's sign-ins at the
+# vendor after a suspected leak is the remedy.
 
 SECRETS_DIR = "/run/kaptyorka/box-secrets"
 SECRETS_FILE_MAX = 4 * 1024 * 1024
@@ -425,7 +430,25 @@ MAX_SECRET_VALUES = 256
 CHUNK = 16
 _WS = re.compile(r"\s+")
 _NOT_HEX = re.compile(r"[^0-9a-f]")
+_NOT_ALNUM = re.compile(r"[^A-Za-z0-9]")
 _URLSAFE = str.maketrans("+/", "-_")
+_B64_RUN = re.compile(r"(?:H4sI|(?<![A-Za-z0-9+/_-])e[AFJN])[A-Za-z0-9+/_-]{20,}={0,2}")   # gzip, zlib
+UNPACK_MAX = 1 << 20       # bytes a compressed piece may unpack to
+UNPACK_RUNS = 64           # base64 runs looked into per text
+
+
+def _groups(value: bytes, enc: Callable[[bytes], bytes], nbytes: int, nchars: int) -> List[str]:
+    """The characters of a base32/base85 encoding that hold only the value's bytes, for each
+    byte offset the value may have in a longer text (whole groups of nbytes -> nchars)."""
+    out = []
+    n = len(value)
+    for k in range(nbytes):
+        e = enc(b"\0" * k + value).decode("ascii")
+        first = -(-k // nbytes)
+        last = (k + n) // nbytes
+        if last > first:
+            out.append(e[nchars * first:nchars * last])
+    return out
 
 
 def secret_forms(value: bytes) -> Tuple[List[str], List[str]]:
@@ -437,6 +460,9 @@ def secret_forms(value: bytes) -> Tuple[List[str], List[str]]:
         e = base64.b64encode(b"\0" * k + value).decode()
         core = e[(0, 2, 3)[k]:4 * (n // 3) + (8 * (n % 3)) // 6]
         forms += [core, core.translate(_URLSAFE)]
+    b32 = _groups(value, base64.b32encode, 5, 8)
+    forms += b32 + [f.lower() for f in b32]
+    forms += _groups(value, base64.b85encode, 4, 5) + _groups(value, lambda b: base64.a85encode(b, foldspaces=False), 4, 5)
     return forms, [value.hex()]
 
 
@@ -450,26 +476,64 @@ def _scan(t: str, pieces: set) -> bool:
     return any(t[i:i + CHUNK] in pieces for i in range(len(t) - CHUNK + 1))
 
 
+def _unpack(data: bytes) -> Optional[bytes]:
+    """data unpacked when it starts as gzip or zlib, at most UNPACK_MAX bytes; else None."""
+    if data[:2] == b"\x1f\x8b":
+        wbits = 16 + zlib.MAX_WBITS
+    elif len(data) > 1 and data[0] == 0x78 and (data[0] * 256 + data[1]) % 31 == 0:
+        wbits = zlib.MAX_WBITS
+    else:
+        return None
+    try:
+        return zlib.decompressobj(wbits).decompress(data, UNPACK_MAX)
+    except zlib.error:
+        return None
+
+
 class SecretGuard:
     """The known secret values of one door, as pieces to look for."""
 
     def __init__(self, values: List[bytes]):
         self.plain: set = set()
+        self.norm: set = set()
         self.hex: set = set()
         for v in values:
             forms, hexes = secret_forms(v)
             for f in forms:
                 self.plain.update(_chunks(f))
+                self.norm.update(_chunks(_NOT_ALNUM.sub("", f)))
             for f in hexes:
                 self.hex.update(_chunks(f))
 
-    def holds(self, s: str) -> bool:
+    def holds(self, s: str, depth: int = 0) -> bool:
         if not self.plain:
             return False
         squeezed = _WS.sub("", s)
         if _scan(s, self.plain) or (squeezed != s and _scan(squeezed, self.plain)):
             return True
-        return _scan(_NOT_HEX.sub("", s.lower()), self.hex)
+        if _scan(_NOT_ALNUM.sub("", s), self.norm) or _scan(_NOT_HEX.sub("", s.lower()), self.hex):
+            return True
+        return depth < 2 and any(self.holds(u.decode("latin-1"), depth + 1) for u in self._packed(s, squeezed))
+
+    @staticmethod
+    def _packed(s: str, squeezed: str):
+        """Compressed pieces of the text, unpacked: a raw gzip/zlib file, or base64 of one."""
+        i = s.find("\x1f\x8b")
+        if i >= 0:
+            try:
+                u = _unpack(s[i:].encode("latin-1"))
+            except UnicodeEncodeError:
+                u = None
+            if u:
+                yield u
+        for m in list(_B64_RUN.finditer(squeezed))[:UNPACK_RUNS]:
+            run = m.group().rstrip("=").replace("-", "+").replace("_", "/")
+            try:
+                u = _unpack(base64.b64decode(run + "=" * (-len(run) % 4)))
+            except ValueError:
+                u = None
+            if u:
+                yield u
 
 
 def parse_secrets(raw: bytes) -> List[bytes]:

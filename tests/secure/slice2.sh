@@ -8,6 +8,9 @@
 #                                KEEP=1 ./slice2.sh                # leave the container running
 #                                PHASES="walls1" ./slice2.sh --reuse   # rerun phases in the running container
 # REPO=<kaptyorka checkout> (default: the checkout this script is in) gives the product code.
+# Phase r4: red team round 4's successes, step by step (14-redteam-round4.md): a box-planted git alias run by
+# alice's own git once she set safe.directory, tool folders in subfolders, a trap deeper than the scan, build files
+# missing from the enter notice, and a box sign-in sent out base32/base85/dotted/gzip through the relay door.
 #
 # Hard limits (07, section 13): every docker exec runs under `timeout -k 5 90`; every phase runs in its own
 # transient unit (RuntimeMaxSec=80, KillMode=control-group); every helper unit has RuntimeMaxSec and
@@ -15,7 +18,7 @@
 # No strace. No host folder is mounted. Nothing here runs as root on the host.
 set -u
 C=${C:-kaptest-s2}
-ALL_PHASES="setup install launch walls1 walls2 tools-claude tools-codex b17 tools-opencode tools-cursor-agent token egress git hubchat wallcheck remove"
+ALL_PHASES="setup install launch walls1 walls2 tools-claude tools-codex b17 tools-opencode tools-cursor-agent token egress git hubchat r4 wallcheck remove"
 # tools-* and token use the four real tools, downloaded into the container once (unit "toolsdl"); TOOLS=0 skips them.
 
 if [ "${1:-}" != "--inner" ]; then
@@ -732,6 +735,79 @@ hubchat)
     "asal 'hubchat remove ~/proj-b'; id kap-alice-proj-b >/dev/null 2>&1 && echo user-left || echo no-user"
   t "H-rm hubchat remove m1 by its shortcut path" "personal again" 're:m1 is personal again: /home/alice/m1' "asal 'cd ~ && hubchat remove m1'"
   t "H-cmds hubchat offers add, list and remove (token-rotate rarely)" "refused" 're:there is no command.*add, list and remove' "asal 'hubchat login'"
+  ;;
+
+r4)
+  # Red team round 4 (14-redteam-round4.md), the attacker's steps against proj-a (a team folder again since H-add).
+  P=$V/proj-a
+  rm -f /tmp/ALIAS_RAN /tmp/ALIAS_NESTED /tmp/ALIAS_CTL /tmp/R4_FSMON
+  cat > /run/kapbox/alice/tmp/plant4.sh <<'SH'
+git init -q 2>/dev/null
+git config alias.st '!touch /tmp/ALIAS_RAN'
+git config core.fsmonitor 'touch /tmp/R4_FSMON; false'
+printf '[alias]\n\tlg = !touch /tmp/ALIAS_RAN\n' > .git/config.worktree
+mkdir -p .git/info && echo '* diff=x' > .git/info/attributes
+git init -q lib && git -C lib config alias.st '!touch /tmp/ALIAS_NESTED'
+mkdir -p sub/deep/.opencode/plugin && echo pwn > sub/deep/.opencode/plugin/pwn.js
+d=$(printf 'd%d/' $(seq 40)); mkdir -p "${d}.opencode/plugin" && echo deep > "${d}.opencode/plugin/deep.js"
+printf 'all:\n\ttouch /tmp/MAKE_RAN\n' > Makefile
+echo '{"scripts":{"prepare":"touch /tmp/NPM_RAN"}}' > package.json
+echo planted
+SH
+  chown kap-alice /run/kapbox/alice/tmp/plant4.sh
+  t "R4-0 a box chat plants: git alias + fsmonitor + config.worktree + info, a nested repo's alias, sub/deep/.opencode, a trap 40 folders down, Makefile, package.json" \
+    "planted" 're:planted$' "inb 'bash /tmp/plant4.sh'"
+  sleep 1
+  t "R4-1 alice's view: .git/config, config.worktree, info, hooks, lib/.git/config are covered (empty); the box keeps its own" \
+    "0 0 0 0 0, alias in the box" 're:^rc=0 0 0 0 0 0[[:space:]]+!touch /tmp/ALIAS_RAN' \
+    "runuser -u alice -- bash -c 'cd $P && echo \$(cat .git/config | wc -c) \$(cat .git/config.worktree | wc -c) \$(ls -A .git/info | wc -l) \$(ls -A .git/hooks | wc -l) \$(cat lib/.git/config | wc -c)'; echo -n ' '; inb 'git config --get alias.st' | grep -v '^enter:'"
+  runuser -u alice -- bash -c 'mkdir -p ~/ctl && cd ~/ctl && /usr/bin/git init -q && /usr/bin/git config alias.st "!touch /tmp/ALIAS_CTL"'
+  t "R4-2c control: the same alias in a repo of alice's own runs as alice (so R4-2 can fail)" "ALIAS_CTL alice" 're:^rc=0 alice$' \
+    "asal 'cd ~/ctl && /usr/bin/git st'; stat -c %U /tmp/ALIAS_CTL"
+  t "R4-2 the attacker's step: alice sets safe.directory '*' and runs her own git (launcher bypassed) in her view: st, lg, status, and in lib" \
+    "no ALIAS_RAN, no ALIAS_NESTED, no fsmonitor" 're:^rc=0 .*CANARIES=0$' \
+    "asal 'git config --global --add safe.directory \"*\"; cd $P && /usr/bin/git st; /usr/bin/git lg; /usr/bin/git status >/dev/null; cd lib && /usr/bin/git st'
+     asal 'git config --global --unset-all safe.directory'; echo CANARIES=\$(ls /tmp/ALIAS_RAN /tmp/ALIAS_NESTED /tmp/R4_FSMON 2>/dev/null | wc -l)"
+  TL=60 t "R4-2d git typed in alice's shell in the team folder runs in the box: no safe.directory needed, nothing on the host" \
+    "no dubious ownership; host clean" 're:^rc=0 HOST-CLEAN$' \
+    "asali 'cd ~/team/proj-a && git st' 2>&1 | grep -E 'dubious|safe.directory'; ls /tmp/ALIAS_RAN 2>/dev/null || echo HOST-CLEAN"
+  TL=60 t "R4-4 enter names the build files, git's config and says the scan was cut (the trap 40 folders down)" \
+    "Makefile, package.json, NOT FULLY CHECKED, could not cover" \
+    "re:'Makefile'.*'package.json'.*NOT FULLY CHECKED: 1 folders deeper than 32.*could not cover every tool folder in it \(1 folders deeper than 32\)" \
+    "asali 'cd ~/team/proj-a && claude hi' 2>&1 | grep '^enter:' | tr '\n' ' '"
+  t "R4-4b hubchat list says it too" "NOT FULLY CHECKED" 're:WARNING: files that can run code.*NOT FULLY CHECKED' "asal 'hubchat list' | tr '\n' ' '"
+  # the box rewrites .git/config by rename (git config) and plants a new subfolder tool dir: the guard covers again
+  inb 'git config alias.co "!touch /tmp/ALIAS_RAN"; mkdir -p sub/new/.claude/hooks && echo x > sub/new/.claude/hooks/h.sh; mkdir -p sub/new2 && git init -q sub/new2 && git -C sub/new2 config alias.st "!touch /tmp/ALIAS_NESTED"' >/dev/null
+  sleep 1.5
+  t "R4-3 after the box rewrites .git/config (rename) and plants sub/new/.claude and a new repo sub/new2: covered again within a second" \
+    "0 0 0 tmpfs" 're:^rc=0 0 0 0 tmpfs$' \
+    "runuser -u alice -- bash -c 'cd $P && echo \$(cat .git/config | wc -c) \$(ls -A sub/new/.claude | wc -l) \$(cat sub/new2/.git/config | wc -c) \$(stat -f -c %T sub/deep/.opencode)'"
+  t "R4-3b the guard's log names the covers it made (inotify, not the next enter)" "+.git/config, +sub/new/.claude" \
+    're:\+\.git/config.*|\+sub/new/\.claude' "journalctl -u kaptyorka-guard.service --no-pager -q -n 30 | grep proj-a | tr '\n' ' '"
+  # finding 5: a box sign-in sent out in one message, base32 / base85 / a dot every 8 / gzip+base64, through the relay door
+  SIGN='tk_bbbbXq9Lm2Pz7Wc4Rt8Yu1Io5As3Df6Gh0Jk3Lp8Zx2Cv9Qa1Ws'
+  inb "mkdir -p ~/state/opencode/data/opencode && printf '{\"opencode\": {\"type\": \"oauth\", \"refresh\": \"$SIGN\"}}' > ~/state/opencode/data/opencode/auth.json" >/dev/null
+  sleep 1
+  cat > /run/kapbox/alice/tmp/send4.py <<'PY'
+import base64, gzip, json, socket, sys
+sign = sys.argv[1]
+def send(text):
+    s = socket.socket(socket.AF_UNIX); s.connect("/run/kaptyorka/relay/alice.sock")
+    s.sendall(json.dumps({"call": "send", "args": {"chat": "opencode:ses_x1", "project": "proj-a", "to": "box-2", "text": text}}).encode() + b"\n")
+    a = json.loads(s.makefile().readline()); e = a.get("error", "")
+    return "REFUSED" if not a.get("ok") and ("sign-in" in e or "key or token" in e) else "PASSED"
+b = sign.encode()
+for name, text in (("raw", sign), ("base32", base64.b32encode(b).decode()), ("base85", base64.b85encode(b"q" + b).decode()),
+                   ("ascii85", base64.a85encode(b).decode()), ("dots", ".".join(sign[i:i + 8] for i in range(0, len(sign), 8))),
+                   ("gzip+base64", base64.b64encode(gzip.compress(b + b"\n")).decode()), ("plain", "the build is green")):
+    print(f"{name}={send(text)}", end=" ")
+PY
+  chown kap-alice /run/kapbox/alice/tmp/send4.py
+  t "R4-5 through the relay door: the box's sign-in raw, base32, base85, ascii85, dotted, gzip+base64: all refused; plain passes the filter" \
+    "REFUSED x6, plain PASSED" 're:^rc=0 raw=REFUSED base32=REFUSED base85=REFUSED ascii85=REFUSED dots=REFUSED gzip\+base64=REFUSED plain=PASSED' \
+    "inb 'python3 -I /tmp/send4.py $SIGN' | grep -v '^enter:'"
+  inb 'rm -rf sub lib d1 Makefile package.json .git/config.worktree .git/info ~/state/opencode/data/opencode/auth.json /tmp/send4.py; git config --unset alias.st; git config --unset alias.co; git config --unset core.fsmonitor; true' >/dev/null
+  rm -rf /home/alice/ctl /tmp/ALIAS_CTL
   ;;
 
 wallcheck)

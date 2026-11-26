@@ -30,11 +30,13 @@ else:
     import kaproot as kr
 
 
-def notices(person: str, box: str, name: str) -> None:
+def notices(person: str, box: str, name: str, cover_cut: str = "") -> None:
     """Warnings that do not stop the start, at every start: git's ownership check switched off,
-    and the files that can run code in the person's own tools or editor which changed since the
-    folder became a team folder (7.1, 7.2; red team round 3, finding 1: at any depth, whoever
-    owns the folder they are in). The covers in her view are the wall; this is so she knows."""
+    and the files that can run code in the person's own tools, editor, git or a build which
+    changed since the folder became a team folder (7.1, 7.2; red team round 3, finding 1: at any
+    depth, whoever owns the folder they are in; round 4: build files too, and a scan cut by its
+    bounds says so), and covers the view could not make. The covers in her view are the wall;
+    this is so she knows."""
     try:
         folders = kr.load_folders(person)
         shorts = [f["shortcut"] for f in folders.values() if f.get("shortcut")]
@@ -44,30 +46,37 @@ def notices(person: str, box: str, name: str) -> None:
             return
         fd = kr.open_dir(f"{kc.box_projects(box)}/{name}")
         try:
-            changed = kr.trap_files(fd, kr.read_since(box, name), build=False)
+            changed = kr.trap_files(fd, kr.read_since(box, name))
         finally:
             os.close(fd)
         if changed:
-            print("enter: team chats may have changed files that run code when your own tools or editor open "
-                  "this folder: " + kr.trap_notice(changed) + ". Your view of the folder covers the ones at its "
-                  "top; look before you open a subfolder with your own tools.", file=sys.stderr)
+            print(kc.term("enter: team chats may have changed files that run code when your own tools, editor, git "
+                          "or a build open this folder: " + kr.trap_notice(changed) + ". Your view of the folder "
+                          "covers the tool and git ones; a Makefile or package.json runs only if you start a build "
+                          "yourself, so read it first."), file=sys.stderr)
+        if cover_cut:
+            print(kc.term(f"enter: your view of {name} could not cover every tool folder in it ({cover_cut}): "
+                          "do not open its subfolders with your own tools or editor."), file=sys.stderr)
     except (kc.Refuse, OSError, KeyError, ValueError):
         pass
 
 
-def repair(person: str, box: str, name: str) -> None:
+def repair(person: str, box: str, name: str) -> str:
     """Before the self-check: the covers in the person's view of this folder, and the relay's copy
     of the box's sign-ins (red team round 3, findings 1 and 2). kaptyorka-guard does both as soon
-    as something changes; here they are certain before a chat starts."""
+    as something changes; here they are certain before a chat starts. Returns why the cover walk
+    was cut ('' when it was not)."""
+    info: dict = {}
     if name != kc.MEMORY:
         try:
-            kr.hide_view(person, name, box)
+            kr.hide_view(person, name, box, info=info)
         except (kc.Refuse, OSError):
             pass
     try:
         kr.write_box_secrets(person, box)
     except (kc.Refuse, OSError, KeyError, ValueError):
         pass
+    return info.get("cut", "")
 
 
 def build(person: str, box: str, tool: str, args, cwd: str, tty: bool, term: str) -> list:
@@ -111,7 +120,7 @@ def main(argv) -> int:
         if kc.view_path(person, name) not in kr.mount_flags():
             raise kc.Refuse(f"the team folder {name} is not mounted (run hubchat list)")
         boxes = sorted({box, person})
-        repair(person, box, name)
+        cover_cut = repair(person, box, name)
         problems = kr.outside_check(person, boxes)
         if problems:
             print("enter: self-check found a problem:", file=sys.stderr)
@@ -123,7 +132,7 @@ def main(argv) -> int:
             return 3
         for ln in kr.old_login_hint(person):
             print(kc.term(ln), file=sys.stderr)
-        notices(person, box, name)
+        notices(person, box, name, cover_cut)
         kr.ensure_box_running(box)
         kr.start_helper(person, box)
         tty = os.isatty(0) and os.isatty(1)

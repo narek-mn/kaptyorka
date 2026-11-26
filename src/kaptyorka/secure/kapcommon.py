@@ -60,18 +60,29 @@ CANARY_PROC = "KAPTYORKA_WALL_CANARY_PROC"
 TOOL_DIRS = (".opencode", ".claude", ".codex", ".cursor", ".vscode", ".idea", ".zed", ".devcontainer")
 TOOL_FILES = ("opencode.json", "opencode.jsonc", ".mcp.json", ".envrc", ".nvim.lua", ".nvimrc", ".exrc",
               ".dir-locals.el")
-# what a build or a version manager may run (listed by hubchat list and remove, not at every start)
+# what a build or a version manager may run: listed by enter, hubchat list and remove, never covered
+# (a build the person starts herself in her view is her own choice; round 4, finding 1)
 BUILD_FILES = ("Makefile", "makefile", "GNUmakefile", "package.json", ".mise.toml", "mise.toml",
                ".tool-versions", ".nvmrc", ".python-version", ".gitattributes")
 TRAP_MAX = 500                 # names reported at most
 TRAP_BUDGET = 200000           # entries looked at at most (a huge tree is cut, never hangs enter)
-TRAP_DEPTH = 32
-# In the person's view of a team folder (/srv/team/<person>/<name>), the TOOL_DIRS and
-# TOOL_FILES at the top and .git/hooks are covered: a folder by an empty private tmpfs of the
-# person's own (her tool may write its scratch there; it never reaches the box), a file by an
-# empty or "{}" read-only file. The box keeps the real ones. kaptyorka-guard redoes it the moment
-# the box makes, renames or removes one (inotify).
-HIDE_GIT = ".git/hooks"
+TRAP_DEPTH = 32                # a folder deeper is not looked into: the scan then says it is not fully checked
+# git's files that name programs (alias.x = !cmd, core.fsmonitor, core.pager, filter drivers, hooks,
+# an include.path, a commondir or a .git file pointing at another config; red team round 4,
+# finding 1), in every git folder: a .git at any depth, or a folder with HEAD, objects and refs
+GIT_HIDE_DIRS = ("hooks", "info")
+GIT_HIDE_FILES = ("config", "config.worktree", "commondir")
+# In the person's view of a team folder (/srv/team/<person>/<name>), every TOOL_DIR and TOOL_FILE
+# and git's files above are covered, at any depth (round 4, finding 3): a folder by an empty
+# private tmpfs of the person's own (her tool may write its scratch there; it never reaches the
+# box), a file by an empty or "{}" read-only file. The box keeps the real ones. kaptyorka-guard
+# redoes it the moment the box makes, renames, removes or rewrites one (inotify): at once at the
+# top and in .git, after a short wait elsewhere. The walk is bounded: a folder deeper than
+# TRAP_DEPTH, more than COVER_BUDGET entries or COVER_MAX covers leave the rest uncovered, and
+# enter and hubchat list say so.
+COVER_MAX = 256
+COVER_BUDGET = 50000
+WATCH_MAX = 4000               # folders kaptyorka-guard watches per team folder (the rest: every RESYNC)
 HIDE_FILE = LIBEXEC + "/hide-empty"
 HIDE_JSON = LIBEXEC + "/hide-empty.json"
 HIDE_TMPFS = "kaptyorka-hide"
@@ -775,5 +786,7 @@ def safe_directory_warnings(lines: List[Tuple[str, str]], shortcuts: List[str]) 
         if bad:
             out.append(f"WARNING: git's ownership check is switched off for team folders by "
                        f"'safe.directory = {v}' in {origin}. Team chats could then run code as you "
-                       f"through git. Remove that line.")
+                       f"through git. Remove that line: git you type in a team folder already runs in the box and "
+                       f"needs no such line, and a 'dubious ownership' error from another git there "
+                       f"(an editor's, a script's) is that check working.")
     return out

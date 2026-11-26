@@ -4,6 +4,7 @@ in tests/fakes/relay_hub.py on loopback. The real units and the R-*/N-* attack r
 throw-away container (secure-design/testbox/slice1.sh), never here."""
 import ast
 import base64
+import gzip
 import hashlib
 import hmac
 import json
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import zlib
 from pathlib import Path
 
 import pytest
@@ -761,7 +763,17 @@ def encodings(value: str):
         "hex": hx,
         "HEX with colons": ":".join(hx[i:i + 2] for i in range(0, len(hx), 2)).upper(),
         "reversed": value[::-1],
+        # red team round 4, finding 5: these passed in one message
+        "base32": base64.b32encode(v).decode(),
+        "base32 lower, after two bytes": base64.b32encode(b"xy" + v).decode().lower(),
+        "base85": base64.b85encode(b"q" + v).decode(),
+        "ascii85": "<~" + base64.a85encode(b"qqq" + v).decode() + "~>",
+        "a dot every 8": ".".join(value[i:i + 8] for i in range(0, len(value), 8)),
+        "a dash after each": "-".join(value),
+        "gzip then base64": base64.b64encode(gzip.compress(b"token: " + v + b"\n")).decode(),
+        "zlib then base64": "data=" + base64.b64encode(zlib.compress(v, 9)).decode(),
         "in a file": None,
+        "in a gzip file": None,
     }
 
 
@@ -772,7 +784,10 @@ def test_a_box_sign_in_value_never_leaves_raw_or_encoded(tmp_path, value, form):
     characters), and the other encodings, once the box's sign-in values are the relay's."""
     relay = relay_with_secrets(tmp_path, [value])
     text = encodings(value)[form]
-    if text is None:
+    if form == "in a gzip file":
+        args = {**caller(), "to": "bob", "text": "f", "file_name": "k.gz",
+                "file_content": "base64:" + base64.b64encode(gzip.compress(value.encode())).decode()}
+    elif text is None:
         args = {**caller(), "to": "bob", "text": "f", "file_name": "k.bin",
                 "file_content": "base64:" + base64.b64encode(base64.b64encode(value.encode())).decode()}
     else:
@@ -798,10 +813,16 @@ def test_other_text_and_another_box_s_values_pass(tmp_path):
                  "a1b2c3d4e5f6a7b8" * 4):
         relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": text})
     relay.filter_out("bob", "send", {**caller(), "to": "carol", "text": OPAQUE})   # bob's box has none
-    # the honest limit: short pieces get through (a backstop, not a wall); spaces do not hide them
-    relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": ",".join(OPAQUE[i:i + 10] for i in range(0, 50, 10))})
-    with pytest.raises(R.Bad):
-        relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": " ".join(OPAQUE[i:i + 10] for i in range(0, 50, 10))})
+    relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": base64.b64encode(gzip.compress(b"hello" * 50)).decode()})
+    # the honest limit (a backstop, not a wall): short pieces in separate messages, a shifted
+    # alphabet, or letters put between get through; spaces, commas and dots do not hide it
+    for i in range(0, 50, 10):
+        relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": OPAQUE[i:i + 10]})
+    relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": "".join(chr(ord(c) + 1) for c in OPAQUE)})
+    relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": "x".join(OPAQUE)})
+    for sep in (" ", ",", "."):
+        with pytest.raises(R.Bad):
+            relay.filter_out("alice", "send", {**caller(), "to": "bob", "text": sep.join(OPAQUE[i:i + 10] for i in range(0, 50, 10))})
 
 
 def test_the_values_are_read_again_when_root_rewrites_the_file(tmp_path):

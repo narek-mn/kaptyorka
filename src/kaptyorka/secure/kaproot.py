@@ -391,20 +391,27 @@ def lstat_rel(top_fd: int, rel: str) -> Optional[os.stat_result]:
             os.close(f)
 
 
+def _gitdir(rel: str, names: List[str]) -> bool:
+    """A folder git reads as a repository: a .git, or one with HEAD, objects and refs (bare)."""
+    return rel == ".git/" or rel.endswith("/.git/") or {"HEAD", "objects", "refs"} <= set(names)
+
+
 def trap_files(top_fd: int, since: float = 0.0, build: bool = True, git: bool = True) -> List[str]:
     """Files that can run code when a program of the person's opens the folder (7.2), at any
     depth, changed after `since` (their ctime: no user can set it back, and it moves whoever
     owns the file, so a box write into a folder the person made counts too; red team round 3,
     finding 1). Everything inside a tool's folder (.opencode, .claude, .codex, .cursor, .vscode,
     ...), the tool files (opencode.json, .mcp.json, .envrc, ...), with git: every git hook and
-    repository config, with build: Makefiles, package.json and version files. Walked without
-    following a link, at most TRAP_DEPTH deep and TRAP_BUDGET entries; at most TRAP_MAX names,
-    sorted, the last one '...' when there were more."""
+    repository config (bare repositories and .git files too), with build: Makefiles,
+    package.json and version files. Walked without following a link, at most TRAP_DEPTH deep and
+    TRAP_BUDGET entries; at most TRAP_MAX names, sorted, then '...' when there were more, and
+    '?deep:N' (N folders deeper than TRAP_DEPTH not looked into) or '?budget' when the walk was
+    cut: the folder is then not fully checked, never clean (round 4, finding 4)."""
     out: List[str] = []
-    seen = 0
+    seen = deep = 0
     stack = [(os.dup(top_fd), "", False, 0)]
     try:
-        while stack:
+        while stack and seen <= kc.TRAP_BUDGET:
             fd, rel, tool, depth = stack.pop()
             try:
                 names = sorted(os.listdir(fd))
@@ -412,6 +419,7 @@ def trap_files(top_fd: int, since: float = 0.0, build: bool = True, git: bool = 
                 os.close(fd)
                 continue
             try:
+                in_git = _gitdir(rel, names)
                 for name in names:
                     seen += 1
                     if seen > kc.TRAP_BUDGET:
@@ -421,12 +429,13 @@ def trap_files(top_fd: int, since: float = 0.0, build: bool = True, git: bool = 
                     except OSError:
                         continue
                     path = rel + name
-                    in_git = rel == ".git/" or rel.endswith("/.git/")
                     if stat.S_ISDIR(st.st_mode):
-                        if depth >= kc.TRAP_DEPTH or (in_git and name == "objects") or \
-                                (name == "node_modules" and not tool):
+                        if (in_git and name == "objects") or (name == "node_modules" and not tool):
                             continue
-                        child_tool = tool or name in kc.TOOL_DIRS or (in_git and name == "hooks" and git)
+                        if depth >= kc.TRAP_DEPTH:
+                            deep += 1
+                            continue
+                        child_tool = tool or name in kc.TOOL_DIRS or (in_git and name in kc.GIT_HIDE_DIRS and git)
                         try:
                             stack.append((os.open(name, O_DIR, dir_fd=fd), path + "/", child_tool, depth + 1))
                         except OSError:
@@ -435,7 +444,7 @@ def trap_files(top_fd: int, since: float = 0.0, build: bool = True, git: bool = 
                     if not stat.S_ISREG(st.st_mode) or max(st.st_ctime, st.st_mtime) <= since:
                         continue
                     hit = (tool and not name.endswith(".sample")) or name in kc.TOOL_FILES \
-                        or (git and in_git and name in ("config", "config.worktree")) \
+                        or (git and in_git and name in kc.GIT_HIDE_FILES) or (git and name == ".git") \
                         or (build and name in kc.BUILD_FILES)
                     if hit:
                         out.append(path)
@@ -445,15 +454,30 @@ def trap_files(top_fd: int, since: float = 0.0, build: bool = True, git: bool = 
         for fd, *_ in stack:
             os.close(fd)
     out.sort()
-    return out[:kc.TRAP_MAX] + (["..."] if len(out) > kc.TRAP_MAX or seen > kc.TRAP_BUDGET else [])
+    return out[:kc.TRAP_MAX] + (["..."] if len(out) > kc.TRAP_MAX else []) + \
+        ([f"?deep:{deep}"] if deep else []) + (["?budget"] if seen > kc.TRAP_BUDGET else [])
+
+
+def trap_cut(traps: List[str]) -> str:
+    """Why a trap scan is not complete, in words ('' when it is)."""
+    why = []
+    for t in traps:
+        if t.startswith("?deep:"):
+            why.append(f"{t[6:]} folders deeper than {kc.TRAP_DEPTH} were not looked into")
+        elif t == "?budget":
+            why.append(f"it has more than {kc.TRAP_BUDGET} entries")
+    return ("NOT FULLY CHECKED: " + " and ".join(why) + "; treat the folder as unchecked") if why else ""
 
 
 def trap_notice(traps: List[str], most: int = 12) -> str:
     """The trap files as one line for the person's terminal (every name through kc.shown)."""
-    more = [t for t in traps if t != "..."]
+    more = [t for t in traps if t != "..." and not t.startswith("?")]
     shown = ", ".join(kc.shown(t, 200) for t in more[:most])
-    left = len(more) - most + (1 if traps and traps[-1] == "..." else 0)
-    return shown + (f" and {left} more{'+' if traps[-1:] == ['...'] else ''}" if left > 0 else "")
+    cut = "..." in traps
+    left = len(more) - most + (1 if cut else 0)
+    line = shown + (f" and {left} more{'+' if cut else ''}" if left > 0 else "")
+    why = trap_cut(traps)
+    return (line + ". " + why if line else why) if why else line
 
 
 def since_stamp(box: str, name: str) -> str:
@@ -524,27 +548,91 @@ def mounts(text: Optional[str] = None) -> List[dict]:
     return out
 
 
-def hides_wanted(top_fd: int) -> Dict[str, str]:
-    """What must be covered in the view of this folder: relative path -> "dir" or "file". Only
-    real folders and plain files (a link is not followed in the view: nosymfollow)."""
+def cover_scan(top_fd: int, deep: bool = True) -> Tuple[Dict[str, str], List[str], str]:
+    """What must be covered in the view of this folder: (relative path -> "dir" or "file", the
+    folders walked (for kaptyorka-guard to watch), why the walk was cut or ''). Every tool folder
+    and tool file, and in every git folder its hooks, info, config, config.worktree and
+    commondir, and a .git file; at any depth (deep=False: only the top and its .git). Only real
+    folders and plain files (a link is not followed in the view: nosymfollow). A tool folder is
+    covered whole, so nothing inside it is looked at. Bounded: TRAP_DEPTH, COVER_BUDGET entries,
+    COVER_MAX covers."""
     want: Dict[str, str] = {}
-    for n in kc.TOOL_DIRS + kc.TOOL_FILES + (kc.HIDE_GIT,):
-        st = lstat_rel(top_fd, n)
-        if st is None:
-            continue
-        if stat.S_ISDIR(st.st_mode) and n not in kc.TOOL_FILES:
-            want[n] = "dir"
-        elif stat.S_ISREG(st.st_mode) and n in kc.TOOL_FILES:
-            want[n] = "file"
-    return want
+    walked: List[str] = []
+    seen = far = 0
+    cut = ""
+    stack = [(os.dup(top_fd), "", 0)]
+    try:
+        while stack and not cut:
+            fd, rel, depth = stack.pop()
+            try:
+                names = sorted(os.listdir(fd))
+            except OSError:
+                os.close(fd)
+                continue
+            try:
+                in_git = _gitdir(rel, names)
+                for name in names:
+                    seen += 1
+                    if seen > kc.COVER_BUDGET:
+                        cut = f"more than {kc.COVER_BUDGET} entries"
+                        break
+                    try:
+                        st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    except OSError:
+                        continue
+                    path = rel + name
+                    if stat.S_ISDIR(st.st_mode):
+                        if name in kc.TOOL_DIRS or (in_git and name in kc.GIT_HIDE_DIRS):
+                            want[path] = "dir"
+                        elif (in_git and name == "objects") or name == "node_modules":
+                            continue
+                        elif not deep and path != ".git":
+                            continue
+                        elif depth >= kc.TRAP_DEPTH:
+                            far += 1
+                            continue
+                        else:
+                            try:
+                                stack.append((os.open(name, O_DIR, dir_fd=fd), path + "/", depth + 1))
+                                walked.append(path)
+                            except OSError:
+                                pass
+                    elif stat.S_ISREG(st.st_mode) and (name in kc.TOOL_FILES or name == ".git"
+                                                       or (in_git and name in kc.GIT_HIDE_FILES)):
+                        want[path] = "file"
+                    if len(want) > kc.COVER_MAX:
+                        cut = f"more than {kc.COVER_MAX} tool folders and files"
+                        want.pop(path)
+                        break
+            finally:
+                os.close(fd)
+    finally:
+        for fd, *_ in stack:
+            os.close(fd)
+    if far and not cut:
+        cut = f"{far} folders deeper than {kc.TRAP_DEPTH}"
+    return want, walked, cut
 
 
-def hide_view(person: str, name: str, box: str, mi: Optional[List[dict]] = None) -> List[str]:
-    """Cover the tool folders and files at the top of the person's view of one team folder (and
-    its .git/hooks), so her own tools started there load nothing the box wrote; uncover what
-    is no longer there. The view is made private first: a mount below it then stays in the
-    view and never shows in the box's own copy of the folder (measured: on a shared view, a
-    mount at the view's .opencode also appeared over the box's). Returns what it changed."""
+def hides_wanted(top_fd: int) -> Dict[str, str]:
+    return cover_scan(top_fd)[0]
+
+
+def _top_scope(rel: str) -> bool:
+    """A cover the quick (top only) pass of hide_view looks after."""
+    return "/" not in rel or (rel.startswith(".git/") and rel.count("/") == 1)
+
+
+def hide_view(person: str, name: str, box: str, mi: Optional[List[dict]] = None, deep: bool = True,
+              info: Optional[dict] = None) -> List[str]:
+    """Cover the tool folders and files and git's program-naming files in the person's view of
+    one team folder, at any depth (cover_scan), so her own tools and her own git started there
+    load nothing the box wrote; uncover what is no longer there (not after a cut walk: then
+    covers only grow). deep=False looks only at the top and its .git (kaptyorka-guard's quick
+    pass). The view is made private first: a mount below it then stays in the view and never
+    shows in the box's own copy of the folder (measured: on a shared view, a mount at the view's
+    .opencode also appeared over the box's). Returns what it changed; info, when given, gets
+    the folders walked ("walked") and why the walk was cut ("cut")."""
     where = kc.view_path(person, name)
     mi = mounts() if mi is None else mi
     view = [m for m in mi if m["point"] == where]
@@ -557,14 +645,16 @@ def hide_view(person: str, name: str, box: str, mi: Optional[List[dict]] = None)
         done.append("private")
     fd = open_dir(f"{kc.box_projects(box)}/{name}")
     try:
-        want = hides_wanted(fd)
+        want, walked, cut = cover_scan(fd, deep)
     finally:
         os.close(fd)
+    if info is not None:
+        info.update(walked=walked, cut=cut)
     have = {m["point"][len(where) + 1:]: m for m in mi if m["parent"] == vm["id"]
-            and m["point"].startswith(where + "/")}
+            and m["point"].startswith(where + "/") and (deep or _top_scope(m["point"][len(where) + 1:]))}
     for rel, m in sorted(have.items()):
         kind = "dir" if m["fstype"] == "tmpfs" else "file"
-        if want.get(rel) != kind:
+        if want.get(rel) != kind and not cut:
             try:
                 _umount(f"{where}/{rel}")
                 done.append(f"-{rel}")
@@ -578,7 +668,7 @@ def hide_view(person: str, name: str, box: str, mi: Optional[List[dict]] = None)
         # a link the box swaps in between is never followed
         try:
             vfd = open_dir(where + "/" + os.path.dirname(rel)) if "/" in rel else open_dir(where)
-        except Refuse:
+        except (Refuse, OSError):
             continue
         try:
             tfd = os.open(os.path.basename(rel), os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=vfd)
@@ -606,7 +696,8 @@ def hide_view(person: str, name: str, box: str, mi: Optional[List[dict]] = None)
 
 
 def hidden_problem(person: str, name: str, box: str, mi: List[dict]) -> Optional[str]:
-    """The view is shared, or a tool folder or file at its top is not covered."""
+    """The view is shared, or a tool folder or file (or git's) that the walk found is not
+    covered. A walk cut by its bounds is not a problem here: enter and hubchat list say it."""
     where = kc.view_path(person, name)
     view = [m for m in mi if m["point"] == where]
     if not view:

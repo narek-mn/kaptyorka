@@ -201,9 +201,10 @@ def check_source(person: str, path: str):
     return real, pfd, fd, st
 
 
-COVERED = ("  Note: tool settings at its top (.claude, .codex, .cursor, .opencode, .vscode, .mcp.json, .envrc,",
-           "  .git/hooks and others) look empty to you, so your own tools never load what team chats wrote.",
-           "  To change them, ask a team chat.")
+COVERED = ("  Note: tool settings in it, at any depth (.claude, .codex, .cursor, .opencode, .vscode, .mcp.json,",
+           "  .envrc, and git's .git/config, .git/hooks and others) look empty to you, so your own tools and",
+           "  your own git never load what team chats wrote. To change them, ask a team chat. git typed here",
+           "  runs in the box: never add this folder to git's safe.directory.")
 
 
 def add_folder(person: str, path: str, name: str, separate: bool, yes: bool, force: bool = False) -> None:
@@ -473,7 +474,8 @@ def remove(person: str, target: str, uninstall: bool = False) -> None:
     if traps:
         kr.say("  Team chats may have changed these files, which can run code when a program of yours opens "
                "them (your own AI tool, your editor, a build). Read them before you trust the folder:",
-               *[f"    {kc.shown(t, 200)}" for t in traps])
+               *[f"    {kc.shown(t, 200)}" for t in traps if not t.startswith("?")],
+               *([f"    {kr.trap_cut(traps)}"] if kr.trap_cut(traps) else []))
 
 
 def human(n: int) -> str:
@@ -528,8 +530,8 @@ def list_all(person: str) -> None:
             finally:
                 os.close(fd)
             if traps:
-                kr.say("    WARNING: files that can run code when your own tools, editor or a build open them,",
-                       "    changed while this was a team folder (your view covers the tool ones at its top): "
+                kr.say("    WARNING: files that can run code when your own tools, editor, git or a build open them,",
+                       "    changed while this was a team folder (your view covers the tool and git ones): "
                        + kr.trap_notice(traps, 20))
             secrets_found = [f for f in scan_secrets_path(real) if f[2] != "link"]
             if secrets_found:
