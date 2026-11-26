@@ -24,10 +24,21 @@ jobs:
       - run: python -m pytest tests -q
       - run: python -m build
       - run: twine check --strict dist/*
+      # The personal-mode installer (one file, a release asset; never on PyPI): built from the
+      # package files byte for byte as every hub of this version builds it to print its SHA-256.
+      - name: Build the personal-mode installer
+        run: |
+          mkdir installer
+          python -I src/kaptyorka/secure/kap_installer.py build installer/kaptyorka-secure-setup.pyz | tee installer/kaptyorka-secure-setup.pyz.sha256
+          python -I installer/kaptyorka-secure-setup.pyz 2>&1 | grep -q 'run it with sudo'
       - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer
+          path: installer/
 
   publish:
     needs: build
@@ -55,10 +66,15 @@ jobs:
         with:
           name: dist
           path: dist/
+      - uses: actions/download-artifact@v8
+        with:
+          name: installer
+          path: installer/
       - name: Create the GitHub release from the CHANGELOG section
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           awk -v v="## ${GITHUB_REF_NAME#v}" '/^## / { on = index($0, v) == 1; next } on' CHANGELOG.md > notes.md
           printf '\nInstall: `pipx install kaptyorka==%s`\n' "${GITHUB_REF_NAME#v}" >> notes.md
-          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+          printf '\nPersonal laptop installer: `kaptyorka-secure-setup.pyz`, SHA-256 `%s`\n' "$(cut -d' ' -f1 installer/kaptyorka-secure-setup.pyz.sha256)" >> notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* installer/kaptyorka-secure-setup.pyz installer/kaptyorka-secure-setup.pyz.sha256 --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

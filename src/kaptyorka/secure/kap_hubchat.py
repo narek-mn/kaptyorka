@@ -31,9 +31,10 @@ import sys
 import time
 
 if __package__:
-    from . import kapcommon as kc, kaproot as kr
+    from . import kap_tools, kapcommon as kc, kaproot as kr
 else:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import kap_tools
     import kapcommon as kc
     import kaproot as kr
 
@@ -51,10 +52,13 @@ Options for add:
   --name NAME   use another name for the team folder
   --separate    give this folder a box of its own
   --force       share it even with files that look like keys or passwords
+  hubchat update-tools [claude codex ...]   newer AI tools in the box, from their vendors
+                             (claude=2.1.300 for one version; opencode=2 for OpenCode 2)
 Rarely needed:
   hubchat token-rotate       give the box a new Claude token (if a team chat may have leaked it)"""
 SHORT = {"add": "hubchat add <folder>   or   hubchat add <git URL>", "remove": "hubchat remove <folder or name>",
-         "list": "hubchat list", "token-rotate": "hubchat token-rotate"}
+         "list": "hubchat list", "token-rotate": "hubchat token-rotate",
+         "update-tools": "hubchat update-tools [claude] [codex] [opencode] [cursor-agent]"}
 
 
 def ask(question: str) -> bool:
@@ -540,6 +544,9 @@ def list_all(person: str) -> None:
         except (Refuse, OSError):
             pass
     kr.say(f"  {kc.MEMORY} (the shared team memory)    view: {kc.view_path(person, kc.MEMORY)}")
+    have = kap_tools.installed()
+    kr.say("AI tools in the box: " + (", ".join(f"{t} {v}" for t, v in sorted(have.items())) or "none")
+           + "  (hubchat update-tools for newer ones)")
     for box in boxes:
         kr.say(f"Box {kc.box_user(box)}:")
         tok = f"{kc.SECRET}/{person}/claude-oauth-token"
@@ -612,6 +619,18 @@ def scan_secrets_path(path: str):
         os.close(fd)
 
 
+def update_tools(pos) -> int:
+    """Newer AI tools in the box, each from its vendor's installer in its locked unit (kap_tools);
+    only tool names and versions get through (kap_tools.parse_specs)."""
+    specs = kap_tools.parse_specs(",".join(pos)) if pos else {t: "" for t in kap_tools.installed()}
+    if not specs:
+        raise Refuse("no AI tool is in the box yet: name the ones you want, such as  hubchat update-tools claude codex")
+    done, failed = kap_tools.install(specs, kr.say)
+    for t, e in failed.items():
+        print(kc.term(f"hubchat: {t} was not changed: {e}"), file=sys.stderr)
+    return 1 if failed else 0
+
+
 def main(argv) -> int:
     try:
         person = kr.caller_person()
@@ -644,6 +663,8 @@ def main(argv) -> int:
             list_all(person)
         elif cmd == "token-rotate" and not pos and not any(opts.values()):
             token_rotate(person)
+        elif cmd == "update-tools" and not any(opts.values()):
+            return update_tools(pos)
         elif cmd in SHORT:
             raise Refuse(f"usage: {SHORT[cmd]}")
         else:

@@ -512,12 +512,23 @@ def _invite(args) -> int:
     if got[0] != 200:
         print(_problem(got), file=sys.stderr)
         return 1
-    print(f"send this link to {args.person} (works once, for 7 days): {got[1]['url']}"
-          + ("\nit is for a personal laptop in the secure mode: its installer takes it, never"
-             " `kaptyorka join`:  sudo python3 -I kap_setup.py install --personal '<link>'"
-             + ("" if str(got[1]['url']).startswith("https://") else
-                "\nthis hub has no encrypted connections, and the installer refuses http links:"
-                " run  kaptyorka tls on  first") if personal else ""))
+    url = str(got[1]["url"])
+    if not personal:
+        print(f"send this link to {args.person} (works once, for 7 days): {url}")
+        return 0
+    if not url.startswith("https://"):
+        print(f"personal link for {args.person}: {url}\nthis hub has no encrypted connections, and the installer"
+              " refuses http links: run  kaptyorka tls on  first, then make a new link")
+        return 0
+    cmds = [str(c) for c in got[1].get("install") or []]
+    print(f"send this to {args.person} (the link works once, for 7 days). It is for a personal laptop in the"
+          " secure mode: its installer takes the link, never `kaptyorka join`.")
+    if cmds:
+        print("On the laptop, as yourself (the second command checks the installer's SHA-256 first):")
+        for c in cmds:
+            print("  " + c)
+    else:
+        print(f"  link: {url}\n  installer: the kaptyorka project's GitHub release (README, \"Personal laptop\")")
     return 0
 
 

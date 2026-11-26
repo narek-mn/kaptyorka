@@ -43,3 +43,9 @@ def test_every_data_file_is_in_the_wheel(tmp_path):
     assert "secure/files/box/opencode/etc/plugins/kaptyorka.js" in want   # the nested ones are found
     assert "secure/files/box/opencode/etc/opencode.json" in want
     assert want - names == set()
+    # a hub installed from this wheel prints the SHA-256 of the installer its own files build:
+    # the same bytes as the release's installer file, built from the checkout (kap_installer)
+    from kaptyorka.secure import kap_installer
+    inst = tmp_path / "installed"
+    zipfile.ZipFile(whl).extractall(inst)
+    assert kap_installer.build(str(inst / "kaptyorka")) == kap_installer.build(PKG)

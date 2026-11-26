@@ -99,8 +99,11 @@ def steps(monkeypatch):
     """Every step that writes, recorded instead of run; the self-check stops the run after them."""
     calls = Calls()
     for name in ("install_code", "install_tools", "claude_execute_only", "install_etc", "install_units",
-                 "install_hooks", "install_person"):
+                 "install_hooks", "install_person", "install_installer"):
         monkeypatch.setattr(setup, name, calls.stub(name))
+    monkeypatch.setattr(setup.kap_tools, "detect", lambda home: [])
+    monkeypatch.setattr(setup.kap_tools, "install", lambda specs, say: (calls.append(("tools", specs)), ({}, {}))[1])
+    monkeypatch.setattr(setup.pwd, "getpwnam", lambda p: type("pw", (), {"pw_dir": f"/home/{p}"}))
     seen = {}
     monkeypatch.setattr(setup, "install_relay_conf", lambda v: (calls.append("install_relay_conf"), seen.update(v)))
     monkeypatch.setattr(setup.kr, "write_file", calls.stub("write_file"))

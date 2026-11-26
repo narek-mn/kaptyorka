@@ -115,15 +115,25 @@ On your own laptop, kaptyorka can keep the team away from your personal files. O
 
 **2. Make a Claude token for the box** (in a terminal, as yourself): `claude setup-token`. Keep the token it prints; the installer asks for it. You can also skip it and add it later with `hubchat token-rotate`.
 
-**3. Install** with that one link (from a kaptyorka checkout, in `src/kaptyorka/secure`; keep the quotes):
+**3. Get the installer and install.** The installer is one file, `kaptyorka-secure-setup.pyz` (Python standard library only), attached to each GitHub release of kaptyorka. Its SHA-256 is in the release notes and next to it as `kaptyorka-secure-setup.pyz.sha256`. The hub's invite page (open your link in a browser) and the admin's `kaptyorka invite <you> --personal` print the two commands for the hub's own kaptyorka version, ready to copy. In a terminal, as yourself (keep the quotes):
 
 ```bash
-sudo python3 -I kap_setup.py install --personal 'https://192.0.2.10:8444/i/<code>#sha256=<fingerprint>'
+curl -fLO https://github.com/narek-mn/kaptyorka/releases/download/v<version>/kaptyorka-secure-setup.pyz
+echo '<sha256>  kaptyorka-secure-setup.pyz' | sha256sum -c && sudo python3 -I kaptyorka-secure-setup.pyz install --personal 'https://192.0.2.10:8444/i/<code>#sha256=<fingerprint>'
 ```
 
-It asks for a name for this computer on the hub (choose one, such as `laptop-2`; not your user or host name) and for the Claude token, then joins the hub and sets everything up. It ends with `Self-check: all walls in place` and `Done.`. To answer without questions: `--name laptop-2 --claude-token-file ~/claude-token.txt` (delete that file afterwards).
+The install runs only when `sha256sum -c` says `OK`. **The trust step, honestly:** this runs once as root, so you trust this one file. The hash on the invite page comes from the hub itself (it builds the same file from its own kaptyorka, byte for byte, and hashes it; it never fetches it). That protects you from a damaged or swapped download, but not from a hostile hub, which could show you any command. So compare the hash with the one on the project's release page (or ask your admin over another channel). If they differ, do not run it. There is no signed package yet.
+
+It asks for a name for this computer on the hub (choose one, such as `laptop-2`; not your user or host name), for the Claude token, and which AI tools go into the box (default: the ones you already have; it looks for them by name only and never runs or copies yours). Then it joins the hub and sets everything up. It ends with `Self-check: all walls in place` and `Done.`. To answer without questions: `--name laptop-2 --claude-token-file ~/claude-token.txt --tools claude,codex` (delete that file afterwards; `--tools none` installs no tool).
+
+The tools in the box come from each vendor's own installer (Claude Code: `claude.ai/install.sh`; Codex: `chatgpt.com/codex/install.sh`; OpenCode: `opencode.ai/install`, OpenCode 2 `opencode.ai/v2/install`; Cursor: `cursor.com/install`). Each runs in a locked unit as a throw-away user that sees no home folder and reaches only that vendor's hosts. Root then copies the result to `/opt/kap-tools`, root-owned, and records each version in `/etc/kaptyorka/tools.json`. The box runs exactly those versions and never updates them itself. For newer ones: `hubchat update-tools` (all of them), or `hubchat update-tools codex claude=2.1.300 opencode=2` (one version; `opencode=2` is OpenCode 2).
 
 The installer checks the hub against the fingerprint at the end of the link before it sends anything, and keeps the hub's address it actually reached. If the link was already used, is older than 7 days, is for a team machine, or the hub's fingerprint does not match, it says so in one sentence and changes nothing on your computer: ask the admin for a new personal link. It also checks your computer first (systemd version, an old kaptyorka in your account, your home folder's rights), so a computer that is not ready does not use up the link.
+
+It keeps a copy of itself in `/usr/local/libexec/kaptyorka/installer`, so you never download or paste a new root command later:
+
+- **New link** (the hub got a new certificate or address, or the admin made a new device): `sudo /usr/local/libexec/kaptyorka/installer rejoin '<new link>'`. Only the hub's values change; your team folders and the box stay.
+- **Something is broken or was changed by hand:** `sudo /usr/local/libexec/kaptyorka/installer repair` writes every file, unit and rule again and runs the self-check.
 
 **4. Log out and in once** (or restart the computer). Until then, your own programs get `Permission denied` in team folders; `hubchat` reminds you.
 
@@ -151,10 +161,11 @@ If a team chat does not start and says a wall is missing, restart the computer a
 - All your team folders share one box and one memory: a chat in one can read the others. `hubchat add <folder> --separate` gives a folder a box of its own.
 - Never mark a team folder as trusted in your editor, and never add it to git's `safe.directory`: a team chat can put files there that your editor or git would then run as you. `git` typed in a team folder already runs in the box and needs no such line; a "dubious ownership" error from another git there (an editor's, a script's) is that check working. Your view of a team folder covers the tool folders and files (`.opencode`, `.claude`, `opencode.json`, ...) and git's own (`.git/config`, hooks, `info`) at any depth with empty ones of yours, and each team chat's start and `hubchat list` name what a team chat changed there, build files (`Makefile`, `package.json`) too; a folder too deep or too big to check fully is said to be so. A build you start there yourself runs what the team wrote: read it first.
 - Your editor's own AI, and a tool you start by its full path (such as `~/.local/bin/claude`), run as you, outside the box, even in a team folder.
+- What a team chat prints passes a small filter before it reaches your terminal: it drops clipboard codes, window titles, file-transfer and other terminal "strings", report questions that answer with text, and links whose text is not their address; colours, cursor moves and the tools' screens stay. It is not a wall against every terminal bug.
 - Linux only for now; macOS is not proven.
 - `hubchat token-rotate` gives the box a new token but does not end the old one: end it yourself as the command says.
 
-**Remove it all:** `sudo /usr/local/libexec/kaptyorka/kaptyorka-secure-setup remove`. Every team folder goes back to you first. Then open a new terminal, and end the box's sign-ins as the command lists.
+**Remove it all:** `sudo /usr/local/libexec/kaptyorka/installer remove`. Every team folder goes back to you first. Then open a new terminal, and end the box's sign-ins as the command lists.
 
 ## For agents
 

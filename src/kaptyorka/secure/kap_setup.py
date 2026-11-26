@@ -1,28 +1,36 @@
 #!/usr/bin/python3 -I
-"""kaptyorka-secure-setup (secure design v2, 9.1, 9.2, 9.6): install and remove the personal-laptop
-mode. Root, run once by the person: sudo python3 -I kap_setup.py install --personal '<invite link>'
+"""kaptyorka-secure-setup (secure design v2, 9.1, 9.2, 9.4, 9.6): install and remove the
+personal-laptop mode. Root, run by the person from the one installer file (kap_installer.py
+builds it; the GitHub release carries it):
+  sudo python3 -I kaptyorka-secure-setup.pyz install --personal '<invite link>'
 
   install --personal '<https invite link>' [--name NAME] [--person NAME] [--claude-token-file FILE]
-          [--runtime-max 7d] [--tools-from DIR]
+          [--runtime-max 7d] [--tools claude,codex,opencode,cursor-agent|none]
+  rejoin '<new https invite link>' [--name NAME]   (a new certificate, address or device)
+  repair                                          (every file, unit and rule written again)
+  update-tools [claude codex=0.172.0 ...]          (the box's tools from their vendors)
   remove [--person NAME] [--delete-box-home] [--yes]
 
 install: checks the computer; redeems the personal invite over TLS pinned to the link's own
 fingerprint (the device token comes back; the hub's address is the one actually connected to);
 makes the box user and groups; writes the files of 4.2 (root programs, launcher, box configs,
-units); installs relay, forwarder and box code; makes the namespace, relay door, forwarder,
-canary; stores the Claude token root-only; makes the box's SSH key; adds the launcher to the
-system shell files; runs the self-check. The mode is fixed here (/etc/kaptyorka/mode = personal)
-and never changes afterwards.
+units); keeps a copy of this installer file in /usr/local/libexec/kaptyorka/installer (for
+rejoin, repair, update-tools and remove, without downloading anything again); installs relay,
+forwarder and box code; installs the AI tools into the box with each vendor's own installer
+(kap_tools.py; default: the ones the person already has, by name only); makes the namespace,
+relay door, forwarder, canary; stores the Claude token root-only; makes the box's SSH key; adds
+the launcher to the system shell files; runs the self-check. The mode is fixed here
+(/etc/kaptyorka/mode = personal) and never changes afterwards.
 
 For tests only, instead of the link: --hub-ip IP --hub-port N --hub-sha256 HEX
---device-token-file FILE (a token redeemed some other way). Not in the usage text.
+--device-token-file FILE (a token redeemed some other way); and --tools-from DIR (a prepared
+bin/<tool> folder instead of the vendors' installers). Not in the usage text.
 
 remove: hands every team folder back (made safe, as hubchat remove), stops and deletes every
 unit, file, user and group it made, the namespace and the launcher lines.
 
 Every outside value is checked against a strict pattern before root uses it. From the hub only
 the device token is taken (a strict pattern); nothing else it answers reaches a file or a unit.
-The tools' own sign-ins are slice 5.
 """
 import grp
 import hashlib
@@ -40,9 +48,11 @@ import subprocess
 import sys
 
 if __package__:
-    from . import kapcommon as kc, kaproot as kr
+    from . import kap_installer, kap_tools, kapcommon as kc, kaproot as kr
 else:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import kap_installer
+    import kap_tools
     import kapcommon as kc
     import kaproot as kr
 
@@ -50,14 +60,20 @@ Refuse = kc.Refuse
 USAGE = """Install or remove kaptyorka's team box on a personal laptop (run with sudo).
 
 Install, with the personal invite link your team admin sent you (keep the quotes):
-  sudo python3 -I kap_setup.py install --personal 'https://HUB:PORT/i/CODE#sha256=FINGERPRINT'
-  It asks for a name for this computer on the hub and for the token from `claude setup-token`
-  (run that as yourself first). Or give them: --name THIS-COMPUTER --claude-token-file FILE.
+  sudo python3 -I kaptyorka-secure-setup.pyz install --personal 'https://HUB:PORT/i/CODE#sha256=FINGERPRINT'
+  It asks for a name for this computer on the hub, for the token from `claude setup-token`
+  (run that as yourself first) and which AI tools go into the box. Or give them:
+  --name THIS-COMPUTER --claude-token-file FILE --tools claude,codex (or --tools none).
   More: --person NAME (default: you), --runtime-max 7d (longest a team chat runs).
 
-Remove (every team folder goes back to you first):
-  sudo /usr/local/libexec/kaptyorka/kaptyorka-secure-setup remove [--delete-box-home] [--yes]"""
+Afterwards, with the copy the installer keeps (nothing is downloaded again):
+  sudo /usr/local/libexec/kaptyorka/installer rejoin 'NEW LINK'   a new link from your team admin
+  sudo /usr/local/libexec/kaptyorka/installer repair              write every file and unit again
+  hubchat update-tools [claude codex ...]                         newer AI tools in the box
+  sudo /usr/local/libexec/kaptyorka/installer remove [--delete-box-home] [--yes]
+                                                                  remove it all (team folders back first)"""
 HERE = os.path.dirname(os.path.abspath(__file__))
+INSTALLER_FILE = ""   # set by the installer file's __main__: its own path (kap_installer.MAIN)
 FILES = os.path.join(HERE, "files")
 RELAY_SRC = os.path.join(os.path.dirname(HERE), "relay")
 SYSTEMD = kr.SYSTEMD
@@ -70,7 +86,8 @@ PROGRAMS = (  # (source in this folder, name in /usr/local/libexec/kaptyorka, mo
     ("kap_hubchat.py", "kap_hubchat.py", 0o644), ("kap_wallcheck.py", "wallcheck", 0o755),
     ("kap_box_exec.py", "box-exec", 0o755), ("kap_canary.py", "canary", 0o755),
     ("kap_addrwatch.py", "addrwatch", 0o755), ("kap_guard.py", "guard", 0o755),
-    ("kap_setup.py", "kaptyorka-secure-setup", 0o755), ("kapcommon.py", "kapcommon.py", 0o644),
+    ("kap_tools.py", "kap_tools.py", 0o644), ("kap_ttyfilter.py", "tty-filter", 0o755),
+    ("kapcommon.py", "kapcommon.py", 0o644),
     ("kaproot.py", "kaproot.py", 0o644), ("files/launch", "launch", 0o755),
     ("files/kapbox-base", "kapbox-base", 0o755),
 )
@@ -518,6 +535,89 @@ def install_person(person: str, v: dict) -> None:
 BY_HAND = ("--hub-ip", "--hub-port", "--hub-sha256", "--device-token-file")   # tests only
 
 
+def install_installer() -> None:
+    """The whole installer file in /usr/local/libexec/kaptyorka/installer (9.2, finding 5c):
+    rejoin, repair, update-tools and remove run from it, nothing is downloaded again. Run from
+    the file, it copies itself; run from a checkout (tests), it builds the same file."""
+    if INSTALLER_FILE:
+        with open(INSTALLER_FILE, "rb") as f:
+            data = f.read()
+    else:
+        data = kap_installer.build(os.path.dirname(HERE))
+    kr.write_file(kc.INSTALLER, data, 0o755)
+    kr.write_file(f"{kc.ETC}/installer.sha256", hashlib.sha256(data).hexdigest() + "\n", 0o644)
+    link = f"{kc.LIBEXEC}/kaptyorka-secure-setup"
+    if os.path.lexists(link):
+        os.unlink(link)
+    os.symlink("installer", link)
+
+
+def choose_tools(a, person: str) -> dict:
+    """Which AI tools go into the box: --tools, or a question, or the ones the person already
+    has (by name only, never run or read). Asked before the link is used."""
+    if a.get("--tools"):
+        return kap_tools.parse_specs(a["--tools"])
+    have = kap_tools.detect(pwd.getpwnam(person).pw_dir)
+    if sys.stdin.isatty():
+        got = input("AI tools for the box, installed by each vendor's own installer (claude, codex, opencode, "
+                    f"cursor-agent; 'none' for none) [{','.join(have) or 'none'}]: ").strip()
+        if got:
+            return kap_tools.parse_specs(got)
+    return {t: "" for t in have}
+
+
+def tools_step(a, specs: dict) -> list:
+    """Lines for the end: a tool that did not install says how to try again."""
+    if a.get("--tools-from"):
+        install_tools(a["--tools-from"])
+    if not specs:
+        return []
+    say("Installing the AI tools into the box (each from its vendor; this takes a few minutes) ...")
+    done, failed = kap_tools.install(specs, say)
+    claude_execute_only()
+    return [f"  {t} is not in the box yet ({kc.shown(e, 160)}); try again later:  hubchat update-tools {t}"
+            for t, e in failed.items()]
+
+
+def apply(person: str, v: dict, rt: str, a, specs: dict) -> int:
+    """Everything after the checks: install, repair and the hub's values, the same steps."""
+    ver = version()
+    say(f"Installing kaptyorka {ver} for {person}, personal-laptop mode ...")
+    install_code(ver)
+    install_etc(ver)
+    install_installer()
+    if rt:
+        kr.write_file(kc.LIMITS_FILE, f"runtime_max={rt}\n", 0o644)
+    elif not os.path.exists(kc.LIMITS_FILE):
+        kr.write_file(kc.LIMITS_FILE, "runtime_max=7d\n", 0o644)
+    later = tools_step(a, specs)
+    claude_execute_only()
+    install_units()
+    install_relay_conf(v)
+    install_hooks()
+    install_person(person, v)
+    a["_later"] = later
+    return self_check(person)
+
+
+def self_check(person: str) -> int:
+    problems = kr.outside_check(person, [person])
+    if problems:
+        say("Self-check: PROBLEMS", *[f"  {p}" for p in problems])
+        return 3
+    kr.ensure_box_running(person)
+    r = kr.run(["systemd-run", "--quiet", "--collect", "--pipe", "--wait", "--expand-environment=no",
+                f"--working-directory={kc.view_root(person)}", *kr.props_args(person, person), "--",
+                kc.WALLCHECK, "--verbose", "--box", person, "--person", person,
+                "--addrs", ",".join(kr.host_addrs()), "--canaries", ",".join(kr.shared_canaries()),
+                "--", "/bin/true"], check=False)
+    if r.returncode != 0:
+        say("Self-check (inside the box): PROBLEMS", *["  " + ln for ln in (r.stderr or r.stdout).strip()[-400:].splitlines()])
+        return 3
+    say("Self-check: all walls in place. " + " ".join(r.stderr.split()))
+    return 0
+
+
 def install(a) -> int:
     person = a.get("--person") or os.environ.get("SUDO_USER", "")
     kc.check_person(person)
@@ -529,7 +629,7 @@ def install(a) -> int:
         raise Refuse("give the invite link alone: " + " ".join(by_hand) + " are for tests")
     if not link and len(by_hand) < len(BY_HAND):
         raise Refuse("give the personal invite link your team admin sent you, in quotes:  sudo python3 -I "
-                     "kap_setup.py install --personal 'https://<hub>:<port>/i/<code>#sha256=<fingerprint>'")
+                     "kaptyorka-secure-setup.pyz install --personal 'https://<hub>:<port>/i/<code>#sha256=<fingerprint>'")
     rt = a.get("--runtime-max") or "7d"
     if not kc.RUNTIME_RX.fullmatch(rt):
         raise Refuse("--runtime-max: like 7d, 12h, 90min or infinity")
@@ -553,39 +653,21 @@ def install(a) -> int:
         if inv:
             say("Nothing was changed on this computer, and the link was not used: fix the above and run this again.")
         return 2
+    specs = choose_tools(a, person)
     ask_claude_token(person, v)
     if inv:
         say(f"Joining the hub at {inv['host']}:{inv['port']} (fingerprint {inv['fp'][:16]}...) as {v['name']} ...")
         v.update(redeem(inv, v["name"]))
         say(f"Joined: this computer is {v['name']} on the hub (address {v['ip']}).")
-    ver = version()
-    say(f"Installing kaptyorka {ver} for {person}, personal-laptop mode ...")
-    install_code(ver)
-    if a.get("--tools-from"):
-        install_tools(a["--tools-from"])
-    claude_execute_only()
-    install_etc(ver)
-    kr.write_file(kc.LIMITS_FILE, f"runtime_max={rt}\n", 0o644)
-    install_units()
-    install_relay_conf(v)
-    install_hooks()
-    install_person(person, v)
-    problems = kr.outside_check(person, [person])
-    if problems:
-        say("Self-check: PROBLEMS", *[f"  {p}" for p in problems])
-        return 3
-    kr.ensure_box_running(person)
-    r = kr.run(["systemd-run", "--quiet", "--collect", "--pipe", "--wait", "--expand-environment=no",
-                f"--working-directory={kc.view_root(person)}", *kr.props_args(person, person), "--",
-                kc.WALLCHECK, "--verbose", "--box", person, "--person", person,
-                "--addrs", ",".join(kr.host_addrs()), "--canaries", ",".join(kr.shared_canaries()),
-                "--", "/bin/true"], check=False)
-    if r.returncode != 0:
-        say("Self-check (inside the box): PROBLEMS", *["  " + ln for ln in (r.stderr or r.stdout).strip()[-400:].splitlines()])
-        return 3
-    say("Self-check: all walls in place. " + " ".join(r.stderr.split()))
+    rc = apply(person, v, rt, a, specs)
+    if rc:
+        return rc
     pub = kr.read_text(f"{kc.box_home(person)}/.ssh/id_ed25519.pub").strip()
+    have = kap_tools.installed()
     say("", f"Done. This computer is {v['name']} on the hub; team chats reach it only through the box.",
+        "AI tools in the box: " + (", ".join(f"{t} {have[t]}" for t in sorted(have)) or "none yet"
+                                   + " (add them with  hubchat update-tools claude codex ...)"),
+        *a.get("_later", []),
         "Next steps:",
         "  1. Log out and in once (or restart the computer). Until then your own programs get",
         "     \"Permission denied\" in team folders.",
@@ -597,8 +679,74 @@ def install(a) -> int:
         *([f"  Delete the token file now: rm {kc.shown(a['--claude-token-file'], 200)}"]
           if a.get("--claude-token-file") else []),
         *(["For private repositories: add the box's own SSH key to your git account (as an extra key):",
-           "  " + pub] if pub else []))
+           "  " + pub] if pub else []),
+        f"A copy of this installer stays in {kc.INSTALLER} (rejoin, repair, remove).")
     return 0
+
+
+def installed_values() -> dict:
+    """The hub's values this computer has (relay.conf and the device key), each checked again."""
+    if kr.read_text(kc.MODE_FILE).strip() != "personal":
+        raise Refuse("kaptyorka's personal mode is not installed on this computer: install it first")
+    conf = dict(ln.split("=", 1) for ln in kr.read_text(f"{kc.ETC}/relay.conf").splitlines() if "=" in ln)
+    tok = kr.read_text(f"{kc.SECRET}/device-token").strip()
+    damaged = Refuse("this computer's hub settings are damaged: run  rejoin  with a new link from your team admin")
+    try:
+        ip = str(ipaddress.ip_address(conf.get("hub_ip", "")))
+    except ValueError:
+        raise damaged
+    port, fp, name = conf.get("hub_port", ""), conf.get("hub_sha256", ""), conf.get("name", "")
+    if not (port.isdigit() and 0 < int(port) < 65536 and FP_RX.fullmatch(fp) and CNAME_RX.fullmatch(name)
+            and TOKEN_RX.fullmatch(tok)):
+        raise damaged
+    return {"ip": ip, "port": int(port), "fp": fp, "name": name, "token": tok, "claude": ""}
+
+
+def installed_people() -> list:
+    return sorted(p for p in os.listdir(kc.PEOPLE) if kc.PERSON_RX.fullmatch(p)) if os.path.isdir(kc.PEOPLE) else []
+
+
+def rejoin(a) -> int:
+    """A new personal link for this computer (new certificate, address or device): the hub's
+    values and the device key change, nothing else (9.5)."""
+    old = installed_values()
+    inv = parse_invite(a.get("link", ""))
+    name = a.get("--name") or old["name"]
+    if not CNAME_RX.fullmatch(name):
+        raise Refuse("--name: letters, digits, '.', '_', '-', at most 32, not starting with '.' or '-'")
+    say(f"Joining the hub at {inv['host']}:{inv['port']} (fingerprint {inv['fp'][:16]}...) as {name} ...")
+    v = {"name": name, "claude": "", **redeem(inv, name)}
+    install_relay_conf(v)
+    kr.systemctl("try-restart", "kaptyorka-relay.service", check=False)
+    say(f"Joined again: this computer is {name} on the hub (address {v['ip']}). Team chats that run now",
+        "reach the hub again within a minute; your team folders and the box are as they were.")
+    return 0
+
+
+def repair(a) -> int:
+    """Every file, unit, rule and launcher line written again from this installer, the hub's
+    values and the box's sign-ins kept; then the self-check."""
+    v = installed_values()
+    people = installed_people()
+    if not people:
+        raise Refuse("no person is set up on this computer: install it first")
+    rc = 0
+    for person in people:
+        rc = rc or apply(person, dict(v), "", a, {})
+    if rc == 0:
+        say("Repaired: every file and unit is as this installer writes them, and the self-check passed.")
+    return rc
+
+
+def update_tools(a, pos) -> int:
+    installed_values()
+    specs = kap_tools.parse_specs(",".join(pos)) if pos else {t: "" for t in kap_tools.installed()}
+    if not specs:
+        raise Refuse("no AI tool is in the box yet: name the ones you want, such as  update-tools claude codex")
+    done, failed = kap_tools.install(specs, say)
+    claude_execute_only()
+    say(*[f"{t}: now {ver}" for t, ver in done.items()], *[f"{t}: not changed ({e})" for t, e in failed.items()])
+    return 1 if failed else 0
 
 
 # ---------------------------------------------------------------------------- remove (9.6)
@@ -725,6 +873,13 @@ def main(argv) -> int:
             if len(pos) == 2:
                 a["link"] = pos[1]
             return install(a)
+        if pos[:1] == ["rejoin"] and len(pos) == 2:
+            a["link"] = pos[1]
+            return rejoin(a)
+        if pos == ["repair"]:
+            return repair(a)
+        if pos[:1] == ["update-tools"]:
+            return update_tools(a, pos[1:])
         if pos == ["remove"]:
             return remove(a)
         print(USAGE)

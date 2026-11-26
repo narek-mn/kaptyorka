@@ -2615,8 +2615,10 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                                              kind=kind if isinstance(kind, str) else "?"))
         except KaptyorkaError as e:
             return PlainTextResponse(str(e), status_code=400)
-        return JSONResponse({"code": code, "url": invite_url(request, code),
-                             "expires": admin_ops.invite_expires(store, code)})
+        url = invite_url(request, code)
+        return JSONResponse({"code": code, "url": url, "expires": admin_ops.invite_expires(store, code),
+                             **({"install": hub_box.install_commands(url)}
+                                if store.invite_kind(code) == "personal" else {})})
 
     @server.custom_route("/api/team-machines", methods=["POST"])
     @_bad_request
@@ -3258,11 +3260,19 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             # a personal laptop installs with the secure installer from the project page (design v2,
             # 9.2), never a command this page offers to run as root; the link alone is shown
             link = invite_url(request, code)
+            cmds = hub_box.install_commands(link)
             body = ("<h1>Set up your personal laptop</h1>"
                     + (INVITE_GITLAB.format(action=html.escape(f"/i/{code}/gitlab")) if on else "")
-                    + ("<p>Get the secure installer from the kaptyorka project page (README, \"Personal"
-                       " laptop\") and give it this link:</p>" f"<pre>{html.escape(link)}</pre>"
-                       "<p>This link works for 7 days, once.</p>" if link.startswith("https://") else
+                    + (("<p>On your laptop, in a terminal, as yourself: get the installer of this hub's"
+                        " kaptyorka version from the project's GitHub release, then check it and install"
+                        " (the install runs only when the check says OK):</p>"
+                        f"<pre>{html.escape(chr(10).join(cmds))}</pre>"
+                        "<p>The SHA-256 above is the one this hub computes from its own kaptyorka; the same"
+                        " number is on the project's release page. If they differ, do not run it.</p>"
+                        if cmds else
+                        "<p>Get the secure installer from the kaptyorka project page (README, \"Personal"
+                        " laptop\") and give it this link:</p>" f"<pre>{html.escape(link)}</pre>")
+                       + "<p>This link works for 7 days, once.</p>" if link.startswith("https://") else
                        "<p>This hub has no encrypted connections yet, and a personal laptop joins only over"
                        " one: ask your admin to switch them on and send a new link.</p>"))
             return HTMLResponse(INVITE_PAGE.format(body=body), headers=headers)
