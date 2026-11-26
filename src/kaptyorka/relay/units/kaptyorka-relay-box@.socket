@@ -1,0 +1,18 @@
+# The relay's door for one person's box (secure design v2, 4.3). Only root and kap-<person>
+# can connect: nobody else may create a file in /run/kaptyorka/relay, so the door cannot be
+# faked, and the relay also checks the caller's uid (SO_PEERCRED).
+[Unit]
+Description=kaptyorka relay door for the box of %i
+
+[Socket]
+ListenStream=/run/kaptyorka/relay/%i.sock
+SocketUser=root
+SocketGroup=kap-%i
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=yes
+FileDescriptorName=box-%i
+Service=kaptyorka-relay.service
+
+[Install]
+WantedBy=sockets.target

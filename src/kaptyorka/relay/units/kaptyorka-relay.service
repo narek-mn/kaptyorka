@@ -1,0 +1,62 @@
+# The relay (secure design v2, 4.3, with the slice-0 changes D1 and D2: no
+# ProtectControlGroups=yes, which would put the cgroup tree back, and no PrivateUsers=yes,
+# which would hide the caller's uid). Started only by its socket units; it exits by itself
+# when no chat has talked to it for idle_exit seconds.
+# The hub's address goes in a drop-in written by the installer:
+#   /etc/systemd/system/kaptyorka-relay.service.d/hub.conf  ->  [Service] IPAddressAllow=<hub ip>
+# Without it the relay can reach nothing.
+[Unit]
+Description=kaptyorka relay: the box's only way to the hub
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I /opt/kaptyorka/relay/current/relay.py /etc/kaptyorka/relay.conf
+DynamicUser=yes
+LoadCredential=device-token:/etc/kaptyorka/secret/device-token
+LoadCredential=chat-key:/etc/kaptyorka/secret/chat-key
+
+# Files: nothing of any person.
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+TemporaryFileSystem=/dev/shm
+TemporaryFileSystem=/sys/fs/cgroup:ro
+ProtectProc=invisible
+ProcSubset=pid
+InaccessiblePaths=-/run/dbus -/run/user -/var/lib/kap-team -/srv -/run/kapbox -/mnt -/media -/var/lib/docker -/run/docker.sock -/etc/kaptyorka/secret
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# Rights: none, and no way to get any.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug
+SystemCallFilter=~process_vm_readv process_vm_writev kcmp pidfd_getfd
+UMask=0077
+LimitCORE=0
+
+# Network: IP sockets only (its doors come from systemd), and only to the hub.
+RestrictAddressFamilies=AF_INET AF_INET6
+IPAddressDeny=any
+
+# Limits, so a bad release cannot eat the laptop, and a hard end for the whole tree.
+MemoryMax=200M
+MemorySwapMax=0
+TasksMax=64
+CPUQuota=20%
+KillMode=control-group
+TimeoutStopSec=5
+RuntimeMaxSec=12h
