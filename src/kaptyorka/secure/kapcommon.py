@@ -34,6 +34,8 @@ WALLCHECK = LIBEXEC + "/wallcheck"
 BOX_EXEC = LIBEXEC + "/box-exec"
 ENTER = LIBEXEC + "/enter"
 HUBCHAT_ROOT = LIBEXEC + "/hubchat-root"
+TTY_FILTER = LIBEXEC + "/tty-filter"
+INSTALLER = LIBEXEC + "/installer"
 MEMORY = "_memory"
 
 TOOLS = ("claude", "opencode", "codex", "cursor-agent", "git")
@@ -411,6 +413,33 @@ def box_props(person: str, box: str, runtime_max: str = "7d") -> List[str]:
         "Environment=PATH=/opt/kap-tools/bin:/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8",
         "Environment=HTTPS_PROXY=http://127.0.0.1:3128 HTTP_PROXY=http://127.0.0.1:3128 "
         "ALL_PROXY=http://127.0.0.1:3128 NO_PROXY=",
+    ]
+
+
+def tty_filter_props(runtime_max: str = "7d") -> List[str]:
+    """The terminal filter's unit (4.8): a fresh user of its own, no network (and no socket call:
+    RestrictAddressFamilies=none needs a newer systemd than 255), no one's files, no new
+    processes and no capabilities; it only holds the two devices systemd-run --pipe hands it.
+    TIOCSTI (typing into the person's terminal) needs that terminal to be the caller's own or
+    CAP_SYS_ADMIN, and the unit has neither (measured, tests/secure/slice3.sh T-1b); a blanket
+    ioctl ban is not possible, Python's own open() needs it (measured). A refused call fails
+    (EPERM) instead of killing it."""
+    if not RUNTIME_RX.fullmatch(runtime_max):
+        raise Refuse("bad runtime limit")
+    return [
+        "DynamicUser=yes", "PrivateNetwork=yes", "RestrictAddressFamilies=AF_UNIX", "IPAddressDeny=any",
+        "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes", "PrivateDevices=yes", "PrivateIPC=yes",
+        "TemporaryFileSystem=/dev/shm", f"InaccessiblePaths=-{ETC} -{TEAM} -{VIEW} -{RUNBOX} -/run/kaptyorka -{OPT}",
+        "ProtectProc=invisible", "ProcSubset=pid", "ProtectKernelTunables=yes", "ProtectKernelModules=yes",
+        "ProtectKernelLogs=yes", "ProtectClock=yes", "ProtectHostname=yes", "ProtectControlGroups=yes",
+        "NoNewPrivileges=yes", "CapabilityBoundingSet=", "AmbientCapabilities=", "RestrictSUIDSGID=yes",
+        "RestrictNamespaces=yes", "LockPersonality=yes", "MemoryDenyWriteExecute=yes", "RestrictRealtime=yes",
+        "SystemCallArchitectures=native", "SystemCallErrorNumber=EPERM", "SystemCallFilter=@system-service",
+        "SystemCallFilter=~@privileged @resources @mount @debug @network-io @process @clock @cpu-emulation "
+        "@module @obsolete @raw-io @reboot @swap @keyring @setuid",
+        "UMask=0077", "LimitCORE=0", "MemoryMax=64M", "MemorySwapMax=0", "TasksMax=4", "CPUQuota=50%",
+        "KillMode=control-group", "TimeoutStopSec=5", f"RuntimeMaxSec={runtime_max}",
+        "Environment=LANG=C.UTF-8",
     ]
 
 

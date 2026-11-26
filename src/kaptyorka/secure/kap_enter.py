@@ -12,15 +12,22 @@ rule from the launcher:  sudo -n /usr/local/libexec/kaptyorka/enter <tool> args.
 6. The box's units and its helper are started if they are not running.
 7. The tool starts in a transient unit with the box's walls, behind wallcheck (the inside half):
    --pty at a live terminal, --pipe --wait otherwise (D8).
+8. What the box prints reaches the person's terminal only through tty-filter (4.8), its own
+   unit: at a live terminal the box's side is a pty made here (the person's keys go in as
+   they are, the output comes back filtered; a resize is passed on); otherwise each of stdout
+   and stderr that is a terminal gets a filter of its own. When the chat ends, pending input
+   is thrown away (tcflush) before the shell gets the terminal back.
 
 Nothing comes from the hub. Installed as /usr/local/libexec/kaptyorka/enter.
 """
+import fcntl
 import os
 import secrets
 import signal
 import subprocess
 import sys
 import termios
+import time
 
 if __package__:
     from . import kapcommon as kc, kaproot as kr
@@ -134,15 +141,115 @@ def main(argv) -> int:
     env = dict(kr.CLEAN_ENV)
     if tty and kc.TERM_RX.fullmatch(os.environ.get("TERM", "")):
         env["TERM"] = os.environ["TERM"]
-    p = subprocess.Popen(cmd, env=env)
     for s in (signal.SIGINT, signal.SIGQUIT):
         signal.signal(s, signal.SIG_IGN)   # systemd-run and the box get them; enter only waits
-    rc = p.wait()
-    if tty:
+    try:
+        return run_tty(cmd, env) if tty else run_pipe(cmd, env)
+    except kc.Refuse as e:
+        print(kc.term(f"enter: {e}"), file=sys.stderr)
+        return 2
+
+
+def filter_cmd(mode: str) -> list:
+    cmd = ["systemd-run", "--quiet", "--collect", "--pipe", "--wait", "--expand-environment=no",
+           f"--unit=kaptyorka-ttyfilter-{secrets.token_hex(4)}"]
+    for p in kc.tty_filter_props(kr.runtime_max()):
+        cmd += ["-p", p]
+    return cmd + ["--", "/usr/bin/python3", "-I", kc.TTY_FILTER, mode]
+
+
+def unit_of(cmd: list) -> str:
+    return next(a.split("=", 1)[1] for a in cmd if a.startswith("--unit="))
+
+
+def _ctty():
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+
+def _winsize(src: int, dst: int) -> None:
+    try:
+        fcntl.ioctl(dst, termios.TIOCSWINSZ, fcntl.ioctl(src, termios.TIOCGWINSZ, b"\0" * 8))
+    except OSError:
+        pass
+
+
+def _stop(unit: str) -> None:
+    kr.run(["systemctl", "stop", "--no-block", unit + ".service"], check=False)
+
+
+def run_tty(cmd: list, env: dict) -> int:
+    """systemd-run --pty on a pty made here; the person's terminal only behind tty-filter."""
+    import pty
+    import tty as ttymod
+    saved = termios.tcgetattr(0)
+    master, slave = pty.openpty()
+    _winsize(0, slave)
+    person = os.open(os.ttyname(0), os.O_RDWR | os.O_NOCTTY)
+    try:
+        filt = subprocess.Popen(filter_cmd("pty"), stdin=person, stdout=master, stderr=subprocess.DEVNULL,
+                                env=dict(kr.CLEAN_ENV))
+    finally:
+        os.close(person)
+    signal.signal(signal.SIGWINCH, lambda *_: _winsize(0, master))
+    box = None
+    try:
+        ttymod.setraw(0)   # keys go to the box as they are; the box's own pty does the rest
+        box = subprocess.Popen(cmd, env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
+                               preexec_fn=_ctty)
+        os.close(slave)
+        slave = -1
+        while box.poll() is None:
+            if filt.poll() is not None:     # no filter, no output: the chat is stopped
+                _stop(unit_of(cmd))
+                box.wait(30)
+                raise kc.Refuse("the terminal filter stopped, so the team chat was stopped too")
+            time.sleep(0.1)
         try:
+            filt.wait(5)
+        except subprocess.TimeoutExpired:
+            filt.terminate()
+        return box.returncode
+    finally:
+        if slave >= 0:
+            os.close(slave)
+        if box is not None and box.poll() is None:
+            _stop(unit_of(cmd))
+        if filt.poll() is None:
+            try:
+                filt.wait(5)
+            except subprocess.TimeoutExpired:
+                filt.kill()
+        os.close(master)
+        signal.signal(signal.SIGWINCH, signal.SIG_DFL)
+        try:
+            termios.tcsetattr(0, termios.TCSAFLUSH, saved)
             termios.tcflush(0, termios.TCIFLUSH)   # nothing the box left in the input reaches the shell
         except termios.error:
             pass
+
+
+def run_pipe(cmd: list, env: dict) -> int:
+    """--pipe --wait (D8): each of stdout and stderr that is a terminal gets its own filter."""
+    outs, filters = {1: 1, 2: 2}, []
+    try:
+        for fd in (1, 2):
+            if os.isatty(fd):
+                r, w = os.pipe()
+                filters.append(subprocess.Popen(filter_cmd("pipe"), stdin=r, stdout=fd, stderr=subprocess.DEVNULL,
+                                                env=dict(kr.CLEAN_ENV)))
+                os.close(r)
+                outs[fd] = w
+        box = subprocess.Popen(cmd, env=env, stdout=outs[1], stderr=outs[2])
+    finally:
+        for fd in (1, 2):
+            if outs[fd] != fd:
+                os.close(outs[fd])
+    rc = box.wait()
+    for f in filters:
+        try:
+            f.wait(10)
+        except subprocess.TimeoutExpired:
+            f.kill()
     return rc
 
 

@@ -1,7 +1,10 @@
 #!/bin/bash
 # Slice 5 of 07-design-v2.md (section 13): OpenCode (1 and 2), Codex and Cursor in the box, with the same walls and the
 # same hub use as Claude Code, in a fresh throw-away container. The hub, the personal install and the second machine
-# (team machine box-1) are slice3.sh's. The four real tools are downloaded into the container (slice2.sh's way).
+# (team machine box-1) are slice3.sh's: the hub from a wheel of this checkout, the laptop from the ONE installer file
+# (kap_installer.py; no repository in the container). The real tools come into the box only from the installer:
+# each vendor's own installer, in a locked unit that reaches only that vendor's hosts (kap_tools.py); OpenCode 2
+# and the real Claude Code later through `hubchat update-tools` (alice, through her sudo rule).
 # Per tool: it starts in the box through the real launcher, its own lock-down settings are in force and a chat cannot
 # change them (tried from inside the box), a message from box-1 goes through the real hub and arrives (pushed through
 # the tool's own server, or at the next turn), the page closes the chat, no personal canary is readable, and no
@@ -9,19 +12,24 @@
 # Codex runs with a fake API key (its turns fail with 401 after the message is in), Cursor needs a real sign-in, so its
 # chat is a stub that fires Cursor's hooks (as slice3.sh does for Claude). Phase r3: red team round 3's two
 # successes, step by step (12-redteam-round3.md): a box-planted OpenCode plugin under a folder alice made, run by her
-# own OpenCode; a box sign-in sent out base64, opaque or hex. Results: slice5-results.tsv.
+# own OpenCode; a box sign-in sent out base64, opaque or hex. Phase tools: the vendor installer's unit reaches
+# its vendor and nothing else, and what it installed is root-owned. Phase draw: each real tool (Claude Code, Codex,
+# OpenCode, cursor-agent) draws its first screen and redraws after a resize through the terminal filter (design
+# 4.8), at a real terminal. Results: slice5-results.tsv.
 #
 # On the host (never as root):   ./slice5.sh            # fresh container kaptest-s5, removed at the end
 #                                KEEP=1 ./slice5.sh     # leave it running
 #                                PHASES="codex" ./slice5.sh --reuse    # rerun phases in the kept container
-# REPO=<kaptyorka checkout> (default: the checkout this script is in).
+# REPO=<kaptyorka checkout> (default: the checkout this script is in). PY=<python with the build package> (default
+# python3) builds the hub's wheel.
 #
 # Hard limits (07, section 13): every docker exec runs under `timeout -k 5 90`; every phase runs in its own transient
 # unit with RuntimeMaxSec and KillMode=control-group (polled with short execs); every helper unit too; the product's box
-# units get RuntimeMaxSec=400s from the installer. No strace. No host folder is mounted. Nothing runs as root on the host.
+# units get RuntimeMaxSec=400s from the installer; the vendor installers' units RuntimeMaxSec=600 (kap_tools), inside
+# the install phase's own 600 s unit. No strace. No host folder is mounted. Nothing runs as root on the host.
 set -u
 C=${C:-kaptest-s5}
-ALL_PHASES="setup hubvenv hub install oc1 oc2 codex cursor r3 final"
+ALL_PHASES="setup hubvenv hub install tools oc1 oc2 codex cursor r3 draw final"
 
 if [ "${1:-}" != "--inner" ]; then
   HERE=$(cd "$(dirname "$0")" && pwd)
@@ -51,23 +59,27 @@ if [ "${1:-}" != "--inner" ]; then
       --tmpfs /run --tmpfs /run/lock kaptest-box >/dev/null || exit 1
     for i in $(seq 60); do s=$(X systemctl is-system-running 2>/dev/null); case $s in running|degraded) break;; esac; sleep 1; done
   fi
-  X rm -rf /root/bundle /root/src
-  X mkdir -p /root/bundle /root/src
-  tar -C "$REPO/src" --exclude=__pycache__ -cf - kaptyorka/__init__.py kaptyorka/secure kaptyorka/relay \
-    | timeout -k 5 90 docker exec -i "$C" tar -C /root/bundle -xf - || exit 1
-  tar -C "$REPO/src" --exclude=__pycache__ -cf - kaptyorka | timeout -k 5 90 docker exec -i "$C" tar -C /root/src -xf - || exit 1
+  # the laptop gets ONE file, the installer (as from the release page); the hub gets a wheel. No repository inside.
+  PY=${PY:-python3}
+  WB=$(mktemp -d)
+  "$PY" -I "$REPO/src/kaptyorka/secure/kap_installer.py" build "$WB/kaptyorka-secure-setup.pyz" >/dev/null || { rm -rf "$WB"; exit 1; }
+  mkdir -p "$WB/repo" && cp "$REPO/pyproject.toml" "$REPO/README.md" "$REPO/LICENSE" "$WB/repo/" \
+    && tar -C "$REPO" --exclude=__pycache__ --exclude='*.egg-info' -cf - src | tar -C "$WB/repo" -xf - \
+    && timeout -k 5 300 "$PY" -m build --wheel --no-isolation --outdir "$WB/whl" "$WB/repo" >/dev/null 2>&1 \
+    || { echo "cannot build the hub's wheel (PY=$PY needs the build package)"; rm -rf "$WB"; exit 1; }
+  X rm -rf /root/hubwheel; X mkdir -p /root/hubwheel /home/alice/Downloads
+  timeout -k 5 90 docker cp "$WB/kaptyorka-secure-setup.pyz" "$C":/home/alice/Downloads/kaptyorka-secure-setup.pyz >/dev/null \
+    && timeout -k 5 90 docker cp "$(ls "$WB"/whl/*.whl)" "$C":/root/hubwheel/ >/dev/null || { rm -rf "$WB"; exit 1; }
+  rm -rf "$WB"
   timeout -k 5 90 docker cp "$0" "$C":/root/slice5.sh >/dev/null || exit 1
   # the stub claude (execute-only after install, as the real one; slice3.sh): the helper's `claude agents --json`
   SB=$(mktemp -d); printf '%s\n' '#include <stdio.h>' 'int main(void) { puts("[]"); return 0; }' > "$SB/stub.c"
   gcc -static -O2 -o "$SB/stubclaude" "$SB/stub.c" && timeout -k 5 90 docker cp "$SB/stubclaude" "$C":/root/stubclaude >/dev/null \
     || { rm -rf "$SB"; exit 1; }
   rm -rf "$SB"
-  if [ "${1:-}" != "--reuse" ]; then
-    X bash -c ': > /root/results.tsv'
-    echo "== the real tools (unit, max 600 s)"; unit toolsdl 600
-  fi
+  [ "${1:-}" != "--reuse" ] && X bash -c ': > /root/results.tsv'
   for p in ${PHASES:-$ALL_PHASES}; do
-    case $p in hubvenv) lim=400;; oc1|oc2|codex|cursor) lim=420;; r3) lim=400;; *) lim=85;; esac
+    case $p in hubvenv) lim=400;; install|draw) lim=600;; oc1|oc2|codex|cursor) lim=420;; r3) lim=400;; tools) lim=150;; *) lim=85;; esac
     echo "== phase $p (limit ${lim}s)"; unit "$p" "$lim"
   done
   X bash -c 'systemctl kill --signal=KILL "kapbox-*.slice" kaptest-chat.service >/dev/null 2>&1; true'
@@ -93,8 +105,11 @@ BH=$KH/home
 PA=$KH/projects/proj-a
 CH=/run/kapbox/alice/run/chats          # the helper's chat records (/run/kapbox/chats in the box)
 L=/usr/local/libexec/kaptyorka
-HUBPY="env PYTHONPATH=/root/src KAPTYORKA_HOME=/var/lib/kaphub/home /opt/hubvenv/bin/python3"
-SETUP="python3 -I /root/bundle/kaptyorka/secure/kap_setup.py"
+HUBPY="env KAPTYORKA_HOME=/var/lib/kaphub/home /opt/hubvenv/bin/python3"
+PYZ=/home/alice/Downloads/kaptyorka-secure-setup.pyz
+SETUP="python3 -I $PYZ"
+# where the installer put each vendor's tool (written by the install phase; the phases switch bin/ links for tests)
+[ -f /root/toolpaths ] && . /root/toolpaths
 export KH BH PA CH L
 
 rec() { # id status expected command actual
@@ -167,34 +182,16 @@ hub_round() {
 
 case $PH in
 refresh)
-  # --reuse: the changed product code into the kept container's install (the installer's own copy steps)
-  B=/root/bundle/kaptyorka/secure
-  for f in helper:kap_helper fence:kap_fence toolwire:kap_toolwire proxybridge:kap_proxybridge; do
-    install -m 644 $B/${f#*:}.py /opt/kaptyorka/box/current/${f%%:*}.py; done
-  for f in box-exec:kap_box_exec wallcheck:kap_wallcheck enter:kap_enter; do install -m 755 $B/${f#*:}.py $L/${f%%:*}; done
-  for f in kapcommon kaproot; do install -m 644 $B/$f.py $L/$f.py; done
-  (cd $B/files/box && for f in $(find . -type f); do install -D -m 644 "$f" "/etc/kaptyorka/box/$f"; done)
+  # --reuse: the changed product into the kept container: the new installer file's repair, the hub's new wheel
   systemctl stop kapbox-alice-helper.service 2>/dev/null
+  /opt/hubvenv/bin/pip install -q --force-reinstall --no-deps /root/hubwheel/*.whl >/root/pip.log 2>&1
+  t "R-0 the changed code is installed (the new installer's repair)" "Repaired" 're:Repaired' "$SETUP repair 2>&1 | tail -3"
   systemctl restart kaptest-hub.service; wait_for 30 'curl -sk -o /dev/null https://127.0.0.1:8443/'
-  t "R-0 the changed code is installed" "same files" 're:^rc=0 same$' "cmp $B/kap_helper.py /opt/kaptyorka/box/current/helper.py && cmp $B/files/box/opencode/etc/opencode.json /etc/kaptyorka/box/opencode/etc/opencode.json && echo same"
   ;;
-
-toolsdl)
-  # the real tools, as slice2.sh fetches them (OpenCode 1 and 2 from their GitHub releases), kept in /root/real
-  apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq --no-install-recommends nodejs npm openssh-client acl >/root/apt.log 2>&1
-  mkdir -p /root/dl /root/real; cd /root/dl
-  for v in 1.19.6 2.4.2; do d=/root/real/opencode${v%%.*}; mkdir -p "$d"
-    curl -fsSL --max-time 200 -o oc$v.tgz "https://github.com/anomalyco/opencode/releases/download/v$v/opencode-linux-x64.tar.gz" \
-      && tar -C "$d" -xzf oc$v.tgz && chmod 755 "$d/opencode"; done
-  (npm install -g --prefix /opt/kap-tools-npm @openai/codex) > codex.log 2>&1 && mkdir -p /root/real/codex && cp -a /opt/kap-tools-npm/. /root/real/codex/
-  rm -rf /opt/kap-tools-npm
-  (curl -fsS https://cursor.com/install | bash) > cursor.log 2>&1
-  CA=$(readlink -f /root/.local/bin/cursor-agent) && mkdir -p /root/real/cursor-agent && cp -a "$(dirname "$CA")"/. /root/real/cursor-agent/ \
-    && basename "$CA" > /root/real/cursor-agent/.exe
-  ls -la /root/real/*/ | head -40 ;;
 
 setup)
   mount --make-rshared /   # docker's --tmpfs /run is private: systemd's own mounts need a shared /
+  apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq --no-install-recommends openssh-client acl >/root/apt.log 2>&1
   rm -rf /home/alice/team
   runuser -u alice -- bash -c 'umask 022; mkdir -p ~/team/proj-a ~/personal ~/.config/opencode ~/.codex ~/.cursor && echo "team readme" > ~/team/proj-a/README.md
     echo CANARY-PERSONAL-FILE-7f3a > ~/personal/diary.txt; echo CANARY-CLAUDE-MD-6d6d > ~/.claude/CLAUDE.md
@@ -312,19 +309,18 @@ import sqlite3, sys, time
 d = sqlite3.connect("file:/var/lib/kaphub/hub.db?mode=ro", uri=True)
 for r in d.execute(sys.argv[1], [time.time() - 30] if "?" in sys.argv[1] else []): print("|".join(map(str, r)))
 EOF
-  t "S5-0 setup and the real tools" "opencode 1 and 2, codex, cursor-agent downloaded" 're:^rc=0 1\.19\.6 opencode v2\.4\.2 codex-cli [0-9.]+ 20[0-9.]+-' \
-    "echo \$(/root/real/opencode1/opencode --version) \$(/root/real/opencode2/opencode --version) \$(/root/real/codex/bin/codex --version) \$(/root/real/cursor-agent/\$(cat /root/real/cursor-agent/.exe) --version)"
+  t "S5-0 setup" "certificate, stubs, seed scripts" 're:^rc=0 [0-9a-f]{64}$' "cat /etc/kaptest/hub.fp"
   ;;
 
 hubvenv)
-  python3 -m venv /opt/hubvenv && /opt/hubvenv/bin/pip install -q 'mcp==2.3.0' >/root/pip.log 2>&1
+  python3 -m venv /opt/hubvenv && /opt/hubvenv/bin/pip install -q /root/hubwheel/*.whl 'mcp==2.3.0' >/root/pip.log 2>&1
   t "S5-1 the hub's packages" "mcp 2.3.0 and uvicorn importable" 're:^rc=0 ok$' "$HUBPY -c 'import mcp, uvicorn, kaptyorka.hub, kaptyorka.hub_box; print(\"ok\")'"
   ;;
 
 hub)
   $HUBPY /root/seed.py
   systemd-run --quiet --unit=kaptest-hub -p RuntimeMaxSec=3000 -p KillMode=control-group -p TimeoutStopSec=5 \
-    -p Environment=PYTHONPATH=/root/src -p Environment=KAPTYORKA_HOME=/var/lib/kaphub/home /opt/hubvenv/bin/python3 /root/hub.py
+    -p Environment=KAPTYORKA_HOME=/var/lib/kaphub/home /opt/hubvenv/bin/python3 /root/hub.py
   wait_for 30 'curl -sk -o /dev/null https://127.0.0.1:8443/'
   cat > /root/beat.sh <<'EOF'
 while true; do
@@ -342,14 +338,17 @@ EOF
 
 install)
   printf 'sk-ant-oat01-FAKE-SETUP-TOKEN-s5-not-a-login\n' > /root/claudetok; chmod 600 /root/claudetok
-  t "I-0 installer, personal mode, real device token and pinned fingerprint" "self-check passes" 're:^rc=0 .*Self-check: all walls in place' \
-    "$SETUP install --personal --person alice --hub-ip 127.0.0.1 --hub-port 8443 --hub-sha256 \$(cat /etc/kaptest/hub.fp) --name alice-laptop --device-token-file /root/devtok --claude-token-file /root/claudetok --runtime-max 400s --tools-from /root/tools"
-  # the real tools into /opt/kap-tools (root-owned, read-only in the box), as the installer will once it ships them
-  cp -a /root/real/. /opt/kap-tools/real/ 2>/dev/null || { mkdir -p /opt/kap-tools/real; cp -a /root/real/. /opt/kap-tools/real/; }
-  chown -R root:root /opt/kap-tools/real; chmod -R go-w /opt/kap-tools/real
-  ln -sfn /opt/kap-tools/real/codex/bin/codex /opt/kap-tools/bin/codex
-  ln -sfn "/opt/kap-tools/real/cursor-agent/$(cat /root/real/cursor-agent/.exe)" /opt/kap-tools/bin/cursor-agent
-  ln -sfn /opt/kap-tools/real/opencode1/opencode /opt/kap-tools/bin/opencode
+  # the installer file, with the three real tools from their vendors (Claude: the stub, from --tools-from, for tests)
+  TL=560 t "I-0 installer, personal mode, real device token and pinned fingerprint; Codex, OpenCode 1, cursor-agent from their vendors" \
+    "each tool in the box; self-check passes" \
+    're:^rc=0 .*codex [0-9.]+ is in the box.*opencode 1\.19\.6 is in the box.*cursor-agent [0-9.]+-[0-9a-f]+ is in the box.*Self-check: all walls in place.*AI tools in the box: codex [0-9.]+, cursor-agent [0-9.-]+[0-9a-f]+, opencode 1\.19\.6' \
+    "$SETUP install --personal --person alice --hub-ip 127.0.0.1 --hub-port 8443 --hub-sha256 \$(cat /etc/kaptest/hub.fp) --name alice-laptop --device-token-file /root/devtok --claude-token-file /root/claudetok --runtime-max 400s --tools-from /root/tools --tools codex,opencode=1.19.6,cursor-agent"
+  printf 'OC1=%s\nCX=%s\nCA=%s\n' "$(readlink -f /opt/kap-tools/bin/opencode)" "$(readlink -f /opt/kap-tools/bin/codex)" \
+    "$(readlink -f /opt/kap-tools/bin/cursor-agent)" > /root/toolpaths
+  . /root/toolpaths
+  t "S5-0b the real tools, each the version the installer recorded" "opencode 1.19.6, codex-cli, cursor-agent" \
+    're:^rc=0 1\.19\.6 codex-cli [0-9.]+ 20[0-9.]+-[0-9a-f]+$' \
+    "echo \$(runuser -u nobody -- env HOME=/tmp /opt/kap-tools/bin/opencode --version) \$(runuser -u nobody -- /opt/kap-tools/bin/codex --version 2>/dev/null) \$(runuser -u nobody -- /opt/kap-tools/bin/cursor-agent --version)"
   t "I-1 the box code holds the helper, its fence and its tool wire" "fence.py, helper.py, proxybridge.py, toolwire.py" \
     're:^rc=0 fence.py helper.py proxybridge.py toolwire.py$' "ls /opt/kaptyorka/box/current/ | tr '\n' ' ' | sed 's/ \$//'"
   t "H-add hubchat add proj-a as alice" "a team folder" 're:proj-a is now a team folder' "runuser -u alice -- bash -c 'hubchat add ~/team/proj-a' 2>&1"
@@ -360,7 +359,16 @@ install)
 
 oc1|oc2)
   v=${PH#oc}; I=O$v
-  ln -sfn /opt/kap-tools/real/opencode$v/opencode /opt/kap-tools/bin/opencode
+  if [ "$v" = 2 ]; then
+    TL=300 t "U-1 hubchat update-tools opencode=2.4.2 (alice, through her sudo rule): OpenCode 2 from its vendor's installer" \
+      "now 2.4.2" 're:opencode 2\.4\.2 is in the box' "runuser -u alice -- hubchat update-tools opencode=2.4.2 2>&1 | tail -3"
+    echo "OC2=$(readlink -f /opt/kap-tools/bin/opencode)" >> /root/toolpaths
+    t "U-2 the record says so, and OpenCode 1 is kept for a chat that still runs it" "2.4.2 recorded; 1.19.6 folder kept" \
+      're:^rc=0 2\.4\.2 1\.19\.6 2\.4\.2 $' \
+      "python3 -I -c 'import json; print(json.load(open(\"/etc/kaptyorka/tools.json\"))[\"opencode\"][\"version\"], end=\" \")'; ls /opt/kap-tools/opencode | tr '\n' ' '"
+  else
+    ln -sfn "$OC1" /opt/kap-tools/bin/opencode
+  fi
   systemctl stop kapbox-alice-helper.service 2>/dev/null   # a helper of the other OpenCode's run ends first
   # --- lock-down: OpenCode's own settings, in force and not changeable from inside the box
   O=state/opencode/cfg/opencode
@@ -507,7 +515,7 @@ cursor)
   printf '{"sandbox": {"type": "workspace_readwrite", "cwd": "/srv/team/alice/proj-a", "readBoundary": "system"}}' > /root/cp.json
   install -o kap-alice -g kap-alice -m 600 /root/cp.json /run/kapbox/alice/tmp/cp.json
   t "$I-L2 Cursor's own shell sandbox inside the box: it needs a user namespace (Landlock backend) or bubblewrap (INFO)" "measured" info \
-    "inb '/opt/kap-tools/real/cursor-agent/cursorsandbox --policy /tmp/cp.json -- /usr/bin/cat ~/.cursor/cli-config.json 2>&1 | tail -1'"
+    "inb '$(dirname "$CA")/cursorsandbox --policy /tmp/cp.json -- /usr/bin/cat ~/.cursor/cli-config.json 2>&1 | tail -1'"
   tui cursor-agent; sleep 14
   t "$I-L3 the real cursor-agent starts in the box with its locked cli-config.json (a sign-in is needed next)" "its screen, no error" \
     're:(Cursor|[Ll]og ?in|[Ss]ign)' "screen cursor-agent | head -12"
@@ -541,16 +549,16 @@ cursor)
     "readable: stealable unless Cursor's sandbox runs" info "inb 'cat ~/.cursor/auth.json'"
   t "$I-K2 no personal file of alice is readable from the box (her ~/.cursor, her canaries)" "none" nocanary \
     "inb 'cat /home/alice/.cursor/auth.json /home/alice/personal/diary.txt 2>&1'"
-  ln -sfn "/opt/kap-tools/real/cursor-agent/$(cat /root/real/cursor-agent/.exe)" /opt/kap-tools/bin/cursor-agent
+  ln -sfn "$CA" /opt/kap-tools/bin/cursor-agent
   endbox "$I"
   ;;
 
 r3)
   # Red team round 3 (12-redteam-round3.md), the attacker's own steps, and the fixes: the covers in alice's view
   # (kaptyorka-guard), the recursive trap notice, the launcher's other ways in, and the relay's sign-in check.
-  ln -sfn /opt/kap-tools/real/opencode1/opencode /opt/kap-tools/bin/opencode
+  ln -sfn "$OC1" /opt/kap-tools/bin/opencode
   V=/srv/team/alice/proj-a
-  OC=/opt/kap-tools/real/opencode1/opencode
+  OC=$OC1
   t "R3-0 the view is private (its covers never show in the box) and kaptyorka-guard runs" "no shared: tag; active" \
     're:^rc=0 private active$' "grep \" $V \" /proc/self/mountinfo | grep -q shared: && echo shared || echo -n 'private '; systemctl is-active kaptyorka-guard.service"
   # (d) hubchat add hands every folder to the box, also a .opencode/plugin alice made before
@@ -653,6 +661,85 @@ PY
   inb 'rm -rf .oc-old oc.old opencode.json evil.js .claude .codex .cursor .opencode' >/dev/null
   rm -f /home/alice/PLUGIN_*
   endbox R3
+  ;;
+
+tools)
+  # the vendor installer's unit (kap_tools.unit_cmd, the installer's own code), with a probe in place of the installer
+  cat > /root/toolnet.py <<'EOF'
+import subprocess, sys
+sys.path.insert(0, "/usr/local/libexec/kaptyorka")
+import kap_tools as kt
+a = kt.addresses(kt.VENDOR["claude"][1])
+open("/run/kaptyorka/tool-hosts-probe", "w").write(kt.hosts_text(a))
+cmd = kt.unit_cmd("kaptest-toolnet", "claude", "claude", "", "/var/lib/kaptyorka-tool-stage-probe", "/run/kaptyorka/tool-hosts-probe", a)
+cmd[-1] = sys.argv[1]
+r = subprocess.run(cmd, capture_output=True, text=True, timeout=80)
+print((r.stdout + r.stderr).replace("\n", " "))
+EOF
+  t "V-1 the vendor installer's unit reaches its vendor's hosts only, sees no home and no kaptyorka file, and is not root" \
+    "vendor=200; others, an address, DNS blocked; homes and /etc/kaptyorka hidden; a throw-away uid" \
+    're:^rc=0 vendor=200 other=000 other=blocked ip=blocked dns=blocked home=hidden etc=hidden team=hidden uid=[1-9][0-9]+ ' \
+    "python3 -I /root/toolnet.py 'curl -sL -m 20 -o /dev/null -w \"vendor=%{http_code} \" https://claude.ai/install.sh; curl -s -m 8 -o /dev/null -w \"other=%{http_code} \" https://example.com || echo -n \"other=blocked \"; curl -s -m 5 -o /dev/null https://1.1.1.1 || echo -n \"ip=blocked \"; getent hosts example.org >/dev/null || echo -n \"dns=blocked \"; cat /home/alice/personal/diary.txt 2>/dev/null || echo -n \"home=hidden \"; ls /etc/kaptyorka 2>/dev/null || echo -n \"etc=hidden \"; ls /var/lib/kap-team 2>/dev/null || echo -n \"team=hidden \"; echo -n \"uid=\$(id -u) \"'"
+  t "V-2 everything the installers put in /opt/kap-tools is root's, writable by no one else, with no set-id bit" "nothing else" 're:^rc=0 $' \
+    "find /opt/kap-tools ! -type l \\( ! -user root -o -perm /022 -o -perm /6000 \\) -print | head -5"
+  t "V-3 /etc/kaptyorka/tools.json (root-owned) records each tool's version and the SHA-256 of the program the box runs" "all match" \
+    're:^rc=0 644 root (codex ok )?(cursor-agent ok )?(opencode ok )?$' \
+    "stat -c '%a %U ' /etc/kaptyorka/tools.json | tr -d '\n'; python3 -I -c 'import hashlib, json; r = json.load(open(\"/etc/kaptyorka/tools.json\"))
+for t in sorted(r): print(t, \"ok\" if hashlib.sha256(open(\"/opt/kap-tools/\" + r[t][\"program\"], \"rb\").read()).hexdigest() == r[t][\"sha256\"] else \"DIFFERS\", end=\" \")'"
+  # alice's own tools are found by their names only: a decoy that would leave a mark if anything ran it
+  runuser -u alice -- bash -c 'mkdir -p ~/.local/bin && printf "#!/bin/sh\ntouch /tmp/DECOY-RAN\n" > ~/.local/bin/claude && chmod 755 ~/.local/bin/claude && ln -sf /nonexistent ~/.local/bin/cursor-agent'
+  t "V-4 the default choice is the tools alice has, by name only: nothing of hers is run or copied" "claude, cursor-agent; not run" \
+    "re:^rc=0 \\['claude', 'cursor-agent'\\] not-run$" \
+    "python3 -I -c 'import sys; sys.path.insert(0, \"/usr/local/libexec/kaptyorka\"); import kap_tools; print(kap_tools.detect(\"/home/alice\"), end=\" \")'; [ -e /tmp/DECOY-RAN ] && echo RAN || echo not-run"
+  rm -rf /home/alice/.local/bin/claude /home/alice/.local/bin/cursor-agent
+  ;;
+
+draw)
+  # design 4.8 with the real tools: a real terminal (script(1) in tmux records every byte that reaches it), the
+  # launcher, the box and the filter; the first screen, then a resize. The real Claude Code comes in first.
+  TL=300 t "U-3 hubchat update-tools claude (alice): the real Claude Code from its vendor's installer, execute-only in the box" \
+    "in the box; 711" 're:claude [0-9.]+ is in the box.* 711$' \
+    "runuser -u alice -- hubchat update-tools claude 2>&1 | tail -2 | tr '\n' ' '; stat -c %a \$(readlink -f /opt/kap-tools/bin/claude)"
+  ln -sfn "$OC1" /opt/kap-tools/bin/opencode
+  cat > /root/kinds.py <<'EOF'
+import re, sys
+d = open(sys.argv[1], "rb").read().decode("utf-8", "replace")
+k = set()
+for m in re.finditer(r"\x1b(\[([<=>?]?)[0-9;:]*([ -/]*)([@-~])|\](\d*)|([P_^X])|(.))", d):
+    if m.group(1).startswith("["): k.add(f"CSI{m.group(2)}{m.group(3)}{m.group(4)}")
+    elif m.group(5) is not None: k.add(f"OSC{m.group(5)}")
+    elif m.group(6): k.add({"P": "DCS", "_": "APC", "^": "PM", "X": "SOS"}[m.group(6)])
+    else: k.add("ESC" + m.group(7))
+print(" ".join(sorted(k)))
+EOF
+  for spec in "claude:C:claude" "codex:X:codex|chatgpt|sign in|openai" "opencode:O:opencode|ask anything|ctrl" \
+              "cursor-agent:U:cursor|log ?in|sign"; do
+    tool=${spec%%:*}; rest=${spec#*:}; id=T$tool; mark=${rest#*:}
+    printf '#!/bin/bash\nexec script -qfec "runuser -u alice -- bash -c '"'"'cd ~/team/proj-a && exec %s/launch %s'"'"'" /root/raw-%s\n' \
+      "$L" "$tool" "$tool" > /root/draw-$tool.sh
+    chmod 755 /root/draw-$tool.sh; rm -f /root/raw-$tool
+    tmux -L s5 kill-session -t d 2>/dev/null
+    tmux -L s5 new-session -d -s d -x 140 -y 40 "/root/draw-$tool.sh; sleep 600"
+    wait_for 40 "tmux -L s5 capture-pane -p -t d | tr A-Z a-z | grep -Eq '$mark'"; sleep 3
+    t "$id-1 the real $tool draws its first screen at a real terminal, through the box and the filter" "its screen ($mark)" \
+      "re:$mark" "tmux -L s5 capture-pane -p -t d | grep -v '^\\s*\$' | head -24 | tr A-Z a-z"
+    before=$(stat -c %s /root/raw-$tool 2>/dev/null || echo 0)
+    tmux -L s5 resize-window -t d -x 100 -y 30; sleep 5
+    t "$id-2 after a resize to 100x30 the real $tool draws again (new output reached the terminal; its screen still there)" \
+      "grew, its screen" 're:^rc=0 grew screen$' \
+      "[ \$(stat -c %s /root/raw-$tool) -gt $before ] && echo -n 'grew '; tmux -L s5 capture-pane -p -t d | tr A-Z a-z | grep -Eq '$mark' && echo screen"
+    t "$id-3 what reached the terminal from the real $tool: no OSC but plain links, no DCS, APC, PM or SOS" "only drawing codes" \
+      'nore:OSC([0-79]|[0-9]{2,})|DCS|APC|PM|SOS' "python3 -I /root/kinds.py /root/raw-$tool"
+    tmux -L s5 kill-session -t d 2>/dev/null; systemctl kill --signal=KILL 'kapbox-alice-chat-*' 2>/dev/null; sleep 2
+    # control (INFO): the same tool outside the box, unfiltered, with a throw-away HOME of alice: what it prints that
+    # the filter takes out (script(1) gives it a terminal; it runs 12 s)
+    mkdir -p /tmp/ctl-$tool; chown alice /tmp/ctl-$tool
+    (cd /tmp/ctl-$tool && timeout -k 2 12 script -qfec "runuser -u alice -- env HOME=/tmp/ctl-$tool TERM=xterm-256color /opt/kap-tools/bin/$tool" \
+      /root/ctl-$tool </dev/null >/dev/null 2>&1)
+    t "$id-4 control (INFO): the codes the real $tool prints outside the box that the filter takes out" "measured" info \
+      "a=\$(python3 -I /root/kinds.py /root/ctl-$tool); b=\$(python3 -I $L/tty-filter pipe < /root/ctl-$tool > /root/ctlf-$tool; python3 -I /root/kinds.py /root/ctlf-$tool); echo \"dropped: \$(comm -23 <(tr ' ' '\n' <<< \"\$a\" | sort) <(tr ' ' '\n' <<< \"\$b\" | sort) | tr '\n' ' ')\""
+  done
+  endbox TD
   ;;
 
 final)
