@@ -882,12 +882,14 @@ def test_forwarder_viewcheck(tmp_path):
 
 
 def test_wallcheck_relay_door(tmp_path):
+    from kaptyorka.relay import relay
     path = str(tmp_path / "relay.sock")
     s = socket.socket(socket.AF_UNIX)
     s.bind(path)
     s.listen(4)
     answers = [b'{"ok": false, "error": "wallcheck: unknown call \'wallcheck\'"}\n',
-               b'{"ok": false, "error": "refused: you are not this box\'s user"}\n']
+               b'{"ok": false, "error": "refused: you are not this box\'s user"}\n',
+               json.dumps(relay.BUSY).encode() + b"\n"]   # the same text as the relay's
 
     def serve():
         for a in answers:
@@ -899,6 +901,7 @@ def test_wallcheck_relay_door(tmp_path):
     t.start()
     assert wc.relay_answers(path) == ""
     assert "refused" in wc.relay_answers(path)
+    assert wc.relay_answers(path) == ""   # the relay's own "busy": its door answers
     t.join(5)
     s.close()
     assert wc.relay_answers(str(tmp_path / "none.sock"))

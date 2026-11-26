@@ -93,6 +93,11 @@ def relay_answers(path: str) -> str:
         return f"relay answered {data[:40]!r}"
     if ans.get("ok") is False and "unknown call" in str(ans.get("error", "")):
         return ""
+    # Its full answer (relay.BUSY): the door answers, it has other calls in flight (each waits up to
+    # 30 s for the hub, so a slow or offline hub fills it). Measured in slice 2: a chat started
+    # within 20 s of two Codex chats was refused here.
+    if ans == {"ok": False, "error": "the relay is busy, try again"}:
+        return ""
     return f"relay answered {str(ans)[:60]}"
 
 
