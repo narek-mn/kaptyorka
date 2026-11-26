@@ -5,6 +5,23 @@
 # The hub's address goes in a drop-in written by the installer:
 #   /etc/systemd/system/kaptyorka-relay.service.d/hub.conf  ->  [Service] IPAddressAllow=<hub ip>
 # Without it the relay can reach nothing.
+#
+# Ports: no unit setting limits the port of an outgoing connection. IPAddressAllow= takes
+# addresses only, and SocketBindAllow=/SocketBindDeny= act on bind() only ("implemented with
+# cgroup/bind4 and cgroup/bind6 cgroup-bpf hooks", systemd.resource-control(5), systemd 255).
+# The unit ways are IPEgressFilterPath= or BPFProgram=connect4:/connect6: with a BPF program
+# the installer compiles and pins in /sys/fs/bpf. The simpler way is a firewall rule the
+# installer writes, matched by this unit's cgroup (nft(8), "socket cgroupv2 level NUM"):
+#   table inet kaptyorka-relay {
+#     chain out {
+#       type filter hook output priority 0;
+#       socket cgroupv2 level 2 "system.slice/kaptyorka-relay.service" meta l4proto != tcp drop
+#       socket cgroupv2 level 2 "system.slice/kaptyorka-relay.service" tcp dport != <hub port> drop
+#     }
+#   }
+# nft resolves the cgroup when the rule is loaded, so the installer must load it again each
+# time the unit starts (ExecStartPre= in a drop-in, run as root with "+"). NOT TESTED yet.
+# Until then: give the hub an address of its own, so "any port of the hub" reaches nothing else.
 [Unit]
 Description=kaptyorka relay: the box's only way to the hub
 
@@ -15,17 +32,24 @@ DynamicUser=yes
 LoadCredential=device-token:/etc/kaptyorka/secret/device-token
 LoadCredential=chat-key:/etc/kaptyorka/secret/chat-key
 
-# Files: nothing of any person.
+# Files: nothing of any person, and of the host only what python3 needs. /etc, /var and /opt
+# are empty but for the relay's code, its config and the dynamic linker's cache. /etc/passwd
+# is there only for the box users' ids; when the installer writes box_uids= into relay.conf,
+# that bind can go. No CA store: the hub is accepted by its pinned fingerprint.
+# Measured on systemd 255: TemporaryFileSystem=/ is ignored without a word (the whole root
+# stays), and TemporaryFileSystem=/sys is undone by ProtectKernelTunables=yes (the real /sys,
+# cgroup tree too, comes back). Hence the three folders and InaccessiblePaths=/sys.
+TemporaryFileSystem=/etc:ro /var:ro /opt:ro
+BindReadOnlyPaths=/opt/kaptyorka/relay /etc/kaptyorka/relay.conf /etc/passwd -/etc/ld.so.cache -/etc/alternatives
 ProtectHome=yes
 ProtectSystem=strict
 PrivateTmp=yes
 PrivateDevices=yes
 PrivateIPC=yes
 TemporaryFileSystem=/dev/shm
-TemporaryFileSystem=/sys/fs/cgroup:ro
 ProtectProc=invisible
 ProcSubset=pid
-InaccessiblePaths=-/run/dbus -/run/user -/var/lib/kap-team -/srv -/run/kapbox -/mnt -/media -/var/lib/docker -/run/docker.sock -/etc/kaptyorka/secret
+InaccessiblePaths=/sys -/boot -/srv -/mnt -/media -/run/dbus -/run/user -/run/kapbox -/run/docker.sock
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
@@ -48,9 +72,13 @@ SystemCallFilter=~process_vm_readv process_vm_writev kcmp pidfd_getfd
 UMask=0077
 LimitCORE=0
 
-# Network: IP sockets only (its doors come from systemd), and only to the hub.
+# Network: IP sockets only (its doors come from systemd), and only to and from the hub.
+# SocketBindDeny=any (no listening) needs a systemd built with +BPF_FRAMEWORK; Ubuntu 24.04's
+# is -BPF_FRAMEWORK and ignores it without a word (measured: bind and listen still work).
+# IPAddressDeny= does not need it and also refuses anyone but the hub connecting in.
 RestrictAddressFamilies=AF_INET AF_INET6
 IPAddressDeny=any
+SocketBindDeny=any
 
 # Limits, so a bad release cannot eat the laptop, and a hard end for the whole tree.
 MemoryMax=200M

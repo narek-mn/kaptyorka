@@ -19,7 +19,8 @@ from typing import Any, Dict, List, Optional, Tuple
 class FakeHub:
     def __init__(self, cert: Optional[str], key: Optional[str], host: str = "127.0.0.1",
                  port: int = 0, log_path: Optional[str] = None, answers_path: Optional[str] = None,
-                 tag: str = "hub"):
+                 tag: str = "hub", read_timeout: float = 5):
+        self.read_timeout = read_timeout
         self.answers: Dict[str, Tuple[int, Dict[str, str], Any]] = {}
         self.requests: List[Dict[str, Any]] = []
         self.log_path, self.answers_path, self.tag = log_path, answers_path, tag
@@ -77,7 +78,7 @@ class FakeHub:
     def _one(self, c: socket.socket) -> None:
         raw = b""
         try:
-            c.settimeout(5)
+            c.settimeout(self.read_timeout)
             if self.ctx:
                 c = self.ctx.wrap_socket(c, server_side=True)
             while b"\r\n\r\n" not in raw:
@@ -85,6 +86,8 @@ class FakeHub:
                 if not got:
                     break
                 raw += got
+            if not raw:  # the caller closed without a byte of a request (a refused certificate)
+                return
             head, _, body = raw.partition(b"\r\n\r\n")
             lines = head.decode("latin-1").split("\r\n")
             headers = {}
