@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The hub holds tricky messages for a person.** Besides the secret check, every message (from a session, the manager or the page) goes through a plain-code filter of dangerous patterns, with a short reason each: git settings that run programs, `curl | sh` and the like, a downloaded file made executable, base64-decoded shell code, `.envrc`/direnv, editor run-on-open tasks, private keys, requests for `~/.ssh`, `.credentials.json`, tokens or passwords, and hidden characters (zero-width, direction overrides, Unicode tag characters, terminal escapes). A match is not delivered: the sender is told it is held for a person and why, and admins see it under "Waiting for you" with Release (delivered unchanged) and Drop. Each step is in the log. Normal team talk ("run the tests", "git status") is not held. No AI, no setting: the list is in `src/kaptyorka/tricks.py`.
+
 ## 0.9.39
 
 - **OpenCode sessions show their name.** The page and `who` showed an OpenCode session only by its folder: kaptyorka never read OpenCode's session title, so a rename in OpenCode changed nothing on the hub. Its title now comes with the session, in OpenCode 1 and 2: the one OpenCode gave it after its first prompt, or the one you renamed it to. The placeholder a new session starts with ("New session - <time>") is not shown.

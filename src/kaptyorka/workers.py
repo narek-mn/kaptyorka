@@ -1420,6 +1420,7 @@ class WorkerStore:
                                   (file_id,)).fetchone()
                 if f is None or f["person_id"] != sender["person_id"] or f["message_id"] is not None:
                     raise KaptyorkaError("that file is not yours")
+            st.hold_if_tricky(sender_key, sender["name"], to, targets, text, file_id, now)
             n = st._insert(sender_key, sender["name"], targets, text, now, file_id)
             st._rate_hit(sender_key, now)
             if held is not None and to != "all":
@@ -1444,6 +1445,7 @@ class WorkerStore:
             if not all(not t["key"].startswith("web:") and t["person_id"] == manager_pid
                        for t in targets):
                 return None
+            st.hold_if_tricky(key, name, to, targets, text, file_id, now)
             return st._insert(key, name, targets, text, now, file_id)
 
     def warnings(self, now: float, hub_version: str) -> List[dict]:

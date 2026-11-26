@@ -180,6 +180,7 @@ def feed(store: Store, principal: Principal, ws=None, cs=None, closing=None, nig
             "log": [{**r, "sentence": admin_ops.log_sentence(r)} for r in store.log(200)],
             "settings": {"retention_days": store.retention_days(), "auto_doors": store.auto_doors(),
                          "manager_doors": store.manager_doors()},
+            "held": store.held_messages(),  # the trick filter's: "Waiting for you", Release or Drop
             "door_requests": cs.door_requests() if cs else [],  # the top bar's "Waiting for you"
         })
     return out

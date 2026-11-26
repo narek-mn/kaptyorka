@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from kaptyorka import paths, stuck
 from kaptyorka.secrets_check import TEXT_TYPES, check_secrets
+from kaptyorka.tricks import check_tricks, visible
 
 ONLINE_S = 30
 RECENT_S = 600  # send to a session gone this long still holds the message for it
@@ -108,6 +109,10 @@ CREATE TABLE IF NOT EXISTS rekeys (
     device_name TEXT PRIMARY KEY, token TEXT NOT NULL, created REAL NOT NULL,
     secret TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS held (
+    id INTEGER PRIMARY KEY, sender_key TEXT NOT NULL, sender_name TEXT NOT NULL,
+    to_name TEXT NOT NULL, targets TEXT NOT NULL, text TEXT NOT NULL, file_id INTEGER,
+    reason TEXT NOT NULL, created REAL NOT NULL, decided_at REAL, decision TEXT, decided_by TEXT);
 """
 
 # columns added after 0.1: an older database gets them by ALTER TABLE when it is opened
@@ -175,6 +180,10 @@ ADDED_COLUMNS = [
 
 class KaptyorkaError(Exception):
     """Error whose message is shown to the agent."""
+
+
+class MessageHeld(KaptyorkaError):
+    """The message matched the trick filter (tricks.py): it is kept for an admin, not sent."""
 
 
 def _check_length(text: str) -> None:
@@ -1759,6 +1768,7 @@ class Store:
                 targets = [t for t in targets if self._may_message(sender, t)]
             elif not all(self._may_message(sender, self._as_target(t)) for t in targets):
                 raise KaptyorkaError(UNREACHABLE.format(to=to))
+            self.hold_if_tricky(sender_key, sender["name"], to, targets, text, file_id, now)
             opened, sp = [], sender["person_id"]
             if to != "all" and sp is not None and self._is_admin(sp):  # so the session can reply
                 opened = [t["name"] for t in targets
@@ -1779,6 +1789,63 @@ class Store:
         one gone longer (a name kept for its next session) reads as a plain send."""
         return [(t["name"], int(now - t["last_seen"])) for t in targets
                 if not t["key"].startswith("web:") and ONLINE_S <= now - t["last_seen"] < RECENT_S]
+
+    def hold_if_tricky(self, sender_key, sender_name, to, targets, text, file_id, now) -> None:
+        """Lock held. A text that matches the trick filter is stored in `held`, not delivered,
+        and MessageHeld says so to the sender. The door a reply would open is not opened."""
+        reason = check_tricks(text)
+        if reason is None:
+            return
+        rows = [{k: t[k] for k in ("key", "name", "machine", "tool", "project")} for t in targets]
+        hid = self.db.execute(
+            "INSERT INTO held (sender_key, sender_name, to_name, targets, text, file_id, reason,"
+            " created) VALUES (?,?,?,?,?,?,?,?)",
+            (sender_key, sender_name, to, json.dumps(rows), text, file_id, reason, now)).lastrowid
+        self.db.execute("INSERT INTO log (time, person, kind, detail) VALUES (?,?,?,?)",
+                        (now, sender_name, "message_held", f"#{hid} to {to}: {reason}"))
+        raise MessageHeld(f"not sent: held for a person to look at, because it has {reason}."
+                          " An admin can release it; nothing was delivered.")
+
+    def held_messages(self) -> List[dict]:
+        """Messages waiting for an admin, oldest first. `text` shows hidden characters as
+        <U+XXXX>, so what the admin reads is what would be delivered."""
+        with self.lock:
+            return [{"id": r["id"], "from": r["sender_name"], "to": r["to_name"],
+                     "text": visible(r["text"]), "reason": r["reason"], "created": r["created"]}
+                    for r in self.db.execute(
+                        "SELECT * FROM held WHERE decided_at IS NULL ORDER BY id")]
+
+    def _held_open(self, hid: int):
+        row = self.db.execute("SELECT * FROM held WHERE id=? AND decided_at IS NULL",
+                              (hid,)).fetchone()
+        if row is None:
+            raise KaptyorkaError("that message is not waiting any more")
+        return row
+
+    def held_release(self, hid: int, by: str) -> int:
+        """Deliver a held message unchanged to the sessions it was written to. Returns how
+        many got it."""
+        with self.lock:
+            row = self._held_open(hid)
+            now = self.clock()
+            n = self._insert(row["sender_key"], row["sender_name"], json.loads(row["targets"]),
+                             row["text"], now, row["file_id"])
+            self.db.execute("UPDATE held SET decided_at=?, decision='released', decided_by=?"
+                            " WHERE id=?", (now, by, hid))
+            self.db.execute("INSERT INTO log (time, person, kind, detail) VALUES (?,?,?,?)",
+                            (self.clock(), by, "message_released",
+                             f"#{hid} from {row['sender_name']} to {row['to_name']}"))
+            return n
+
+    def held_drop(self, hid: int, by: str) -> None:
+        """Discard a held message; the text is kept only until the hub's retention prunes it."""
+        with self.lock:
+            row = self._held_open(hid)
+            self.db.execute("UPDATE held SET decided_at=?, decision='dropped', decided_by=?"
+                            " WHERE id=?", (self.clock(), by, hid))
+            self.db.execute("INSERT INTO log (time, person, kind, detail) VALUES (?,?,?,?)",
+                            (self.clock(), by, "message_dropped",
+                             f"#{hid} from {row['sender_name']} to {row['to_name']}"))
 
     def _rate_check(self, key, now):
         count, window = RATE
@@ -1809,8 +1876,10 @@ class Store:
                     targets = [t for t in targets if self._may_message(me, self._as_target(t))]
                 elif not all(self._may_message(me, self._as_target(t)) for t in targets):
                     raise KaptyorkaError(UNREACHABLE.format(to=to))
+                self.hold_if_tricky(key, name, to, targets, text, file_id, now)
                 if to != "all":  # so the session can reply to the page; a broadcast is one-way
                     opened = [t["name"] for t in targets if self._reply_door(key, person_id, t, now)]
+            self.hold_if_tricky(key, name, to, targets, text, file_id, now)  # no person_id: the page
             n = self._insert(key, name, targets, text, now, file_id)
         for other in opened:
             self.log_add(name, "door_open", f"{key} <-> {other}")

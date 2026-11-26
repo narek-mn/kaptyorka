@@ -2916,6 +2916,13 @@ a.p-main { color: inherit; text-decoration: none; }
                  yes: function () { return api("/api/knocks/" + k.id + "/answer", { answer: "yes" }); },
                  no: function () { return api("/api/knocks/" + k.id + "/answer", { answer: "no" }); } });
     });
+    (feed.held || []).forEach(function (h) {  /* the trick filter kept it back: Yes delivers it unchanged */
+      out.push({ key: "h:" + h.id, t: h.created, who: h.from,
+                 what: ["wrote to ", el("b", { text: h.to }), ", held: it has " + h.reason], why: h.text.length > 300 ? h.text.slice(0, 300) + "\u2026" : h.text,
+                 tip: h.text + "\n\nRelease delivers it as written. Drop throws it away.",
+                 yes: function () { return api("/api/held/" + h.id, { release: true }); },
+                 no: function () { return api("/api/held/" + h.id, { release: false }); } });
+    });
     proposals.forEach(function (p) {
       out.push({ key: "p:" + p.id, t: p.time, who: p.person, what: ["suggests a rule"], why: p.text,
                  tip: p.text + (p.evidence ? "\n\n" + p.evidence : ""),
@@ -2940,6 +2947,10 @@ a.p-main { color: inherit; text-decoration: none; }
       }
       var yes = button("Yes", "primary", function () { answer(true); }, { "aria-label": "Yes: " + w.who + " " + plain(w.what) });
       var no = button("No", "", function () { answer(false); }, { "aria-label": "No: " + w.who + " " + plain(w.what) });
+      if (w.key.charAt(0) === "h") {  /* a held message: Release and Drop */
+        yes.textContent = "Release"; no.textContent = "Drop";
+        yes.setAttribute("aria-label", "Release: " + w.who + " " + plain(w.what)); no.setAttribute("aria-label", "Drop: " + w.who + " " + plain(w.what));
+      }
       if (busyNow) { yes.disabled = no.disabled = true; (answering[w.key] === "yes" ? yes : no).setAttribute("aria-busy", "true"); }
       box.appendChild(el("div", { "class": "w-row" + (!first && !waitSeen[w.key] ? " new" : "") + (busyNow ? " going" : ""), "data-key": w.key }, [
         avatar("person", w.who), el("span", { "class": "w-text", title: w.tip }, [el("b", { text: w.who }), " "].concat(w.what, [

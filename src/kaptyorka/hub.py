@@ -38,7 +38,7 @@ from kaptyorka.manager import ManagerStore
 from kaptyorka.memory import MemoryStore, check_state
 from kaptyorka.secrets_check import check_secrets, labelled_values
 from kaptyorka.store import (MAX_FILE, MAX_IDENT, ONLINE_S, RECENT_S, UNREACHABLE, Agent,
-                              KaptyorkaError, Principal, Store, attach_line, clean, machine_name,
+                              KaptyorkaError, MessageHeld, Principal, Store, attach_line, clean, machine_name,
                               session_id)
 from kaptyorka.workers import HUB_KEY, LIVE, MAX_FACT, STARTUP_S, WorkerStore, _git as clean_git, clean_facts, safe_name
 
@@ -872,9 +872,12 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
             to_admins(f"from the manager: {text}")
             wake_bridges()
             return "sent to the admins (their online sessions, else their page)"
-        n = ws.send_via_manager(key, to, text, mm.person_id(), file_id, held)
-        if n is None:
-            n = store.send(key, to, text, file_id, held)
+        try:
+            n = ws.send_via_manager(key, to, text, mm.person_id(), file_id, held)
+            if n is None:
+                n = store.send(key, to, text, file_id, held)
+        except MessageHeld as e:  # an answer, not a failure: the sender needs no retry
+            return str(e)
         wake_bridges()
         wait = limits.waiting_line(store, mm, identity.facts()["host"], store.clock()) \
             if limits.to_manager(store, mm, to) else ""
@@ -2958,6 +2961,27 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         if out == "offline":
             return PlainTextResponse("a session went offline, so no door was opened;"
                                      " the request is closed", status_code=409)
+        return Response(status_code=204)
+
+    @server.custom_route("/api/held/{hid:int}", methods=["POST"])
+    @_bad_request
+    async def api_held_decide(request: Request) -> Response:
+        """The admin releases (delivers unchanged) or drops a message the trick filter held."""
+        denied = admin_only(request)
+        if denied:
+            return denied
+        body = await request.json()
+        if not isinstance(body["release"], bool):
+            raise ValueError("release must be true or false")
+        by, hid = request.scope["state"]["principal"].person_name, request.path_params["hid"]
+        try:
+            if body["release"]:
+                store.held_release(hid, by)
+                wake_bridges()
+            else:
+                store.held_drop(hid, by)
+        except KaptyorkaError as e:
+            return PlainTextResponse(str(e), status_code=400)
         return Response(status_code=204)
 
     @server.custom_route("/api/requests/{rid:int}", methods=["POST"])
