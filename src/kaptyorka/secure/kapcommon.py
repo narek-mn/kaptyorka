@@ -268,7 +268,14 @@ LOCKED_FILES = (  # (source in /etc/kaptyorka/box, place in the box home): read-
     ("cursor/mcp.json", ".cursor/mcp.json"),
     ("cursor/hooks.json", ".cursor/hooks.json"),
     ("cursor/sandbox.json", ".cursor/sandbox.json"),
+    ("cursor/cli-config.json", ".cursor/cli-config.json"),
 )
+# OpenCode's global config folder must stay writable (D5), so the folders in it that would load
+# code or agents into every later chat are root-owned, empty and each its own read-only mount
+# (a root-owned folder alone could be renamed away; B-9)
+OPENCODE_LOCKED_DIRS = ("agent", "agents", "plugin", "plugins", "command", "commands", "mode", "modes",
+                        "tool", "tools", "skill", "skills")
+OPENCODE_CFG = "state/opencode/cfg/opencode"
 STATE_DIRS = ("state/claude", "state/codex", "state/opencode", "state/ssh", ".cursor", ".cache")
 # /sys: ProtectKernelTunables= mounts the real /sys again over a TemporaryFileSystem=/sys
 # (measured, systemd 255), so each of its standard folders gets its own empty tmpfs instead. The
@@ -306,6 +313,11 @@ def box_props(person: str, box: str, runtime_max: str = "7d") -> List[str]:
         f"ReadOnlyPaths={home}",
         "ReadWritePaths=" + " ".join(f"{home}/{d}" for d in STATE_DIRS),
         f"BindReadOnlyPaths={locked}",
+        "ReadOnlyPaths=" + " ".join(f"-{home}/{OPENCODE_CFG}/{d}" for d in OPENCODE_LOCKED_DIRS),
+        # the tools' own managed settings, which outrank every user and project file (slice 5):
+        # OpenCode's system folder, Codex's requirements
+        f"BindReadOnlyPaths={BOXCONF}/opencode/etc:/etc/opencode {BOXCONF}/codex/requirements.toml:"
+        "/etc/codex/requirements.toml",
         f"BindPaths={box_projects(box)}:{VIEW}/{person}",
         f"BindPaths={box_memory(box)}:{VIEW}/{person}/{MEMORY}",
         f"BindPaths={run}/tmp:/tmp {run}/vartmp:/var/tmp {run}/run:/run/kapbox",

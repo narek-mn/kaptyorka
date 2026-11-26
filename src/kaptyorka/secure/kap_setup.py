@@ -154,7 +154,8 @@ def install_code(ver: str) -> None:
     kr.mkdir(kc.OPT, 0o755)
     for part, files in (("egress", {"kap_egress.py": "egress.py"}), ("box", {"kap_proxybridge.py": "proxybridge.py",
                                                                          "kap_helper.py": "helper.py",
-                                                                         "kap_fence.py": "fence.py"}),
+                                                                         "kap_fence.py": "fence.py",
+                                                                         "kap_toolwire.py": "toolwire.py"}),
                         ("relay", {os.path.join(RELAY_SRC, "relay.py"): "relay.py"})):
         kr.mkdir(f"{kc.OPT}/{part}", 0o755)
         kr.mkdir(f"{kc.OPT}/{part}/{ver}", 0o755)
@@ -227,7 +228,8 @@ def claude_execute_only() -> None:
 def install_etc(ver: str) -> None:
     kr.mkdir(kc.ETC, 0o755)
     kr.write_file(f"{kc.ETC}/version", ver + "\n")
-    for d in ("box", "box/claude", "box/codex", "box/opencode", "box/cursor"):
+    for d in ("box", "box/claude", "box/codex", "box/opencode", "box/opencode/etc", "box/opencode/etc/plugins",
+              "box/cursor"):
         kr.mkdir(f"{kc.ETC}/{d}", 0o755)
     for dirpath, dirs, files in os.walk(os.path.join(FILES, "box")):
         rel = os.path.relpath(dirpath, os.path.join(FILES, "box"))

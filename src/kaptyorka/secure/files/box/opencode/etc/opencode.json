@@ -1,0 +1,19 @@
+{
+ "$schema": "https://opencode.ai/config.json",
+ "autoupdate": false,
+ "share": "disabled",
+ "plugin": ["file:///etc/kaptyorka/box/opencode/kaptyorka-v1.js"],
+ "mcp": {
+  "kaptyorka": {"type": "local", "command": ["/usr/bin/python3", "-I", "/opt/kaptyorka/box/current/helper.py", "mcp"], "enabled": true}
+ },
+ "permission": {
+  "external_directory": "deny"
+ },
+ "policies": [
+  {"action": "tool.use", "resource": "external_directory:*", "effect": "deny"},
+  {"action": "plugin.use", "resource": "*", "effect": "deny"},
+  {"action": "plugin.use", "resource": "/etc/opencode/plugins/kaptyorka.js", "effect": "allow"},
+  {"action": "mcp.use", "resource": "*", "effect": "deny"},
+  {"action": "mcp.use", "resource": "kaptyorka", "effect": "allow"}
+ ]
+}

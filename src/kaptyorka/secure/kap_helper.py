@@ -17,6 +17,12 @@ How it learns about chats: only from the tools' official interfaces. Claude Code
 session id, the folder and the chat's mailbox socket (CLAUDE_CODE_MESSAGING_SOCKET, documented in
 cross-session-messaging); `claude agents --json` (documented in agent-view) adds busy/idle and the
 name. The mailbox's line format is not documented (the same one today's bridge uses; compat.py).
+The other tools (slice 5; toolwire.py): OpenCode's root-owned plugin and Codex's and Cursor's
+managed hooks run `helper.py hook <tool> <event>`; box-exec names the chat's own process
+(KAP_CHAT_PID) and its own server (KAP_OPENCODE_URL for an OpenCode 1 window, KAP_CODEX_SOCKET
+for a Codex chat's own app-server), and records an OpenCode 2 window itself. Delivery: OpenCode's
+server API (the box's own V2 service, started here), Codex's turn/steer or turn/start; Cursor
+is pull only (its next prompt or its stop hook's follow-up message).
 
 Python standard library only: the box has no other packages. Installed as
 /opt/kaptyorka/box/<version>/helper.py, read-only in the box.
@@ -36,13 +42,15 @@ from typing import Dict, List, Optional, Tuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if __package__:
-    from . import kap_fence as kf
+    from . import kap_fence as kf, kap_toolwire as tw
 else:  # in the box: fence.py beside this file (python -I leaves the script's folder off the path)
     sys.path.insert(0, HERE)
     try:
         import fence as kf
+        import toolwire as tw
     except ImportError:  # run from the source tree
         import kap_fence as kf
+        import kap_toolwire as tw
 VIEW = "/srv/team"
 STATE = "/run/kapbox/chats"            # the box's own runtime folder: chats' records (hooks -> helper)
 RELAY_DIR = "/run/kaptyorka/relay"      # the relay's door for this box, <box>.sock
@@ -61,7 +69,10 @@ CALL_TIMEOUT = 35     # one relay call (its hub exchange is at most 30 s)
 CHAT_RX = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._:@-]{0,127}")
 NAME_RX = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,63}")
 PERSON_RX = re.compile(r"[a-z_][a-z0-9_-]{0,30}")
-TOOL_PREFIX = {"claude": "claude-code", "codex": "codex", "cursor": "cursor"}
+TOOL_PREFIX = {"claude": "claude-code", "codex": "codex", "cursor": "cursor", "opencode": "opencode"}
+TOOL_NAMES = ("claude", "node", "codex", "cursor-agent", "opencode")   # process names of the tools
+OC_OPEN_S = 1800      # such a session counts as open this long after its last step (adapters/opencode.py)
+SERVICE_RETRY_S = 60  # the box's OpenCode V2 service: started again at most this often
 MEMORY = "_memory"
 WAKE_TEXT = ("kaptyorka: this chat has been busy for {m} minutes without a new step. If a command "
              "or tool is hung, stop it and go on with the work.")
@@ -176,7 +187,7 @@ def proc_start(pid: int) -> Optional[str]:
         return None
 
 
-def tool_pid(start: int, names=("claude", "node", "codex", "cursor-agent")) -> Tuple[int, bool]:
+def tool_pid(start: int, names=TOOL_NAMES) -> Tuple[int, bool]:
     """(the tool's process, found by name): the nearest ancestor of `start` whose name is the
     tool's (a hook runs under a shell the tool started); (start, False) when none is."""
     pid = start
@@ -194,6 +205,38 @@ def tool_pid(start: int, names=("claude", "node", "codex", "cursor-agent")) -> T
             break
         pid = ppid
     return start, False
+
+
+def is_ancestor(pid: int, start: int) -> bool:
+    """Whether pid is start or one of its ancestors (at most 12 steps up)."""
+    cur = start
+    for _ in range(12):
+        if cur == pid:
+            return True
+        try:
+            with open(f"/proc/{cur}/stat") as f:
+                cur = int(f.read().rpartition(")")[2].split()[1])
+        except (OSError, IndexError, ValueError):
+            return False
+        if cur <= 1:
+            return False
+    return False
+
+
+def chat_pid(tool: str, env, start: int) -> Tuple[int, bool]:
+    """The chat's own process for a hook: the process box-exec became (it names its pid in
+    KAP_CHAT_PID and keeps it through exec) when that is an ancestor of the hook; else the
+    nearest tool-named ancestor. OpenCode has no fallback: an OpenCode 2 hook runs in the box's
+    shared service, and closing that would end every chat (box-exec records those chats)."""
+    try:
+        pid = int(env.get("KAP_CHAT_PID", "") or 0)
+    except ValueError:
+        pid = 0
+    if pid > 1 and is_ancestor(pid, start):
+        return pid, True
+    if tool == "opencode":
+        return start, False
+    return tool_pid(start)
 
 
 def alive(rec: dict) -> bool:
@@ -234,6 +277,7 @@ def hook_out(tool: str, event: str, text: str) -> str:
 EVENTS = {  # tool event name -> start | prompt | stop | end
     "SessionStart": "start", "UserPromptSubmit": "prompt", "Stop": "stop", "SessionEnd": "end",
     "sessionStart": "start", "beforeSubmitPrompt": "prompt", "stop": "stop", "sessionEnd": "end",
+    "start": "start", "prompt": "prompt", "end": "end",   # kaptyorka's OpenCode plugin says these
 }
 
 
@@ -302,13 +346,22 @@ def hook(tool: str, event_name: str, stdin: str, env=os.environ, state: str = ST
         tok = env.get("CLAUDE_CODE_MESSAGING_TOKEN", "")
         if isinstance(tok, str) and 0 < len(tok) < 400:
             rec["token"] = tok
+    # the chat's own server, as box-exec named it: an OpenCode 1 window's, a Codex chat's app-server
+    url = env.get("KAP_OPENCODE_URL", "")
+    if tool == "opencode" and isinstance(url, str) and re.fullmatch(r"http://127\.0\.0\.1:\d{1,5}", url):
+        rec["server"] = url
+    cxs = env.get("KAP_CODEX_SOCKET", "")
+    if tool == "codex" and isinstance(cxs, str) and re.fullmatch(r"/run/kapbox/codex/\d+/app\.sock", cxs):
+        rec["codex"] = cxs
+    if tool == "codex" and isinstance(data.get("turn_id"), str) and tw.THREAD_RX.fullmatch(data["turn_id"]):
+        rec["turn"] = data["turn_id"]
     if isinstance(data.get("transcript_path"), str):
         rec["transcript"] = data["transcript_path"][:400]
-    title = data.get("session_title")
+    title = data.get("session_title") or data.get("title")
     if isinstance(title, str) and title.strip():
         rec["title"] = title.strip()[:80]
     if event == "start" or "pid" not in rec:
-        pid, named = tool_pid(os.getppid())
+        pid, named = chat_pid(tool, env, os.getppid())
         if named:  # only a process proven to be the tool says whether the chat still runs
             rec["pid"], rec["pstart"] = pid, proc_start(pid)
     rec["state"] = {"start": "idle", "prompt": "busy", "stop": "idle", "end": "ended"}[event]
@@ -323,7 +376,10 @@ def hook(tool: str, event_name: str, stdin: str, env=os.environ, state: str = ST
         got = relay_call(door, "brief", caller, HOOK_TIMEOUT)
         brief = got.get("result", {}).get("text", "") if got.get("ok") else ""
         text = "\n\n".join(t for t in (standing_rule(), brief) if t)
-    elif event == "prompt":  # the prompt itself never leaves the box
+    elif event == "prompt" or (event == "stop" and tool == "cursor"):
+        # the prompt itself never leaves the box. Cursor has no way in from outside (pull only):
+        # what came meanwhile goes in at its next prompt, or as its stop hook's follow-up
+        # message ("followup_message": Cursor sends it as the next prompt, cursor.com/docs/hooks)
         got = relay_call(door, "inbox", caller, HOOK_TIMEOUT)
         text = messages_text(got.get("result", {}).get("messages")) if got.get("ok") else ""
     return hook_out(tool, event, text)
@@ -331,9 +387,26 @@ def hook(tool: str, event_name: str, stdin: str, env=os.environ, state: str = ST
 
 # ---------------------------------------------------------------------------- the mailbox
 
-def deliver(rec: dict, text: str, timeout: float = 5) -> None:
-    """One message into a Claude Code chat's mailbox socket. Raises OSError or ValueError when
-    the chat cannot take it (then it waits for the chat's next turn, through inbox)."""
+def deliver(rec: dict, text: str, timeout: float = 5, home: str = "") -> str:
+    """One message into a chat, the tool's own way: Claude Code's mailbox socket; OpenCode's own
+    server (prompt_async on a V1 window's, POST /api/session/<id>/prompt on the box's V2
+    service); the chat's own Codex app-server (turn/steer, else turn/start). Cursor has none.
+    Returns how; raises OSError, ValueError or tw.RpcError when the chat cannot take it (then it
+    waits for the chat's next turn, through inbox)."""
+    tool = rec.get("tool", "claude")
+    if tool == "opencode":
+        tw.oc_deliver(rec, text, home)
+        return "opencode server"
+    if tool == "codex":
+        return tw.cx_deliver(rec, text)
+    if tool != "claude":
+        raise ValueError(f"{tool} has no way in from outside (pull only)")
+    mailbox(rec, text, timeout)
+    return "mailbox"
+
+
+def mailbox(rec: dict, text: str, timeout: float = 5) -> None:
+    """One message into a Claude Code chat's mailbox socket."""
     path = rec.get("socket")
     if not isinstance(path, str) or not path:
         raise ValueError("this chat has no mailbox (pull only)")
@@ -373,6 +446,9 @@ class Helper:
         self.helpers: List[Tuple[subprocess.Popen, float]] = []
         self.last_chat = clock()
         self.stuck: Dict[str, float] = {}  # chat -> transcript mtime it was asked about
+        self.asked: Dict[str, Tuple[float, str, str]] = {}  # chat -> (when, state, name) from its tool
+        self.service: Optional[subprocess.Popen] = None     # the box's OpenCode V2 service
+        self.service_at = -1e9
 
     # chats
     def _agents(self) -> None:
@@ -400,15 +476,21 @@ class Helper:
             if "pid" in rec and rec.get("state") != "ended" and not alive(rec):
                 rec["state"] = "ended"
             sid = rec["chat"].split(":", 1)[-1]
-            a = self.agents.get(sid)
+            a = self.agents.get(sid) if rec.get("tool") == "claude" else None
             state = rec.get("state", "idle")
             if a is not None and state != "ended" and a.get("status") in ("busy", "waiting", "idle"):
                 state = "idle" if a["status"] == "idle" else "busy"
+            told, told_name = ("", "") if state == "ended" else self.tool_says(rec)
+            if told:
+                state = told
+            if (rec.get("tool") == "opencode" and "pid" not in rec and "server" not in rec and state != "busy"
+                    and isinstance(rec.get("last"), (int, float)) and self.clock() - rec["last"] > OC_OPEN_S):
+                state = "ended"   # a session of the box's OpenCode 2 service with no window known
             if not NAME_RX.fullmatch(str(rec.get("project", ""))):
                 continue
             row = {"chat": rec["chat"], "project": rec["project"],
                    "state": state if state in ("busy", "idle", "ended") else "idle"}
-            name = (a or {}).get("name") or rec.get("title")
+            name = (a or {}).get("name") or told_name or rec.get("title")
             if isinstance(name, str) and name.strip():
                 row["name"] = name.strip()[:80]
             if isinstance(rec.get("last"), (int, float)):
@@ -416,7 +498,56 @@ class Helper:
             out.append(row)
         return out[:64]
 
+    def tool_says(self, rec: dict) -> Tuple[str, str]:
+        """(busy|idle|"", name) of an OpenCode or Codex chat from the tool's own server (its own
+        title or /rename), asked at most every AGENTS_S."""
+        if rec.get("tool") not in ("opencode", "codex"):
+            return "", ""
+        now = self.clock()
+        got = self.asked.get(rec["chat"])
+        if got and now - got[0] < AGENTS_S:
+            return got[1], got[2]
+        try:
+            st, name = tw.oc_state(rec, self.home) if rec["tool"] == "opencode" else tw.cx_state(rec)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, tw.RpcError):
+            st, name = "", ""
+        self.asked[rec["chat"]] = (now, st, name)
+        return st, name
+
+    def keep_service(self) -> None:
+        """The box user's own OpenCode V2 service, a child of this unit: inside the box's walls
+        and its cgroup, so it ends with the helper (never the person's own service). Started when
+        the box's OpenCode is V2, again when it stopped, at most every SERVICE_RETRY_S."""
+        if self.service is not None and self.service.poll() is None:
+            return
+        if self.clock() - self.service_at < SERVICE_RETRY_S:
+            return
+        self.service_at = self.clock()
+        self.service = None
+        exe = f"{TOOLS_BIN}/opencode"
+        if not os.path.exists(exe) or not self.home:
+            return
+        env = dict(self.claude_env())
+        for k in ("CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER"):
+            env.pop(k, None)
+        env.update(tw.oc_env(self.home))
+        try:
+            r = self.run_([exe, "--version"], capture_output=True, text=True, timeout=20, env=env)
+            if tw.oc_major(r.stdout + r.stderr) < 2:
+                return
+            logdir = f"{self.home}/state/opencode/state"
+            os.makedirs(logdir, mode=0o700, exist_ok=True)
+            out = open(f"{logdir}/kaptyorka-service.log", "ab")
+            self.service = self.popen([exe, "serve", "--service", "--hostname", "127.0.0.1", "--port", "0"],
+                                      cwd=self.home, env=env, stdin=subprocess.DEVNULL, stdout=out,
+                                      stderr=subprocess.STDOUT, start_new_session=True)
+            out.close()
+            log("the box's OpenCode service started")
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            log(f"the box's OpenCode service did not start: {e}")
+
     def step(self) -> None:
+        self.keep_service()
         chats = self.chats()
         live = [c for c in chats if c["state"] != "ended"]
         ended = [c for c in chats if c["state"] == "ended"]
@@ -450,9 +581,9 @@ class Helper:
         ok = False
         if rec is not None and isinstance(m.get("text"), str):
             try:
-                deliver(rec, with_origin(m))
+                deliver(rec, with_origin(m), home=self.home)
                 ok = True
-            except (OSError, ValueError) as e:
+            except (OSError, ValueError, tw.RpcError) as e:
                 log(f"a message for {rec.get('project')} waits for the chat's next turn ({e})")
         if isinstance(m.get("id"), int):
             relay_call(self.door, "ack", {"id": m["id"], "ok": ok})
@@ -461,6 +592,9 @@ class Helper:
         """End one chat of this box, its conversation kept: SIGTERM to its own process, only
         when that process is still the one its hook saw (the box can signal nothing else)."""
         rec = read_record(self.state, str(chat or ""))
+        if rec is not None and "pid" not in rec:
+            log(f"a chat in {rec.get('project')} cannot be closed from the page: no process of its own is known")
+            return
         if rec is None or not alive(rec):
             return
         try:
@@ -483,8 +617,8 @@ class Helper:
                 continue
             self.stuck[rec["chat"]] = mtime
             try:
-                deliver(rec, WAKE_TEXT.format(m=int((now - mtime) // 60)))
-            except (OSError, ValueError):
+                deliver(rec, WAKE_TEXT.format(m=int((now - mtime) // 60)), home=self.home)
+            except (OSError, ValueError, tw.RpcError):
                 pass
 
     # helper chats and skills
@@ -676,7 +810,16 @@ def mcp_caller(env=os.environ, state: str = STATE) -> Optional[dict]:
     sid = env.get("CLAUDE_CODE_SESSION_ID", "")
     chat = f"claude-code:{sid}" if sid else ""
     rec = read_record(state, chat) if CHAT_RX.fullmatch(chat) else None
-    if not chat:  # Codex and Cursor say no session to their MCP server: the newest chat here
+    if not chat:  # the others say no session to their MCP server: the chat whose process started it
+        try:
+            pid = int(env.get("KAP_CHAT_PID", "") or 0)
+        except ValueError:
+            pid = 0
+        mine = [r for r in records(state) if pid > 1 and r.get("pid") == pid and r.get("tool") != "claude"
+                and r.get("state") != "ended" and alive(r)]
+        rec = max(mine, key=lambda r: r.get("last", 0)) if mine else None
+        chat = rec["chat"] if rec else ""
+    if not chat:  # else the newest chat in this folder
         try:
             here = os.getcwd()
         except OSError:

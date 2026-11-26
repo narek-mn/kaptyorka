@@ -34,7 +34,8 @@ ENV_OK = {"LANG", "PATH", "USER", "LOGNAME", "HOME", "SHELL", "INVOCATION_ID", "
           "LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES", "PWD", "JOURNAL_STREAM", "MANAGERPID"}
 SYS_HIDDEN = ("block", "bus", "class", "dev", "devices", "firmware", "hypervisor", "kernel", "module", "power")
 LOCKED = ("state/claude/settings.json", "state/codex/config.toml", "state/codex/hooks.json",
-          "state/opencode/cfg/opencode/opencode.json", ".cursor/mcp.json", ".cursor/hooks.json", ".cursor/sandbox.json")
+          "state/opencode/cfg/opencode/opencode.json", ".cursor/mcp.json", ".cursor/hooks.json", ".cursor/sandbox.json",
+          ".cursor/cli-config.json")
 
 
 def fail(wall: str, what: str) -> None:
@@ -116,7 +117,7 @@ def view(box: str, person: str):
     u = "kap-" + box
     return [
         ("/", {"bin", "dev", "etc", "lib", "opt", "proc", "run", "sbin", "srv", "sys", "tmp", "usr", "var"}, {"lib64"}),
-        ("/etc", {"group", "hosts", "kaptyorka", "ld.so.cache", "nsswitch.conf", "passwd", "ssl"},
+        ("/etc", {"codex", "group", "hosts", "kaptyorka", "ld.so.cache", "nsswitch.conf", "opencode", "passwd", "ssl"},
          {"alternatives", "ca-certificates", "localtime"}),
         ("/etc/kaptyorka", {"box", "boxes"}, set()),
         ("/etc/kaptyorka/boxes", {box}, set()),

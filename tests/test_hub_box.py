@@ -244,6 +244,7 @@ def test_a_message_not_delivered_stays_for_the_chats_own_inbox(w):
     got = call(w, "inbox", {"chat": CHAT, "project": "proj-a"})
     assert got["ok"] and [x["chat"] for x in got["result"]["messages"]] == [CHAT]
     assert "hello there" in got["result"]["messages"][0]["text"]
+    assert got["result"]["messages"][0]["person"] == "box-1"   # its origin line names the sender
     assert call(w, "inbox", {"chat": CHAT, "project": "proj-a"})["result"]["messages"] == []
 
 

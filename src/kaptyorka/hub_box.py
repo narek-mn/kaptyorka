@@ -361,8 +361,15 @@ class BoxHub:
         key = self.caller(principal, body)
         chat = chat_of(key, principal.device_id)
         out = []
-        for m in self.store.inbox(key)[:50]:  # read now: the chat itself asked
+        msgs = self.store.inbox(key)[:50]  # read now: the chat itself asked
+        with self.store.lock:   # who each is from, for the origin line (as report's messages)
+            origin = {}
+            for m in msgs:
+                row = self.store.db.execute("SELECT * FROM messages WHERE id=?", (m.id,)).fetchone()
+                origin[m.id] = self._origin(row) if row is not None else {}
+        for m in msgs:
             out.append({"id": m.id, "chat": chat, "kind": "page" if m.from_web else "chat",
+                        **origin.get(m.id, {}),
                         "text": brief_mod.message_text(m), "body": m.text,
                         **({} if m.from_hub else {"reply": clean(m.reply_to or m.sender, 128)}),
                         **({"files": [{"id": m.file["id"], "name": m.file["name"],

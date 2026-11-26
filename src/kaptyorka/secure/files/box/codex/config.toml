@@ -1,5 +1,11 @@
+# Codex's user config for every box chat (root-owned, a read-only file in the box). Its limits
+# are in /etc/codex/requirements.toml; no project is marked trusted here, so a team folder's own
+# .codex/ config, hooks and rules never load ("Untrusted projects skip project-scoped .codex/
+# layers, including project-local config, hooks, and rules", learn.chatgpt.com/docs/config-file).
 cli_auth_credentials_store = "file"
 check_for_update_on_startup = false
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
 
 # the kaptyorka helper of this box (secure design v2, 5.1): its MCP server
 [mcp_servers.kaptyorka]

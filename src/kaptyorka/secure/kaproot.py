@@ -84,6 +84,30 @@ def mkdir(path: str, mode: int, uid: int = 0, gid: int = 0) -> None:
     os.chmod(path, mode)
 
 
+def lock_dirs(parent: str, names) -> None:
+    """Root-owned empty folders (0755) in a folder the box can write: the mount points of the
+    box's read-only folders there. Made through descriptors, never following a link the box
+    put on the way; an entry the box made that is not a folder is refused."""
+    pfd = open_dir(parent)
+    try:
+        for n in names:
+            try:
+                os.mkdir(n, 0o755, dir_fd=pfd)
+            except FileExistsError:
+                pass
+            try:
+                fd = os.open(n, O_DIR, dir_fd=pfd)
+            except OSError as e:
+                raise Refuse(f"{parent}/{n}: {os.strerror(e.errno)} (not a folder, or a link)")
+            try:
+                os.fchown(fd, 0, 0)
+                os.fchmod(fd, 0o755)
+            finally:
+                os.close(fd)
+    finally:
+        os.close(pfd)
+
+
 def uid_of(user: str) -> int:
     return pwd.getpwnam(user).pw_uid
 
@@ -865,6 +889,7 @@ def ensure_box(person: str, box: str, allow_list: str, separate: bool = False) -
         mkdir(f"{home}/{d}", 0o700, buid, bgid)
     for d in ("state/opencode/cfg", "state/opencode/cfg/opencode"):
         mkdir(f"{home}/{d}", 0o700, buid, bgid)
+    lock_dirs(f"{home}/{kc.OPENCODE_CFG}", kc.OPENCODE_LOCKED_DIRS)
     for _, dst in kc.LOCKED_FILES:       # mount points for the read-only file binds
         p = f"{home}/{dst}"
         if not os.path.lexists(p):

@@ -1,0 +1,49 @@
+# Codex's managed requirements for every box chat (secure design v2, 5.2; slice 5). Bound
+# read-only at /etc/codex/requirements.toml inside the box, so neither a project's .codex/ nor a
+# chat can loosen them. learn.chatgpt.com/docs/enterprise/managed-configuration:
+# "/etc/codex/requirements.toml on Unix systems"; the hooks below are "marked as managed, trusted
+# by policy, and can't be disabled from the user hook browser" (learn.chatgpt.com/docs/hooks).
+
+# No unsandboxed mode and no approval bypass can be chosen, by flag, config or app-server call.
+allowed_sandbox_modes = ["read-only", "workspace-write"]
+allowed_approval_policies = ["on-request"]
+allowed_web_search_modes = ["cached"]
+# no road from a box chat to the person's other sessions or devices (as the Claude profile's
+# remoteControlAtStartup false and its browser/computer-use denies)
+allow_remote_control = false
+allow_browser_and_computer_use = false
+
+# "allow_managed_hooks_only = true skips hooks from user, project, session, and plugin sources"
+allow_managed_hooks_only = true
+
+[features]
+hooks = true
+
+[hooks]
+managed_dir = "/opt/kaptyorka/box/current"
+
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "/usr/bin/python3 -I /opt/kaptyorka/box/current/helper.py hook codex SessionStart"
+timeout = 10
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "/usr/bin/python3 -I /opt/kaptyorka/box/current/helper.py hook codex UserPromptSubmit"
+timeout = 10
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "/usr/bin/python3 -I /opt/kaptyorka/box/current/helper.py hook codex Stop"
+timeout = 10
+
+# MCP allowlist: only the box helper's own server
+[mcp_servers.kaptyorka.identity]
+command = { executable = "/usr/bin/python3", args = [
+  { match = "exact", value = "-I" },
+  { match = "exact", value = "/opt/kaptyorka/box/current/helper.py" },
+  { match = "exact", value = "mcp" },
+] }

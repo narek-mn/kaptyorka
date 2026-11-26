@@ -1,0 +1,12 @@
+{
+ "version": 1,
+ "permissions": {
+  "allow": [],
+  "deny": [
+   "Read(~/.cursor/**)", "Write(~/.cursor/**)",
+   "Read(~/state/**)", "Write(~/state/**)",
+   "Read(~/.ssh/**)", "Write(~/.ssh/**)",
+   "Write(~/.gitconfig)"
+  ]
+ }
+}
