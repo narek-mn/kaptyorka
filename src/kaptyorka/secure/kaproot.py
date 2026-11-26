@@ -143,6 +143,36 @@ def caller_person() -> str:
     return name
 
 
+def _proc_status(pid: int) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                k, _, v = line.partition(":")
+                out[k] = v.strip()
+    except OSError:
+        pass
+    return out
+
+
+def old_login_hint(person: str) -> List[str]:
+    """Lines for a terminal opened before the install: its shell (sudo's parent) lacks the share
+    group, so the person's own ls or editor gets "Permission denied" in team folders. Only a hint:
+    nothing is decided from it."""
+    try:
+        shell = _proc_status(int(_proc_status(os.getppid()).get("PPid", "0")))
+        gid = grp.getgrnam(kc.share_group(person)).gr_gid
+        uid = pwd.getpwnam(person).pw_uid
+    except (KeyError, ValueError, Refuse):
+        return []
+    if not shell or shell.get("Uid", "").split()[:1] != [str(uid)]:
+        return []
+    if str(gid) in shell.get("Groups", "").split():
+        return []
+    return ["Note: this terminal was opened before kaptyorka was installed, so your own programs get",
+            "  \"Permission denied\" in team folders. Log out and in once (or restart the computer)."]
+
+
 def person_home(person: str) -> pwd.struct_passwd:
     pw = pwd.getpwnam(kc.check_person(person))
     if not pw.pw_dir.startswith("/home/") or os.path.realpath(pw.pw_dir) != pw.pw_dir:

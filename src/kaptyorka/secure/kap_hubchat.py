@@ -38,7 +38,23 @@ else:
     import kaproot as kr
 
 Refuse = kc.Refuse
-USAGE = __doc__.split("\n\n", 2)[1]
+USAGE = """hubchat: share folders with your team. Team chats run in a separate, locked box.
+
+  hubchat add <folder>       make a folder of yours a team folder (a shortcut stays where it was)
+  hubchat add <git URL>      get a repository as a new team folder, here in the current folder
+  hubchat list               your team folders, and a check that every wall is in place
+  hubchat remove <folder>    make a team folder personal again
+
+Then cd into a team folder and run claude, codex, opencode or cursor-agent as usual.
+
+Options for add:
+  --name NAME   use another name for the team folder
+  --separate    give this folder a box of its own
+  --force       share it even with files that look like keys or passwords
+Rarely needed:
+  hubchat token-rotate       give the box a new Claude token (if a team chat may have leaked it)"""
+SHORT = {"add": "hubchat add <folder>   or   hubchat add <git URL>", "remove": "hubchat remove <folder or name>",
+         "list": "hubchat list", "token-rotate": "hubchat token-rotate"}
 
 
 def ask(question: str) -> bool:
@@ -142,6 +158,9 @@ def check_source(person: str, path: str):
     pw = kr.person_home(person)
     real = os.path.realpath(path)
     home = pw.pw_dir
+    hit = kc.team_folder(real, person)
+    if hit:
+        raise Refuse(f"{kc.shown(path)} is already a team folder ({hit[0]}); see: hubchat list")
     if real == home or not kc.under(real, home):
         raise Refuse(f"{kc.shown(path)} must be a folder inside your home, not the home itself")
     if kc.under(real, home + "/.ssh") or os.path.basename(real).startswith("."):
@@ -161,9 +180,11 @@ def check_source(person: str, path: str):
         if st.st_uid != pw.pw_uid or pst.st_uid != pw.pw_uid:
             raise Refuse(f"{real} and the folder holding it must be yours")
         if st.st_dev != pst.st_dev:
-            raise Refuse(f"{real} is a mount point; copy its files into a plain folder first")
+            raise Refuse(f"{real} is a mount point (another disk). Copy it into your home, for example "
+                         f"cp -a {real} ~/, then hubchat add the copy")
         if st.st_dev != os.stat(kc.TEAM).st_dev:
-            raise Refuse(f"{real} is on another disk than the team area; copy it into your home first")
+            raise Refuse(f"{real} is on another disk than the team area. Copy it into your home, for example "
+                         f"cp -a {real} ~/, then hubchat add the copy")
         # a sync tool's marker anywhere from the folder up to the home
         p = real
         while kc.under(p, home):
@@ -180,9 +201,9 @@ def check_source(person: str, path: str):
     return real, pfd, fd, st
 
 
-COVERED = ("  In your view, the tool folders and files at its top (.opencode, .claude, .codex, .cursor, .vscode,",
-           "  opencode.json, .mcp.json, .envrc, .git/hooks) look empty: your own tools must not load what team chats",
-           "  write there. The box keeps the real ones; change them through a team chat.")
+COVERED = ("  Note: tool settings at its top (.claude, .codex, .cursor, .opencode, .vscode, .mcp.json, .envrc,",
+           "  .git/hooks and others) look empty to you, so your own tools never load what team chats wrote.",
+           "  To change them, ask a team chat.")
 
 
 def add_folder(person: str, path: str, name: str, separate: bool, yes: bool, force: bool = False) -> None:
@@ -195,14 +216,16 @@ def add_folder(person: str, path: str, name: str, separate: bool, yes: bool, for
         found = scan_secrets(fd)
         strong = [f for f in found if f[2] != "name"]
         if found:
-            kr.say("These look like secrets, or are also elsewhere on your disk. Team chats will be able "
-                   "to read all of them:", *show_found(found))
+            kr.say("These files look like secrets, or are also elsewhere on your disk. If you share the folder,",
+                   "team chats can read all of them:", *show_found(found))
         # A secret seen in a file's content, or a hard link, is refused unless --force: no
         # question at the terminal, so a habit of typing "y" does not share a key.
         if strong and not force:
-            raise Refuse("nothing was changed (move those files out, or run again with --force to share them anyway)")
+            raise Refuse("nothing was changed. Move those files out of the folder and run the same command again, "
+                         "or add --force to share them anyway")
         if found and not strong and not (yes or force) and not ask("Share them anyway?"):
-            raise Refuse("nothing was changed (move the secrets out, or run again with --yes)")
+            raise Refuse("nothing was changed. Move those files out of the folder and run the same command again, "
+                         "or add --yes to share them anyway")
         box = pick_box(person, name, separate)
         pw = kr.person_home(person)
         buid, sgid = kr.uid_of(kc.box_user(box)), kr.gid_of(kc.share_group(box))
@@ -258,8 +281,8 @@ def add_folder(person: str, path: str, name: str, separate: bool, yes: bool, for
         notes.append(f"removed set-user-id bits from {len(rep.stripped)} file(s)")
     kr.say(f"{name} is now a team folder{' in its own box' if separate else ''}.",
            f"  your shortcut: {real} -> {view}",
-           "  Run claude, codex, opencode, cursor-agent or git there as usual: they start in the box.",
-           *COVERED, *[f"  {n}" for n in notes])
+           f"  Next: cd {real} and run claude, codex, opencode or cursor-agent as usual.",
+           "  They start in the team box.", *[f"  {n}" for n in notes], *COVERED)
     warn_all(person)
 
 
@@ -272,7 +295,8 @@ def add_git(person: str, url: str, name: str, separate: bool) -> None:
     pw = kr.person_home(person)
     here = os.path.realpath(os.getcwd())
     if not kc.under(here, pw.pw_dir):
-        raise Refuse("run it from a folder in your home: the shortcut goes there")
+        raise Refuse("the new folder's shortcut is made in the current folder, so cd into a folder in "
+                     "your home first (for example cd ~)")
     pfd = kr.open_dir(here)
     try:
         if os.fstat(pfd).st_uid != pw.pw_uid:
@@ -307,7 +331,9 @@ def add_git(person: str, url: str, name: str, separate: bool) -> None:
                  "clone", "--no-recurse-submodules", "--", url, "."],
                 stdin=subprocess.DEVNULL, env=kr.CLEAN_ENV, timeout=3600)
             if r.returncode != 0:
-                raise Refuse(f"git clone failed inside the box (exit {r.returncode}); nothing was kept")
+                raise Refuse(f"git clone failed inside the box (exit {r.returncode}); nothing was kept. Check the URL. "
+                             "For a private repository use its git@host:path address and add the box's SSH key "
+                             "(hubchat list shows it) to your git account")
             kr.write_file(kr.since_stamp(box, name), "", 0o600)
             kr.add_view_mount(person, name, top)
             os.symlink(view, name, dir_fd=pfd)
@@ -325,7 +351,9 @@ def add_git(person: str, url: str, name: str, separate: bool) -> None:
         os.close(pfd)
     kr.say(f"{name} is now a team folder, cloned inside the box{' (its own box)' if separate else ''}.",
            f"  your shortcut: {os.path.join(here, name)} -> {view}",
-           f"  the box may now reach {host}{':22' if port == 22 else ''}.", *COVERED)
+           f"  the box may now reach {host}{':22' if port == 22 else ''}.",
+           f"  Next: cd {os.path.join(here, name)} and run claude, codex, opencode or cursor-agent as usual.",
+           *COVERED)
     warn_all(person)
 
 
@@ -379,7 +407,7 @@ def _lexists(dfd: int, name: str) -> bool:
         return False
 
 
-def remove(person: str, target: str) -> None:
+def remove(person: str, target: str, uninstall: bool = False) -> None:
     folders = kr.load_folders(person)
     entry = find_entry(person, target, folders)
     name, box = entry["name"], entry["box"]
@@ -437,9 +465,11 @@ def remove(person: str, target: str) -> None:
         kr.drop_box(person, box)
         notes.append(f"its own box {kc.box_user(box)} was removed; revoke that box's tool sign-ins at each vendor")
     kr.say(f"{name} is personal again: {back}",
-           "  It was made safe for git: only plain keys are left in its git config, hooks moved aside.",
+           "  Team chats cannot reach it any more. Nothing the box wrote in its git settings runs as you:",
+           "  only plain settings are left in .git/config, and git hooks were moved aside.",
            *[f"  {n}" for n in notes],
-           "  If a team chat may have sent the box's Claude token away, give it a new one: hubchat token-rotate")
+           *([] if uninstall else
+             ["  If a team chat may have leaked the box's Claude token, give it a new one: hubchat token-rotate"]))
     if traps:
         kr.say("  Team chats may have changed these files, which can run code when a program of yours opens "
                "them (your own AI tool, your editor, a build). Read them before you trust the folder:",
@@ -522,22 +552,26 @@ def list_all(person: str) -> None:
             kr.say(f"    {tool} sign-in: {'yes' if os.path.exists(f'{home}/{p}') else 'none'}")
         try:
             key = open(f"{home}/.ssh/id_ed25519.pub").read().split()
-            kr.say(f"    git SSH key: {key[0]} {key[1][:24]}... (add it to your git account as an extra key)")
+            kr.say("    git SSH key (add it to your git account as an extra key, for private repositories):",
+                   f"      {' '.join(key[:3])}")
         except (OSError, IndexError):
             pass
         allow = sorted(kc.parse_allow(kr.read_text(f"{kc.BOXES}/{box}/egress-allow")).items())
         kr.say("    may reach: " + ", ".join(h + ("" if ports == {443} else ":" + "/".join(map(str, sorted(ports))))
                                          for h, ports in allow))
     problems = kr.outside_check(person, boxes)
-    kr.say("Self-check (outside half): " + ("all walls in place" if not problems else "PROBLEMS"),
-           *[f"  {p}" for p in problems])
+    kr.say("Self-check: " + ("all walls in place" if not problems else "PROBLEMS: team chats will not start"),
+           *[f"  - {p}" for p in problems],
+           *(["Next: restart this computer and run hubchat list again. If a problem stays, send these lines "
+              "to your team admin."] if problems else []))
     warn_all(person)
 
 
 def read_new_token() -> str:
     if sys.stdin.isatty():
         import getpass
-        return getpass.getpass("Paste the new token from `claude setup-token` (run it as yourself): ").strip()
+        print("Run  claude setup-token  in another terminal, in a personal folder, and copy the token it prints.")
+        return getpass.getpass("Paste it here (it is not shown), then press Enter: ").strip()
     return sys.stdin.readline(512).strip()
 
 
@@ -546,6 +580,9 @@ def token_rotate(person: str) -> None:
     token as one a tricked chat may have sent away). Read from the terminal or standard input,
     never from the command line, where every user's ps would show it."""
     tok = read_new_token()
+    if not tok:
+        raise Refuse("no token given; nothing was changed. Run  claude setup-token  in another terminal, "
+                     "then hubchat token-rotate again and paste the token it printed")
     if not kc.TOKEN_RX.fullmatch(tok):
         raise Refuse("that does not look like a token from `claude setup-token`; nothing was changed")
     path = f"{kc.SECRET}/{person}/claude-oauth-token"
@@ -576,6 +613,8 @@ def scan_secrets_path(path: str):
 def main(argv) -> int:
     try:
         person = kr.caller_person()
+        for ln in kr.old_login_hint(person):
+            print(kc.term(ln), file=sys.stderr)
         if not argv or argv[0] in ("help", "-h", "--help"):
             kr.say(*USAGE.splitlines())
             return 0
@@ -589,7 +628,7 @@ def main(argv) -> int:
             elif a in ("--separate", "--yes", "--force"):
                 opts[a] = True
             elif a.startswith("-"):
-                raise Refuse(f"unknown option {kc.shown(a)}")
+                raise Refuse(f"unknown option {kc.shown(a)}. Usage: {SHORT.get(cmd, 'hubchat help')}")
             else:
                 pos.append(a)
         if cmd == "add" and len(pos) == 1:
@@ -603,8 +642,14 @@ def main(argv) -> int:
             list_all(person)
         elif cmd == "token-rotate" and not pos and not any(opts.values()):
             token_rotate(person)
+        elif cmd in SHORT:
+            raise Refuse(f"usage: {SHORT[cmd]}")
         else:
-            raise Refuse("hubchat has four commands: add, remove, list, token-rotate (hubchat help)")
+            raise Refuse(f"there is no command {kc.shown(cmd)}. The commands are add, list and remove "
+                         "(hubchat help shows them all)")
+        return 0
+    except BrokenPipeError:   # `hubchat list | head`: the reader left, nothing to say
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())   # no second error at exit
         return 0
     except Refuse as e:
         print(kc.term(f"hubchat: {e}"), file=sys.stderr)

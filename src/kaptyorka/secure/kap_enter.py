@@ -114,10 +114,15 @@ def main(argv) -> int:
         repair(person, box, name)
         problems = kr.outside_check(person, boxes)
         if problems:
+            print("enter: self-check found a problem:", file=sys.stderr)
             for p in problems:
-                print(kc.term(f"enter: self-check: {p}"), file=sys.stderr)
+                print(kc.term(f"  - {p}"), file=sys.stderr)
             print("enter: a wall is missing, so the team chat was not started.", file=sys.stderr)
+            print("Next: restart this computer and try again. If it stays, send these lines to your team admin.",
+                  file=sys.stderr)
             return 3
+        for ln in kr.old_login_hint(person):
+            print(kc.term(ln), file=sys.stderr)
         notices(person, box, name)
         kr.ensure_box_running(box)
         kr.start_helper(person, box)

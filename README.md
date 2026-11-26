@@ -105,6 +105,45 @@ uv tool install kaptyorka
 
 On a Jetson the bridge reads GPU use from the board itself (no `nvidia-smi` needed), `tmux` may need `sudo apt install -y tmux` for workers, and the bridge runs as a systemd user service like on any Ubuntu. On a headless board, log in as the user over SSH (not through `sudo` or `su`, which have no user session) before `kaptyorka join`, and run the `sudo loginctl enable-linger <user>` line `join` prints, so the bridge starts at boot without a login. `kaptyorka doctor` says when the shell has no user session.
 
+## Personal laptop: team folders in a locked box
+
+On your own laptop, kaptyorka can keep the team away from your personal files. Only the folders you choose become **team folders**. A team chat (Claude Code, Codex, OpenCode or Cursor started in a team folder) runs as a separate Linux user, the **box**, that cannot see your other files, chats or sign-ins. Everywhere else your tools work as before, with no kaptyorka in them. You need Linux with systemd 254 or newer (Ubuntu 24.04 is fine) and `sudo`.
+
+**1. Get four things from your team admin:** the hub's IP address, its port, its fingerprint (64 letters and digits), and a device token in a file. Choose a name for this computer, such as `alice-laptop`.
+
+**2. Make a Claude token for the box** (in a terminal, as yourself): `claude setup-token`. Save the token it prints in a file, such as `~/claude-token.txt`. You can also skip this and paste it when the installer asks.
+
+**3. Install** (from a kaptyorka checkout, in `src/kaptyorka/secure`):
+
+```bash
+sudo python3 -I kap_setup.py install --personal --hub-ip 192.0.2.10 --hub-port 8443 \
+     --hub-sha256 <fingerprint> --name alice-laptop \
+     --device-token-file ~/device-token.txt --claude-token-file ~/claude-token.txt
+```
+
+It ends with `Self-check: all walls in place` and `Done. Next steps:`. Delete the two token files afterwards.
+
+**4. Log out and in once** (or restart the computer). Until then, your own programs get `Permission denied` in team folders; `hubchat` reminds you.
+
+**5. Make a folder a team folder:**
+
+```bash
+hubchat add ~/work/webapp                            # moves it; ~/work/webapp stays as a shortcut
+cd ~/work && hubchat add https://github.com/org/repo.git  # or get a repository as a new team folder here
+```
+
+`hubchat add` stops, and changes nothing, when the folder has files that look like keys or passwords, or files that are also elsewhere on your disk (hard links): move them out and run it again, or add `--force` to share them anyway. A folder on another disk (a USB stick, another partition) must be copied into your home first. For a private repository, use its `git@host:path` address and add the box's own SSH key (the installer and `hubchat list` show it) to your git account.
+
+**6. Work as usual:** `cd ~/work/webapp`, then `claude`, `codex`, `opencode` or `cursor-agent`. In a team folder they start in the box and can talk to the team through the hub; anywhere else they are your own tools. Claude uses the token from step 2; Codex, OpenCode and Cursor show their own sign-in screen the first time, and that sign-in belongs to the box, not to your own tools.
+
+**7. See what you share:** `hubchat list` shows every team folder, its shortcut, the running chats, the box's sign-ins and SSH key, and runs the self-check.
+
+**8. Make a folder personal again:** `hubchat remove webapp`. It goes back to where its shortcut was, and team chats cannot reach it any more.
+
+If a team chat does not start and says a wall is missing, restart the computer and try again; if it stays, send the lines it printed to your team admin. Rarely: if you think a team chat leaked the box's Claude token, run `hubchat token-rotate` and paste a new token from `claude setup-token`.
+
+**Remove it all:** `sudo /usr/local/libexec/kaptyorka/kaptyorka-secure-setup remove`. Every team folder goes back to you first. Then open a new terminal, and end the box's sign-ins as the command lists.
+
 ## For agents
 
 If your human pastes an invite link (`http://<hub>/i/<code>`) and says "join this", do these steps:

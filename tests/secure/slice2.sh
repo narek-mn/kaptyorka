@@ -697,7 +697,7 @@ hubchat)
     head -c 3000 /dev/urandom > ~/trap1/blob.bin'
   t "M-7 content scan: each secret under a harmless name is named with its reason; nothing moved" "5 named; refused; still alice's" \
     're:^rc=0 6 NOT-MOVED$' \
-    "asal 'hubchat add ~/trap1 --yes' | tee /root/m7.out | grep -o -E 'hardlink-to-key.?: this file is also elsewhere|notes.bak.?: a private key|data.json.?: credentials in JSON|settings.txt.?: a KEY=secret line|ci.yml.?: a GitHub token|nothing was changed \\(move those files out, or run again with --force' | sort -u | wc -l | tr -d '\n'; [ -d /home/alice/trap1 ] && [ ! -L /home/alice/trap1 ] && echo ' NOT-MOVED'"
+    "asal 'hubchat add ~/trap1 --yes' | tee /root/m7.out | grep -o -E 'hardlink-to-key.?: this file is also elsewhere|notes.bak.?: a private key|data.json.?: credentials in JSON|settings.txt.?: a KEY=secret line|ci.yml.?: a GitHub token|nothing was changed. Move those files out of the folder and run the same command again, or add --force' | sort -u | wc -l | tr -d '\n'; [ -d /home/alice/trap1 ] && [ ! -L /home/alice/trap1 ] && echo ' NOT-MOVED'"
   rec "M-7 the refusal as alice sees it" INFO "info" "hubchat add ~/trap1 --yes" "$(cat /root/m7.out)"
   t "M-7b README.md and a binary file are not named" "not named" 'nore:README.md:|blob.bin:' "asal 'hubchat add ~/trap1'"
   t "M-7c with --force it is added after the list; the copy is the box's, alice's key untouched" "added; key alice nlink 1" \
@@ -725,13 +725,13 @@ hubchat)
   inb 'sleep 15' >/dev/null 2>&1 &
   sleep 3
   t "H-list every team folder, shortcut, size, box, running chats, sign-ins, allow list, self-check" "all listed" \
-    're:m1.*shortcut: /home/alice/m1.*proj-a.*size: .*chats: +claude .*proj-b.*kap-alice-proj-b \(separate\).*Claude Code sign-in: a setup-token.*may reach: .*api.anthropic.com.*Self-check \(outside half\): all walls in place' \
+    're:m1.*shortcut: /home/alice/m1.*proj-a.*size: .*chats: +claude .*proj-b.*kap-alice-proj-b \(separate\).*Claude Code sign-in: a setup-token.*may reach: .*api.anthropic.com.*Self-check: all walls in place' \
     "asal 'hubchat list'"
   wait
   t "H-rm hubchat remove of the separate project removes its box" "user gone" 're:personal again: /home/alice/proj-b.*own box kap-alice-proj-b was removed.*no-user' \
     "asal 'hubchat remove ~/proj-b'; id kap-alice-proj-b >/dev/null 2>&1 && echo user-left || echo no-user"
   t "H-rm hubchat remove m1 by its shortcut path" "personal again" 're:m1 is personal again: /home/alice/m1' "asal 'cd ~ && hubchat remove m1'"
-  t "H-cmds hubchat has four commands" "refused" 're:four commands' "asal 'hubchat login'"
+  t "H-cmds hubchat offers add, list and remove (token-rotate rarely)" "refused" 're:there is no command.*add, list and remove' "asal 'hubchat login'"
   ;;
 
 wallcheck)

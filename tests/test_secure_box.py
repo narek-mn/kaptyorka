@@ -1116,11 +1116,13 @@ def test_hubchat_and_enter_errors_are_one_safe_line(monkeypatch, capsys):
     assert _terminal_safe(err) and err.count("\n") == 1
 
 
-def test_wallcheck_fail_prints_one_safe_line(capsys):
+def test_wallcheck_fail_prints_one_safe_line_and_the_fixed_next_step(capsys):
     with pytest.raises(SystemExit):
         wc.fail("W1", "/x\x1b[2J\nwallcheck ok: 15 walls")
     err = capsys.readouterr().err
-    assert _terminal_safe(err) and err.count("\n") == 1
+    first, second = err.splitlines()   # the box-made name stays inside the first line
+    assert _terminal_safe(err) and err.count("\n") == 2 and "wall W1 is missing" in first
+    assert second.startswith("Next: restart this computer")
 
 
 # ---------------------------------------------------------------------------- kaptyorka-guard (round 3)

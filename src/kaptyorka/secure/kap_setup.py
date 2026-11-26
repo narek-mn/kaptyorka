@@ -37,6 +37,16 @@ else:
     import kaproot as kr
 
 Refuse = kc.Refuse
+USAGE = """Install or remove kaptyorka's team box on a personal laptop (run with sudo).
+
+Install (your team admin gives you the hub's IP, port and fingerprint and a device token file):
+  sudo python3 -I kap_setup.py install --personal --hub-ip IP --hub-port PORT --hub-sha256 FINGERPRINT \\
+       --name THIS-COMPUTER --device-token-file FILE [--claude-token-file FILE]
+  --claude-token-file: a file with the token from `claude setup-token` (or paste it when asked).
+  More: --person NAME (default: you), --runtime-max 7d (longest a team chat runs).
+
+Remove (every team folder goes back to you first):
+  sudo /usr/local/libexec/kaptyorka/kaptyorka-secure-setup remove [--delete-box-home] [--yes]"""
 HERE = os.path.dirname(os.path.abspath(__file__))
 FILES = os.path.join(HERE, "files")
 RELAY_SRC = os.path.join(os.path.dirname(HERE), "relay")
@@ -348,9 +358,11 @@ def install(a) -> int:
     kc.check_person(person)
     if not a.get("--personal"):
         raise Refuse("say --personal (a team machine is installed with pipx install kaptyorka and kaptyorka join)")
-    for k in ("--hub-ip", "--hub-port", "--hub-sha256", "--name", "--device-token-file"):
-        if not a.get(k):
-            raise Refuse(f"{k} is needed")
+    missing = [k for k in ("--hub-ip", "--hub-port", "--hub-sha256", "--name", "--device-token-file")
+               if not a.get(k)]
+    if missing:
+        raise Refuse("missing: " + " ".join(missing) + ". Your team admin gives you the hub's IP, port and "
+                     "fingerprint and a device token file; --name is a name you choose for this computer.")
     rt = a.get("--runtime-max") or "7d"
     if not kc.RUNTIME_RX.fullmatch(rt):
         raise Refuse("--runtime-max: like 7d, 12h, 90min or infinity")
@@ -392,9 +404,14 @@ def install(a) -> int:
         return 3
     say("Self-check: all walls in place. " + " ".join(r.stderr.split()))
     pub = kr.read_text(f"{kc.box_home(person)}/.ssh/id_ed25519.pub").strip()
-    say("", "Done. Log out and in once, so your account joins its new group.",
-        "Next:  hubchat add <folder>   (or: hubchat add <git URL>)",
-        *(["The box's own git SSH key (add it to your git account as an extra key):", "  " + pub] if pub else []))
+    say("", "Done. Next steps:",
+        "  1. Log out and in once (or restart the computer). Until then your own programs get",
+        "     \"Permission denied\" in team folders.",
+        "  2. Make a folder a team folder:   hubchat add ~/path/to/folder",
+        "     or get a repository as one:    hubchat add <git URL>",
+        "  3. cd into it and run claude, codex, opencode or cursor-agent as usual.",
+        *(["For private repositories: add the box's own SSH key to your git account (as an extra key):",
+           "  " + pub] if pub else []))
     return 0
 
 
@@ -436,7 +453,7 @@ def remove(a) -> int:
             folders = {}
         for name in sorted(folders):
             try:
-                hc.remove(person, name)
+                hc.remove(person, name, uninstall=True)
             except (Refuse, OSError) as e:
                 failed.append(f"{name}: {e}")
         for box in sorted(kr.boxes_of(person), key=lambda b: b == person):   # separate boxes first
@@ -485,10 +502,15 @@ def remove(a) -> int:
                 except OSError:
                     pass
     say("Removed." if not failed else "Removed, except:", *[f"  {f}" for f in failed],
-        *([] if delete_home else [f"The box homes were kept in {kc.TEAM}; delete them with sudo when you are sure."]),
-        "Now revoke what the box used: the box's Codex, Cursor and OpenCode sessions in each vendor's",
-        "account page, the box's SSH key in your git account, and ask an admin to remove this computer on",
-        "the hub page.", *kc.REVOKE_CLAUDE_TOKEN)
+        "Open a new terminal (or log out and in): then claude, codex, opencode and cursor-agent are",
+        "your own again everywhere.",
+        *([] if delete_home else ["The box homes (team memory, the box's sign-ins) were kept. To delete them:",
+                                  f"  sudo rm -rf {kc.TEAM}"]),
+        "Last, end what the box used:",
+        "  - the box's Codex, Cursor and OpenCode sign-ins: on each vendor's account page",
+        "  - the box's SSH key: in your git account",
+        "  - this computer on the hub: ask your team admin",
+        *kc.REVOKE_CLAUDE_TOKEN)
     return 1 if failed else 0
 
 
@@ -517,8 +539,11 @@ def main(argv) -> int:
             return install(a)
         if pos == ["remove"]:
             return remove(a)
-        print(__doc__.split("\n\n")[1])
+        print(USAGE)
         return 2
+    except BrokenPipeError:   # `... | head`: the reader left, nothing to say
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())   # no second error at exit
+        return 0
     except Refuse as e:
         print(kc.term(f"kaptyorka-secure-setup: {e}"), file=sys.stderr)
         return 2
