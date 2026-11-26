@@ -1,10 +1,12 @@
 #!/usr/bin/python3 -I
-"""hubchat-root (secure design v2, 4.9): add, remove, list. Nothing else. Root, reached only
+"""hubchat-root (secure design v2, 4.9): add, remove, list, token-rotate. Nothing else. Root, reached only
 through the sudo rule (/usr/local/bin/hubchat is one line: exec sudo -n ... "$@"). It never talks
 to the hub; a folder becomes a team folder only by being moved here by the person's own command.
 
-  hubchat add <folder> [--name NAME] [--separate] [--yes]
+  hubchat add <folder> [--name NAME] [--separate] [--yes] [--force]
       Move a folder of yours into the team area and leave a shortcut (a symlink) where it was.
+      A file that holds a key or token, or that is also elsewhere on your disk (a hard link),
+      stops it unless --force.
   hubchat add <git URL> [--name NAME] [--separate]
       Clone a repository inside the box (never as root) into a new team folder; the shortcut
       goes into the current folder.
@@ -13,6 +15,9 @@ to the hub; a folder becomes a team folder only by being moved here by the perso
   hubchat list
       Every team folder, its shortcut, size, box and running chats; sign-ins, allow list,
       self-check, warnings.
+  hubchat token-rotate
+      Give the box a new Claude token (from `claude setup-token`, pasted or on standard input),
+      end the running Claude chats, and say how to end the old token.
 
 Installed as /usr/local/libexec/kaptyorka/hubchat-root.
 """
@@ -58,18 +63,51 @@ def pick_box(person: str, name: str, separate: bool) -> str:
     return box
 
 
+LINKED = "this file is also elsewhere on your disk (a hard link): the box would get a copy of it"
+O_PEEK = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC | getattr(os, "O_NOATIME", 0)
+
+
+def peek(dfd: int, name: str) -> bytes:
+    """The first bytes of a regular file, opened without following a link; b"" if it is not a
+    plain file any more or is too big to be a key file."""
+    try:
+        fd = os.open(name, O_PEEK, dir_fd=dfd)
+    except PermissionError:          # O_NOATIME on a file root does not own on some file systems
+        try:
+            fd = os.open(name, O_PEEK & ~getattr(os, "O_NOATIME", 0), dir_fd=dfd)
+        except OSError:
+            return b""
+    except OSError:
+        return b""
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > kc.CONTENT_MAX_SIZE:
+            return b""
+        return os.read(fd, kc.CONTENT_SAMPLE)
+    except OSError:
+        return b""
+    finally:
+        os.close(fd)
+
+
 def scan_secrets(top_fd: int, limit: int = 200000):
-    """Names that look like secrets (4.9 step 2), walked without following links."""
+    """What looks like a secret (4.9 step 2, and red team round 1 finding 2), walked without
+    following links: [(path, reason, kind)], kind "name" (its name), "content" (its first
+    bytes: a key block, a token shape, credential JSON, a KEY=secret line) or "link" (a plain
+    file with more than one hard link, so it is also somewhere else on the disk)."""
     found, seen = [], 0
     stack = [(os.dup(top_fd), "")]
     while stack:
         fd, rel = stack.pop()
         try:
-            for name in os.listdir(fd):
+            for name in sorted(os.listdir(fd)):
                 seen += 1
                 if seen > limit:
                     break
-                st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                try:
+                    st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                except OSError:
+                    continue
                 if stat.S_ISDIR(st.st_mode):
                     if name in ("objects", "node_modules") and rel.endswith(".git/") or name == "node_modules":
                         continue
@@ -77,11 +115,24 @@ def scan_secrets(top_fd: int, limit: int = 200000):
                         stack.append((os.open(name, kr.O_DIR, dir_fd=fd), f"{rel}{name}/"))
                     except OSError:
                         pass
-                elif kc.is_secret_name(name):
-                    found.append(rel + name)
+                    continue
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+                if kc.is_secret_name(name):
+                    found.append((rel + name, "its name looks like a secret", "name"))
+                reason = kc.secret_in_content(peek(fd, name))
+                if reason:
+                    found.append((rel + name, reason, "content"))
+                if st.st_nlink > 1:
+                    found.append((rel + name, LINKED, "link"))
         finally:
             os.close(fd)
     return found
+
+
+def show_found(found, most: int = 30):
+    lines = [f"  {p}: {why}" for p, why, _ in found[:most]]
+    return lines + (["  ..."] if len(found) > most else [])
 
 
 def check_source(person: str, path: str):
@@ -129,7 +180,7 @@ def check_source(person: str, path: str):
     return real, pfd, fd, st
 
 
-def add_folder(person: str, path: str, name: str, separate: bool, yes: bool) -> None:
+def add_folder(person: str, path: str, name: str, separate: bool, yes: bool, force: bool = False) -> None:
     folders = kr.load_folders(person)
     real, pfd, fd, st = check_source(person, path)
     try:
@@ -137,11 +188,16 @@ def add_folder(person: str, path: str, name: str, separate: bool, yes: bool) -> 
         if name in folders:
             raise Refuse(f"a team folder named {name} exists; pick another with --name")
         found = scan_secrets(fd)
+        strong = [f for f in found if f[2] != "name"]
         if found:
-            kr.say("These look like secrets. Team chats will be able to read all of them:",
-                   *[f"  {f}" for f in found[:30]], *(["  ..."] if len(found) > 30 else []))
-            if not yes and not ask("Share them anyway?"):
-                raise Refuse("nothing was changed (move the secrets out, or run again with --yes)")
+            kr.say("These look like secrets, or are also elsewhere on your disk. Team chats will be able "
+                   "to read all of them:", *show_found(found))
+        # A secret seen in a file's content, or a hard link, is refused unless --force: no
+        # question at the terminal, so a habit of typing "y" does not share a key.
+        if strong and not force:
+            raise Refuse("nothing was changed (move those files out, or run again with --force to share them anyway)")
+        if found and not strong and not (yes or force) and not ask("Share them anyway?"):
+            raise Refuse("nothing was changed (move the secrets out, or run again with --yes)")
         box = pick_box(person, name, separate)
         pw = kr.person_home(person)
         buid, sgid = kr.uid_of(kc.box_user(box)), kr.gid_of(kc.share_group(box))
@@ -370,7 +426,8 @@ def remove(person: str, target: str) -> None:
         notes.append(f"its own box {kc.box_user(box)} was removed; revoke that box's tool sign-ins at each vendor")
     kr.say(f"{name} is personal again: {back}",
            "  It was made safe for git: only plain keys are left in its git config, hooks moved aside.",
-           *[f"  {n}" for n in notes])
+           *[f"  {n}" for n in notes],
+           "  If a team chat may have sent the box's Claude token away, give it a new one: hubchat token-rotate")
     if traps:
         kr.say("  Team chats wrote these files, which can run code when a program of yours opens them. "
                "Read them before you trust the folder:", *[f"    {t}" for t in traps])
@@ -429,10 +486,10 @@ def list_all(person: str) -> None:
                 os.close(fd)
             if traps:
                 kr.say("    files that can run code, written by team chats: " + ", ".join(traps[:20]))
-            secrets_found = scan_secrets_path(real)
+            secrets_found = [f for f in scan_secrets_path(real) if f[2] != "link"]
             if secrets_found:
-                kr.say("    WARNING: these look like secrets and team chats can read them: "
-                       + ", ".join(secrets_found[:10]))
+                kr.say("    WARNING: these look like secrets and team chats can read them:",
+                       *["  " + ln for ln in show_found(secrets_found, 10)])
         except (Refuse, OSError):
             pass
     kr.say(f"  {kc.MEMORY} (the shared team memory)    view: {kc.view_path(person, kc.MEMORY)}")
@@ -462,6 +519,37 @@ def list_all(person: str) -> None:
     warn_all(person)
 
 
+def read_new_token() -> str:
+    if sys.stdin.isatty():
+        import getpass
+        return getpass.getpass("Paste the new token from `claude setup-token` (run it as yourself): ").strip()
+    return sys.stdin.readline(512).strip()
+
+
+def token_rotate(person: str) -> None:
+    """A new Claude token for the person's boxes (red team round 1, finding 1: treat the box's
+    token as one a tricked chat may have sent away). Read from the terminal or standard input,
+    never from the command line, where every user's ps would show it."""
+    tok = read_new_token()
+    if not kc.TOKEN_RX.fullmatch(tok):
+        raise Refuse("that does not look like a token from `claude setup-token`; nothing was changed")
+    path = f"{kc.SECRET}/{person}/claude-oauth-token"
+    if kr.read_text(path).strip() == tok:
+        raise Refuse("that is the token the box has now; make a new one with `claude setup-token`")
+    kr.mkdir(kc.SECRET, 0o700)
+    kr.mkdir(f"{kc.SECRET}/{person}", 0o700)
+    kr.write_file(path, tok + "\n", 0o600)
+    ended = 0
+    for box in kr.boxes_of(person):
+        for unit, tool, _ in kr.chats(box):
+            if tool == "claude":
+                kr.systemctl("stop", unit, check=False)
+                ended += 1
+    kr.say("The box has a new Claude token; the next Claude chat uses it.",
+           f"  {ended} running Claude chat(s) were ended (they held the old token)." if ended else
+           "  No Claude chat was running.", *kc.REVOKE_CLAUDE_TOKEN)
+
+
 def scan_secrets_path(path: str):
     fd = kr.open_dir(path)
     try:
@@ -477,13 +565,13 @@ def main(argv) -> int:
             kr.say(USAGE)
             return 0
         cmd, rest = argv[0], argv[1:]
-        opts = {"--name": "", "--separate": False, "--yes": False}
+        opts = {"--name": "", "--separate": False, "--yes": False, "--force": False}
         pos = []
         while rest:
             a = rest.pop(0)
             if a == "--name" and rest:
                 opts["--name"] = rest.pop(0)
-            elif a in ("--separate", "--yes"):
+            elif a in ("--separate", "--yes", "--force"):
                 opts[a] = True
             elif a.startswith("-"):
                 raise Refuse(f"unknown option {kc.shown(a)}")
@@ -493,13 +581,15 @@ def main(argv) -> int:
             if kc.looks_like_url(pos[0]):
                 add_git(person, pos[0], opts["--name"], opts["--separate"])
             else:
-                add_folder(person, pos[0], opts["--name"], opts["--separate"], opts["--yes"])
+                add_folder(person, pos[0], opts["--name"], opts["--separate"], opts["--yes"], opts["--force"])
         elif cmd == "remove" and len(pos) == 1 and not opts["--name"]:
             remove(person, pos[0])
         elif cmd == "list" and not pos:
             list_all(person)
+        elif cmd == "token-rotate" and not pos and not any(opts.values()):
+            token_rotate(person)
         else:
-            raise Refuse("hubchat has three commands: add, remove, list (hubchat help)")
+            raise Refuse("hubchat has four commands: add, remove, list, token-rotate (hubchat help)")
         return 0
     except Refuse as e:
         print(f"hubchat: {e}", file=sys.stderr)

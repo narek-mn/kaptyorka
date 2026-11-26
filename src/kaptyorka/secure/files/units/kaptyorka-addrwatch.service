@@ -1,0 +1,28 @@
+# The second wall for this computer's own addresses (secure design v2, 4.5): when they change,
+# the new ones are added to IPAddressDeny= of every box's forwarder and of each running box
+# slice (systemctl set-property --runtime). Root: it talks to systemd. It needs no file of anyone.
+[Unit]
+Description=kaptyorka: deny this computer's new addresses to the box units
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/kaptyorka/addrwatch
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+IPAddressDeny=any
+SystemCallFilter=@system-service
+MemoryMax=64M
+TasksMax=16
+KillMode=control-group
+TimeoutStopSec=5
+Restart=always
+RestartSec=2
+RuntimeMaxSec=1d
+
+[Install]
+WantedBy=multi-user.target
