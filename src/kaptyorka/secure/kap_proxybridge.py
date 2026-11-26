@@ -40,13 +40,18 @@ def pump(a, b, done=None) -> None:
             done()
 
 
-def serve(idle: float, port: int = 3128) -> None:
-    ls = socket.socket()
-    ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    ls.bind(("127.0.0.1", port))
-    ls.listen(64)
-    ls.settimeout(5)
-    state = {"open": 0, "last": time.monotonic()}
+def serve(idle: float, port: int = 3128, ls=None, stop=None, state=None) -> None:
+    """ls: a listening socket already open (the helper's, from its socket unit); else bind port.
+    stop: an Event; once set, no new connection is taken (they wait in the socket's queue for the
+    next helper) while the open ones go on. state["open"]: how many pump ends are still open."""
+    if ls is None:
+        ls = socket.socket()
+        ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        ls.bind(("127.0.0.1", port))
+        ls.listen(64)
+    ls.settimeout(0.5)
+    state = state if state is not None else {}
+    state.update({"open": 0, "last": time.monotonic()})
     lock = threading.Lock()
 
     def closed():
@@ -54,7 +59,7 @@ def serve(idle: float, port: int = 3128) -> None:
             state["open"] -= 1
             state["last"] = time.monotonic()
 
-    while True:
+    while not (stop and stop.is_set()):
         try:
             c, _ = ls.accept()
         except socket.timeout:

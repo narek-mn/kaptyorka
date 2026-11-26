@@ -435,3 +435,58 @@ def test_the_helper_runs_as_a_script_and_refuses_outside_a_box():
     r = subprocess.run([sys.executable, "-I", H.__file__, "hook", "claude", "SessionStart"], input="{}",
                        capture_output=True, text=True, timeout=20)
     assert r.returncode == 0 and r.stdout == ""
+
+
+def test_take_token_keeps_the_proxy_socket_uninheritable_and_closes_the_rest(tmp_path):
+    """The helper's socket unit passes the listening socket of 127.0.0.1:3128 (fd name proxy) next
+    to the token (claude-token): the token is read and closed, the socket kept but never handed to
+    a helper chat (non-inheritable), so the proxy survives the helper's restarts."""
+    src = Path(H.__file__).resolve().parents[2]
+    script = f"""
+import os, socket, sys
+sys.path.insert(0, {str(src)!r})
+from kaptyorka.secure import kap_helper as H
+a, b = socket.socketpair(); b.sendall(b"sk-ant-oat01-x\\n"); b.close()
+ls = socket.socket(); ls.bind(("127.0.0.1", 0)); ls.listen(1)
+x, y = os.dup2(a.fileno(), 50), os.dup2(ls.fileno(), 51); a.close(); ls.close()
+os.dup2(x, 3); os.dup2(y, 4); os.close(x); os.close(y)
+env = {{"LISTEN_FDS": "2", "LISTEN_PID": str(os.getpid()), "LISTEN_FDNAMES": "claude-token:proxy"}}
+keep = {{}}
+tok = H.take_token(env, keep)
+def is_open(fd):
+    try: os.fstat(fd); return True
+    except OSError: return False
+print(tok, keep, is_open(3), is_open(4), os.get_inheritable(4), sorted(env))
+"""
+    r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=20)
+    assert r.stdout.strip() == "sk-ant-oat01-x {'proxy': 4} False True False []", r.stderr
+
+
+def test_the_proxy_bridge_stops_taking_connections_on_stop_and_keeps_the_open_ones(tmp_path, monkeypatch):
+    """At the helper's time limit (SIGTERM) the bridge takes no new connection (they wait in the
+    socket's queue for the next helper) while an open one keeps working until it ends."""
+    from kaptyorka.secure import kap_proxybridge as pb
+    egress = socket.socket(socket.AF_UNIX)
+    egress.bind(str(tmp_path / "egress.sock"))
+    egress.listen(4)
+    monkeypatch.setattr(pb, "EGRESS", str(tmp_path / "egress.sock"))
+    ls = socket.socket()
+    ls.bind(("127.0.0.1", 0))
+    ls.listen(8)
+    port = ls.getsockname()[1]
+    stop, state = threading.Event(), {}
+    t = threading.Thread(target=pb.serve, args=(3600.0,), kwargs={"ls": ls, "stop": stop, "state": state}, daemon=True)
+    t.start()
+    c = socket.create_connection(("127.0.0.1", port), timeout=5)
+    u, _ = egress.accept()
+    stop.set()
+    t.join(3)
+    assert not t.is_alive() and state["open"] == 2
+    c.sendall(b"ping")                       # the open connection still passes data
+    assert u.recv(4) == b"ping"
+    late = socket.create_connection(("127.0.0.1", port), timeout=5)   # queued, not refused
+    egress.settimeout(0.5)
+    with pytest.raises(socket.timeout):
+        egress.accept()
+    for s in (c, u, late, ls, egress):
+        s.close()

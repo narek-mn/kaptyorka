@@ -61,6 +61,7 @@ STANDING = BOXCONF + "/standing-rule.md"
 REPORT_S = 3          # a report this often while a chat runs
 AGENTS_S = 15         # `claude agents --json` this often
 IDLE_S = 600          # no chat this long: the helper ends (enter starts it again)
+DRAIN_S = 3           # at the time limit: open proxy connections get this long to finish
 WAKE_S = 1800         # busy and silent this long: the chat is asked once (stuck.py)
 HELPER_MAX = 4        # helper chats running at once
 HELPER_S = 2 * 3600   # a helper chat is stopped after this long
@@ -754,15 +755,22 @@ def token_readable_problem(prog: str) -> str:
     return ""
 
 
-def take_token(env) -> str:
+def take_token(env, keep: Optional[dict] = None) -> str:
     """The Claude token systemd opened for this unit (OpenFile=, fd name claude-token), for
-    helper chats; every passed descriptor is closed."""
+    helper chats; every passed descriptor is closed, except the proxy's listening socket (fd name
+    proxy, held by the helper's socket unit), which goes into keep["proxy"] when keep is given.
+    It is made non-inheritable: no helper chat or tool server may accept the box's connections."""
     n = int(env.get("LISTEN_FDS", "0") or 0) if env.get("LISTEN_PID") == str(os.getpid()) else 0
     names = env.get("LISTEN_FDNAMES", "").split(":")
     token = ""
     for i in range(n):
+        name = names[i] if i < len(names) else ""
+        if name == "proxy" and keep is not None:
+            os.set_inheritable(3 + i, False)
+            keep["proxy"] = 3 + i
+            continue
         try:
-            if i < len(names) and names[i] == "claude-token":
+            if name == "claude-token":
                 token = os.read(3 + i, 4096).decode("ascii", "replace").strip()
         finally:
             try:
@@ -957,15 +965,25 @@ def main(argv: List[str]) -> int:
         if not box:
             print("helper: runs only as a box user", file=sys.stderr)
             return 2
-        token = take_token(os.environ)
+        fds: dict = {}
+        token = take_token(os.environ, fds)
+        stop, bridge = threading.Event(), {}
+        signal.signal(signal.SIGTERM, lambda *_: stop.set())
         sys.path.insert(0, HERE)
         try:
             import proxybridge  # the box's only way to the internet: 127.0.0.1:3128 -> forwarder
-            threading.Thread(target=proxybridge.serve, args=(float(86400 * 365),), daemon=True).start()
+            ls = socket.socket(fileno=fds["proxy"]) if "proxy" in fds else None   # systemd's, kept across restarts
+            threading.Thread(target=proxybridge.serve, args=(float(86400 * 365),),
+                             kwargs={"ls": ls, "stop": stop, "state": bridge}, daemon=True).start()
         except (ImportError, OSError) as e:
             log(f"proxy bridge not started: {e}")
         os.makedirs(STATE, mode=0o700, exist_ok=True)
-        Helper(box, relay_socket(box), token=token).loop(idle)
+        Helper(box, relay_socket(box), token=token).loop(idle, stop)
+        # SIGTERM (the unit's time limit; systemd starts the next helper on the same socket): the
+        # connections already open get DRAIN_S to finish; new ones wait in the socket's queue
+        end = time.monotonic() + DRAIN_S
+        while stop.is_set() and bridge.get("open", 0) > 0 and time.monotonic() < end:
+            time.sleep(0.1)
         return 0
     print(__doc__.split("\n\n")[1], file=sys.stderr)
     return 2

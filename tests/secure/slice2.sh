@@ -592,6 +592,9 @@ EOF
   systemctl stop kaptest-own2; ip addr del 203.0.113.77/32 dev own0
   # E-2f: the second wall. A bad forwarder release runs, this computer gets a new address, and alice's server on 0.0.0.0
   # answers there: the forwarder UNIT must refuse it within seconds (addrwatch adds it to IPAddressDeny=).
+  # No helper meanwhile: a helper restarted at its time limit runs wallcheck, whose W15 asks the forwarder,
+  # and this bad forwarder dies on that question (it would count as "restarted" in E-2f3).
+  systemctl stop kapbox-alice-helper.socket kapbox-alice-helper.service 2>/dev/null
   mkdir -p /opt/kaptyorka/egress/evil
   cat > /opt/kaptyorka/egress/evil/egress.py <<'EOF'
 import socket
