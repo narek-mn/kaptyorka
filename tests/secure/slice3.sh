@@ -12,8 +12,10 @@
 # the box's MCP server, the helper, the relay) must arrive back at box-1. Then the box chat asks for a helper chat
 # (work), which must start inside the box with the Claude token on a descriptor only. Then the terminal filter
 # (design 4.8): the stub prints clipboard, title, DCS, APC and report codes through the real launcher at a real
-# terminal (script(1) in tmux); none may reach it, colours and a resize must. Last: rejoin with a new link and
-# repair, both from the installer's own copy. Results: slice3-results.tsv.
+# terminal (script(1) in tmux); none may reach it, colours and a resize must. Phase modes (red team round 5, finding
+# 1): a stub chat leaves every lasting terminal mode on and bracketed paste off; after it the terminal (tmux, which
+# keeps each mode's state) must be as before, also when the filter is killed mid-chat. Last: rejoin with a new link
+# and repair, both from the installer's own copy. Results: slice3-results.tsv.
 #
 # On the host (never as root):   ./slice3.sh            # fresh container kaptest-s3, removed at the end
 #                                KEEP=1 ./slice3.sh     # leave it running
@@ -25,7 +27,7 @@
 # units get RuntimeMaxSec=150s from the installer. No host folder is mounted. Nothing runs as root on the host.
 set -u
 C=${C:-kaptest-s3}
-ALL_PHASES="setup hubvenv hub install chat close term rejoin"
+ALL_PHASES="setup hubvenv hub install chat close term modes rejoin"
 
 if [ "${1:-}" != "--inner" ]; then
   HERE=$(cd "$(dirname "$0")" && pwd)
@@ -83,7 +85,7 @@ m = re.search(r"```bash\n(.*?)```", t, re.S); sys.stdout.write(m.group(1) if m e
   rm -rf "$SB"
   X bash -c ': > /root/results.tsv'
   for p in ${PHASES:-$ALL_PHASES}; do
-    case $p in hubvenv) lim=400;; chat) lim=170;; install|rejoin) lim=150;; *) lim=85;; esac
+    case $p in hubvenv) lim=400;; chat) lim=170;; install|rejoin|modes) lim=150;; *) lim=85;; esac
     echo "== phase $p (limit ${lim}s)"; unit "$p" "$lim"
   done
   X bash -c 'systemctl kill --signal=KILL "kapbox-*.slice" kaptest-chat.service >/dev/null 2>&1; true'
@@ -155,6 +157,12 @@ while a and a[0] in ("--settings", "--mcp-config", "--strict-mcp-config"):
     else: mcpconf = a[1]
     a = a[2:]
 if a[:1] == ["agents"]: print("[]"); sys.exit(0)
+if os.path.exists(".stub-modes"):  # red team round 5: a chat leaves every lasting terminal mode on and ends
+    how = open(".stub-modes").read().strip()
+    sys.stdout.write("\x1b[?2026h\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1015h\x1b[?1004h\x1b[?1h\x1b="
+                     "\x1b[?25l\x1b[4h\x1b[5;10r\x1b(0\x1b[=5u\x1b[>1u\x1b[>4;2m\x1b[5 q\x1b[?2004lMODES-ON\r\n"
+                     "\x1b[?2026l\x1b[?2026h"); sys.stdout.flush()
+    time.sleep(90 if how == "hold" else 1); sys.exit(0)
 if os.path.exists(".stub-esc"):  # the terminal filter's test: codes that act through the terminal, colours, a resize
     def size(): c, r = os.get_terminal_size(1); return f"SIZE {c}x{r}"
     w = sys.stdout
@@ -527,6 +535,80 @@ EOF2
   wait_for 15 "! systemctl list-units --plain --no-legend 'kaptyorka-ttyfilter-*' | grep -q ."
   t "T-5 the filter's unit ends with the chat" "none left" 're:^rc=0 $' "systemctl list-units --plain --no-legend 'kaptyorka-ttyfilter-*'"
   rm -f $PA/.stub-esc; tmux -L s3 kill-server 2>/dev/null; true
+  ;;
+
+modes)
+  # red team round 5, finding 1: a box chat turns on every lasting terminal mode the filter passes (mouse reports,
+  # the alternate screen, cursor keys and keypad, insert mode, a scroll region, the line-drawing set, kitty keyboard
+  # flags, modifyOtherKeys, cursor shape, focus events, synchronized output) and bracketed paste OFF, then ends. The
+  # terminal is tmux's (it keeps each mode's state: #{...} flags); the shell had its paste guard on before the chat.
+  # After the chat the terminal must be as before; the same stub without the box and the filter (control) leaves
+  # it broken, so the checks can fail. Then the filter is killed outright mid-chat: enter's own reset must do it.
+  cat > /root/modes.sh <<'EOM'
+#!/bin/bash
+printf '\e[?2004h'
+if [ "$1" = ctl ]; then cd /root/ctlm && script -qfec "python3 -I /root/tools/testkit/stub-claude.py" /root/modes-$1.raw
+else script -qfec "runuser -u alice -- bash -c 'cd ~/team/proj-a && exec /usr/local/libexec/kaptyorka/launch claude'" /root/modes-$1.raw; fi
+printf 'AFTER-CHAT qqq\r\n'
+stty raw -echo; printf 'READY-PASTE\r\n'; timeout --foreground 12 dd bs=1 count=18 of=/root/paste-$1 2>/dev/null; stty sane; echo PASTE-READ
+sleep 60
+EOM
+  cat > /root/rawcheck.py <<'EOM'
+import sys
+d = open(sys.argv[1], "rb").read().decode("utf-8", "replace")
+tail = d[d.find("MODES-ON") + 8:] if "MODES-ON" in d else ""
+want = {"kitty-pop": "\x1b[<1u", "kitty-flags": "\x1b[=0u", "modifyOtherKeys": "\x1b[>4m", "cursor-shape": "\x1b[0 q",
+        "focus-off": "1004", "sync-off": "\x1b[?2026l", "charset": "\x1b(B", "sgr0": "\x1b[0m"}
+print("after-the-chat:", " ".join(k for k, v in want.items() if v in tail) or "nothing",
+      "| paste-off-reached:", "yes" if "\x1b[?2004l" in d else "no")
+EOM
+  chmod 755 /root/modes.sh
+  F='alt=#{alternate_on} mouse=#{mouse_any_flag}#{mouse_all_flag}#{mouse_button_flag}#{mouse_standard_flag}#{mouse_sgr_flag}#{mouse_utf8_flag} cursor=#{cursor_flag} keys=#{keypad_cursor_flag}#{keypad_flag} insert=#{insert_flag} region=#{scroll_region_upper}-#{scroll_region_lower}'
+  # mrun TAG: modes.sh TAG in its own tmux terminal (120x40); paste TAG: tmux pastes PASTED as a terminal does
+  mrun() { rm -f /root/modes-$1.raw /root/paste-$1; tmux -L s3 kill-session -t m$1 2>/dev/null
+    tmux -L s3 new-session -d -s m$1 -x 120 -y 40 "/root/modes.sh $1"; }
+  paste() { wait_for 10 "tmux -L s3 capture-pane -p -t m$1 | grep -q READY-PASTE"; tmux -L s3 set-buffer -b p PASTED; tmux -L s3 paste-buffer -p -d -b p -t m$1
+    wait_for 14 "tmux -L s3 capture-pane -p -t m$1 | grep -q PASTE-READ"; }
+  mkdir -p /root/ctlm && echo end > /root/ctlm/.stub-modes
+  mrun ctl; wait_for 15 "tmux -L s3 capture-pane -p -t mctl | grep -q 'AFTER-CHAT'"; sleep 1
+  t "T-6c control: the same stub without the box and the filter leaves the terminal broken (so the T-6 rows can fail)" \
+    "alternate screen, mouse, keys, insert, hidden cursor, region on; line drawing" \
+    're:^rc=0 alt=1 mouse=1[01]+ cursor=0 keys=11 insert=1 region=4-9 drawn=yes$' \
+    "tmux -L s3 display -p -t mctl '$F' | tr -d '\n'; tmux -L s3 capture-pane -p -e -t mctl | grep -a AFTER-CHAT | grep -qa \$'\\x0e' && echo ' drawn=yes' || echo ' drawn=no'"
+  paste ctl
+  t "T-6c2 control: the paste arrives without its guard (the stub switched bracketed paste off)" "PASTED alone" 're:^rc=0 PASTED$' "cat /root/paste-ctl"
+  echo end > /root/mstub; install -o kap-alice -g kap-alice -m 644 /root/mstub $PA/.stub-modes
+  mrun box; wait_for 40 "tmux -L s3 capture-pane -p -t mbox | grep -q 'AFTER-CHAT'"; sleep 1
+  t "T-6a after a box chat that left them on: alternate screen left, mouse reports off, cursor shown, cursor keys and keypad normal, insert off, full scroll region" \
+    "alt=0 mouse=000000 cursor=1 keys=00 insert=0 region=0-39" 're:^rc=0 alt=0 mouse=000000 cursor=1 keys=00 insert=0 region=0-39$' \
+    "tmux -L s3 display -p -t mbox '$F'"
+  t "T-6b the chat's output reached the terminal (MODES-ON), and the text after the chat is plain letters, not line drawing" \
+    "MODES-ON; AFTER-CHAT qqq" 're:^rc=0 on AFTER-CHAT qqq plain$' \
+    "grep -aq MODES-ON /root/modes-box.raw && echo -n 'on '; tmux -L s3 capture-pane -p -t mbox | grep -o 'AFTER-CHAT ...' | tr -d '\n'; tmux -L s3 capture-pane -p -e -t mbox | grep -a AFTER-CHAT | grep -qa \$'\\x0e' && echo ' drawn' || echo ' plain'"
+  t "T-6d what tmux cannot show, from the bytes after the chat's last output: kitty flags popped and reset, modifyOtherKeys, cursor shape, focus events, synchronized output off, ASCII, SGR 0; bracketed paste OFF never reached the terminal" \
+    "all of them; paste-off-reached no" \
+    're:^rc=0 after-the-chat: kitty-pop kitty-flags modifyOtherKeys cursor-shape focus-off sync-off charset sgr0 \| paste-off-reached: no$' \
+    "python3 -I /root/rawcheck.py /root/modes-box.raw"
+  paste box
+  t "T-6e the paste guard is still on after the chat (the paste arrives bracketed)" "ESC[200~PASTED ESC[201~" \
+    're:^rc=0 \^\[\[200~PASTED\^\[\[201~$' "cat -v /root/paste-box"
+  # the filter killed outright (SIGKILL, so it cannot restore): enter stops the chat and resets the terminal itself
+  echo hold > /root/mstub; install -o kap-alice -g kap-alice -m 644 /root/mstub $PA/.stub-modes
+  mrun kill; wait_for 40 "grep -aq MODES-ON /root/modes-kill.raw"; sleep 2
+  t "T-7a while that chat runs the modes are on (alternate screen, mouse)" "alt=1 mouse on" \
+    're:^rc=0 alt=1 mouse=1' "tmux -L s3 display -p -t mkill '$F'"
+  systemctl kill --signal=KILL 'kaptyorka-ttyfilter-*' 2>/dev/null
+  wait_for 40 "tmux -L s3 capture-pane -p -t mkill | grep -q 'AFTER-CHAT'"; sleep 1
+  t "T-7b the filter killed mid-chat: enter stopped the chat and its own reset left the terminal sane" \
+    "the chat stopped; alt=0 mouse=000000 cursor=1 keys=00 insert=0 region=0-39; plain letters" \
+    're:^rc=0 .*terminal filter stopped.*alt=0 mouse=000000 cursor=1 keys=00 insert=0 region=0-39 AFTER-CHAT qqq plain$' \
+    "grep -ao 'enter: the terminal filter stopped[^.]*' /root/modes-kill.raw | head -1 | tr -d '\r\n'; echo -n ' '; tmux -L s3 display -p -t mkill '$F' | tr -d '\n'; echo -n ' '; tmux -L s3 capture-pane -p -t mkill | grep -o 'AFTER-CHAT ...' | tr -d '\n'; tmux -L s3 capture-pane -p -e -t mkill | grep -a AFTER-CHAT | grep -qa \$'\\x0e' && echo ' drawn' || echo ' plain'"
+  paste kill
+  t "T-7c after the killed filter the paste guard is still on" "bracketed" 're:^rc=0 \^\[\[200~PASTED\^\[\[201~$' "cat -v /root/paste-kill"
+  wait_for 20 "! systemctl list-units --plain --no-legend 'kaptyorka-ttyfilter-*' 'kapbox-alice-chat-*' | grep -q ."
+  t "T-7d no chat or filter unit is left" "none" 're:^rc=0 $' \
+    "systemctl list-units --plain --no-legend 'kaptyorka-ttyfilter-*' 'kapbox-alice-chat-*'"
+  rm -f $PA/.stub-modes; tmux -L s3 kill-server 2>/dev/null; true
   ;;
 
 rejoin)

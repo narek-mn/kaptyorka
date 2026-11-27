@@ -130,7 +130,7 @@ def test_the_pipe_pump_filters_and_ends_at_the_end_of_input():
     os.close(w1)
     t.join(5)
     os.close(w2)
-    assert os.read(r2, 1000) == f"ok{E}[32mgreen".encode()
+    assert os.read(r2, 1000) == f"ok{E}[32mgreen{E}[0m".encode()    # the end: the restore (SGR 0 here)
 
 
 def _read_until(fd, want: bytes, limit: float = 5) -> bytes:
@@ -188,5 +188,106 @@ def test_enter_runs_the_filter_from_root_owned_libexec_in_its_own_unit(monkeypat
 def test_the_filter_program_runs_as_its_own_script():
     r = subprocess.run([sys.executable, "-I", tf.__file__, "pipe"], input=f"a{E}]52;c;x\x07b".encode(),
                        capture_output=True, timeout=20)
-    assert r.returncode == 0 and r.stdout == b"ab"
+    assert r.returncode == 0 and r.stdout == f"ab{E}[0m".encode()
     assert subprocess.run([sys.executable, "-I", tf.__file__, "x"], capture_output=True, timeout=20).returncode == 2
+
+
+def test_bracketed_paste_is_never_switched_off():
+    assert run(f"{E}[?2004h") == f"{E}[?2004h"
+    assert run(f"a{E}[?2004lb") == "ab"
+    assert run(f"{E}[?1049;2004l") == f"{E}[?1049l"
+    assert run("\x9b?2004l", f"{E}[?20", "04l") == ""
+
+
+def finish(*chunks: str) -> str:
+    f = tf.Filter()
+    out = b"".join(f.feed(c.encode()) for c in chunks)
+    return (out + f.finish()).decode()
+
+
+@pytest.mark.parametrize("on, back", [
+    (f"{E}[?1000h{E}[?1002h{E}[?1003h{E}[?1006h{E}[?1015h{E}[?1004h", f"{E}[?1000;1002;1003;1004;1006;1015l"),
+    (f"{E}[?1049h", f"{E}[?1049l"), (f"{E}[?47h", f"{E}[?47l"), (f"{E}[?1047h", f"{E}[?1047l"),
+    (f"{E}(0", f"{E}(B"), (f"{E})0", f"{E})B"),
+    (f"{E}[>1u", f"{E}[<1u"), (f"{E}[>1u{E}[>5u", f"{E}[<2u"), (f"{E}[=5u", f"{E}[=0u"),
+    (f"{E}[>4;2m", f"{E}[>4m"), (f"{E}[?1h{E}=", f"{E}[?1l{E}>"), (f"{E}[?25l", f"{E}[?25h"), (f"{E}[?7l", f"{E}[?7h"),
+    (f"{E}[4h", f"{E}[4l"), (f"{E}[5;20r", f"{E}7{E}[r{E}8"), (f"{E}[5 q", f"{E}[0 q"), (f"{E}[?2026h", f"{E}[?2026l"),
+    ("\x9b?1003h", f"{E}[?1003l"),
+])
+def test_every_lasting_mode_the_box_leaves_on_is_put_back_at_the_end(on, back):
+    assert finish("x", on, "y") == f"x{on}y{back}{E}[0m".replace("\x9b", f"{E}[")
+
+
+def test_a_mode_the_box_put_back_itself_is_not_sent_again():
+    assert finish(f"{E}[?1049h{E}[?1003h{E}(0{E}[>1u{E}[?25l", f"{E}[?1049l{E}[?1003l{E}(B{E}[<u{E}[?25h").endswith(
+        f"{E}[?25h{E}[0m")
+    assert finish(f"{E}[>1u{E}[>1u{E}[<5u") == f"{E}[>1u{E}[>1u{E}[<5u{E}[0m"
+    assert finish(f"{E}[5;9r{E}[r") == f"{E}[5;9r{E}[r{E}[0m"
+
+
+def test_the_restore_leaves_the_alternate_screen_and_ends_synchronized_output_first():
+    out = finish(f"{E}[?2026h{E}[?1003h{E}[?1049h{E}(0")
+    rest = out[len(f"{E}[?2026h{E}[?1003h{E}[?1049h{E}(0"):]
+    assert rest == f"{E}[?2026l{E}[?1049l{E}[?1003l{E}(B{E}[0m"
+
+
+def test_the_restore_comes_after_whatever_was_held():
+    f = tf.Filter()
+    assert f.feed(f"{E}[?1003h{E}]8;;https://example.org{E}\\https://ex".encode()) == f"{E}[?1003h".encode()
+    assert f.finish() == f"https://ex{E}[?1003l{E}[0m".encode()
+    assert f.finish() == f"{E}[0m".encode()     # nothing is restored twice
+
+
+def test_the_pump_restores_at_every_end():
+    r1, w1 = os.pipe()
+    r2, w2 = os.pipe()
+    t = threading.Thread(target=tf.pump, args=("pipe", r1, w2), daemon=True)
+    t.start()
+    os.write(w1, f"a{E}[?1003h{E}(0".encode())
+    assert _read_until(r2, b"(0") == f"a{E}[?1003h{E}(0".encode()
+    os.close(w1)
+    t.join(5)
+    assert _read_until(r2, b"[0m") == f"{E}[?1003l{E}(B{E}[0m".encode()
+    for fd in (r1, r2, w2):
+        os.close(fd)
+    pm, ps = __import__("pty").openpty()
+    bm, bs = __import__("pty").openpty()
+    __import__("tty").setraw(ps)
+    t = threading.Thread(target=tf.pump, args=("pty", ps, bm), daemon=True)
+    t.start()
+    os.write(bs, f"{E}[?1049h{E}[>1u".encode())
+    assert _read_until(pm, b"1u") == f"{E}[?1049h{E}[>1u".encode()
+    os.close(bs)
+    t.join(5)
+    assert _read_until(pm, b"[0m") == f"{E}[?1049l{E}[<1u{E}[0m".encode()
+
+
+def test_the_filter_restores_when_its_unit_stops_it():
+    import signal
+    import time
+    p = subprocess.Popen([sys.executable, "-I", tf.__file__, "pipe"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    p.stdin.write(f"go{E}[?1002h{E}[?2004l".encode())
+    p.stdin.flush()
+    got = b""
+    end = time.time() + 10
+    while b"1002h" not in got and time.time() < end:
+        got += os.read(p.stdout.fileno(), 100)
+    p.send_signal(signal.SIGTERM)
+    got += p.stdout.read()
+    assert p.wait(10) == 0
+    assert got == f"go{E}[?1002h{E}[?1002l{E}[0m".encode()
+
+
+def test_enter_resets_the_terminal_after_the_filter_ended(monkeypatch):
+    from kaptyorka.secure import kap_enter as en
+    r, w = os.pipe()
+    en.reset_terminal(w, clean=True)
+    en.reset_terminal(w, clean=False)
+    os.close(w)
+    out = os.read(r, 10000).decode()
+    clean, full = out[:len(en.RESET)], out[len(en.RESET):]
+    assert clean == en.RESET and full.endswith(en.RESET) and full.startswith(f"{E}[?1049l")
+    for want in ("?1000l", "?1002l", "?1003l", "?1006l", "?1015l", "?2026l", "<u", ">4m", "?1l", "?25h", "0m"):
+        assert f"{E}[{want}" in clean, want
+    assert f"{E}(B" in clean and f"{E}>" in clean and "2004l" not in out and "1049" not in clean
+    assert run(out) == out     # the filter itself would pass all of it

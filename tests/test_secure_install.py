@@ -312,6 +312,18 @@ def test_the_copy_is_read_only_for_others_and_keeps_only_links_inside(tmp_path, 
     assert (single / "2.1.400").stat().st_mode & 0o7777 == 0o755    # the set-id bit is gone
 
 
+
+def test_a_file_that_is_not_the_installers_own_is_refused_and_no_half_copy_stays(tmp_path, monkeypatch):
+    f = tmp_path / "f"
+    f.write_text("x")
+    with pytest.raises(kt.Refuse, match="not its own"):
+        kt._copy_file(str(f), str(tmp_path / "g"), os.getuid() + 1)    # a hard link to someone else's file
+    os.mkfifo(tmp_path / "fifo")
+    with pytest.raises(kt.Refuse, match="not its own"):
+        kt._copy_file(str(tmp_path / "fifo"), str(tmp_path / "h"), os.getuid())   # swapped in: no hang
+    assert not (tmp_path / "g").exists() and not (tmp_path / "h").exists()
+
+
 def test_install_one_records_the_version_and_points_bin_at_it(tmp_path, monkeypatch):
     top = tmp_path / "tools"
     (top / "bin").mkdir(parents=True)
@@ -322,6 +334,7 @@ def test_install_one_records_the_version_and_points_bin_at_it(tmp_path, monkeypa
     monkeypatch.setattr(kt.kr, "mkdir", lambda p, mode, **k: os.makedirs(p, mode, exist_ok=True))
     monkeypatch.setattr(kt.kr, "write_file", lambda p, d, mode=0o644, **k: open(p, "w").write(d))
     monkeypatch.setattr(kt, "addresses", lambda hosts: {h: ["192.0.2.1"] for h in hosts})
+    monkeypatch.setattr(kt, "unreachable", lambda specs: "")
     ran = []
 
     def unit(cmd, **kw):   # the unit: the vendor's installer leaves its program in the stage
@@ -351,6 +364,7 @@ def test_a_failed_vendor_installer_changes_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(kt.kr, "mkdir", lambda p, mode, **k: os.makedirs(p, mode, exist_ok=True))
     monkeypatch.setattr(kt.kr, "write_file", lambda p, d, mode=0o644, **k: open(p, "w").write(d))
     monkeypatch.setattr(kt, "addresses", lambda hosts: {h: ["192.0.2.1"] for h in hosts})
+    monkeypatch.setattr(kt, "unreachable", lambda specs: "")
     monkeypatch.setattr(kt.kr, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "curl: (7) Failed\n"))
     with pytest.raises(kt.Refuse, match="its installer failed"):
         kt.install_one("codex", "", say=lambda *a: None)

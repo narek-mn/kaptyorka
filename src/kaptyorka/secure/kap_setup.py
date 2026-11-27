@@ -516,13 +516,17 @@ def install_hooks() -> None:
         kr.write_file("/etc/fish/conf.d/kaptyorka.fish", f"{HOOK_BEGIN}\nsource {kc.ETC}/launcher.fish\n{HOOK_END}\n")
 
 
-def install_person(person: str, v: dict) -> None:
+def install_person_files(person: str, v: dict) -> None:
     kr.mkdir(f"{kc.PEOPLE}/{person}", 0o755)
     if not os.path.exists(f"{kc.PEOPLE}/{person}/folders.json"):
         kr.save_folders(person, {})
     kr.mkdir(f"{kc.SECRET}/{person}", 0o700)
     if v["claude"]:
         kr.write_file(f"{kc.SECRET}/{person}/claude-oauth-token", v["claude"] + "\n", 0o600)
+
+
+def install_person(person: str, v: dict) -> None:
+    install_person_files(person, v)
     kr.ensure_box(person, person, kr.read_text(f"{kc.BOXCONF}/egress-base"))
     sudoers = (f"# kaptyorka (secure design v2, 4.2): {person} may start team chats and use hubchat. Nothing else.\n"
                f"{person} ALL=(root) NOPASSWD: {kc.ENTER}, {kc.HUBCHAT_ROOT}\n")
@@ -580,11 +584,19 @@ def tools_step(a, specs: dict) -> list:
 
 
 def apply(person: str, v: dict, rt: str, a, specs: dict) -> int:
-    """Everything after the checks: install, repair and the hub's values, the same steps."""
+    """Everything after the checks: install, repair and the hub's values, the same steps. The
+    in-progress marker is written first and removed last (only when the self-check passed); what a
+    repair needs to finish a stopped install (the hub's values, the person, her Claude token, the
+    installer's copy) is written before the long tools step."""
     ver = version()
     say(f"Installing kaptyorka {ver} for {person}, personal-laptop mode ...")
+    kr.mkdir(kc.ETC, 0o755)
+    tools = [t for t in kap_tools.NAMES if t in specs] or marker().get("tools", [])   # a repair keeps the list
+    kr.write_file(kc.INSTALLING, f"person={person}\ntools={','.join(tools)}\n", 0o644)
     install_code(ver)
     install_etc(ver)
+    install_relay_conf(v)
+    install_person_files(person, v)
     install_installer()
     if rt:
         kr.write_file(kc.LIMITS_FILE, f"runtime_max={rt}\n", 0o644)
@@ -593,11 +605,28 @@ def apply(person: str, v: dict, rt: str, a, specs: dict) -> int:
     later = tools_step(a, specs)
     claude_execute_only()
     install_units()
-    install_relay_conf(v)
     install_hooks()
     install_person(person, v)
     a["_later"] = later
-    return self_check(person)
+    rc = self_check(person)
+    if rc == 0:
+        os.unlink(kc.INSTALLING)
+    return rc
+
+
+def marker() -> dict:
+    """The in-progress marker's values (person, tools), each checked; {} when there is none."""
+    got = dict(ln.split("=", 1) for ln in kr.read_text(kc.INSTALLING, 4096).splitlines() if "=" in ln)
+    out = {}
+    if kc.PERSON_RX.fullmatch(got.get("person", "")):
+        out["person"] = got["person"]
+    out["tools"] = [t for t in got.get("tools", "").split(",") if t in kap_tools.NAMES]
+    return out if os.path.lexists(kc.INSTALLING) else {}
+
+
+def refuse_unfinished() -> None:
+    if kc.unfinished_install():
+        raise Refuse(kc.unfinished_install())
 
 
 def self_check(person: str) -> int:
@@ -619,6 +648,7 @@ def self_check(person: str) -> int:
 
 
 def install(a) -> int:
+    refuse_unfinished()
     person = a.get("--person") or os.environ.get("SUDO_USER", "")
     kc.check_person(person)
     if not a.get("--personal"):
@@ -654,6 +684,12 @@ def install(a) -> int:
             say("Nothing was changed on this computer, and the link was not used: fix the above and run this again.")
         return 2
     specs = choose_tools(a, person)
+    host = kap_tools.unreachable(specs)
+    if host:
+        raise Refuse(f"this computer cannot reach {host}, where the AI tools come from: it looks offline. "
+                     "Connect it and run this again, or install now without them (--tools none) and add them "
+                     "later with  hubchat update-tools " + " ".join(t for t in kap_tools.NAMES if t in specs) + "."
+                     + (" The link was not used." if inv else "") + UNCHANGED)
     ask_claude_token(person, v)
     if inv:
         say(f"Joining the hub at {inv['host']}:{inv['port']} (fingerprint {inv['fp'][:16]}...) as {v['name']} ...")
@@ -709,6 +745,7 @@ def installed_people() -> list:
 def rejoin(a) -> int:
     """A new personal link for this computer (new certificate, address or device): the hub's
     values and the device key change, nothing else (9.5)."""
+    refuse_unfinished()
     old = installed_values()
     inv = parse_invite(a.get("link", ""))
     name = a.get("--name") or old["name"]
@@ -726,19 +763,30 @@ def rejoin(a) -> int:
 def repair(a) -> int:
     """Every file, unit, rule and launcher line written again from this installer, the hub's
     values and the box's sign-ins kept; then the self-check."""
-    v = installed_values()
-    people = installed_people()
+    half = marker()
+    try:
+        v = installed_values()
+    except Refuse:
+        if half:
+            raise Refuse("the install stopped before it kept the hub's settings, so it cannot be finished: run  "
+                         f"sudo {kc.INSTALLER} remove  and install again with a new link from your team admin")
+        raise
+    people = installed_people() or ([half["person"]] if half.get("person") else [])
     if not people:
         raise Refuse("no person is set up on this computer: install it first")
     rc = 0
     for person in people:
         rc = rc or apply(person, dict(v), "", a, {})
     if rc == 0:
-        say("Repaired: every file and unit is as this installer writes them, and the self-check passed.")
+        missing = [t for t in half.get("tools", []) if t not in kap_tools.installed()]
+        say("Repaired: every file and unit is as this installer writes them, and the self-check passed.",
+            *([f"The AI tools the install did not get to are not in the box yet: {', '.join(missing)}. Add them with  "
+               f"hubchat update-tools {' '.join(missing)}"] if missing else []))
     return rc
 
 
 def update_tools(a, pos) -> int:
+    refuse_unfinished()
     installed_values()
     specs = kap_tools.parse_specs(",".join(pos)) if pos else {t: "" for t in kap_tools.installed()}
     if not specs:

@@ -10,6 +10,7 @@ name is checked here against a strict pattern before root uses it. Nothing comes
 """
 import ipaddress
 import json
+import os
 import re
 from typing import Dict, List, Optional, Tuple
 
@@ -36,6 +37,9 @@ ENTER = LIBEXEC + "/enter"
 HUBCHAT_ROOT = LIBEXEC + "/hubchat-root"
 TTY_FILTER = LIBEXEC + "/tty-filter"
 INSTALLER = LIBEXEC + "/installer"
+# written first and removed last by every install and repair (red team round 5): while it is there, enter,
+# hubchat and the installer (but its repair and remove) refuse to run. It names the person.
+INSTALLING = ETC + "/install-in-progress"
 MEMORY = "_memory"
 
 TOOLS = ("claude", "opencode", "codex", "cursor-agent", "git")
@@ -231,6 +235,16 @@ def term(s) -> str:
     characters) becomes '?', so no name or text can move the cursor, set the title or the
     clipboard, or start a forged line (red team round 2, finding 1)."""
     return "".join(c if c.isprintable() else "?" for c in str(s))
+
+
+def unfinished_install() -> str:
+    """'' when no install or repair is half done; else why nothing may run and what to do."""
+    if not os.path.lexists(INSTALLING):
+        return ""
+    how = f"sudo {INSTALLER}" if os.path.isfile(INSTALLER) else \
+        "sudo python3 -I kaptyorka-secure-setup.pyz (the installer file you downloaded)"
+    return (f"the install did not finish: run  {how} repair  to finish it (or  {how} remove  to take it all "
+            "away). Until then no team chat starts.")
 
 
 def shown(s, most: int = 80) -> str:

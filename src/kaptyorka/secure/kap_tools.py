@@ -55,6 +55,7 @@ GOT_RX = re.compile(r"(?<![0-9.])([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[-+][0-9A-Za-z.]
 MAX_BYTES = 1536 << 20       # one tool's folder at most
 MAX_FILES = 20000
 UNIT_LIMIT = 600             # seconds one vendor installer may run
+PROBE_S = 8                  # seconds a vendor host has to answer before the installs start
 GH = ("github.com", "api.github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")
 
 # tool: (script URL, hosts it reaches, the program it leaves in HOME, copy its folder or the file)
@@ -204,10 +205,12 @@ def collect(stage: str, key: str):
 
 def copy_tree(src: str, dst: str) -> None:
     """Root-owned copy, modes masked to rwxr-xr-x (no set-id bits); a link is kept only when it
-    stays inside the copy; anything else (devices, pipes) is left out."""
+    stays inside the copy; anything else (devices, pipes) is left out. Every file must belong to
+    whoever owns src (the installer's own user): a hard link to someone else's file is refused."""
     total = files = 0
+    owner = os.lstat(src).st_uid
     if os.path.isfile(src):
-        _copy_file(src, os.path.join(dst, os.path.basename(src)))
+        _copy_file(src, os.path.join(dst, os.path.basename(src)), owner)
         return
     for dirpath, dirs, names in os.walk(src):
         rel = os.path.relpath(dirpath, src)
@@ -226,12 +229,16 @@ def copy_tree(src: str, dst: str) -> None:
                 total += st.st_size
                 if files > MAX_FILES or total > MAX_BYTES:
                     raise Refuse("the tool's folder is bigger than any tool should be")
-                _copy_file(s, d)
+                _copy_file(s, d, owner)
 
 
-def _copy_file(s: str, d: str) -> None:
-    mode = os.lstat(s).st_mode
-    fd = os.open(s, os.O_RDONLY | os.O_NOFOLLOW)
+def _copy_file(s: str, d: str, owner: int) -> None:
+    fd = os.open(s, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != owner:
+        os.close(fd)
+        raise Refuse(f"the installer left a file that is not its own: {kc.shown(os.path.basename(s), 60)}")
+    mode = st.st_mode
     with os.fdopen(fd, "rb") as f:
         tmp = d + ".kapnew"
         with open(tmp, "wb") as out:
@@ -276,10 +283,25 @@ def prune(tool: str, keep) -> None:
             shutil.rmtree(os.path.join(top, n), ignore_errors=True)
 
 
+def unreachable(specs) -> str:
+    """'' when each tool's vendor answers (a TCP connection to its first host's port 443 within
+    PROBE_S seconds); else that host's name. Before the long installs: an offline computer fails at
+    once instead of waiting out each installer's time limit (red team round 5)."""
+    for tool in [t for t in NAMES if t in specs]:
+        host = VENDOR[vendor_of(tool, specs[tool])[0]][1][0]
+        try:
+            socket.create_connection((host, 443), timeout=PROBE_S).close()
+        except OSError:
+            return host
+    return ""
+
+
 def install_one(tool: str, ver: str, say=kr.say) -> str:
     """One tool from its vendor's installer into /opt/kap-tools; returns the version installed."""
     key, ask = vendor_of(tool, ver)
     url, hosts, program, how = VENDOR[key]
+    if unreachable({tool: ver}):
+        raise Refuse(f"cannot reach {hosts[0]}, where {tool} comes from: is this computer online?")
     addrs = addresses(hosts)
     if not addrs:
         raise Refuse(f"cannot look up {hosts[0]}: is this computer online?")
@@ -306,7 +328,11 @@ def install_one(tool: str, ver: str, say=kr.say) -> str:
         kr.mkdir(f"{kc.TOOLS_DIR}/{tool}", 0o755)
         shutil.rmtree(dst, ignore_errors=True)
         kr.mkdir(dst, 0o755)
-        copy_tree(src, dst)
+        try:
+            copy_tree(src, dst)
+        except (Refuse, OSError):
+            shutil.rmtree(dst, ignore_errors=True)    # no half copy is left
+            raise
         prog = os.path.join(dst, inner)
         with open(prog, "rb") as f:
             digest = hashlib.sha256(f.read()).hexdigest()

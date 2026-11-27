@@ -99,8 +99,9 @@ def steps(monkeypatch):
     """Every step that writes, recorded instead of run; the self-check stops the run after them."""
     calls = Calls()
     for name in ("install_code", "install_tools", "claude_execute_only", "install_etc", "install_units",
-                 "install_hooks", "install_person", "install_installer"):
+                 "install_hooks", "install_person", "install_person_files", "install_installer"):
         monkeypatch.setattr(setup, name, calls.stub(name))
+    monkeypatch.setattr(setup.kr, "mkdir", lambda *a, **k: None)
     monkeypatch.setattr(setup.kap_tools, "detect", lambda home: [])
     monkeypatch.setattr(setup.kap_tools, "install", lambda specs, say: (calls.append(("tools", specs)), ({}, {}))[1])
     monkeypatch.setattr(setup.pwd, "getpwnam", lambda p: type("pw", (), {"pw_dir": f"/home/{p}"}))
@@ -192,3 +193,113 @@ def test_the_command_line_takes_the_link_as_the_second_word(monkeypatch):
     link = f"https://hub:8444/i/abc#sha256={FP}"
     assert setup.main(["install", "--personal", link]) == 0 and got["link"] == link
     assert setup.main(["install", "--personal", link, "extra"]) == 2   # usage
+
+
+# ---------------------------------------------------------------------------- a stopped or offline install (round 5)
+
+@pytest.fixture
+def marked(steps, monkeypatch, tmp_path):
+    """The in-progress marker in a temporary folder, written and removed for real."""
+    mark = tmp_path / "install-in-progress"
+    monkeypatch.setattr(setup.kc, "INSTALLING", str(mark))
+
+    def write(path, data, mode=0o644, *a, **k):
+        steps.append(("write", path))
+        if path == str(mark):
+            mark.write_text(data)
+    monkeypatch.setattr(setup.kr, "write_file", write)
+    monkeypatch.setattr(setup, "redeem", lambda inv, name: (steps.append("redeem"), {
+        "ip": "192.0.2.10", "port": inv["port"], "fp": inv["fp"], "token": "T" * 43})[1])
+    return mark
+
+
+def test_the_marker_comes_first_names_the_person_and_tools_and_goes_only_after_the_self_check(marked, steps, monkeypatch):
+    monkeypatch.setattr(setup.kap_tools, "unreachable", lambda specs: "")
+    assert setup.install(args(**{"--tools": "codex,claude"})) == 3      # the test's self-check stop
+    first = steps.index("redeem") + 1
+    assert steps[first] == ("write", str(marked))
+    assert marked.read_text() == "person=alice\ntools=claude,codex\n"
+    order = [s for s in steps if s in ("install_relay_conf", "install_person_files", "install_installer")
+             or (isinstance(s, tuple) and s[0] == "tools")]
+    assert order[:3] == ["install_relay_conf", "install_person_files", "install_installer"]   # before the tools
+    monkeypatch.setattr(setup, "self_check", lambda person: 0)
+    monkeypatch.setattr(setup, "refuse_unfinished", lambda: None)
+    assert setup.apply("alice", {"claude": ""}, "", {}, {}) == 0
+    assert not marked.exists()
+
+
+@pytest.mark.parametrize("call", [
+    lambda: setup.install(args()), lambda: setup.rejoin({"link": f"https://hub.lan:8444/i/abc#sha256={FP}"}),
+    lambda: setup.update_tools({}, ["claude"]),
+])
+def test_with_the_marker_install_rejoin_and_update_tools_refuse_and_name_repair(marked, steps, call):
+    marked.write_text("person=alice\ntools=\n")
+    with pytest.raises(setup.Refuse, match=r"the install did not finish: run  sudo .* repair .*remove"):
+        call()
+    assert "redeem" not in steps and not [s for s in steps if isinstance(s, tuple)]
+
+
+def test_repair_finishes_a_stopped_first_install_from_the_marker(marked, steps, monkeypatch, capsys):
+    marked.write_text("person=alice\ntools=claude,codex\n")
+    monkeypatch.setattr(setup, "installed_values", lambda: {"ip": "192.0.2.10", "port": 8444, "fp": FP,
+                                                            "name": "laptop-2", "token": "T" * 43, "claude": ""})
+    monkeypatch.setattr(setup, "installed_people", lambda: [])
+    monkeypatch.setattr(setup.kap_tools, "installed", lambda: {"claude": "2.0.0"})
+    got = []
+    monkeypatch.setattr(setup, "apply", lambda person, v, rt, a, specs: got.append(person) or 0)
+    assert setup.repair({}) == 0
+    assert got == ["alice"]
+    assert "not in the box yet: codex. Add them with  hubchat update-tools codex" in capsys.readouterr().out
+
+
+def test_repair_without_the_hubs_values_says_remove_and_install_again(marked, steps, monkeypatch):
+    marked.write_text("person=alice\ntools=\n")
+    monkeypatch.setattr(setup, "installed_values", lambda: (_ for _ in ()).throw(setup.Refuse("damaged")))
+    with pytest.raises(setup.Refuse, match="remove  and install again with a new link"):
+        setup.repair({})
+
+
+def test_an_offline_computer_is_told_at_once_before_the_link_is_used(marked, steps, monkeypatch):
+    monkeypatch.setattr(setup.kap_tools, "unreachable", lambda specs: "claude.ai")
+    with pytest.raises(setup.Refuse) as e:
+        setup.install(args(**{"--tools": "claude,cursor-agent"}))
+    msg = str(e.value)
+    assert "cannot reach claude.ai" in msg and "--tools none" in msg and "hubchat update-tools claude cursor-agent" in msg
+    assert "The link was not used. Nothing was changed" in msg
+    assert steps == []
+
+
+def test_no_tools_needs_no_network(marked, steps, monkeypatch):
+    monkeypatch.setattr(setup.kap_tools, "unreachable", lambda specs: (_ for _ in ()).throw(AssertionError) if specs else "")
+    assert setup.install(args(**{"--tools": "none"})) == 3
+
+
+def test_the_probe_names_the_first_vendor_host_that_does_not_answer(monkeypatch):
+    tried = []
+
+    def connect(addr, timeout):
+        tried.append((addr, timeout))
+        if addr[0] == "chatgpt.com":
+            raise OSError("unreachable")
+        return type("s", (), {"close": lambda self: None})()
+    monkeypatch.setattr(setup.kap_tools.socket, "create_connection", connect)
+    assert setup.kap_tools.unreachable({"claude": "", "codex": "1.2.3"}) == "chatgpt.com"
+    assert tried == [(("claude.ai", 443), setup.kap_tools.PROBE_S), (("chatgpt.com", 443), setup.kap_tools.PROBE_S)]
+    assert setup.kap_tools.unreachable({}) == ""
+    with pytest.raises(setup.Refuse, match="cannot reach chatgpt.com, where codex comes from: is this computer online"):
+        setup.kap_tools.install_one("codex", "")
+
+
+def test_enter_and_hubchat_refuse_while_the_marker_is_there(monkeypatch, tmp_path, capsys):
+    from kaptyorka.secure import kap_enter as en, kap_hubchat as hc
+    mark = tmp_path / "install-in-progress"
+    mark.write_text("person=alice\n")
+    monkeypatch.setattr(setup.kc, "INSTALLING", str(mark))
+    monkeypatch.setattr(en.kr, "caller_person", lambda: "alice")
+    monkeypatch.setattr(hc.kr, "caller_person", lambda: "alice")
+    monkeypatch.setattr(hc.kr, "old_login_hint", lambda p: [])
+    assert en.main(["claude"]) == 2
+    assert hc.main(["list"]) == 2
+    err = capsys.readouterr().err
+    assert err.count("the install did not finish: run  sudo python3 -I kaptyorka-secure-setup.pyz") == 2
+    assert "enter: the install did not finish" in err and "hubchat: the install did not finish" in err

@@ -11,7 +11,19 @@ moves and resizes, printing, concealed text (SGR 8), 8-bit controls and the C0 c
 terminal acts on (answerback, shift-out). It keeps what the tools need to draw: printable text,
 colours and styles, cursor moves, erasing, scroll regions, the alternate screen, mouse and paste
 modes, synchronized output, the kitty keyboard flags, and the questions whose answer is a fixed
-row of digits (cursor position, device attributes, mode reports).
+row of digits (cursor position, device attributes, mode reports). It never passes bracketed
+paste off (CSI ? 2004 l): a chat has no need to turn the person's paste guard off.
+
+Nothing the box sets outlives the chat (red team round 5, finding 1): the filter keeps track of
+every lasting mode it lets through (mouse reports, focus events, the alternate screen, cursor
+keys and keypad, insert mode, scroll region, cursor shape and visibility, the kitty keyboard
+flags, modifyOtherKeys, synchronized output, the line-drawing character sets) and, when the
+output ends for any reason (the box side closed, the person's side closed, SIGTERM from its
+unit's time limit or from enter, an error), it sends what puts each one back to how a shell's
+terminal has it between programs. enter sends a fixed reset of its own after the filter ended,
+for a filter that was killed outright. Two passed modes are left as the box set them: 12 (cursor
+blink) and 1007 (wheel as arrow keys on the alternate screen): their resting state is each
+terminal's own setting, so no fixed value is right, and neither breaks the shell.
 
 Started by `enter` (root) as its own unit: a fresh user of its own (DynamicUser=), no network,
 no files of anyone, no capabilities and a system-call filter (TIOCSTI into the person's terminal
@@ -27,6 +39,7 @@ import errno
 import os
 import re
 import select
+import signal
 import sys
 
 PLAIN = re.compile(r"[^\x00-\x1f\x7f-\x9f]+")
@@ -44,6 +57,12 @@ MAX_LINK_HOLD = 8192
 CSI_PLAIN = set("@ABCDEFGHIJKLMPSTXZ`abdefgrsu")
 DEC_MODES = {"1", "6", "7", "12", "25", "47", "1000", "1002", "1003", "1004", "1005", "1006", "1007",
              "1015", "1016", "1047", "1048", "1049", "2004", "2026", "2027"}
+# The lasting DEC modes the filter restores at the end, with the state a shell's terminal has between
+# programs (2004 is not here: it is never switched off, so it is on at the end whenever it was on).
+MODE_REST = {"1": "l", "6": "l", "7": "h", "25": "h", "47": "l", "1000": "l", "1002": "l", "1003": "l", "1004": "l",
+             "1005": "l", "1006": "l", "1015": "l", "1016": "l", "1047": "l", "1049": "l", "2026": "l", "2027": "l"}
+SCREEN_MODES = ("1049", "1047", "47")       # left first: the alternate screen's cursor and contents go with it
+SEQ_RX = re.compile(r"\x1b\[([<=>?]?)([0-9;:]*)([ !$]?)([@-~])")
 LINK_RX = re.compile(r"https?://[\x21-\x7e]{1,2000}")
 LINK_PARAMS_RX = re.compile(r"(id=[A-Za-z0-9_.:-]{1,64})?")
 
@@ -89,7 +108,7 @@ def csi_ok(params: str, inter: str, final: str):
         return None
     if priv == "?" and not inter:
         if final in "hl":
-            keep = [p for p in body.split(";") if p in DEC_MODES]
+            keep = [p for p in body.split(";") if p in DEC_MODES and not (p == "2004" and final == "l")]
             return f"\x1b[?{';'.join(keep)}{final}" if keep else None
         if final in "JK" or (final == "u" and body == ""):
             return f"\x1b[?{body}{final}"
@@ -120,6 +139,15 @@ class Filter:
         self.buf = ""
         self.kind = ""
         self.link = None       # (uri, params, held output, shown text) while inside a plain-looking link
+        self._reset_track()
+
+    def _reset_track(self) -> None:
+        self.modes = {}        # DEC mode -> the last h/l the box set
+        self.kitty = 0         # kitty keyboard pushes not yet popped
+        self.kitty_set = False  # flags set (CSI = u) with nothing of the box's pushed
+        self.mok = set()       # modifyOtherKeys resources set (CSI > Pp ; Pv m)
+        self.charsets = set()  # G0..G3 given something other than ASCII
+        self.keypad = self.irm = self.region = self.shape = False
 
     def feed(self, data: bytes) -> bytes:
         return self._run(self.dec.decode(data)).encode("utf-8")
@@ -132,7 +160,80 @@ class Filter:
             self.link = None
         return out.encode("utf-8")
 
+    def restore(self) -> str:
+        """What puts every lasting mode the box set back to a shell's state, and SGR 0."""
+        out = [] if self.modes.get("2026") != "h" else ["\x1b[?2026l"]
+        out += [f"\x1b[?{m}l" for m in SCREEN_MODES if self.modes.get(m) == "h"]
+        for want in "lh":
+            ms = sorted((m for m, v in self.modes.items() if m not in SCREEN_MODES and m != "2026"
+                         and v != MODE_REST[m] and MODE_REST[m] == want), key=int)
+            if ms:
+                out.append(f"\x1b[?{';'.join(ms)}{want}")
+        if self.kitty:
+            out.append(f"\x1b[<{self.kitty}u")
+        if self.kitty_set:
+            out.append("\x1b[=0u")
+        out += [f"\x1b[>{r}m" for r in sorted(self.mok)]
+        if self.keypad:
+            out.append("\x1b>")
+        if self.irm:
+            out.append("\x1b[4l")
+        if self.region:
+            out.append("\x1b7\x1b[r\x1b8")     # the full screen again, the cursor where it was
+        if self.shape:
+            out.append("\x1b[0 q")
+        out += [f"\x1b{g}B" for g in sorted(self.charsets)]
+        out.append("\x1b[0m")
+        self._reset_track()
+        return "".join(out)
+
+    def finish(self) -> bytes:
+        """The end of the output (any end): what is held, then the restore."""
+        out = self.flush()
+        self.state, self.buf = "ground", ""
+        return out + self.restore().encode("utf-8")
+
+    def _note(self, s: str) -> None:
+        """Keep track of a lasting mode in a sequence that is passed."""
+        if s in ("\x1b=", "\x1b>"):
+            self.keypad = s == "\x1b="
+            return
+        if len(s) == 3 and s[1] in CHARSET_INTRO:
+            (self.charsets.discard if s[2] == "B" else self.charsets.add)(s[1])
+            return
+        m = SEQ_RX.fullmatch(s)
+        if not m:
+            return
+        priv, body, inter, final = m.groups()
+        if priv == "?" and final in "hl" and not inter:
+            for p in body.split(";"):
+                if p in MODE_REST:
+                    self.modes[p] = final
+        elif not priv and not inter and final in "hl":
+            self.irm = final == "h"            # the only plain mode kept is 4 (insert)
+        elif not priv and not inter and final == "r":
+            self.region = bool(body.strip(";"))
+        elif not priv and inter == " " and final == "q":
+            self.shape = body not in ("", "0")
+        elif priv == ">" and not inter and final == "u":
+            self.kitty += 1
+        elif priv == "<" and not inter and final == "u":
+            n = body.split(";")[0]
+            self.kitty = max(0, self.kitty - (int(n) if n.isdigit() else 1))
+        elif priv == "=" and not inter and final == "u" and not self.kitty:
+            self.kitty_set = True
+        elif priv == ">" and not inter and final == "m":
+            parts = body.split(";")
+            if not body:
+                self.mok.clear()
+            elif len(parts) > 1 and parts[1] not in ("", "0"):
+                self.mok.add(parts[0])
+            else:
+                self.mok.discard(parts[0])
+
     def _emit(self, out: list, s: str, shown: str = "") -> None:
+        if s.startswith("\x1b"):
+            self._note(s)
         if self.link is None:
             out.append(s)
             return
@@ -295,7 +396,19 @@ def _read(fd: int) -> bytes:
 
 
 def pump(mode: str, src_in: int = 0, src_out: int = 1) -> int:
+    """Filter until either side ends; whatever ends it, the person's terminal gets the restore."""
     f = Filter()
+    term = src_out if mode == "pipe" else src_in
+    try:
+        return _pump(f, mode, src_in, src_out)
+    finally:
+        try:
+            _write(term, f.finish())
+        except OSError:
+            pass
+
+
+def _pump(f: Filter, mode: str, src_in: int, src_out: int) -> int:
     if mode == "pipe":
         while True:
             r, _, _ = select.select([src_in], [], [], 0.05)
@@ -306,7 +419,6 @@ def pump(mode: str, src_in: int = 0, src_out: int = 1) -> int:
             if got is None:
                 continue
             if not got:
-                _write(src_out, f.flush())
                 return 0
             _write(src_out, f.feed(got))
     # pty: fd 0 the person's terminal (keys in, filtered output out), fd 1 the box side
@@ -319,7 +431,6 @@ def pump(mode: str, src_in: int = 0, src_out: int = 1) -> int:
         if box in r:
             got = _read(box)
             if got == b"":
-                _write(person, f.flush())
                 return 0
             if got:
                 _write(person, f.feed(got))
@@ -335,6 +446,13 @@ def main(argv) -> int:
     if argv not in (["pty"], ["pipe"]):
         print("usage: tty-filter pty|pipe", file=sys.stderr)
         return 2
+
+    def stop(*_):
+        for s in (signal.SIGTERM, signal.SIGHUP):
+            signal.signal(s, signal.SIG_IGN)
+        raise SystemExit(0)    # pump's finally sends the restore
+    for s in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, stop)
     try:
         return pump(argv[0])
     except (BrokenPipeError, KeyboardInterrupt):

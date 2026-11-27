@@ -639,6 +639,8 @@ def main(argv) -> int:
         if not argv or argv[0] in ("help", "-h", "--help"):
             kr.say(*USAGE.splitlines())
             return 0
+        if kc.unfinished_install():
+            raise Refuse(kc.unfinished_install())
         cmd, rest = argv[0], argv[1:]
         opts = {"--name": "", "--separate": False, "--yes": False, "--force": False}
         pos = []

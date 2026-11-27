@@ -105,6 +105,8 @@ def build(person: str, box: str, tool: str, args, cwd: str, tty: bool, term: str
 def main(argv) -> int:
     try:
         person = kr.caller_person()
+        if kc.unfinished_install():
+            raise kc.Refuse(kc.unfinished_install())
         if not argv:
             raise kc.Refuse("usage: enter <claude|opencode|codex|cursor-agent|git> args...")
         tool = argv[0]
@@ -186,6 +188,24 @@ def _stop(unit: str) -> None:
     kr.run(["systemctl", "stop", "--no-block", unit + ".service"], check=False)
 
 
+# After the filter ended, enter's own reset (red team round 5, finding 1): the filter restores what the box
+# set, this covers a filter that was killed before it could. Only what never moves the cursor or changes the
+# screen: mouse and focus reports off, synchronized output off, cursor keys and keypad normal, insert off,
+# wrap on, kitty flags popped, modifyOtherKeys default, ASCII, SGR 0, the cursor shown. Bracketed paste is
+# left as it is (the filter never lets it be switched off).
+RESET = ("\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l"
+         "\x1b[?2027l\x1b[?1l\x1b>\x1b[4l\x1b[?7h\x1b[<u\x1b[>4m\x1b(B\x1b)B\x1b[0m\x1b[?25h")
+# a filter that did not end on its own may have left the alternate screen and a scroll region too
+RESET_UNCLEAN = "\x1b[?1049l\x1b7\x1b[r\x1b8"
+
+
+def reset_terminal(fd: int, clean: bool) -> None:
+    try:
+        os.write(fd, ((RESET_UNCLEAN if not clean else "") + RESET).encode())
+    except OSError:
+        pass
+
+
 def run_tty(cmd: list, env: dict) -> int:
     """systemd-run --pty on a pty made here; the person's terminal only behind tty-filter."""
     import pty
@@ -228,8 +248,10 @@ def run_tty(cmd: list, env: dict) -> int:
                 filt.wait(5)
             except subprocess.TimeoutExpired:
                 filt.kill()
+                filt.wait()
         os.close(master)
         signal.signal(signal.SIGWINCH, signal.SIG_DFL)
+        reset_terminal(1, filt.returncode == 0)
         try:
             termios.tcsetattr(0, termios.TCSAFLUSH, saved)
             termios.tcflush(0, termios.TCIFLUSH)   # nothing the box left in the input reaches the shell
@@ -254,11 +276,18 @@ def run_pipe(cmd: list, env: dict) -> int:
             if outs[fd] != fd:
                 os.close(outs[fd])
     rc = box.wait()
+    clean = True
     for f in filters:
         try:
             f.wait(10)
         except subprocess.TimeoutExpired:
             f.kill()
+            f.wait()
+        clean = clean and f.returncode == 0
+    for fd in (1, 2):
+        if os.isatty(fd):
+            reset_terminal(fd, clean)
+            break
     return rc
 
 

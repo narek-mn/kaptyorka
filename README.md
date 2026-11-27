@@ -135,6 +135,7 @@ It keeps a copy of itself in `/usr/local/libexec/kaptyorka/installer`, so you ne
 
 - **New link** (the hub got a new certificate or address, or the admin made a new device): `sudo /usr/local/libexec/kaptyorka/installer rejoin '<new link>'`. Only the hub's values change; your team folders and the box stay.
 - **Something is broken or was changed by hand:** `sudo /usr/local/libexec/kaptyorka/installer repair` writes every file, unit and rule again and runs the self-check.
+- **The install was stopped halfway** (killed, a crash, no network for the tools): team chats and `hubchat` say "the install did not finish"; `sudo /usr/local/libexec/kaptyorka/installer repair` finishes it without a new link (or `... remove` takes it all away). Offline, the install stops at once before changing anything: install with `--tools none` and add the tools later with `hubchat update-tools`.
 
 **4. Log out and in once** (or restart the computer). Until then, your own programs get `Permission denied` in team folders; `hubchat` reminds you.
 

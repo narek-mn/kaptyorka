@@ -15,7 +15,10 @@
 # own OpenCode; a box sign-in sent out base64, opaque or hex. Phase tools: the vendor installer's unit reaches
 # its vendor and nothing else, and what it installed is root-owned. Phase draw: each real tool (Claude Code, Codex,
 # OpenCode, cursor-agent) draws its first screen and redraws after a resize through the terminal filter (design
-# 4.8), at a real terminal. Results: slice5-results.tsv.
+# 4.8), at a real terminal, then quits: the terminal must be as before (red team round 5, finding 1). Phase vendor:
+# red team round 5's tool-install claims measured: hostile versions through `hubchat update-tools`, and what root
+# copies from a fake vendor's installer that leaves set-id files, escaping links, hard links, devices, a huge file
+# and a hostile version. Results: slice5-results.tsv.
 #
 # On the host (never as root):   ./slice5.sh            # fresh container kaptest-s5, removed at the end
 #                                KEEP=1 ./slice5.sh     # leave it running
@@ -29,7 +32,7 @@
 # the install phase's own 600 s unit. No strace. No host folder is mounted. Nothing runs as root on the host.
 set -u
 C=${C:-kaptest-s5}
-ALL_PHASES="setup hubvenv hub install tools oc1 oc2 codex cursor r3 draw final"
+ALL_PHASES="setup hubvenv hub install tools oc1 oc2 codex cursor r3 draw vendor final"
 
 if [ "${1:-}" != "--inner" ]; then
   HERE=$(cd "$(dirname "$0")" && pwd)
@@ -79,7 +82,7 @@ if [ "${1:-}" != "--inner" ]; then
   rm -rf "$SB"
   [ "${1:-}" != "--reuse" ] && X bash -c ': > /root/results.tsv'
   for p in ${PHASES:-$ALL_PHASES}; do
-    case $p in hubvenv) lim=400;; install|draw) lim=600;; oc1|oc2|codex|cursor) lim=420;; r3) lim=400;; tools) lim=150;; *) lim=85;; esac
+    case $p in hubvenv) lim=400;; install) lim=600;; draw) lim=900;; oc1|oc2|codex|cursor) lim=420;; r3) lim=400;; tools) lim=150;; vendor) lim=420;; *) lim=85;; esac
     echo "== phase $p (limit ${lim}s)"; unit "$p" "$lim"
   done
   X bash -c 'systemctl kill --signal=KILL "kapbox-*.slice" kaptest-chat.service >/dev/null 2>&1; true'
@@ -715,11 +718,12 @@ EOF
   for spec in "claude:C:claude" "codex:X:codex|chatgpt|sign in|openai" "opencode:O:opencode|ask anything|ctrl" \
               "cursor-agent:U:cursor|log ?in|sign"; do
     tool=${spec%%:*}; rest=${spec#*:}; id=T$tool; mark=${rest#*:}
-    printf '#!/bin/bash\nexec script -qfec "runuser -u alice -- bash -c '"'"'cd ~/team/proj-a && exec %s/launch %s'"'"'" /root/raw-%s\n' \
-      "$L" "$tool" "$tool" > /root/draw-$tool.sh
+    printf '#!/bin/bash\nprintf "\\e[?2004h"\nscript -qfec "runuser -u alice -- bash -c '"'"'cd ~/team/proj-a && exec %s/launch %s'"'"'" /root/raw-%s\ntrap \"\" INT QUIT\nprintf "AFTER-QUIT qqq\\r\\n"\nsleep 4; python3 -I -c "import termios; termios.tcflush(0, termios.TCIFLUSH)"\nstty raw -echo; printf "READY-PASTE\\r\\n"; timeout --foreground 12 dd bs=1 count=18 of=/root/paste-%s 2>/dev/null; stty sane; echo PASTE-READ\nsleep 600\n' \
+      "$L" "$tool" "$tool" "$tool" > /root/draw-$tool.sh
     chmod 755 /root/draw-$tool.sh; rm -f /root/raw-$tool
     tmux -L s5 kill-session -t d 2>/dev/null
-    tmux -L s5 new-session -d -s d -x 140 -y 40 "/root/draw-$tool.sh; sleep 600"
+    rm -f /root/paste-$tool
+    tmux -L s5 new-session -d -s d -x 140 -y 40 "/root/draw-$tool.sh"
     wait_for 40 "tmux -L s5 capture-pane -p -t d | tr A-Z a-z | grep -Eq '$mark'"; sleep 3
     t "$id-1 the real $tool draws its first screen at a real terminal, through the box and the filter" "its screen ($mark)" \
       "re:$mark" "tmux -L s5 capture-pane -p -t d | grep -v '^\\s*\$' | head -24 | tr A-Z a-z"
@@ -730,6 +734,22 @@ EOF
       "[ \$(stat -c %s /root/raw-$tool) -gt $before ] && echo -n 'grew '; tmux -L s5 capture-pane -p -t d | tr A-Z a-z | grep -Eq '$mark' && echo screen"
     t "$id-3 what reached the terminal from the real $tool: no OSC but plain links, no DCS, APC, PM or SOS" "only drawing codes" \
       'nore:OSC([0-79]|[0-9]{2,})|DCS|APC|PM|SOS' "python3 -I /root/kinds.py /root/raw-$tool"
+    # quit as a person does (Ctrl-C twice, then Ctrl-D); a tool that does not quit so is stopped through its unit
+    for k in C-c C-c C-d; do
+      tmux -L s5 capture-pane -p -t d | grep -q AFTER-QUIT && break; tmux -L s5 send-keys -t d $k; sleep 0.7; done
+    how=keys
+    wait_for 20 "tmux -L s5 capture-pane -p -t d | grep -q AFTER-QUIT" \
+      || { how=stopped; systemctl stop 'kapbox-alice-chat-*'; wait_for 25 "tmux -L s5 capture-pane -p -t d | grep -q AFTER-QUIT"; }
+    t "$id-5 after the real $tool quit ($how), the terminal is as before: no alternate screen, no mouse reports, cursor shown, cursor keys and keypad normal, insert off, full scroll region, plain letters" \
+      "alt=0 mouse=000000 cursor=1 keys=00 insert=0 region=0-29 AFTER-QUIT qqq plain" \
+      're:^rc=0 alt=0 mouse=000000 cursor=1 keys=00 insert=0 region=0-29 AFTER-QUIT qqq plain$' \
+      "tmux -L s5 display -p -t d 'alt=#{alternate_on} mouse=#{mouse_any_flag}#{mouse_all_flag}#{mouse_button_flag}#{mouse_standard_flag}#{mouse_sgr_flag}#{mouse_utf8_flag} cursor=#{cursor_flag} keys=#{keypad_cursor_flag}#{keypad_flag} insert=#{insert_flag} region=#{scroll_region_upper}-#{scroll_region_lower}' | tr -d '\n'; echo -n ' '; tmux -L s5 capture-pane -p -t d | grep -o 'AFTER-QUIT ...' | tr -d '\n'; tmux -L s5 capture-pane -p -e -t d | grep -a AFTER-QUIT | grep -qa \$'\\x0e' && echo ' drawn' || echo ' plain'"
+    wait_for 10 "tmux -L s5 capture-pane -p -t d | grep -q READY-PASTE"
+    tmux -L s5 set-buffer -b p PASTED; tmux -L s5 paste-buffer -p -d -b p -t d
+    wait_for 14 "tmux -L s5 capture-pane -p -t d | grep -q PASTE-READ"
+    t "$id-6 the paste guard is still on after $tool quit, and bracketed paste OFF never reached the terminal (the tool's own exit sends it: INFO in -4)" \
+      "bracketed; 0" 're:^rc=0 \^\[\[200~PASTED\^\[\[201~ 0$' \
+      "echo -n \"\$(cat -v /root/paste-$tool) \"; grep -ac \$'\\e\\[?2004l' /root/raw-$tool; true"
     tmux -L s5 kill-session -t d 2>/dev/null; systemctl kill --signal=KILL 'kapbox-alice-chat-*' 2>/dev/null; sleep 2
     # control (INFO): the same tool outside the box, unfiltered, with a throw-away HOME of alice: what it prints that
     # the filter takes out (script(1) gives it a terminal; it runs 12 s)
@@ -737,9 +757,148 @@ EOF
     (cd /tmp/ctl-$tool && timeout -k 2 12 script -qfec "runuser -u alice -- env HOME=/tmp/ctl-$tool TERM=xterm-256color /opt/kap-tools/bin/$tool" \
       /root/ctl-$tool </dev/null >/dev/null 2>&1)
     t "$id-4 control (INFO): the codes the real $tool prints outside the box that the filter takes out" "measured" info \
-      "a=\$(python3 -I /root/kinds.py /root/ctl-$tool); b=\$(python3 -I $L/tty-filter pipe < /root/ctl-$tool > /root/ctlf-$tool; python3 -I /root/kinds.py /root/ctlf-$tool); echo \"dropped: \$(comm -23 <(tr ' ' '\n' <<< \"\$a\" | sort) <(tr ' ' '\n' <<< \"\$b\" | sort) | tr '\n' ' ')\""
+      "a=\$(python3 -I /root/kinds.py /root/ctl-$tool); b=\$(python3 -I $L/tty-filter pipe < /root/ctl-$tool > /root/ctlf-$tool; python3 -I /root/kinds.py /root/ctlf-$tool); echo \"2004l-sent=\$(grep -ac \$'\\e\\[?2004l' /root/ctl-$tool) dropped: \$(comm -23 <(tr ' ' '\n' <<< \"\$a\" | sort) <(tr ' ' '\n' <<< \"\$b\" | sort) | tr '\n' ' ')\""
   done
   endbox TD
+  ;;
+
+vendor)
+  # Red team round 5's BLOCKED claims for the tool installs, measured here (not only read): hostile version strings
+  # through `hubchat update-tools`; and what root copies into /opt/kap-tools from a vendor installer that leaves
+  # set-id files, links out of its folder, hard links, device nodes, a pipe, a huge file and a hostile version.
+  # The vendor is a fake one on loopback (fakevendor.test, https with a test CA the system trusts); its installer
+  # runs in the real locked unit (kap_tools.unit_cmd) and root's real collect/copy_tree take the result.
+  T1=$(date +%s)
+  cat > /root/hostile.sh <<'EOV'
+#!/bin/bash
+# each hostile spec through alice's hubchat: rc, and whether the refusal is the spec check's
+n=0
+for s in 'codex=1.2.3;id' 'codex=$(touch /tmp/PWN-V)' $'codex=1.2.3\nExecStart=/bin/sh' 'claude=1.2.3 --x' 'opencode=2;x' \
+         'codex=1.2.3-$(id)' 'codex=../../etc' "claude=1.2.3-$(printf 'a%.0s' $(seq 40))" $'codex=1.2.3\e]0;T\a' \
+         'codex=1.2.3 -p ExecStart=/bin/sh' 'evil' 'codex=1.2.3-a/b' "codex='1.2.3'"; do
+  o=$(runuser -u alice -- hubchat update-tools "$s" 2>&1); r=$?
+  if [ $r = 2 ] && [[ $o == *"a tool is claude, codex, opencode or cursor-agent"* || $o == *"a version looks like 1.2.3"* ]]; then
+    n=$((n + 1)); else echo "NOT-REFUSED($r): $s -> $o"; fi
+done
+echo "refused=$n"
+EOV
+  chmod 700 /root/hostile.sh
+  sha256sum /etc/kaptyorka/tools.json > /root/tools.json.sha
+  TL=60 t "V-5 hostile version strings through alice's hubchat update-tools: every one refused by the spec check, no installer unit, nothing run, the record unchanged" \
+    "refused=13; units=0; no PWN; record same" 're:^rc=0 refused=13 units=0 nopwn same$' \
+    "/root/hostile.sh | tr '\n' ' '; echo -n \"units=\$(journalctl --since @$T1 --no-pager -q | grep -c 'kaptyorka-tool-install') \"; [ -e /tmp/PWN-V ] && echo -n 'PWN ' || echo -n 'nopwn '; sha256sum -c --quiet /root/tools.json.sha && echo same"
+  # --- the fake vendor
+  mkdir -p /root/fakevendor /etc/kaptest && cd /etc/kaptest
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout vca.key -out vca.pem -days 2 -subj /CN=kaptest-vendor-ca 2>/dev/null
+  openssl req -newkey rsa:2048 -nodes -keyout fv.key -out fv.csr -subj /CN=fakevendor.test 2>/dev/null
+  printf 'subjectAltName=DNS:fakevendor.test\n' > fv.ext
+  openssl x509 -req -in fv.csr -CA vca.pem -CAkey vca.key -CAcreateserial -out fv.pem -days 2 -extfile fv.ext 2>/dev/null
+  cp vca.pem /usr/local/share/ca-certificates/kaptest-vendor-ca.crt; update-ca-certificates >/dev/null 2>&1
+  grep -q fakevendor.test /etc/hosts || echo '127.0.0.9 fakevendor.test' >> /etc/hosts
+  cat > /root/fakevendor/codex.sh <<'EOV'
+# a hostile "vendor installer" (run as `sh install.sh` in the locked unit, CODEX_RELEASE = the case). It logs what
+# it could do into report.txt, which root copies with the rest.
+b=$HOME/.local/bin; mkdir -p "$b"; r=$b/report.txt; : > "$r"
+v=${CODEX_RELEASE:-latest}
+ver=$v; [ "$v" = 1.0.5 ] && ver='1.0.5-../../../../tmp/x'
+printf '#!/bin/sh\nprintf "\\033]0;PWN\\007codex-cli %s\\n"\n' "$ver" > "$b/codex"; chmod 755 "$b/codex"
+try() { if eval "$2" 2>/dev/null; then echo "$1=made" >> "$r"; else echo "$1=refused" >> "$r"; fi; }
+case $v in
+  1.0.1)
+    echo x > "$b/suid"; echo x > "$b/sgid"
+    try suid "chmod 4755 '$b/suid'"; try sgid "chmod 2755 '$b/sgid'"
+    try hardlink-passwd "ln /etc/passwd '$b/hl-passwd'"; try hardlink-dpkg "ln /var/lib/dpkg/status '$b/hl-dpkg'"
+    try hardlink-own "ln '$b/codex' '$b/hl-own'"; try device "mknod '$b/null' c 1 3"; try fifo "mkfifo '$b/fifo'"
+    mkdir -p "$b/sub"; try link-in "ln -s codex '$b/link-in' && ln -s ../codex '$b/sub/up'"
+    echo "uid=$(id -u)" >> "$r";;
+  1.0.2) ln -s ../../../../../../etc/shadow "$b/esc";;
+  1.0.3) ln -s /etc/shadow "$b/abs";;
+  1.0.4) truncate -s 1600M "$b/big";;
+  9.9.9-a.b) echo "VENDOR-GOT args=$# CODEX_RELEASE=[$CODEX_RELEASE]"; exit 3;;
+esac
+exit 0
+EOV
+  cat > /root/fv.py <<'EOV'
+import functools, http.server, ssl
+H = functools.partial(http.server.SimpleHTTPRequestHandler, directory="/root/fakevendor")
+s = http.server.ThreadingHTTPServer(("127.0.0.9", 443), H)
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain("/etc/kaptest/fv.pem", "/etc/kaptest/fv.key")
+s.socket = ctx.wrap_socket(s.socket, server_side=True); s.serve_forever()
+EOV
+  systemctl stop kaptest-fakevendor.service 2>/dev/null
+  systemd-run --quiet --unit=kaptest-fakevendor -p RuntimeMaxSec=600 -p KillMode=control-group /usr/bin/python3 -I /root/fv.py
+  wait_for 15 'curl -fs -o /dev/null https://fakevendor.test/codex.sh'
+  # root's own install code (kap_tools.install_one) with codex's installer URL pointed at the fake vendor
+  cat > /root/vendor.py <<'EOV'
+import sys, time
+sys.path.insert(0, "/usr/local/libexec/kaptyorka")
+import kap_tools as kt
+kt.VENDOR["codex"] = ("https://fakevendor.test/codex.sh", ("fakevendor.test",), ".local/bin/codex", "dir")
+t = time.time()
+try:
+    print("installed", kt.install_one("codex", kt.parse_specs("codex=" + sys.argv[1])["codex"], say=lambda *a: None), end=" ")
+except kt.Refuse as e:
+    print("refused:", str(e)[:400], end=" ")
+print(f"secs={time.time() - t:.0f}", end="")
+EOV
+  OPT=/opt/kap-tools/codex
+  cp /etc/kaptyorka/tools.json /root/tools.json.before; readlink /opt/kap-tools/bin/codex > /root/codex.link.before
+  TL=80 t "V-6a control: the fake vendor's installer runs in the real locked unit and root installs its result" "installed 1.0.1" \
+    're:^rc=0 installed 1\.0\.1 secs=' "python3 -I /root/vendor.py 1.0.1"
+  readlink /opt/kap-tools/bin/codex > /root/codex.link.101
+  t "V-6b what the installer itself could make in its unit: no set-id bit, no hard link to a file of root's, no device node; a pipe, its own hard link and links inside its folder it can" \
+    "suid, sgid, hardlink-passwd, hardlink-dpkg, device refused; uid not 0" \
+    're:^rc=0 suid=refused sgid=refused hardlink-passwd=refused hardlink-dpkg=refused hardlink-own=made device=refused fifo=made link-in=made uid=[1-9][0-9]* $' \
+    "tr '\n' ' ' < $OPT/1.0.1/report.txt"
+  t "V-6c what root copied: every entry root's, no set-id bit, nothing writable by others, no device or pipe, links only inside, each hard link its own file" \
+    "root only; modes <= 755; no fifo/null; link-in -> codex, sub/up -> ../codex; hl-own nlink 1" \
+    're:^rc=0 bad=0 types=[dfl]+ links=codex,\.\./codex nlink=1 nofifo nonull$' \
+    "cd $OPT/1.0.1; echo -n \"bad=\$(find . \\( ! -user root -o ! -type l -perm /6022 \\) | wc -l) types=\$(find . -printf '%y' | fold -w1 | sort -u | tr -d '\n') links=\$(readlink link-in),\$(readlink sub/up) nlink=\$(stat -c %h hl-own) \"; [ -e fifo ] && echo -n 'FIFO ' || echo -n 'nofifo '; [ -e null ] && echo NULL || echo nonull"
+  for c in 1.0.2:esc 1.0.3:abs; do
+    v=${c%%:*}
+    TL=80 t "V-6d-$v the installer leaves a link out of its folder (${c#*:}: to /etc/shadow): refused, no half copy left, bin/codex and the record unchanged" \
+      "refused: points outside; no $v folder; link and record unchanged" \
+      "re:^rc=0 refused: the installer left a link that points outside its folder: '${c#*:}' secs=[0-9]+ nodir samelink$" \
+      "python3 -I /root/vendor.py $v; [ -e $OPT/$v ] && echo -n ' DIR' || echo -n ' nodir'; [ \"\$(readlink /opt/kap-tools/bin/codex)\" = \"\$(cat /root/codex.link.101)\" ] && python3 -I -c 'import json; print(\" samelink\" if json.load(open(\"/etc/kaptyorka/tools.json\"))[\"codex\"][\"version\"] == \"1.0.1\" else \" CHANGED\")'"
+  done
+  TL=80 t "V-6e a huge file (1.6 GB, sparse) in the tool's folder: refused before anything of it is copied, no folder left" \
+    "refused: bigger than any tool should be; no 1.0.4 folder" \
+    're:^rc=0 refused: the tool.s folder is bigger than any tool should be secs=[0-9]+ nodir$' \
+    "python3 -I /root/vendor.py 1.0.4; [ -e $OPT/1.0.4 ] && echo ' DIR' || echo ' nodir'"
+  TL=80 t "V-6f a hostile version printed by the program (a title code and ../../ in it): only the version pattern is taken, the folder is one plain name inside /opt/kap-tools/codex, nothing outside, no control character recorded" \
+    "installed 1.0.5-..; a folder named 1.0.5-.. in codex/; no /tmp/x, /opt/kap-tools/x; no ESC in tools.json" \
+    're:^rc=0 installed 1\.0\.5-\.\. secs=[0-9]+ \| 1\.0\.5-\.\./codex \| none clean$' \
+    "python3 -I /root/vendor.py 1.0.5; echo -n ' | '; ls -d $OPT/*/codex | sed 's#.*/codex/##' | grep -F '1.0.5' | tr '\n' ' '; echo -n '| '; ls -d /tmp/x /opt/kap-tools/x /opt/x 2>/dev/null || echo -n 'none '; grep -q -e PWN -e 'u001b' /etc/kaptyorka/tools.json && echo ESC || echo clean"
+  TL=80 t "V-6g a version the pattern accepts reaches the vendor's installer as one plain value (CODEX_RELEASE), never as shell text or extra arguments" \
+    "VENDOR-GOT args=0 CODEX_RELEASE=[9.9.9-a.b]" 're:its installer failed \(.*VENDOR-GOT args=0 CODEX_RELEASE=\[9\.9\.9-a\.b\]' \
+    "python3 -I /root/vendor.py 9.9.9-a.b"
+  # root's own copy of a tree with what the locked unit cannot make (set-id bits, a device node, a hard link to a
+  # file of root's): the copy, not the unit, must hold too
+  rm -rf /root/ct /root/ct-out /root/ct-out2; mkdir -p /root/ct/sub
+  printf '#!/bin/sh\n' > /root/ct/prog; cp /root/ct/prog /root/ct/suid; cp /root/ct/prog /root/ct/sgid
+  chmod 6755 /root/ct/suid; chmod 2755 /root/ct/sgid; mknod /root/ct/null c 1 3; mkfifo /root/ct/fifo; ln -s ../prog /root/ct/sub/up
+  chown -R nobody:nogroup /root/ct; chmod 4755 /root/ct/suid; chmod 2755 /root/ct/sgid
+  cat > /root/ct.py <<'EOV'
+import sys
+sys.path.insert(0, "/usr/local/libexec/kaptyorka")
+import kap_tools as kt
+try:
+    kt.copy_tree(sys.argv[1], sys.argv[2]); print("copied", end="")
+except kt.Refuse as e:
+    print("refused:", e, end="")
+EOV
+  t "V-7a root's copy of a tree of another user with set-id files, a device node, a pipe: set-id bits gone, device and pipe left out, all root's" \
+    "copied; suid 755, sgid 755; no null, no fifo; root" 're:^rc=0 copied 755 755 nonull nofifo root$' \
+    "stat -c %a /root/ct/suid | grep -q 4755 || echo SETUP-FAILED; python3 -I /root/ct.py /root/ct /root/ct-out; echo -n \" \$(stat -c %a /root/ct-out/suid) \$(stat -c %a /root/ct-out/sgid) \"; [ -e /root/ct-out/null ] && echo -n 'NULL ' || echo -n 'nonull '; [ -e /root/ct-out/fifo ] && echo -n 'FIFO ' || echo -n 'nofifo '; find /root/ct-out ! -user root | grep -q . && echo NOTROOT || echo root"
+  ln /etc/shadow /root/ct/hl-shadow
+  t "V-7b a hard link to /etc/shadow in that tree (not the installer's own file): refused, never copied readable" \
+    "refused: not its own" "re:^rc=0 refused: the installer left a file that is not its own: 'hl-shadow' noshadow$" \
+    "python3 -I /root/ct.py /root/ct /root/ct-out2; [ -e /root/ct-out2/hl-shadow ] && echo ' SHADOW' || echo ' noshadow'"
+  rm -rf /root/ct /root/ct-out /root/ct-out2
+  # back as it was: the real codex, its record
+  cp /root/tools.json.before /etc/kaptyorka/tools.json; ln -sfn "$(cat /root/codex.link.before)" /opt/kap-tools/bin/codex
+  systemctl stop kaptest-fakevendor.service 2>/dev/null; sed -i '/fakevendor.test/d' /etc/hosts
+  rm -f /usr/local/share/ca-certificates/kaptest-vendor-ca.crt; update-ca-certificates --fresh >/dev/null 2>&1; true
   ;;
 
 final)

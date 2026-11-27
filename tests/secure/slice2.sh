@@ -8,6 +8,8 @@
 #                                KEEP=1 ./slice2.sh                # leave the container running
 #                                PHASES="walls1" ./slice2.sh --reuse   # rerun phases in the running container
 # REPO=<kaptyorka checkout> (default: the checkout this script is in) gives the product code.
+# Phases half0 and half (red team round 5): no network -> the install stops at once; an install SIGKILLed in its
+# tools step (first and again) -> the marker, the refusals, and repair finishing it.
 # Phase r4: red team round 4's successes, step by step (14-redteam-round4.md): a box-planted git alias run by
 # alice's own git once she set safe.directory, tool folders in subfolders, a trap deeper than the scan, build files
 # missing from the enter notice, and a box sign-in sent out base32/base85/dotted/gzip through the relay door.
@@ -18,7 +20,7 @@
 # No strace. No host folder is mounted. Nothing here runs as root on the host.
 set -u
 C=${C:-kaptest-s2}
-ALL_PHASES="setup install launch walls1 walls2 tools-claude tools-codex b17 tools-opencode tools-cursor-agent token egress git hubchat r4 wallcheck remove"
+ALL_PHASES="setup half0 install launch half walls1 walls2 tools-claude tools-codex b17 tools-opencode tools-cursor-agent token egress git hubchat r4 wallcheck remove"
 # tools-* and token use the four real tools, downloaded into the container once (unit "toolsdl"); TOOLS=0 skips them.
 
 if [ "${1:-}" != "--inner" ]; then
@@ -134,6 +136,38 @@ rawbox() {
   systemd-run --quiet --pipe --wait --collect --expand-environment=no --working-directory=$V -p RuntimeMaxSec=40 "${A[@]}" -- "$@"
 }
 export -f inb asal asali props rawbox
+# red team round 5 (LOW): the installer with the test's values by hand; a stopped install; the refusals while its
+# in-progress marker is there
+wait_for() { local i; for i in $(seq "$1"); do bash -c "$2" >/dev/null 2>&1 && return 0; sleep 1; done; return 1; }
+HAND="$SETUP install --personal --person alice --hub-ip 10.77.0.1 --hub-port 8443 --hub-sha256 $(printf 'a%.0s' $(seq 64)) --name box-1 --device-token-file /root/devtok --runtime-max 60s"
+stopped_install() { # UNIT ID: an install in its own unit, SIGKILLed in its tools step (a pipe in --tools-from blocks the copy)
+  mkdir -p /root/toolsfifo/bin; rm -f /root/toolsfifo/bin/claude; mkfifo /root/toolsfifo/bin/claude
+  systemctl reset-failed "$1.service" 2>/dev/null
+  systemd-run --quiet --unit="$1" -p RuntimeMaxSec=60 -p KillMode=control-group -p TimeoutStopSec=5 -p Environment=HOME=/root \
+    -p StandardOutput=file:/root/$1.log -p StandardError=inherit \
+    /usr/bin/python3 ${HAND#python3 } --claude-token-file /root/claudetok --tools-from /root/toolsfifo --tools none
+  wait_for 50 "[ -e /etc/kaptyorka/install-in-progress ] && [ -e $L/installer ] && grep -q 'Installing kaptyorka' /root/$1.log"
+  sleep 3
+  t "$2 the install runs into its tools step and is stopped there (SIGKILL): the state a killed or crashed install leaves" \
+    "still running in its tools step; killed" 're:^rc=0 active killed$' \
+    "echo -n \"\$(systemctl is-active $1.service) \"; systemctl kill --signal=KILL $1.service; sleep 1; systemctl is-active -q $1.service || echo killed"
+  cat > /root/refusals.sh <<'EOR'
+#!/bin/bash
+# each installer command but repair and remove, with the marker there: rc and whether it named repair
+want='the install did not finish: run  sudo /usr/local/libexec/kaptyorka/installer repair  to finish it (or  sudo /usr/local/libexec/kaptyorka/installer remove'
+before=$(find /etc/kaptyorka /etc/systemd/system /etc/sudoers.d -newer /etc/kaptyorka/install-in-progress 2>/dev/null | wc -l)
+for c in "$HAND --tools none" "/usr/local/libexec/kaptyorka/installer update-tools claude" \
+         "/usr/local/libexec/kaptyorka/installer rejoin https://hub.test:8443/i/abc#sha256=$(printf 'b%.0s' $(seq 64))"; do
+  o=$(bash -c "$c" 2>&1); r=$?; [[ $o == *"$want"* ]] && echo -n "$r:yes " || echo -n "$r:no($o) "
+done
+echo "new=$(( $(find /etc/kaptyorka /etc/systemd/system /etc/sudoers.d -newer /etc/kaptyorka/install-in-progress 2>/dev/null | wc -l) - before ))"
+EOR
+  chmod 700 /root/refusals.sh
+}
+half_refusals() { # ID
+  t "$1 with the marker there the installer refuses install, update-tools and rejoin, each naming repair (or remove), and writes nothing" \
+    "rc 2 and the sentence, 3 times; nothing new" 're:^rc=0 2:yes 2:yes 2:yes new=0$' "HAND='$HAND' /root/refusals.sh"
+}
 
 case $PH in
 apt)
@@ -294,6 +328,33 @@ EOF
   t "S2-1 platform" "info" info 'systemctl --version | head -1; uname -r; python3 --version; git --version'
   ;;
 
+half0)
+  # red team round 5 (LOW): an offline laptop and a stopped install. First, no network at all (the default route
+  # gone): an install that would fetch AI tools must stop at once, before anything changes, in one plain sentence.
+  GW=$(ip route show default | head -1)
+  ip route del default 2>/dev/null
+  t "I-off no network: an install with AI tools stops at once, before anything changes, with one plain sentence (offline; --tools none; hubchat update-tools later)" \
+    "rc 2 within 20 s; cannot reach claude.ai; --tools none; update-tools; nothing of kaptyorka" \
+    're:^rc=0 rc=2 .*kaptyorka-secure-setup: this computer cannot reach claude\.ai, where the AI tools come from: it looks offline\. .*--tools none.*hubchat update-tools claude\. Nothing was changed on this computer\. secs=([0-9]|1[0-9]) left=$' \
+    "s=\$(date +%s); o=\$($HAND --tools claude 2>&1); r=\$?; echo \"rc=\$r \$o secs=\$((\$(date +%s) - s)) left=\$(ls -d /etc/kaptyorka /usr/local/libexec/kaptyorka /etc/sudoers.d/kaptyorka-* 2>/dev/null | tr '\n' ' ')\""
+  [ -n "$GW" ] && ip route add $GW
+  t "I-off2 the network is back for the rest (the default route again)" "a default route" 're:^rc=0 default ' "ip route show default"
+  # a first install stopped (SIGKILL) in its tools step: the test's tools folder holds a pipe that blocks the copy
+  stopped_install s2-half0 I-half0
+  t "I-half1 the stopped first install left the marker (naming alice), the hub's values, alice's token and the installer's copy; no sudo rule, no box, no launcher lines" \
+    "person=alice; all there; no sudo rule; box inactive; 0 launcher lines" \
+    're:^rc=0 person=alice tools= \| relay token claude installer \| nosudo inactive 0$' \
+    "tr '\n' ' ' < /etc/kaptyorka/install-in-progress; echo -n '| '; for f in /etc/kaptyorka/relay.conf:relay /etc/kaptyorka/secret/device-token:token /etc/kaptyorka/secret/alice/claude-oauth-token:claude $L/installer:installer; do [ -e \${f%%:*} ] && echo -n \"\${f#*:} \"; done; echo -n '| '; [ -e /etc/sudoers.d/kaptyorka-alice ] && echo -n 'SUDO ' || echo -n 'nosudo '; echo -n \"\$(systemctl is-active kapbox-base@alice.service) \"; grep -c kaptyorka /etc/bash.bashrc; true"
+  half_refusals I-half2
+  t "I-half3 with no sudo rule yet alice cannot reach hubchat-root or enter at all; run as sudo would, both refuse with the same sentence" \
+    "sudo refuses; hubchat and enter: the install did not finish" \
+    're:^rc=0 alice-hubchat=[1-9][0-9]* hubchat: the install did not finish: run  sudo /usr/local/libexec/kaptyorka/installer repair .*enter: the install did not finish: run  sudo /usr/local/libexec/kaptyorka/installer repair ' \
+    "runuser -u alice -- hubchat list >/dev/null 2>&1; echo -n \"alice-hubchat=\$? \"; cd /tmp && env SUDO_UID=\$(id -u alice) SUDO_USER=alice $L/hubchat-root list 2>&1 | tr '\n' ' '; env SUDO_UID=\$(id -u alice) SUDO_USER=alice $L/enter claude 2>&1 | tr '\n' ' '"
+  TL=70 t "I-half4 repair (the installer's own copy) finishes the stopped install: self-check passes, the marker is gone, the sudo rule is there" \
+    "Repaired; no marker; sudo rule" 're:^rc=0 .*Self-check: all walls in place.*Repaired: every file and unit is as this installer writes them.* nomarker sudo$' \
+    "$L/installer repair 2>&1 | tr '\n' ' '; [ -e /etc/kaptyorka/install-in-progress ] && echo ' MARKER' || echo -n ' nomarker '; [ -e /etc/sudoers.d/kaptyorka-alice ] && echo sudo"
+  ;;
+
 install)
   # --tools none: the box gets the stub tools from --tools-from only, never a vendor installer (no network here)
   t "I-0 installer, personal mode (the product's kap_setup.py)" "rc 0, self-check passes" 're:^rc=0 .*Self-check: all walls in place.*wallcheck ok: 17 walls' \
@@ -368,6 +429,21 @@ launch)
   t "N-2 bob runs enter and hubchat-root" "sudo refuses both" 're:password is required.*password is required' \
     "runuser -u bob -- sudo -n $L/enter claude 2>&1; runuser -u bob -- sudo -n $L/hubchat-root list 2>&1"
   t "N-2b bob's hubchat" "refused" 're:password is required' "runuser -u bob -- hubchat list"
+  ;;
+
+half)
+  # a stopped re-install (the sudo rule and a team folder already there): alice's hubchat and her team chats refuse
+  # with the sentence until repair finished it; then they work again
+  stopped_install s2-half I-half4b
+  half_refusals I-half5
+  t "I-half6 alice's hubchat and a team chat refuse while the marker is there (one sentence: run the installer's repair)" \
+    "hubchat: ... did not finish; enter: ... did not finish" \
+    're:^rc=0 hubchat: the install did not finish: run  sudo /usr/local/libexec/kaptyorka/installer repair  to finish it .*enter: the install did not finish: run  sudo /usr/local/libexec/kaptyorka/installer repair ' \
+    "asal 'hubchat list' | tr '\n' ' '; asali 'cd ~/team/proj-a && claude hello' | tr '\n' ' '"
+  TL=70 t "I-half7 repair finishes it; the team chat starts in the box again" "Repaired; TOOL=claude USER=kap-alice" \
+    're:^rc=0 .*Repaired: every file and unit.* nomarker .*TOOL=claude USER=kap-alice PWD=/srv/team/alice/proj-a' \
+    "$L/installer repair 2>&1 | tr '\n' ' '; [ -e /etc/kaptyorka/install-in-progress ] && echo -n ' MARKER ' || echo -n ' nomarker '; asali 'cd ~/team/proj-a && claude hello'"
+  rm -rf /root/toolsfifo
   ;;
 
 walls1)
