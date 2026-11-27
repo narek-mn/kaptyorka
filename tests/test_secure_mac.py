@@ -2,6 +2,7 @@
 pure decisions, checked here on any system. The real walls are checked on a Mac by
 tests/mac-box/run.sh in .github/workflows/mac-box.yml."""
 import ast
+import importlib
 import json
 import os
 import plistlib
@@ -11,12 +12,45 @@ import sys
 
 import pytest
 
-from kaptyorka.relay import relay as R
+from kaptyorka.relay import relay as R  # noqa: F401  (the Linux copies; the darwin ones below)
 from kaptyorka.secure import kap_mac as km
 from kaptyorka.secure import kap_mac_setup as ms
 from kaptyorka.secure import kap_mac_wallcheck as mw
 from kaptyorka.secure import kap_tools as kt
 from kaptyorka.secure import kapcommon as kc
+
+MAC_MODULES = ("kapcommon", "kaproot", "kap_mac", "kap_mac_setup", "kap_mac_enter", "kap_mac_hubchat",
+               "kap_mac_wallcheck", "kap_mac_daemon", "kap_tools", "kap_update", "kap_setup", "kap_claude_token")
+
+
+def _ours(name: str) -> bool:
+    return name in ("kaptyorka.secure", "kaptyorka.relay") or name.startswith(("kaptyorka.secure.", "kaptyorka.relay."))
+
+
+def load_darwin() -> dict:
+    """Fresh copies of the secure modules imported as on a Mac (sys.platform "darwin"), so every
+    place and text they build is the Mac's. The Linux copies in sys.modules are put back after."""
+    saved = {n: sys.modules.pop(n) for n in [n for n in sys.modules if _ours(n)]}
+    real = sys.platform
+    sys.platform = "darwin"
+    try:
+        out = {n: importlib.import_module(f"kaptyorka.secure.{n}") for n in MAC_MODULES}
+        out["relay"] = importlib.import_module("kaptyorka.relay.relay")
+    finally:
+        sys.platform = real
+        for n in [n for n in sys.modules if _ours(n)]:
+            del sys.modules[n]
+        sys.modules.update(saved)
+        for n, m in saved.items():
+            parent, _, child = n.rpartition(".")
+            if parent in sys.modules:
+                setattr(sys.modules[parent], child, m)
+    return out
+
+
+MAC = load_darwin()
+km, ms, mw, kt, kc, R = (MAC[n] for n in ("kap_mac", "kap_mac_setup", "kap_mac_wallcheck", "kap_tools", "kapcommon",
+                                          "relay"))
 
 SECURE = os.path.join(os.path.dirname(__file__), "..", "src", "kaptyorka", "secure")
 ROOT = os.path.join(os.path.dirname(__file__), "..")
@@ -251,9 +285,10 @@ def test_py_prefix():
 # ---------------------------------------------------------------------------- the inside check
 
 def test_wallcheck_knows_the_same_places_as_root():
-    assert mw.CANARY_SOCK == km.real(km.CANARY_SOCK)
-    assert mw.TEAMAREA == km.TEAMAREA
-    assert mw.BOXCONF == km.real(kc.BOXCONF)
+    assert mw.CANARY_SOCK == km.CANARY_SOCK == km.real(km.CANARY_SOCK)
+    assert mw.TEAMAREA == km.TEAMAREA == kc.VIEW
+    assert mw.BOXCONF == kc.BOXCONF == km.real(kc.BOXCONF)
+    assert mw.TEAM == kc.TEAM and f"{mw.TEAM}/kap-alice/home" == kc.box_home("alice")   # M11's HOME
     assert mw.LOCKED == kc.LOCKED_FILES
     assert set(mw.MACH_DENIED) <= set(km.MACH_DENY)
     assert (mw.CANARY_TCP_LO, mw.CANARY_TCP_ANY) == (km.CANARY_TCP_LO, km.CANARY_TCP_ANY)
@@ -303,6 +338,7 @@ def test_relay_reads_the_caller_from_a_macos_xucred():
 # ---------------------------------------------------------------------------- the installer
 
 def test_setup_hands_over_to_the_mac_installer_on_macos_only(monkeypatch):
+    from kaptyorka.secure import kap_mac_setup as ms   # the copies kap_setup itself imports
     from kaptyorka.secure import kap_setup as ks
     called = []
     monkeypatch.setattr(ms, "main", lambda argv: called.append(argv) or 7)
@@ -373,3 +409,119 @@ def test_mac_workflow_runs_only_on_its_branch_or_by_hand_with_read_rights():
     assert "workflow_dispatch" in wf and "pull_request" not in wf
     assert re.search(r"permissions:\s*\n\s*contents: read", wf)
     assert "secrets." not in wf
+
+
+
+# ---------------------------------------------------------------------------- no Linux place on a Mac
+
+# Linux-only places, and the macOS links into /private: root's walks never follow a link
+# (kaproot.open_dir: the first CI run stopped on /var/lib/kap-team) and Seatbelt matches real paths
+LINUX_TOP = re.compile(r"/(etc|var|tmp|run|srv|home|proc|sys|lib|lib64|dev/shm|media|mnt)(/|$)")
+LINUX_CALLS = {"systemctl", "props_args", "ensure_box_running", "outside_check", "host_addrs", "shared_canaries",
+               "chats", "boxes_of", "start_helper", "kill_box_procs_in", "add_view_mount", "drop_view_mount",
+               "hide_view", "mount_flags", "old_login_hint", "ensure_box", "drop_box", "unit_cmd", "verify_in_box"}
+LINUX_WORDS = re.compile(r"systemd-run|systemctl|setfacl|getfacl|/proc/|\bnsenter\b|\bunshare\b|\bbwrap\b|loginctl")
+MAC_SOURCES = ("kap_mac.py", "kap_mac_setup.py", "kap_mac_enter.py", "kap_mac_hubchat.py", "kap_mac_wallcheck.py",
+               "kap_mac_daemon.py")
+NOT_PLACES = {"HERE", "FILES", "RELAY_SRC", "INSTALLER_FILE"}   # where this checkout is
+
+
+def _paths(text: str):
+    return re.findall(r"(?<![\w.~/-])(/[A-Za-z0-9._/+-]+)", text)
+
+
+def _values(v):
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, (tuple, list, set, frozenset)):
+        for x in v:
+            yield from _values(x)
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from _values(x)
+
+
+def test_mac_constants_name_no_linux_place():
+    bad = []
+    for name in ("kapcommon", "kap_mac", "kap_mac_setup", "kap_mac_wallcheck", "kap_mac_enter", "kap_mac_hubchat",
+                 "kap_mac_daemon", "kap_update"):
+        for k, v in vars(MAC[name]).items():
+            if k.startswith("_") or k in NOT_PLACES:
+                continue
+            bad += [f"{name}.{k} = {x}" for x in _values(v) if x.startswith("/") and LINUX_TOP.match(x)]
+    for k in ("LOCK", "MAC_STAGE", "RECORD"):
+        x = getattr(kt, k)
+        if LINUX_TOP.match(x):
+            bad.append(f"kap_tools.{k} = {x}")
+    assert not bad, bad
+
+
+def test_what_the_mac_code_builds_names_no_linux_place(monkeypatch):
+    monkeypatch.setattr(km, "proxy_port", lambda b: 47110)
+    py = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+    texts = [profile(), km.service_profile(["/private/var/run/kaptyorka/relay"]),
+             km.filter_profile("/Library/Frameworks/Python.framework/Versions/3.12"), km.sudoers_text("alice"),
+             kt.mac_profile("/private/var/lib/kaptyorka-tool-stage-claude"),
+             json.dumps(km.box_env("alice", "alice", "xterm")),
+             *[json.dumps(plistlib.loads(d)) for d in km.daemons(py, ["alice"]).values()],
+             *[f(x) for f, x in ((kc.box_home, "alice"), (kc.box_root, "alice"), (kc.view_root, "alice"),
+                                 (km.box_run, "alice"), (km.box_tmp, "alice"), (km.relay_door, "alice"),
+                                 (km.profile_path, "alice"), (km.plist_path, "relay"), (km.team_root, "alice"))],
+             km.team_path("alice", "proj-a"), kc.view_path("alice", "proj-a"), kc.INSTALLING, kc.CANARY_STATE,
+             " ".join(ms.HOOK_FILES), km.PF_CONF, km.SUDOERS_DIR]
+    bad = [p for t in texts for p in _paths(t) if LINUX_TOP.match(p)]
+    assert not bad, bad
+    assert kc.view_path("alice", "proj-a") == km.team_path("alice", "proj-a")   # one real place on a Mac
+
+
+def _calls_and_strings(node):
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            f = n.func
+            yield "call", f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str):
+            yield "str", n.value
+
+
+def _no_doc(tree):
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Module, ast.FunctionDef, ast.ClassDef)) and n.body and \
+                isinstance(n.body[0], ast.Expr) and isinstance(getattr(n.body[0], "value", None), ast.Constant):
+            n.body = n.body[1:] or [ast.Pass()]
+    return tree
+
+
+def test_mac_code_calls_nothing_linux_only_even_one_step_down():
+    """The Mac programs, and every kaproot, kap_setup, kap_hubchat and kap_enter function they
+    call, run no systemd, ACL, mount or /proc tool (docstrings aside)."""
+    shared = {"kr": "kaproot.py", "ks": "kap_setup.py", "hc": "kap_hubchat.py", "ke": "kap_enter.py"}
+    defs = {}
+    for alias, f in shared.items():
+        t = _no_doc(ast.parse(open(os.path.join(SECURE, f)).read()))
+        defs[alias] = {n.name: n for n in t.body if isinstance(n, ast.FunctionDef)}
+    bad = []
+    for f in MAC_SOURCES:
+        tree = _no_doc(ast.parse(open(os.path.join(SECURE, f)).read()))
+        for kind, v in _calls_and_strings(tree):
+            if kind == "str" and LINUX_WORDS.search(v):   # (kap_mac has its own host_addrs, chats, ...)
+                bad.append(f"{f}: {kind} {v[:60]}")
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in shared:
+                if n.value.id == "kr" and n.attr in LINUX_CALLS:
+                    bad.append(f"{f}: kr.{n.attr}")
+                fn = defs[n.value.id].get(n.attr)
+                if fn is None:
+                    continue
+                for kind, v in _calls_and_strings(fn):
+                    if (kind == "call" and v in LINUX_CALLS) or (kind == "str" and LINUX_WORDS.search(v)):
+                        bad.append(f"{f} -> {n.value.id}.{n.attr}: {kind} {v[:60]}")
+    # the Mac halves of kap_tools
+    t = _no_doc(ast.parse(open(os.path.join(SECURE, "kap_tools.py")).read()))
+    for fn in (n for n in t.body if isinstance(n, ast.FunctionDef) and n.name in ("install_one_mac", "verify_in_box_mac",
+                                                                                  "mac_profile")):
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Attribute) and getattr(n.value, "id", "") == "kr" and n.attr in LINUX_CALLS:
+                bad.append(f"kap_tools.{fn.name}: kr.{n.attr}")
+            if isinstance(n, ast.Constant) and isinstance(n.value, str) and LINUX_WORDS.search(n.value):
+                bad.append(f"kap_tools.{fn.name}: {n.value[:60]}")
+    assert not bad, sorted(set(bad))

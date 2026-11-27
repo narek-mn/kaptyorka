@@ -52,7 +52,7 @@ Refuse = kc.Refuse
 NAMES = ("claude", "codex", "opencode", "cursor-agent")
 RECORD = kc.ETC + "/tools.json"
 MAC = sys.platform == "darwin"   # macOS (TEST VERSION): a role account in a Seatbelt profile, no unit
-LOCK = "/var/run/kaptyorka/tools.lock" if MAC else "/run/kaptyorka-tools.lock"
+LOCK = kc.RUN + "/tools.lock" if MAC else "/run/kaptyorka-tools.lock"
 STAGE_TOP = "/var/lib"       # systemd's StateDirectory= place; a DynamicUser's is in STAGE_TOP/private
 RUNDIR = "/run/kaptyorka"
 VER_RX = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]{1,30})?")

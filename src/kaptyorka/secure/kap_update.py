@@ -40,8 +40,8 @@ KEY_FILE = kc.ETC + "/release-key"          # the allowed-signers line of the pi
 STATE_FILE = kc.ETC + "/update.json"        # what hubchat list shows; no secret
 WORK = kc.LIBEXEC + "/update"               # root-only: the verified waiting files, the kept installer
 MAC = sys.platform == "darwin"   # macOS (TEST VERSION): launchd's hourly job instead of the timer
-LOCK = "/var/run/kaptyorka/update.lock" if MAC else "/run/kaptyorka/update.lock"
-RUN_LOCK = ("/var/run/kaptyorka" if MAC else "/run/kaptyorka") + "/update-run.lock"   # one updater at a time
+LOCK = kc.RUN + "/update.lock"
+RUN_LOCK = kc.RUN + "/update-run.lock"   # one updater at a time
 CHECK_S = 6 * 3600       # the hub is asked at most this often (each ask tells it the laptop is on)
 REPAIR_S = 1800          # one repair (the new installer's or the kept one's) at most
 STAGED = {n: f"{WORK}/staged-{n}" for n in rel.FILES}

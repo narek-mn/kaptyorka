@@ -56,12 +56,12 @@ TEST_NOTICE = ("macOS: TEST VERSION, not proven yet. Its walls rest on Seatbelt 
 # so each has its real form too (/etc, /var and /tmp are links into /private).
 LIBEXEC, ETC, OPT, TOOLS_DIR = kc.LIBEXEC, kc.ETC, kc.OPT, kc.TOOLS_DIR
 TEAMAREA = "/Users/Shared/kaptyorka"          # TEAMAREA/<person>/<name>: one real place for both
-RUN = "/var/run/kaptyorka"                    # root 755: doors, canaries, chat records, locks
-RUNBOX = "/var/run/kapbox"                    # RUNBOX/<box>: the box's own runtime folder (0700)
+RUN = kc.RUN                                  # /private/var/run/kaptyorka, root 755: doors, canaries, chat records, locks
+RUNBOX = kc.RUNBOX                            # RUNBOX/<box>: the box's own runtime folder (0700)
 RELAY_DIR = RUN + "/relay"
 BOX_SECRETS = RUN + "/box-secrets"
 CHATS = RUN + "/chats"                        # root 0700: one record per running chat (pid.json)
-LOGS = "/var/log/kaptyorka"
+LOGS = "/private/var/log/kaptyorka"
 PYTHON_FILE = ETC + "/python"                 # the interpreter every root program and the box use
 PROFILE_EXTRA = ETC + "/box-extra.sb"         # root-only local additions to the box profile
 PF_FILE = ETC + "/pf.anchor"
@@ -87,6 +87,9 @@ CANARY_FIXED = ETC + "/kaptyorka-wall-canary"         # root's place the box mus
 CANARY_HOME = ".kaptyorka-wall-canary"        # in the person's home
 CANARY_SHARED_DIRS = ("/private/tmp", "/private/var/tmp", "/Users/Shared")
 CANARY_SHARED_RX = re.compile(r"/(private/tmp|private/var/tmp|Users/Shared)/kaptyorka-wall-canary-[0-9a-f]{16}")
+SUDOERS_DIR = "/private/etc/sudoers.d"
+PF_CONF = "/private/etc/pf.conf"
+SHELL_FILES = ("/private/etc/zshenv", "/private/etc/bashrc", "/private/etc/profile")   # the launcher hook
 CANARY_SHM_KEY = kc.CANARY_SHM_KEY
 MIN_MACOS = (14, 0)
 ID_RANGE = (401, 499)                         # hidden accounts (below 500: not on the login window)
@@ -460,6 +463,10 @@ def ensure_account(name: str, home: str, shell: str) -> Tuple[int, int]:
         if not record_ours("Users", name):
             raise Refuse(f"the account {name} already exists and was not made by kaptyorka")
         pw = pwd.getpwnam(name)
+        if pw.pw_dir != home or pw.pw_shell != shell:   # an older install's values: this code's now
+            dscl("-create", f"/Users/{name}", "NFSHomeDirectory", home)
+            dscl("-create", f"/Users/{name}", "UserShell", shell)
+            run(["/usr/bin/dscacheutil", "-flushcache"], check=False)
         return pw.pw_uid, pw.pw_gid
     if record_exists("Groups", name) and not record_ours("Groups", name):
         raise Refuse(f"the group {name} already exists and was not made by kaptyorka")

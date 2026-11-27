@@ -12,22 +12,30 @@ import ipaddress
 import json
 import os
 import re
+import sys
 from typing import Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------- fixed places (4.2)
 
+# macOS (TEST VERSION, kap_mac): /etc, /var and /tmp are symlinks into /private there. Root's
+# folder walks never follow a link (kaproot.open_dir) and Seatbelt matches real paths, so every
+# place on a Mac is named by its real path; Linux's /run and /srv do not exist there.
+MAC = sys.platform == "darwin"
 LIBEXEC = "/usr/local/libexec/kaptyorka"
-ETC = "/etc/kaptyorka"
+ETC = "/private/etc/kaptyorka" if MAC else "/etc/kaptyorka"
 PEOPLE = ETC + "/people"          # people/<person>/folders.json  (written only by hubchat-root)
 BOXES = ETC + "/boxes"            # boxes/<box>/passwd, group, claude-settings.json, egress-allow
 BOXCONF = ETC + "/box"            # tool configs shared by every box; no secret inside
 SECRET = ETC + "/secret"          # root only: device-token, chat-key, <person>/claude-oauth-token
 MODE_FILE = ETC + "/mode"
 LIMITS_FILE = ETC + "/box.conf"
-TEAM = "/var/lib/kap-team"        # TEAM/kap-<box>/{home,memory,projects}
-VIEW = "/srv/team"                # VIEW/<person>/<folder>: the person's view, one mount each
-RUNBOX = "/run/kapbox"            # RUNBOX/<box>/{tmp,vartmp,run,pub}
-RELAY_DOORS = "/run/kaptyorka/relay"
+TEAM = "/private/var/lib/kap-team" if MAC else "/var/lib/kap-team"   # TEAM/kap-<box>/{home,memory,projects}
+# VIEW/<person>/<folder>: the person's view, one mount each (Linux); on a Mac the one real place of
+# a team folder, for the person and the box alike (kap_mac.TEAMAREA)
+VIEW = "/Users/Shared/kaptyorka" if MAC else "/srv/team"
+RUN = "/private/var/run/kaptyorka" if MAC else "/run/kaptyorka"     # root's runtime folder
+RUNBOX = "/private/var/run/kapbox" if MAC else "/run/kapbox"         # RUNBOX/<box>/{tmp,vartmp,run,pub}
+RELAY_DOORS = RUN + "/relay"
 OPT = "/opt/kaptyorka"
 BOXCODE = OPT + "/box/current"
 TOOLS_DIR = "/opt/kap-tools"
@@ -49,10 +57,14 @@ CANARY_MARK = b"KAPTYORKA-WALL-CANARY"
 # Fixed canary files sit in folders only root can write (the top of the disk, /home, /run/kaptyorka),
 # so nobody can put a file or a link there first. /tmp and /dev/shm are open to every user: there
 # each canary gets a fresh name nobody can guess (made with O_EXCL), recorded in CANARY_STATE.
-CANARY_FILES = ("/.kaptyorka-wall-canary", "/home/.kaptyorka-wall-canary", "/run/kaptyorka/wall-canary")
+CANARY_FILES = ("/.kaptyorka-wall-canary", "/home/.kaptyorka-wall-canary", RUN + "/wall-canary")
 CANARY_SHARED_DIRS = ("/tmp", "/dev/shm")
-CANARY_STATE = "/run/kaptyorka/wall-canaries"
+CANARY_STATE = RUN + "/wall-canaries"
 CANARY_SHARED_RX = re.compile(r"/(tmp|dev/shm)/kaptyorka-wall-canary-[0-9a-f]{16}")
+if MAC:   # kap_mac's own canaries (no /home, no /dev/shm)
+    CANARY_FILES = (ETC + "/kaptyorka-wall-canary",)
+    CANARY_SHARED_DIRS = ("/private/tmp", "/private/var/tmp", "/Users/Shared")
+    CANARY_SHARED_RX = re.compile(r"/(private/tmp|private/var/tmp|Users/Shared)/kaptyorka-wall-canary-[0-9a-f]{16}")
 CANARY_SHM_KEY = 0x4B415031
 CANARY_ABSTRACT = b"\0kaptyorka-wall-canary"
 CANARY_TCP_LO = 47991
@@ -98,7 +110,7 @@ SHIMS = LIBEXEC + "/shims"     # first on the person's PATH: claude, opencode, c
 # relay, which refuses any outgoing text that holds one, raw or encoded.
 SIGNIN_FILES = ("state/codex/auth.json", "state/opencode/data/opencode/auth.json", ".cursor/auth.json",
                 ".config/cursor/auth.json", ".ssh/id_ed25519")
-BOX_SECRETS = "/run/kaptyorka/box-secrets"   # <box>: root:kaprelay-secrets 0640, read by the relay
+BOX_SECRETS = RUN + "/box-secrets"           # <box>: root:kaprelay-secrets 0640, read by the relay
 RELAY_GROUP = "kaprelay-secrets"             # the relay's only extra group; nobody is in it
 SECRETS_KEEP = 64                            # values kept per box (old ones too: a copy taken before a refresh)
 _ISO_TIME = re.compile(r"\d{4}-\d\d-\d\d[T ][0-9:.]+(Z|[+-]\d\d:?\d\d)?")

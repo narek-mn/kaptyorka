@@ -30,8 +30,9 @@ PERSON_RX = re.compile(r"[a-z_][a-z0-9_-]{0,30}")
 CANARY_RX = re.compile(r"/[A-Za-z0-9/._-]{1,200}kaptyorka-wall-canary(-[0-9a-f]{16})?")
 ENV_OK = {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "TMPDIR", "HTTPS_PROXY", "HTTP_PROXY",
           "ALL_PROXY", "NO_PROXY", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "PWD", "OLDPWD", "SHLVL", "_",
-          "__CF_USER_TEXT_ENCODING", "__PYVENV_LAUNCHER__", "APP_SANDBOX_CONTAINER_ID"}
+          "__CF_USER_TEXT_ENCODING", "__PYVENV_LAUNCHER__", "APP_SANDBOX_CONTAINER_ID", "KAP_OPENCODE_PORT"}
 TEAMAREA = "/Users/Shared/kaptyorka"
+TEAM = "/private/var/lib/kap-team"                  # kapcommon.TEAM on a Mac
 BOXCONF = "/private/etc/kaptyorka/box"
 LOCKED = (("claude/user-settings.json", "state/claude/settings.json"),
           ("codex/config.toml", "state/codex/config.toml"),
@@ -303,7 +304,7 @@ def main(argv) -> None:
     extra = sorted(k for k in os.environ if k not in ENV_OK)
     if extra:
         fail("M11", "unexpected environment names " + ",".join(extra))
-    if home != f"/var/lib/kap-team/kap-{box}/home":
+    if home != f"{TEAM}/kap-{box}/home":
         fail("M11", "HOME is not the box's")
     # M12 the two doors answer (so a box is not cut off for nothing)
     why = relay_answers(f"/private/var/run/kaptyorka/relay/{box}.sock") or forwarder_answers(int(o["proxy-port"]))

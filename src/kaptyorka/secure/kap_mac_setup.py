@@ -52,7 +52,7 @@ PROGRAMS = (  # (source, name in /usr/local/libexec/kaptyorka, mode); programs g
     ("kap_claude_token.py", "kap_claude_token.py", 0o644),
 )
 RC_FILES = (".zshrc", ".zshenv", ".zprofile", ".bashrc", ".bash_profile", ".profile", ".config/fish/config.fish")
-HOOK_FILES = ("/etc/zshenv", "/etc/bashrc", "/etc/profile")
+HOOK_FILES = km.SHELL_FILES
 BANNER = ["", "*** " + km.TEST_NOTICE + " ***", ""]
 
 
@@ -113,7 +113,7 @@ def preflight(person: str, py: str):
     mode = kr.read_text(kc.MODE_FILE).strip()
     if mode and mode != "personal":
         stop.append(f"this computer was installed as {mode}; the mode is fixed at install")
-    if 'anchor "com.apple/*"' not in kr.read_text("/etc/pf.conf"):
+    if 'anchor "com.apple/*"' not in kr.read_text(km.PF_CONF):
         stop.append("/etc/pf.conf does not load Apple's anchor com.apple/*, so kaptyorka's pf rules would not apply")
     v = py_version(py)
     prefix = km.py_prefix(py) if py else ""
@@ -239,8 +239,8 @@ def own_shebang(py: str) -> None:
 
 def install_dirs() -> None:
     for d, mode in ((km.RUN, 0o755), (km.RELAY_DIR, 0o755), (km.CHATS, 0o700), (km.RUNBOX, 0o755), (km.LOGS, 0o700),
-                    ("/var/lib", 0o755), (kc.TEAM, 0o755)):
-        if d == "/var/lib" and os.path.isdir(d):
+                    ("/private/var/lib", 0o755), (kc.TEAM, 0o755)):
+        if d == "/private/var/lib" and os.path.isdir(d):
             continue
         kr.mkdir(d, mode)
 
@@ -345,12 +345,12 @@ def ensure_box(person: str) -> None:
 
 
 def install_sudoers(person: str) -> None:
-    tmp = f"/etc/sudoers.d/.kaptyorka-{person}.new"
+    tmp = f"{km.SUDOERS_DIR}/.kaptyorka-{person}.new"
     kr.write_file(tmp, km.sudoers_text(person), 0o440)
     km.run(["/usr/sbin/visudo", "-cf", tmp])
-    os.replace(tmp, f"/etc/sudoers.d/kaptyorka-{person}")
+    os.replace(tmp, f"{km.SUDOERS_DIR}/kaptyorka-{person}")
     if km.run(["/usr/sbin/visudo", "-c"], check=False).returncode != 0:
-        os.unlink(f"/etc/sudoers.d/kaptyorka-{person}")
+        os.unlink(f"{km.SUDOERS_DIR}/kaptyorka-{person}")
         raise Refuse("sudo did not accept kaptyorka's rule together with this computer's other rules; it was taken "
                      "out again")
 
@@ -364,9 +364,9 @@ def install_hooks() -> None:
 
 
 def install_services(py: str) -> None:
-    km.ensure_account(km.RELAY_USER, "/var/empty", "/usr/bin/false")
-    km.ensure_account(km.PROXY_USER, "/var/empty", "/usr/bin/false")
-    km.ensure_account(km.TOOLS_USER, "/var/empty", "/usr/bin/false")
+    km.ensure_account(km.RELAY_USER, "/private/var/empty", "/usr/bin/false")
+    km.ensure_account(km.PROXY_USER, "/private/var/empty", "/usr/bin/false")
+    km.ensure_account(km.TOOLS_USER, "/private/var/empty", "/usr/bin/false")
 
 
 def install_daemons(py: str) -> None:
@@ -619,7 +619,7 @@ def remove(a) -> int:
         km.delete_record("Users", kc.box_user(box))
         km.delete_record("Groups", kc.box_user(box))
         km.delete_record("Groups", kc.share_group(box))
-        for p in (f"/etc/sudoers.d/kaptyorka-{person}", f"{km.RUNBOX}/{box}.helper.pid"):
+        for p in (f"{km.SUDOERS_DIR}/kaptyorka-{person}", f"{km.RUNBOX}/{box}.helper.pid"):
             if os.path.lexists(p):
                 os.unlink(p)
         for p in (f"{kc.BOXES}/{box}", km.box_run(box), f"{kc.PEOPLE}/{person}", f"{kc.SECRET}/{person}"):

@@ -34,7 +34,8 @@ VIEW = "/srv/team"
 CHATS = "/run/kapbox/chats"          # the helper's chat records (kap_helper.STATE)
 CODEX_RUN = "/run/kapbox/codex"      # one private app-server socket per Codex chat
 # macOS (TEST VERSION), as a box user: the real places, the box's own runtime folder (kap_mac.box_run)
-if sys.platform == "darwin" and pwd.getpwuid(os.getuid()).pw_name.startswith("kap-"):
+MAC = sys.platform == "darwin" and pwd.getpwuid(os.getuid()).pw_name.startswith("kap-")
+if MAC:
     VIEW = "/Users/Shared/kaptyorka"
     _RUN = f"/private/var/run/kapbox/{pwd.getpwuid(os.getuid()).pw_name[4:]}"
     CHATS, CODEX_RUN = _RUN + "/chats", _RUN + "/codex"
