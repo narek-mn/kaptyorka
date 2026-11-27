@@ -1,0 +1,29 @@
+#!/bin/sh
+# kaptyorka launcher on macOS (secure design v2, 4.7 and 10; TEST VERSION). Root-owned; runs as the
+# person. No network, reads no file. A folder is a team folder only by where it really is:
+# /Users/Shared/kaptyorka/<you>/<name>, where only root can put a folder. There the tool starts in
+# the box; anywhere else your own tool. Reached through the shell functions (launcher.sh) and the
+# shims first on PATH (/usr/local/libexec/kaptyorka/shims), as on Linux.
+tool=$1
+case $tool in
+  claude|opencode|codex|cursor-agent|git) shift ;;
+  *) echo "launch: unknown tool" >&2; exit 2 ;;
+esac
+here=$(pwd -P 2>/dev/null) || here=
+me=$(id -un)
+team="/Users/Shared/kaptyorka/$me/"
+case "$here/" in
+  "$team"?*) exec sudo -n /usr/local/libexec/kaptyorka/enter "$tool" "$@" ;;
+esac
+# Outside a team folder no argument may name one: it would load that folder's settings as you.
+for a in "$@"; do
+  case $a in -*=*) a=${a#*=} ;; esac
+  [ -e "$a" ] || continue
+  r=$(/bin/realpath -q -- "$a" 2>/dev/null) || continue
+  case "$r/" in
+    "$team"?*) echo "launch: $tool: that is a team folder; cd into it and run $tool there, so it starts in the team box" >&2
+               exit 2 ;;
+  esac
+done
+PATH=$(printf '%s' ":$PATH:" | sed 's#:/usr/local/libexec/kaptyorka/shims:#:#g; s#^:##; s#:$##')
+exec "$tool" "$@"

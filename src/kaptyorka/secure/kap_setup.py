@@ -920,6 +920,12 @@ def _hubchat():
 
 
 def main(argv) -> int:
+    if sys.platform == "darwin":   # macOS (TEST VERSION): kap_mac_setup, the same commands
+        if __package__:
+            from . import kap_mac_setup
+        else:
+            import kap_mac_setup
+        return kap_mac_setup.main(argv)
     a, pos = {}, []
     it = iter(argv)
     for x in it:
