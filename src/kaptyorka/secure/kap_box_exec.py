@@ -197,6 +197,24 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def oc_port(env, mac: bool = False) -> int:
+    """The port of an OpenCode 1 window's own server. Linux: any free one (the box's loopback is
+    its own). macOS: the box's one OpenCode port (kap_mac.OPENCODE_PORT_BASE; the profile lets
+    the box listen nowhere else), so one OpenCode 1 window per box at a time."""
+    if not mac:
+        return free_port()
+    p = env.get("KAP_OPENCODE_PORT", "")
+    if not p.isdigit() or not 1024 < int(p) < 65536:
+        raise SystemExit("box-exec: this box has no OpenCode port; run the installer's repair")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", int(p)))
+        except OSError:
+            raise SystemExit("box-exec: another OpenCode window of this box is open (on macOS one OpenCode 1 window "
+                             "at a time per box): close it first, or use OpenCode 2")
+    return int(p)
+
+
 def oc_major(prog: str, env: dict) -> int:
     try:
         r = subprocess.run([prog, "--version"], capture_output=True, text=True, timeout=20, env=env)
@@ -306,7 +324,7 @@ def main(argv) -> None:
         major = oc_major(f"{TOOLS_BIN}/opencode", oenv)
         oc = {"major": major}
         if major == 1:
-            oc["port"] = free_port()
+            oc["port"] = oc_port(env, MAC)
         elif major == 2 and not any(a in ("-s", "--session", "-c", "--continue") or a.startswith("--session=")
                                     for a in argv[1:]):
             oc["session"] = oc_new_session(oenv, os.getcwd())

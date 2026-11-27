@@ -300,7 +300,7 @@ def test_wallcheck_knows_the_same_places_as_root():
               km.real(km.CANARY_FIXED)):
         assert mw.CANARY_RX.fullmatch(p), p
     for k in ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TMPDIR", "TERM", "HTTPS_PROXY", "HTTP_PROXY",
-              "ALL_PROXY", "NO_PROXY", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"):   # what kap_mac.box_env sets
+              "ALL_PROXY", "NO_PROXY", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "KAP_OPENCODE_PORT"):   # box_env's
         assert k in mw.ENV_OK, k
 
 
@@ -461,8 +461,9 @@ def test_mac_constants_name_no_linux_place():
 
 def test_what_the_mac_code_builds_names_no_linux_place(monkeypatch):
     monkeypatch.setattr(km, "proxy_port", lambda b: 47110)
+    monkeypatch.setattr(km, "opencode_port", lambda b: 47310)
     py = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
-    texts = [profile(), km.service_profile(["/private/var/run/kaptyorka/relay"]),
+    texts = [profile(opencode_port=47310), km.service_profile(["/private/var/run/kaptyorka/relay"]),
              km.filter_profile("/Library/Frameworks/Python.framework/Versions/3.12"), km.sudoers_text("alice"),
              kt.mac_profile("/private/var/lib/kaptyorka-tool-stage-claude"),
              json.dumps(km.box_env("alice", "alice", "xterm")),
@@ -528,6 +529,90 @@ def test_mac_code_calls_nothing_linux_only_even_one_step_down():
             if isinstance(n, ast.Constant) and isinstance(n.value, str) and LINUX_WORDS.search(n.value):
                 bad.append(f"kap_tools.{fn.name}: {n.value[:60]}")
     assert not bad, sorted(set(bad))
+
+
+# ---------------------------------------------------------------------------- OpenCode's one port
+
+def test_box_profile_opens_only_the_box_s_own_opencode_port():
+    out = [ln for ln in rules(profile(opencode_port=47310)) if "network" in ln]
+    assert '(allow network-bind network-inbound (local ip "localhost:47310"))' in out
+    assert '(allow network-outbound (remote ip "localhost:47310"))' in out
+    assert not [ln for ln in out if "local ip" in ln and "47310" not in ln]
+    assert not [ln for ln in out if re.search(r'ip "(\*|localhost:\*|[0-9.]+:)', ln)]
+    assert "47310" not in profile()   # no port named: no opening
+    for bad in (47110, 80, 70000, "47310"):
+        with pytest.raises(kc.Refuse):
+            profile(opencode_port=bad)
+
+
+def test_pf_keeps_everyone_but_the_box_off_its_opencode_port():
+    t = km.pf_rules({450: 47110, 455: 47111}, 451, 452, 453, "192.0.2.10", 8444, {450: 47310, 455: 47311})
+    lines = t.splitlines()
+    for uid, oc in ((450, 47310), (455, 47311)):
+        own = lines.index(f"pass out quick on lo0 proto tcp from any to 127.0.0.1 port {oc} user {uid}")
+        answer = lines.index(f"pass out quick on lo0 proto tcp from 127.0.0.1 port {oc} to 127.0.0.1 user {uid}")
+        others = lines.index(f"block drop out quick proto {{ tcp udp }} from any to {{ 127.0.0.1 ::1 }} port {oc}")
+        squat = lines.index(f"block drop out quick proto {{ tcp udp }} from {{ 127.0.0.1 ::1 }} port {oc} to any")
+        assert own < others and answer < squat < lines.index(f"block drop out quick proto {{ tcp udp }} all user {uid}")
+        # no pass for anyone else names the port
+        assert not [ln for ln in lines if ln.startswith("pass") and f"port {oc}" in ln and f"user {uid}" not in ln]
+    for oc in ({450: 47110}, {999: 47310}, {450: 80}):
+        with pytest.raises(kc.Refuse):
+            km.pf_rules({450: 47110}, 451, 452, 453, "192.0.2.10", 443, oc)
+
+
+def test_the_box_gets_its_opencode_port_and_wallcheck_tries_it(monkeypatch):
+    monkeypatch.setattr(km, "proxy_port", lambda b: 47110)
+    monkeypatch.setattr(km, "opencode_port", lambda b: 47310)
+    env = km.box_env("alice", "alice")
+    assert env["KAP_OPENCODE_PORT"] == "47310" and set(env) <= mw.ENV_OK
+    o, cmd = mw.parse(["--box", "alice", "--person", "alice", "--opencode-port", "47310", "--", "/bin/true"])
+    assert o["opencode-port"] == "47310" and cmd == ["/bin/true"]
+    with pytest.raises(SystemExit):
+        mw.parse(["--box", "alice", "--person", "alice", "--opencode-port", "x", "--", "/bin/true"])
+    # bind_problem: refused binds pass, an allowed bind on a busy port too; a wrong bind is named
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(1)
+    busy = s.getsockname()[1]
+    try:
+        assert mw.bind_problem("127.0.0.1", busy, True) == ""            # the box's own server has it
+        assert "could be bound" in mw.bind_problem("127.0.0.1", 0, False)  # here (no profile) a wall is missing
+    finally:
+        s.close()
+    src = open(os.path.join(SECURE, "kap_mac_wallcheck.py")).read()
+    assert '("0.0.0.0", oc, False), ("127.0.0.1", oc + 1, False)' in src and 'fail("M15"' in src
+
+
+def test_box_exec_uses_the_box_s_one_port_on_a_mac():
+    from kaptyorka.secure import kap_box_exec as be
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    assert be.oc_port({"KAP_OPENCODE_PORT": str(port)}, mac=True) == port
+    s = socket.socket()
+    s.bind(("127.0.0.1", port))
+    s.listen(1)
+    try:
+        with pytest.raises(SystemExit, match="another OpenCode window"):
+            be.oc_port({"KAP_OPENCODE_PORT": str(port)}, mac=True)
+    finally:
+        s.close()
+    with pytest.raises(SystemExit, match="no OpenCode port"):
+        be.oc_port({}, mac=True)
+    assert 1024 < be.oc_port({"KAP_OPENCODE_PORT": "47310"}) < 65536   # Linux: any free one
+
+
+def test_opencode_is_offered_on_a_mac():
+    enter = open(os.path.join(SECURE, "kap_mac_enter.py")).read()
+    setup = open(os.path.join(SECURE, "kap_mac_setup.py")).read()
+    assert "NOT_YET" not in enter and 'specs.pop("opencode"' not in setup
+    assert "no OpenCode" not in open(os.path.join(ROOT, "README.md")).read()
+    helper = open(os.path.join(SECURE, "kap_helper.py")).read()
+    assert 'os.environ.get("KAP_OPENCODE_PORT", "") if MAC' in helper   # the V2 service takes the box's port
 
 
 # ---------------------------------------------------------------------------- tools on a Mac

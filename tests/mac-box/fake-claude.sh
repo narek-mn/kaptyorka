@@ -7,6 +7,7 @@
 #   tiocsti   tries to type "echo INJECTED" into its terminal (it must land in its own pty)
 #   escapes   prints terminal escapes the filter must drop (clipboard, title)
 #   write     writes a file in the team folder, appends to the person's file there
+#   oc-listen listens on the box's OpenCode port (KAP_OPENCODE_PORT) for 40 s, answering a marker
 # Bash 3.2 (the macOS bash).
 mode=${!#}
 P=$(/usr/bin/id -un); P=${P#kap-}   # the box of person P is the user kap-P
@@ -89,7 +90,27 @@ case $mode in
     res NESTED-SANDBOX block NESTED-OK "$(/usr/bin/sandbox-exec -p '(version 1)(allow default)' /bin/echo NESTED-OK 2>&1)"
     res SUDO block GOT-ROOT "$(/usr/bin/sudo -n /usr/bin/true 2>&1 && echo GOT-ROOT)"
     res LIST-TEAMAREA block "$P" "$(/bin/ls /Users/Shared/kaptyorka 2>&1)"
+    # the box's one OpenCode port: it may listen there on loopback and reach itself, nothing else
+    Q=${KAP_OPENCODE_PORT:-0}
+    res OC-PORT-NAMED allow PORT-OK "$([ "$Q" -gt 1024 ] 2>/dev/null && echo PORT-OK)"
+    res OC-SELF allow KAPCI-OC-SELF "$(/usr/bin/perl -MIO::Socket::INET -e '
+      my $l = IO::Socket::INET->new(LocalAddr=>"127.0.0.1", LocalPort=>$ARGV[0], Listen=>1, ReuseAddr=>1) or die "listen: $!\n";
+      if (!fork) { my $c = IO::Socket::INET->new(PeerAddr=>"127.0.0.1", PeerPort=>$ARGV[0], Timeout=>3) or die "connect: $!\n";
+                   print scalar <$c>; exit 0 }
+      my $c = $l->accept; print $c "KAPCI-OC-SELF\n"; close $c; wait;' "$Q" 2>&1)"
+    res OC-BIND-ANY block BIND-OK "$(/usr/bin/perl -MIO::Socket::INET -e 'IO::Socket::INET->new(LocalAddr=>"0.0.0.0", LocalPort=>$ARGV[0], Listen=>1, ReuseAddr=>1) or die "$!\n"; print "BIND-OK\n"' "$Q" 2>&1)"
+    res OC-BIND-OTHER block BIND-OK "$(/usr/bin/perl -MIO::Socket::INET -e 'IO::Socket::INET->new(LocalAddr=>"127.0.0.1", LocalPort=>$ARGV[0]+1, Listen=>1, ReuseAddr=>1) or die "$!\n"; print "BIND-OK\n"' "$Q" 2>&1)"
+    res OC-BIND-RANDOM block BIND-OK "$(/usr/bin/perl -MIO::Socket::INET -e 'IO::Socket::INET->new(LocalAddr=>"127.0.0.1", LocalPort=>0, Listen=>1) or die "$!\n"; print "BIND-OK\n"' 2>&1)"
+    res OC-BIND-IPV6 block BIND-OK "$(/usr/bin/perl -MSocket -e 'socket(my $s, AF_INET6, SOCK_STREAM, 0) or die "$!\n"; bind($s, pack_sockaddr_in6($ARGV[0], inet_pton(AF_INET6, "::"))) or die "$!\n"; print "BIND-OK\n"' "$Q" 2>&1)"
     echo "ATTACKS-DONE"
+    ;;
+  oc-listen)
+    # listens on the box's OpenCode port for 40 seconds, answering a marker (run.sh connects from outside)
+    echo "OC-LISTEN port=${KAP_OPENCODE_PORT:-none}"
+    /usr/bin/perl -MIO::Socket::INET -e '
+      my $l = IO::Socket::INET->new(LocalAddr=>"127.0.0.1", LocalPort=>$ARGV[0], Listen=>5, ReuseAddr=>1) or die "listen: $!\n";
+      print "OC-LISTENING\n"; $| = 1; $SIG{ALRM} = sub { exit 0 }; alarm 40;
+      while (my $c = $l->accept) { print $c "KAPCI-OC-BOX-7e21\n"; close $c }' "${KAP_OPENCODE_PORT:-0}" 2>&1
     ;;
   *)
     echo "fake claude: $mode"

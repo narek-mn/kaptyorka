@@ -1,12 +1,12 @@
 #!/usr/bin/python3 -I
 """wallcheck on macOS (secure design v2, 10.2; TEST VERSION): the inside half of the self-check.
 It runs as the box user, inside the box's Seatbelt profile, in the very process that becomes the
-tool: it tries each wall once (M1 to M14) and then replaces itself with the tool. Any miss: one
+tool: it tries each wall once (M1 to M15) and then replaces itself with the tool. Any miss: one
 line naming the missing wall, exit 1, the tool never starts. The worst case is "does not start",
 never "leaks".
 
 Usage: wallcheck [--verbose] --box BOX --person NAME --canaries f,g --canary-pid N --addrs a,b
-                 --proxy-port N -- command args...
+                 --proxy-port N [--opencode-port N] -- command args...
 Installed as /usr/local/libexec/kaptyorka/wallcheck. Standard library only, no other kaptyorka file.
 """
 import ctypes
@@ -67,12 +67,13 @@ def en(e: OSError) -> str:
 def parse(argv):
     a = list(argv)
     o = {"verbose": False, "canaries": [], "addrs": [], "box": None, "person": None, "canary-pid": "0",
-         "proxy-port": "0"}
+         "proxy-port": "0", "opencode-port": "0"}
     while a and a[0] != "--":
         x = a.pop(0)
         if x == "--verbose":
             o["verbose"] = True
-        elif x in ("--canaries", "--addrs", "--box", "--person", "--canary-pid", "--proxy-port") and a:
+        elif x in ("--canaries", "--addrs", "--box", "--person", "--canary-pid", "--proxy-port",
+                   "--opencode-port") and a:
             v = a.pop(0)
             o[x[2:]] = [s for s in v.split(",") if s] if x in ("--canaries", "--addrs") else v
         else:
@@ -80,9 +81,10 @@ def parse(argv):
     if not a or a[0] != "--" or len(a) < 2 or not o["box"] or not BOX_RX.fullmatch(o["box"]) \
             or not o["person"] or not PERSON_RX.fullmatch(o["person"]) \
             or not all(CANARY_RX.fullmatch(c) for c in o["canaries"]) \
-            or not o["canary-pid"].isdigit() or not o["proxy-port"].isdigit():
+            or not o["canary-pid"].isdigit() or not o["proxy-port"].isdigit() \
+            or not o["opencode-port"].isdigit():
         print("wallcheck: usage: wallcheck [--verbose] --box BOX --person NAME --canaries f,g --canary-pid N "
-              "--addrs a,b --proxy-port N -- command", file=sys.stderr)
+              "--addrs a,b --proxy-port N [--opencode-port N] -- command", file=sys.stderr)
         sys.exit(2)
     return o, a[1:]
 
@@ -135,6 +137,23 @@ def forwarder_answers(port: int) -> str:
     finally:
         s.close()
     return "" if r.startswith(b"HTTP/1.1 403") else f"forwarder answered {r[:40]!r}"
+
+
+def bind_problem(host: str, port: int, want_ok: bool) -> str:
+    """'' when binding host:port and listening goes as it must: allowed (or already taken by the
+    box's own OpenCode) when want_ok, refused by the profile when not."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind((host, port))
+        s.listen(1)
+        return "" if want_ok else f"{host}:{port} could be bound"
+    except OSError as e:
+        if want_ok:
+            return "" if e.errno == errno.EADDRINUSE else f"{host}:{port} gave {en(e)}"
+        return "" if e.errno in (errno.EPERM, errno.EACCES) else f"{host}:{port} gave {en(e)} (not refused by the profile)"
+    finally:
+        s.close()
 
 
 def procargs(libc, pid: int) -> bytes:
@@ -326,8 +345,17 @@ def main(argv) -> None:
             os.close(fd)
     except OSError:
         pass
+    # M15 the box's one OpenCode port: it may listen there on loopback, nowhere else (another user is
+    # kept off that port by pf; tests/mac-box/run.sh tries it from outside)
+    oc = int(o["opencode-port"])
+    if oc:
+        for host, port, ok in (("127.0.0.1", oc, True), ("0.0.0.0", oc, False), ("127.0.0.1", oc + 1, False),
+                               ("127.0.0.1", 0, False)):
+            why = bind_problem(host, port, ok)
+            if why:
+                fail("M15", why)
     if o["verbose"]:
-        print(f"wallcheck ok: 14 walls in {(time.monotonic() - t0) * 1000:.0f} ms", file=sys.stderr, flush=True)
+        print(f"wallcheck ok: 15 walls in {(time.monotonic() - t0) * 1000:.0f} ms", file=sys.stderr, flush=True)
     os.execv(cmd[0], cmd)
 
 

@@ -33,7 +33,7 @@ else:
 
 Refuse = kc.Refuse
 USAGE = hc.USAGE.replace("  --separate    give this folder a box of its own\n", "") + \
-    "\n\n" + km.TEST_NOTICE + "\nOn macOS: no --separate boxes, and OpenCode is not offered in team folders yet."
+    "\n\n" + km.TEST_NOTICE + "\nOn macOS: no --separate boxes, and one OpenCode 1 window per box at a time."
 SHORT = hc.SHORT
 NOT_COVERED = ("  Note (macOS): your own programs see the team folder exactly as team chats left it. Tool settings",
                "  in it (.claude, .codex, .cursor, .vscode, .mcp.json, .envrc, .git/config, .git/hooks ...) can",
@@ -195,7 +195,7 @@ def add_folder(person: str, path: str, name: str, yes: bool, force: bool = False
     if rep.stripped:
         notes.append(f"removed set-user-id bits from {len(rep.stripped)} file(s)")
     kr.say(f"{name} is now a team folder.", f"  your shortcut: {real} -> {km.team_path(person, name)}",
-           f"  Next: cd {real} and run claude, codex or cursor-agent as usual. They start in the team box.",
+           f"  Next: cd {real} and run claude, codex, opencode or cursor-agent as usual. They start in the team box.",
            *[f"  {n}" for n in notes], *NOT_COVERED)
 
 
@@ -264,7 +264,7 @@ def add_git(person: str, url: str, name: str) -> None:
     kr.say(f"{name} is now a team folder, cloned inside the box.",
            f"  your shortcut: {os.path.join(here, name)} -> {top}",
            f"  the box may now reach {host}{':22' if port == 22 else ''}.",
-           f"  Next: cd {os.path.join(here, name)} and run claude, codex or cursor-agent as usual.", *NOT_COVERED)
+           f"  Next: cd {os.path.join(here, name)} and run claude, codex, opencode or cursor-agent as usual.", *NOT_COVERED)
 
 
 def find_entry(person: str, target: str, folders) -> dict:

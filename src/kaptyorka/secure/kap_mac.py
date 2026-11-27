@@ -79,6 +79,12 @@ ENTER = kc.ENTER
 HUBCHAT_ROOT = kc.HUBCHAT_ROOT
 DAEMON = LIBEXEC + "/kap_mac_daemon.py"
 PROXY_PORT_BASE = 47110                       # box forwarder ports: PROXY_PORT_BASE + n
+# One loopback port per box for OpenCode: an OpenCode 1 window's own server (--port) or the box's
+# OpenCode 2 service. Only the box may bind it (Seatbelt: localhost only, this one port) and only
+# the box may reach it (pf: every other user's packets to it, and any other owner's answers from
+# it, are dropped). Nothing else on loopback is the box's.
+OPENCODE_PORT_BASE = 47310                    # OPENCODE_PORT_BASE + n, a range of its own
+PORT_SPAN = 200
 CANARY_TCP_LO, CANARY_TCP_ANY = kc.CANARY_TCP_LO, kc.CANARY_TCP_ANY
 CANARY_SOCK = RUN + "/canary.sock"
 CANARY_PID = RUN + "/canary.pid"
@@ -176,17 +182,21 @@ def sb(path: str) -> str:
 
 
 def box_profile(box: str, person: str, proxy_port: int, darwin_dir: str = "", extra: str = "",
-                py_top: str = "") -> str:
+                py_top: str = "", opencode_port: int = 0) -> str:
     """The box's Seatbelt profile (06 wall 6, 07 10.1; the kit's strict profile, measured on macOS
     15.8 and 26.7): deny by default; read the system's read-only places but not kaptyorka's own
     files, keychains and the account database; read and write only the team area, the box's
     state folders, its temp folders and runtime folder; the locked tool settings not even there;
-    network only to the forwarder's port on loopback and the relay's door; no clipboard, screen or
-    Apple Events; processes and signals only inside the same sandbox."""
+    network only to the forwarder's port on loopback and the relay's door, and the box's own
+    OpenCode port (bind on localhost, accept, connect: that one port only); no clipboard, screen
+    or Apple Events; processes and signals only inside the same sandbox."""
     kc.check_box(box)
     kc.check_person(person)
     if not isinstance(proxy_port, int) or not 1024 < proxy_port < 65536:
         raise Refuse("bad forwarder port")
+    if opencode_port and (not isinstance(opencode_port, int) or not 1024 < opencode_port < 65536
+                          or opencode_port == proxy_port):
+        raise Refuse("bad OpenCode port")
     home = real(kc.box_home(box))
     team = team_root(person)
     rw = [f"{home}/{d}" for d in kc.STATE_DIRS] + [real(box_tmp(box)), real(box_run(box)), team]
@@ -215,6 +225,8 @@ def box_profile(box: str, person: str, proxy_port: int, darwin_dir: str = "", ex
         ' (regex #"^/dev/ttys[0-9]+$"))',
         "(allow pseudo-tty)",
         f'(allow network-outbound (remote ip "localhost:{proxy_port}"))',
+        *([f'(allow network-bind network-inbound (local ip "localhost:{opencode_port}"))',
+           f'(allow network-outbound (remote ip "localhost:{opencode_port}"))'] if opencode_port else []),
         f"(allow network-outbound (remote unix-socket (path-literal {sb(real(relay_door(box)))})))",
         f"(allow network-bind network-inbound (local unix-socket (subpath {sb(real(box_run(box)))})))",
         f"(allow network-outbound (remote unix-socket (subpath {sb(real(box_run(box)))})))",
@@ -270,21 +282,34 @@ PRIVATE4 = "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10
 PRIVATE6 = "::1 fc00::/7 fe80::/10"
 
 
-def pf_rules(boxes: Dict[int, int], relay_uid: int, proxy_uid: int, tools_uid: int, hub_ip: str, hub_port: int) -> str:
+def pf_rules(boxes: Dict[int, int], relay_uid: int, proxy_uid: int, tools_uid: int, hub_ip: str, hub_port: int,
+             opencode: Optional[Dict[int, int]] = None) -> str:
     """The anchor com.apple/kaptyorka (06 wall 3, option B; the kit's phase D): a second layer
     under Seatbelt. pf matches users only for TCP and UDP, and its block rules also catch loopback
-    (measured), so each user's loopback way is passed first. boxes: {box uid: forwarder port}."""
+    (measured), so each user's loopback way is passed first. boxes: {box uid: forwarder port};
+    opencode: {box uid: its OpenCode port}: the box's own client and server pass, then every
+    other packet to that port, and every other owner's answer from it, is dropped (another user
+    of this Mac must not reach the box's OpenCode, nor pose as it by taking the port first)."""
     ip = ipaddress.ip_address(hub_ip)
     if not 0 < int(hub_port) < 65536:
         raise Refuse("bad hub port")
     for u in [relay_uid, proxy_uid, tools_uid, *boxes]:
         if not isinstance(u, int) or u <= 0:
             raise Refuse("bad user id for pf")
+    opencode = opencode or {}
     ports = sorted(boxes.values())
+    if any(u not in boxes or not 1024 < int(p) < 65536 or int(p) in ports for u, p in opencode.items()):
+        raise Refuse("bad OpenCode port for pf")
     out = ["# kaptyorka (secure design v2, 10.1): written by root; TEST VERSION"]
     for uid, port in sorted(boxes.items()):
-        out += [f"pass out quick on lo0 proto tcp from any to 127.0.0.1 port {int(port)} user {uid}",
-                f"block drop out quick proto {{ tcp udp }} all user {uid}"]
+        out.append(f"pass out quick on lo0 proto tcp from any to 127.0.0.1 port {int(port)} user {uid}")
+        if uid in opencode:
+            oc = int(opencode[uid])
+            out += [f"pass out quick on lo0 proto tcp from any to 127.0.0.1 port {oc} user {uid}",
+                    f"pass out quick on lo0 proto tcp from 127.0.0.1 port {oc} to 127.0.0.1 user {uid}",
+                    f"block drop out quick proto {{ tcp udp }} from any to {{ 127.0.0.1 ::1 }} port {oc}",
+                    f"block drop out quick proto {{ tcp udp }} from {{ 127.0.0.1 ::1 }} port {oc} to any"]
+        out.append(f"block drop out quick proto {{ tcp udp }} all user {uid}")
     out += [f"pass out quick proto tcp from any to {ip} port {int(hub_port)} user {relay_uid}",
             f"block drop out quick proto {{ tcp udp }} all user {relay_uid}"]
     if ports:
@@ -590,6 +615,12 @@ def boxes() -> List[str]:
         return []
 
 
+def opencode_port(box: str) -> int:
+    """The box's OpenCode port (written at install, like proxy-port); 0 when there is none."""
+    t = kr.read_text(f"{kc.BOXES}/{kc.check_box(box)}/opencode-port").strip()
+    return int(t) if t.isdigit() and 1024 < int(t) < 65536 else 0
+
+
 def proxy_port(box: str) -> int:
     t = kr.read_text(f"{kc.BOXES}/{kc.check_box(box)}/proxy-port").strip()
     if not t.isdigit() or not 1024 < int(t) < 65536:
@@ -615,7 +646,7 @@ def darwin_dir(box: str) -> str:
 def write_profile(person: str, box: str) -> str:
     """The box profile, written anew from this code at every start (root-owned)."""
     text = box_profile(box, person, proxy_port(box), darwin_dir(box), kr.read_text(PROFILE_EXTRA),
-                       py_prefix(python()) if python() else "")
+                       py_prefix(python()) if python() else "", opencode_port(box))
     path = profile_path(box)
     if kr.read_text(path) != text:
         kr.write_file(path, text, 0o644)
@@ -624,14 +655,18 @@ def write_profile(person: str, box: str) -> str:
 
 def pf_text() -> str:
     conf = dict(ln.split("=", 1) for ln in kr.read_text(f"{ETC}/relay.conf").splitlines() if "=" in ln)
-    bx = {}
+    bx, oc = {}, {}
     for b in boxes():
         try:
-            bx[pwd.getpwnam(kc.box_user(b)).pw_uid] = proxy_port(b)
+            uid = pwd.getpwnam(kc.box_user(b)).pw_uid
+            bx[uid] = proxy_port(b)
         except (KeyError, Refuse):
             continue
+        if opencode_port(b):
+            oc[uid] = opencode_port(b)
     return pf_rules(bx, pwd.getpwnam(RELAY_USER).pw_uid, pwd.getpwnam(PROXY_USER).pw_uid,
-                    pwd.getpwnam(TOOLS_USER).pw_uid, conf.get("hub_ip", "127.0.0.1"), int(conf.get("hub_port", "443")))
+                    pwd.getpwnam(TOOLS_USER).pw_uid, conf.get("hub_ip", "127.0.0.1"), int(conf.get("hub_port", "443")),
+                    oc)
 
 
 def pf_load() -> None:
@@ -979,6 +1014,8 @@ def box_env(person: str, box: str, term: str = "") -> Dict[str, str]:
     env = {"PATH": f"{TOOLS_DIR}/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME": kc.box_home(box), "USER": u,
            "LOGNAME": u, "SHELL": "/bin/zsh", "LANG": "en_US.UTF-8", "TMPDIR": box_tmp(box) + "/",
            "HTTPS_PROXY": proxy, "HTTP_PROXY": proxy, "ALL_PROXY": proxy, "NO_PROXY": ""}
+    if opencode_port(box):   # box-exec and the helper give it to OpenCode (kap_box_exec.oc_port)
+        env["KAP_OPENCODE_PORT"] = str(opencode_port(box))
     if term and kc.TERM_RX.fullmatch(term):
         env["TERM"] = term
     return env
@@ -994,7 +1031,7 @@ def box_argv(person: str, box: str, inner: List[str], verbose: bool = False) -> 
     return ["/usr/bin/sandbox-exec", "-f", write_profile(person, box), py, "-I", WALLCHECK,
             *(["--verbose"] if verbose else []), "--box", box, "--person", person,
             "--canaries", ",".join(files), "--canary-pid", str(canary_pid()), "--addrs", ",".join(host_addrs()),
-            "--proxy-port", str(proxy_port(box)), "--", *inner]
+            "--proxy-port", str(proxy_port(box)), "--opencode-port", str(opencode_port(box)), "--", *inner]
 
 
 def ids(box: str) -> Tuple[int, int, int]:

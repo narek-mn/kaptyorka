@@ -255,14 +255,17 @@ def install_relay_conf(v: dict) -> None:
         kr.write_file(f"{kc.SECRET}/chat-key", secrets.token_hex(32) + "\n", 0o600)
 
 
-def free_port(box: str) -> int:
+def free_port(box: str, kind: str = "proxy-port", base: int = km.PROXY_PORT_BASE) -> int:
+    """A loopback port for the box (its forwarder's, or its OpenCode port), not another box's and
+    free now."""
     taken = set()
     for b in km.boxes():
-        t = kr.read_text(f"{kc.BOXES}/{b}/proxy-port").strip()
-        if t.isdigit() and b != box:
-            taken.add(int(t))
+        for n in ("proxy-port", "opencode-port"):
+            t = kr.read_text(f"{kc.BOXES}/{b}/{n}").strip()
+            if t.isdigit() and (b != box or n != kind):
+                taken.add(int(t))
     import socket
-    for port in range(km.PROXY_PORT_BASE, km.PROXY_PORT_BASE + 200):
+    for port in range(base, base + km.PORT_SPAN):
         if port in taken:
             continue
         s = socket.socket()
@@ -273,7 +276,7 @@ def free_port(box: str) -> int:
             continue
         finally:
             s.close()
-    raise Refuse("no free port for the box's forwarder")
+    raise Refuse(f"no free loopback port for the box ({kind})")
 
 
 def ensure_box(person: str) -> None:
@@ -297,6 +300,8 @@ def ensure_box(person: str) -> None:
         kr.write_file(f"{bdir}/egress-allow", kr.read_text(f"{kc.BOXCONF}/egress-base"))
     if not kr.read_text(f"{bdir}/proxy-port").strip().isdigit():
         kr.write_file(f"{bdir}/proxy-port", f"{free_port(box)}\n")
+    if not km.opencode_port(box):
+        kr.write_file(f"{bdir}/opencode-port", f"{free_port(box, 'opencode-port', km.OPENCODE_PORT_BASE)}\n")
     root, home = kc.box_root(box), kc.box_home(box)
     kr.mkdir(kc.TEAM, 0o755)
     kr.mkdir(root, 0o710, 0, bgid)
@@ -498,7 +503,6 @@ def install(a) -> int:
             say("Nothing was changed on this computer, and the link was not used: fix the above and run this again.")
         return 2
     specs = ks.choose_tools(a, person)
-    specs.pop("opencode", None)
     host = kap_tools.unreachable(specs)
     if host:
         raise Refuse(f"this computer cannot reach {host}, where the AI tools come from: connect it and run this again, "
@@ -527,7 +531,7 @@ def install(a) -> int:
         "     \"Permission denied\" in team folders.",
         "  2. Make a folder a team folder:   hubchat add ~/path/to/folder",
         "     or get a repository as one:    hubchat add <git URL>",
-        "  3. cd into it and run claude, codex or cursor-agent as usual (OpenCode: not on macOS yet).",
+        "  3. cd into it and run claude, codex, opencode or cursor-agent as usual.",
         *([] if v["claude"] else ["  Claude in the box has no token yet: run  claude setup-token  as yourself, then",
                                   "  hubchat token-rotate  and paste it."]),
         *([f"  Delete the token file now: rm {kc.shown(a['--claude-token-file'], 200)}"]
@@ -677,10 +681,9 @@ def update_tools(a, pos) -> int:
     ks.refuse_unfinished()
     ks.installed_values()
     specs = kap_tools.parse_specs(",".join(pos)) if pos else {t: "" for t in kap_tools.installed()}
-    specs.pop("opencode", None)
     if not specs:
         raise Refuse("no AI tool is in the box yet: name the ones you want, such as  update-tools claude codex")
-    done, failed = kap_tools.install(specs, say)
+    done, failed = kap_tools.update(specs, say)
     say(*[f"{t}: now {ver}" for t, ver in done.items()], *[f"{t}: not changed ({e})" for t, e in failed.items()])
     return 1 if failed else 0
 

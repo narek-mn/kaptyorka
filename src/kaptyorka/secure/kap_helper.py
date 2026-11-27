@@ -547,7 +547,9 @@ class Helper:
             logdir = f"{self.home}/state/opencode/state"
             os.makedirs(logdir, mode=0o700, exist_ok=True)
             out = open(f"{logdir}/kaptyorka-service.log", "ab")
-            self.service = self.popen([exe, "serve", "--service", "--hostname", "127.0.0.1", "--port", "0"],
+            port = os.environ.get("KAP_OPENCODE_PORT", "") if MAC else ""   # macOS: the box's one port (kap_mac)
+            self.service = self.popen([exe, "serve", "--service", "--hostname", "127.0.0.1",
+                                       "--port", port if port.isdigit() else "0"],
                                       cwd=self.home, env=env, stdin=subprocess.DEVNULL, stdout=out,
                                       stderr=subprocess.STDOUT, start_new_session=True)
             out.close()

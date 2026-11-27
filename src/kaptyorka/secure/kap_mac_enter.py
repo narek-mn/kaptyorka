@@ -2,8 +2,8 @@
 """enter on macOS (secure design v2, 4.7 and 10; TEST VERSION): start a tool in the box. Root,
 reached only through the sudo rule from the launcher:  sudo -n /usr/local/libexec/kaptyorka/enter <tool> args...
 
-1. The person is the caller's user id from sudo; the tool one of claude, codex, cursor-agent, git
-   (OpenCode is not offered on macOS yet: its window needs a loopback server of its own).
+1. The person is the caller's user id from sudo; the tool one of claude, opencode, codex,
+   cursor-agent, git. OpenCode's server listens on the box's one OpenCode port (kap_mac).
 2. The real current folder is /Users/Shared/kaptyorka/<person>/<name> or below, and <name> is a
    team folder of this person (folders.json, written only by hubchat-root).
 3. Tool flags pass through the same short allow list as on Linux.
@@ -34,11 +34,6 @@ else:
     import kap_update
     import kapcommon as kc
     import kaproot as kr
-
-NOT_YET = {"opencode": "OpenCode is not offered in team folders on macOS yet (TEST VERSION): its window runs a "
-                       "server of its own on a loopback port, and the box's profile gives the box no loopback "
-                       "port but its forwarder's. Use claude, codex or cursor-agent here."}
-
 
 def notices(person: str, box: str, name: str) -> None:
     """Warnings that do not stop the start: files that can run code in the person's own tools,
@@ -199,11 +194,9 @@ def main(argv) -> int:
             raise kc.Refuse(kc.unfinished_install())
         ke.update_lock()
         if not argv:
-            raise kc.Refuse("usage: enter <claude|codex|cursor-agent|git> args...")
+            raise kc.Refuse("usage: enter <claude|opencode|codex|cursor-agent|git> args...")
         tool = argv[0]
         args = kc.filter_args(tool, argv[1:])
-        if tool in NOT_YET:
-            raise kc.Refuse(NOT_YET[tool])
         try:
             cwd = os.getcwd()
         except OSError:
