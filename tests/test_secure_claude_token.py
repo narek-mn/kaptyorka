@@ -33,8 +33,14 @@ if b"AbCdEf123456-xyz_code#state" not in got or b"\x1b[200~" not in got:
 if mode == "notoken":
     w("\x1b[2GDone, but no token here\r\n"); sys.exit(0)
 tok = "sk-ant-oat01-" + "Ab1_-" * 19
-if cols < 300:
+if cols < 300 or mode == "wrap100":
     tok = tok[:100] + "\r\r\n" + tok[100:]          # a narrow screen would break the word
+elif mode == "wrap70":
+    tok = tok[:70] + "\r\r\n" + tok[70:]
+elif mode == "split":
+    tok = " ".join(tok[i:i + 12] for i in range(0, len(tok), 12))
+elif mode == "box":
+    tok = "\u2502 " + tok + " \u2502"
 w("\x1b[2GYour token:\x1b[0m\r\r\n\x1b[2G\x1b[1m" + tok + "\x1b[22m\r\r\n")
 sys.exit(0)
 '''
@@ -73,10 +79,28 @@ def test_no_link_means_nothing_is_asked_and_nothing_returned(fake):
     assert "did not show a sign-in link" in said.text()
 
 
-def test_a_claude_that_prints_no_token_gives_nothing_and_no_screen_text_with_long_values(fake):
+def test_a_claude_that_prints_no_token_gives_nothing_and_no_screen_text(fake):
     said = Said()
     assert ct.drive(fake("notoken"), lambda: CODE, said, url_wait=10, token_wait=6) == ""
-    assert "finished without printing a token" in said.text() and CODE not in said.text()
+    assert said.lines[-1] == "  claude did not give a token." and "no token here" not in said.text()
+
+
+@pytest.mark.parametrize("mode,cut", [("split", "it came in pieces"), ("wrap70", "it was too short"),
+                                      ("wrap100", "it was broken over two lines")])
+def test_a_token_in_pieces_is_never_shown_and_never_saved_cut(fake, mode, cut):
+    """Round 6, finding 4: a token split by spaces was shown whole in the error line, and a token
+    wrapped onto a second line was saved cut. Now: nothing of the screen after the code, a
+    warning, and nothing returned (the person pastes one instead)."""
+    said = Said()
+    assert ct.drive(fake(mode), lambda: CODE, said, url_wait=10, token_wait=6) == ""
+    assert f"did not come through whole ({cut})" in said.text() and "none was saved" in said.text()
+    shown = said.text().replace(" ", "")
+    for piece in ("Ab1_-Ab1", "sk-ant", "oat01"):
+        assert piece not in shown
+
+
+def test_a_token_between_a_drawn_box_s_sides_is_taken_whole(fake):
+    assert ct.drive(fake("box"), lambda: CODE, Said(), url_wait=10, token_wait=10) == TOKEN
 
 
 def test_an_empty_or_odd_code_is_refused_before_anything_is_typed(fake):
@@ -90,6 +114,8 @@ def test_why_cuts_out_long_values_and_escapes():
     raw = b"\x1b[31mfailed: " + TOKEN.encode() + b" and https://claude.ai/oauth/authorize?x=" + b"a" * 50 + b"\r\n"
     out = ct.why(raw)
     assert "sk-ant" not in out and "oauth" not in out and "failed:" in out and "\x1b" not in out
+    split = b"failed: " + " ".join(TOKEN[i:i + 12] for i in range(0, len(TOKEN), 12)).encode()
+    assert "Ab1_-" not in ct.why(split) and "failed:" in ct.why(split)
 
 
 def test_the_screen_parsers():
@@ -97,8 +123,14 @@ def test_the_screen_parsers():
            "\x1b[39m\x1b]8;;\x07\r\n").encode()
     assert ct.find_url(raw) == "https://claude.ai/oauth/authorize?abc123def"
     assert ct.find_url(b"see https://evil.example/oauth/authorize?x=1234567890") == ""
-    assert ct.find_token(("\x1b[1m" + TOKEN + "\x1b[22m").encode()) == TOKEN
+    assert ct.find_token(("\x1b[1m" + TOKEN + "\x1b[22m\r\n").encode()) == TOKEN
     assert ct.find_token(b"sk-ant-oat01-short") == ""
+    assert ct.find_token(TOKEN.encode()) == ""                       # the output may go on: not yet
+    assert ct.find_token(TOKEN.encode() + b"\r\n") == TOKEN
+    assert ct.find_token(TOKEN.encode() + b"\r\n\r\nStore it safely.\r\n") == TOKEN
+    assert ct.find_token(TOKEN.encode() + b"\r\n  Done\r\n") == TOKEN    # an ordinary word next
+    assert ct.find_token(TOKEN.encode() + b"\r\nQA\r\n") == ""              # reads as its tail
+    assert ct.find_token(b"x" + TOKEN.encode() + b"\n") == ""                # inside a longer word
 
 
 def test_the_command_runs_the_boxs_claude_behind_wallcheck_with_a_throwaway_home(monkeypatch):

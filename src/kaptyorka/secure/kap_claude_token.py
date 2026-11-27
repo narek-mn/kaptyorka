@@ -39,7 +39,10 @@ COLS = 300
 # escape sequences: OSC (title, hyperlink) up to BEL or ST, CSI, and the short ones
 ANSI = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>78Mc]")
 URL_RX = re.compile(r"https://(?:claude\.ai|platform\.claude\.com|console\.anthropic\.com)/oauth/[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]{4,1500}")
-TOKEN_RX = re.compile(r"sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]{20,400}")
+TOKEN_RX = re.compile(r"(?<![A-Za-z0-9_-])sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]{20,400}")
+TOKEN_MIN = 90        # a whole token is longer (sk-ant-oat01- and about 95 more); a shorter one was cut
+FRAME = " \t│┃║|"     # what may stand around a value on its line: spaces and a drawn box's sides
+WORD_RX = re.compile(r"[A-Z]?[a-z]+[.!:]?")   # an ordinary word on the next line, not a token's tail
 LONG_RX = re.compile(r"[A-Za-z0-9_%./:=-]{20,}")
 
 
@@ -53,15 +56,38 @@ def find_url(raw: bytes) -> str:
     return m.group(0) if m else ""
 
 
+def _token(raw: bytes):
+    """(token, '') for a whole token on the screen; ('', why) for one that is not whole; ('', '')
+    for none (red team round 6, finding 4: a token wrapped onto a second line was saved cut).
+    Whole: it ends at a space or a line end (not where the output read so far stops), is at
+    least TOKEN_MIN long, and the next line does not go on with what reads as its tail."""
+    text = plain(raw)
+    for m in TOKEN_RX.finditer(text):
+        rest = text[m.end():]
+        line, nl, after = rest.partition("\n")
+        if not rest or rest[0] not in FRAME + "\n":
+            return "", "it ran into other text or was not finished"
+        if len(m.group(0)) < TOKEN_MIN:
+            return "", "it was too short"
+        if nl and not line.strip(FRAME):
+            nxt = next((ln.strip(FRAME) for ln in after.split("\n") if ln.strip(FRAME)), "")
+            if re.fullmatch(r"[A-Za-z0-9_-]+", nxt) and not WORD_RX.fullmatch(nxt):
+                return "", "it was broken over two lines"
+        return (m.group(0), "") if kc.TOKEN_RX.fullmatch(m.group(0)) else ("", "it did not look right")
+    return ("", "it came in pieces") if "sk-ant-" in text else ("", "")
+
+
 def find_token(raw: bytes) -> str:
-    m = TOKEN_RX.search(plain(raw))
-    return m.group(0) if m and kc.TOKEN_RX.fullmatch(m.group(0)) else ""
+    return _token(raw)[0]
 
 
 def why(raw: bytes) -> str:
     """A few words of what the screen said last, with every long run (a link, a code, a token)
-    cut out: safe to show."""
-    tail = " ".join(LONG_RX.sub("...", plain(raw)).split())[-160:]
+    and anything from a token's start on cut out: safe to show. Used only before the code is
+    typed; after it, nothing of the screen is shown (round 6, finding 4)."""
+    text = plain(raw)
+    text = text[:text.find("sk-ant")] if "sk-ant" in text else text
+    tail = " ".join(LONG_RX.sub("...", text).split())[-160:]
     return kc.term(tail)
 
 
@@ -135,8 +161,9 @@ def drive(cmd, ask_code, say, url_wait: float = 60, token_wait: float = 120) -> 
         tok = read_until(find_token, token_wait)
         if tok:
             return tok
-        say("  claude finished without printing a token"
-            + (f" (it said: {why(buf)})" if why(buf) else "") + ".")
+        cut = _token(buf)[1]   # never any screen text after the code: the token may be on it in pieces
+        say(f"  warning: claude's token did not come through whole ({cut}), so none was saved." if cut
+            else "  claude did not give a token.")
         return ""
     finally:
         buf = b""
