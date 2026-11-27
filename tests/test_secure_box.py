@@ -1118,7 +1118,7 @@ def test_programs_import_only_the_standard_library_and_each_other():
     import ast
     import sys as _sys
     ours = {"kapcommon", "kaproot", "kap_hubchat", "kap_tools", "kap_installer", "proxybridge", "fence", "kap_fence", "toolwire",
-            "kap_toolwire", "kap_update", "kap_release"}  # kap_proxybridge.py, kap_fence.py, kap_toolwire.py: installed so
+            "kap_toolwire", "kap_update", "kap_release", "kap_claude_token"}  # kap_proxybridge.py, kap_fence.py, kap_toolwire.py: installed so
     for name in os.listdir(SECURE):
         if not name.endswith(".py"):
             continue

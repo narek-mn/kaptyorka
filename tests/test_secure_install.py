@@ -191,7 +191,7 @@ def test_hubchat_update_tools_lets_only_tool_names_and_versions_through(monkeypa
     got = []
     monkeypatch.setattr(hc.kr, "caller_person", lambda: "alice")
     monkeypatch.setattr(hc.kr, "old_login_hint", lambda p: [])
-    monkeypatch.setattr(hc.kap_tools, "install", lambda specs, say: (got.append(specs), ({}, {}))[1])
+    monkeypatch.setattr(hc.kap_tools, "update", lambda specs, say: (got.append(specs), ({}, {}))[1])
     monkeypatch.setattr(hc.kap_tools, "installed", lambda: {"claude": "2.1.3"})
     assert hc.main(["update-tools", "codex=0.172.0", "opencode=2"]) == 0
     assert hc.main(["update-tools"]) == 0

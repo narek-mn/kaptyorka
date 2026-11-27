@@ -1,0 +1,16 @@
+# The box's AI tools, updated by the daily timer (kap_tools.py: the same locked vendor installer as
+# `hubchat update-tools`; newer versions only; a new one must start in the box and pass wallcheck;
+# it switches only when no chat of that tool runs). Root runs no vendor code: the vendor installer
+# runs in its own throw-away unit. No setting that hides the system is added here: this job starts
+# those units and the box's self-check itself.
+[Unit]
+Description=kaptyorka: update the box's AI tools (newer versions only)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/kaptyorka/kap_tools.py auto-update
+NoNewPrivileges=yes
+TimeoutStartSec=45min
+Nice=10
+KillMode=control-group

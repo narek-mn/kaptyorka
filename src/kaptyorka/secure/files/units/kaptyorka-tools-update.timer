@@ -1,0 +1,10 @@
+[Unit]
+Description=kaptyorka: look for newer AI tools in the box once a day
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=2h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

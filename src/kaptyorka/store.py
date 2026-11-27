@@ -31,7 +31,7 @@ RATE = (30, 60)
 # held messages and notes (the trick filter): each counts as a send, one sender keeps at most
 # HELD_OPEN_CAP waiting at once, and a held row (and the file it holds) goes after HELD_KEEP_S
 HELD_OPEN_CAP = 20
-HELD_KEEP_DAYS = 30
+HELD_KEEP_DAYS = 7
 HELD_KEEP_S = HELD_KEEP_DAYS * 86400
 REPLY_S = 86400  # a session may answer one that messaged it this recently, whoever it is
 SCHEMA_VERSION = 2
@@ -1868,8 +1868,8 @@ class Store:
         self.db.execute("INSERT INTO log (time, person, kind, detail) VALUES (?,?,?,?)",
                         (now, sender_name, "message_held", f"#{hid} to {to}: {reason}"))
         self._rate_hit(sender_key, now)   # a held send is a send: it counts toward the rate limit
-        raise MessageHeld(f"not sent: held for a person to look at, because it has {reason}."
-                          " An admin can release it; nothing was delivered.")
+        raise MessageHeld(f"not sent: it has {reason}. Say it without that part; or wait, an admin may"
+                          f" release it, and it is dropped by itself after {HELD_KEEP_DAYS} days.")
 
     def _hold_room(self, sender_key, now) -> None:
         """Lock held. Refuse a new hold when this sender already has HELD_OPEN_CAP waiting: a
@@ -1878,7 +1878,8 @@ class Store:
                             (sender_key,)).fetchone()[0]
         if n >= HELD_OPEN_CAP:
             raise KaptyorkaError(f"not sent: {n} of your messages already wait for an admin to look at;"
-                                 " nothing more is held until an admin releases or drops them.")
+                                 f" they drop by themselves after {HELD_KEEP_DAYS} days, so nobody has to"
+                                 " click. Send it without the part the filter objects to.")
 
     def _held_sender(self, row):
         """Lock held. The held row's sender as _may_message reads it, as of now; None when it is
@@ -2952,8 +2953,9 @@ class Store:
         self.db.execute("INSERT INTO log (time, person, kind, detail) VALUES (?,?,?,?)",
                         (now, author, "note_held", f"#{hid} {where}: {reason}"))
         self._rate_hit(key, now)
-        raise MessageHeld(f"not saved: held for a person to look at, because it has {reason}."
-                          " An admin can release it; the note was not changed.")
+        raise MessageHeld(f"not saved: it has {reason}. Write the note without that part; or wait, an admin"
+                          f" may release it, and it is dropped by itself after {HELD_KEEP_DAYS} days."
+                          " The note was not changed.")
 
     def project_members(self) -> Dict[str, List[dict]]:
         """Each registered project's roles by person, for the admin's page."""

@@ -53,7 +53,7 @@ Options for add:
   --name NAME   use another name for the team folder
   --separate    give this folder a box of its own
   --force       share it even with files that look like keys or passwords
-  hubchat update-tools [claude codex ...]   newer AI tools in the box, from their vendors
+  hubchat update-tools [claude codex ...]   newer AI tools in the box now (a timer does it daily)
                              (claude=2.1.300 for one version; opencode=2 for OpenCode 2)
 Rarely needed:
   hubchat token-rotate       give the box a new Claude token (if a team chat may have leaked it)"""
@@ -627,7 +627,7 @@ def update_tools(pos) -> int:
     specs = kap_tools.parse_specs(",".join(pos)) if pos else {t: "" for t in kap_tools.installed()}
     if not specs:
         raise Refuse("no AI tool is in the box yet: name the ones you want, such as  hubchat update-tools claude codex")
-    done, failed = kap_tools.install(specs, kr.say)
+    done, failed = kap_tools.update(specs, kr.say)
     for t, e in failed.items():
         print(kc.term(f"hubchat: {t} was not changed: {e}"), file=sys.stderr)
     return 1 if failed else 0
