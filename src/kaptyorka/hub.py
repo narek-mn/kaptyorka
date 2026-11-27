@@ -28,7 +28,7 @@ from kaptyorka.gitlab import GitLabError, GitLabSource
 from kaptyorka import overnight as overnight_mod
 from kaptyorka import rules as rules_mod
 from kaptyorka.secrets_check import PATTERNS as SECRET_PATTERNS
-from kaptyorka.secure import kap_installer
+from kaptyorka.secure import kap_installer, kap_release
 from kaptyorka.auth import Auth, NoWebSocket, RateLimiter, bearer, quiet_upgrade_warnings
 from kaptyorka.brief import message_text
 from kaptyorka.connects import ConnectStore
@@ -1741,6 +1741,35 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
                 store.db.execute("UPDATE devices SET version=? WHERE id=?",
                                  (version, principal.device_id))
         return JSONResponse(out, headers=NO_STORE)
+
+    def release_file(name: str) -> Response:
+        """One file of the signed personal-laptop release (build plan 16): read from the static
+        folder the release script fills over ssh, <hub home>/releases/current/. The hub has no
+        route that writes there; the laptops trust the files only by their signature."""
+        if name not in kap_release.FILES:
+            return PlainTextResponse("not found", status_code=404)
+        try:
+            data = (paths.home() / "releases" / "current" / name).read_bytes()
+        except OSError:
+            return PlainTextResponse("this hub offers no release", status_code=404)
+        return Response(data, media_type="application/octet-stream", headers=NO_STORE)
+
+    @server.custom_route("/box/v1/release/{name}", methods=["GET"])
+    async def box_release(request: Request) -> Response:
+        """A personal laptop's updater, with its device token (page_gate lets only those in)."""
+        return await asyncio.to_thread(release_file, request.path_params["name"])
+
+    @server.custom_route("/i/{code}/release/{name}", methods=["GET"])
+    async def invite_release(request: Request) -> Response:
+        """The first install's download: only with a valid, unused personal invite code."""
+        code = request.path_params["code"]
+        key = (request.client.host if request.client else "?", "release")   # per address: no code guessing
+        if limiter.blocked(key):
+            return PlainTextResponse("too many failed attempts", status_code=429)
+        if not store.invite_valid(code) or store.invite_kind(code) != "personal":
+            limiter.hit(key)
+            return PlainTextResponse("this link is not a valid personal invite", status_code=404)
+        return await asyncio.to_thread(release_file, request.path_params["name"])
 
     @server.custom_route("/bridge/heartbeat", methods=["POST"])
     @_bad_request

@@ -31,6 +31,9 @@ jobs:
           mkdir installer
           python -I src/kaptyorka/secure/kap_installer.py build installer/kaptyorka-secure-setup.pyz | tee installer/kaptyorka-secure-setup.pyz.sha256
           python -I installer/kaptyorka-secure-setup.pyz 2>&1 | grep -q 'run it with sudo'
+          # the release key the installer pins (kap_release.RELEASE_KEY): a placeholder means laptops never update
+          key=$(python -I -c 'import sys; sys.path.insert(0, "src/kaptyorka/secure"); import kap_release; print(kap_release.code_key())')
+          [ -n "$key" ] || echo "::warning::kap_release.RELEASE_KEY is the placeholder: this installer cannot verify updates (kap_release.py set-key)"
       - uses: actions/upload-artifact@v7
         with:
           name: dist
@@ -77,4 +80,6 @@ jobs:
           awk -v v="## ${GITHUB_REF_NAME#v}" '/^## / { on = index($0, v) == 1; next } on' CHANGELOG.md > notes.md
           printf '\nInstall: `pipx install kaptyorka==%s`\n' "${GITHUB_REF_NAME#v}" >> notes.md
           printf '\nPersonal laptop installer: `kaptyorka-secure-setup.pyz`, SHA-256 `%s`\n' "$(cut -d' ' -f1 installer/kaptyorka-secure-setup.pyz.sha256)" >> notes.md
+          key=$(python3 -I -c 'import sys; sys.path.insert(0, "src/kaptyorka/secure"); import kap_release; print(kap_release.code_key())')
+          [ -z "$key" ] || printf '\nRelease key (the `KEY=` line of the install steps in the README; the same on every release):\n\n    %s\n' "$key" >> notes.md
           gh release create "$GITHUB_REF_NAME" dist/* installer/kaptyorka-secure-setup.pyz installer/kaptyorka-secure-setup.pyz.sha256 --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

@@ -87,9 +87,9 @@ def test_the_hub_s_sentence_names_only_the_release_page_never_a_command():
     one fixed sentence that sends the person to the release page of its version."""
     got = ki.install_sentence("0.9.40")
     assert got == ("Install with the steps on the kaptyorka release page https://github.com/narek-mn/kaptyorka/"
-                   "releases/tag/v0.9.40: download the installer, check its hash against the .sha256 file on "
-                   "that page, then run it with this link.")
-    for word in ("sudo", "curl", "python3", "sha256sum", "&&", "|", "'"):
+                   "releases/tag/v0.9.40: they download the installer from this hub with your link, check its "
+                   "signature against the release key printed on that page, and only then run it.")
+    for word in ("sudo", "curl", "python3", "sha256sum", "ssh-keygen", "ssh-ed25519", "&&", "|", "'"):
         assert word not in got
     for bad in ("", "x; sudo rm -rf /", "1.0 && curl evil", "../../evil", None):
         assert ki.release_page(bad) == "https://github.com/narek-mn/kaptyorka/releases"

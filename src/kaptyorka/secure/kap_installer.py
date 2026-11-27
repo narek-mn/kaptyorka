@@ -111,9 +111,11 @@ def release_page(ver: str) -> str:
 def install_sentence(ver: str) -> str:
     """The one fixed sentence a hub's personal invite page and `kaptyorka invite --personal` show
     next to the link (design v2, 9.2; finding 5a): never a command, since a hostile hub could
-    print any command to run as root. The commands are in the README and on the release page."""
-    return (f"Install with the steps on the kaptyorka release page {release_page(ver)}: download the"
-            f" installer, check its hash against the .sha256 file on that page, then run it with this link.")
+    print any command to run as root, and never the release key, which must not come from the
+    hub (build plan 16). The commands and the key are in the README and on the release page."""
+    return (f"Install with the steps on the kaptyorka release page {release_page(ver)}: they download the"
+            f" installer from this hub with your link, check its signature against the release key printed on"
+            f" that page, and only then run it.")
 
 
 def main(argv) -> int:
