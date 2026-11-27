@@ -181,6 +181,25 @@ def sb(path: str) -> str:
     return '"' + path + '"'
 
 
+# Processes outside the profile's own sandbox (wall M7). process-info* is allowed by default even
+# under (deny default) (Apple's own WebKit profile says so and denies it first), so the deny must be
+# written out; later rules win, so the same-sandbox allow comes after it. proc_pidpath goes through
+# the same check (XNU proc_info.c: proc_security_policy asks the MAC policy before the same-user
+# exemption). The sysctl list (kern.proc.*: every process's short name, user, parent) and
+# kern.procargs* (arguments, also refused by the kernel for another user) are matched by name; the
+# kernel spells a numbered call as "kern.proc.pid.<pid>" (kern_newsysctl.c), so the prefixes catch
+# it. Seatbelt cannot tell the box's own pid from another there, so the box loses kern.proc for
+# itself too, as Chromium's renderers and WebKit's content process do.
+PROC_WALL = (
+    "(deny process-info*)",
+    "(allow process-info* (target same-sandbox))",
+    "(deny signal)",
+    "(allow signal (target same-sandbox))",
+    '(deny sysctl-read (sysctl-name "kern.proc") (sysctl-name-prefix "kern.proc.")'
+    ' (sysctl-name-prefix "kern.procargs"))',
+)
+
+
 def box_profile(box: str, person: str, proxy_port: int, darwin_dir: str = "", extra: str = "",
                 py_top: str = "", opencode_port: int = 0) -> str:
     """The box's Seatbelt profile (06 wall 6, 07 10.1; the kit's strict profile, measured on macOS
@@ -224,14 +243,13 @@ def box_profile(box: str, person: str, proxy_port: int, darwin_dir: str = "", ex
         '(allow file-write* (literal "/dev/null") (literal "/dev/dtracehelper") (literal "/dev/tty")'
         ' (regex #"^/dev/ttys[0-9]+$"))',
         "(allow pseudo-tty)",
+        *PROC_WALL,
         f'(allow network-outbound (remote ip "localhost:{proxy_port}"))',
         *([f'(allow network-bind network-inbound (local ip "localhost:{opencode_port}"))',
            f'(allow network-outbound (remote ip "localhost:{opencode_port}"))'] if opencode_port else []),
         f"(allow network-outbound (remote unix-socket (path-literal {sb(real(relay_door(box)))})))",
         f"(allow network-bind network-inbound (local unix-socket (subpath {sb(real(box_run(box)))})))",
         f"(allow network-outbound (remote unix-socket (subpath {sb(real(box_run(box)))})))",
-        "(allow process-info* (target same-sandbox))",
-        "(allow signal (target same-sandbox))",
         "(allow mach-lookup " + " ".join(f'(global-name "{n}")' for n in MACH_ALLOW) + ")",
         "(deny mach-lookup " + " ".join(f'(global-name "{n}")' for n in MACH_DENY) + ")",
     ]
@@ -273,6 +291,7 @@ def filter_profile(py_prefix: str) -> str:
                                                                          "/private/etc", "/dev")) + ")",
         "(allow file-read-metadata)",
         "(allow sysctl-read)",
+        *PROC_WALL,
     ]) + "\n"
 
 

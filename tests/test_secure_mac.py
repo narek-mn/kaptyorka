@@ -139,6 +139,24 @@ def test_box_profile_has_no_clipboard_screen_or_apple_events_and_only_same_sandb
     assert "(allow process-info*)" not in p and "(allow signal)" not in p
 
 
+def test_box_and_filter_profiles_deny_other_processes_after_every_allow():
+    # process-info* is allowed by default even under (deny default) and later rules win: the
+    # deny must be written after system.sb and the plain sysctl-read, the same-sandbox allow after it
+    for p in (profile(), km.filter_profile("/opt/py")):
+        r = rules(p)
+        at = {ln: i for i, ln in enumerate(r)}
+        assert at['(import "system.sb")'] < at["(deny process-info*)"] < at["(allow process-info* (target same-sandbox))"]
+        assert at["(deny signal)"] < at["(allow signal (target same-sandbox))"]
+        deny = next(i for i, ln in enumerate(r) if ln.startswith("(deny sysctl-read"))
+        assert at["(allow sysctl-read)"] < deny
+        for name in ('(sysctl-name "kern.proc")', '(sysctl-name-prefix "kern.proc.")',
+                     '(sysctl-name-prefix "kern.procargs")'):
+            assert name in r[deny]
+    # a local addition still comes after the wall, so wallcheck M7 catches one that opens it
+    r = rules(profile(extra="(allow process-info*)"))
+    assert r.index("(allow process-info*)") > r.index("(deny process-info*)")
+
+
 def test_box_profile_refuses_paths_that_could_break_out_of_its_text():
     for bad in ('/private/var/folders/x" (allow default) "', "/x\n(allow default)", "relative", "/a/../b"):
         with pytest.raises(kc.Refuse):

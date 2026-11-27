@@ -175,6 +175,25 @@ def pidpath(libc, pid: int) -> bytes:
     return buf.raw[:n] if n > 0 else b""
 
 
+def kinfo_visible(libc, pid: int) -> bool:
+    """Whether sysctl kern.proc.pid.<pid> answers with the process (short name, user, parent)."""
+    mib = (ctypes.c_int * 4)(1, 14, 1, pid)     # CTL_KERN, KERN_PROC, KERN_PROC_PID
+    size = ctypes.c_size_t(4096)
+    buf = ctypes.create_string_buffer(size.value)
+    return libc.sysctl(mib, 4, buf, ctypes.byref(size), None, ctypes.c_size_t(0)) == 0 and size.value > 0
+
+
+def listed(libc, pid: int) -> bool:
+    """Whether proc_listpids (all processes) names pid."""
+    try:
+        f = libc.proc_listpids
+    except AttributeError:
+        return False
+    buf = (ctypes.c_int * 16384)()
+    n = f(1, 0, buf, ctypes.sizeof(buf))        # PROC_ALL_PIDS
+    return n > 0 and pid in buf[:n // ctypes.sizeof(ctypes.c_int)]
+
+
 def mach_lookup(libc, name: str) -> bool:
     """True when the service name can be looked up from here."""
     try:
@@ -283,20 +302,24 @@ def main(argv) -> None:
         pass
     finally:
         u.close()
-    # M7 the canary process (the person's processes): no arguments, no path, no signal
+    # M7 the canary process (the person's processes): no arguments, no path, not in the lists, no
+    # signal. Every miss is named in one line, so one run tells which part of the wall is gone.
     pid = int(o["canary-pid"])
     if pid > 1:
-        if CANARY_PROC in procargs(libc, pid):
-            fail("M7", "the canary process's arguments are readable")
-        if pidpath(libc, pid):
-            fail("M7", "the canary process's program path is readable")
+        seen = [what for what, got in (
+            ("its arguments are readable", CANARY_PROC in procargs(libc, pid)),
+            ("its program path is readable (proc_pidpath)", bool(pidpath(libc, pid))),
+            ("sysctl kern.proc.pid shows it", kinfo_visible(libc, pid)),
+            ("proc_listpids lists it", listed(libc, pid))) if got]
         try:
             os.kill(pid, 0)
-            fail("M7", "the canary process can be signalled")
+            seen.append("it can be signalled")
         except PermissionError:
             pass
         except ProcessLookupError:
             fail("M7", "the canary process is not there (enter checked it a moment ago)")
+        if seen:
+            fail("M7", "the canary process: " + "; ".join(seen))
     else:
         fail("M7", "no canary process was named")
     # M8 the desktop session: clipboard, screen, Apple Events
