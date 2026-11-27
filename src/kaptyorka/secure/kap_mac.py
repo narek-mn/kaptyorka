@@ -1010,6 +1010,11 @@ def account_problems(person: str, box: str) -> List[str]:
     if "AuthenticationAuthority:" in info:
         bad.append(f"{u} has a password or a login (AuthenticationAuthority)")
     bad += [f"{u} is in the group {n}; it must not be" for n in privileged_groups(u, pw.pw_gid)]
+    try:   # tty: its members can open other people's terminals; the box may use only its own pty
+        if grp.getgrnam("tty").gr_gid in set(os.getgrouplist(u, pw.pw_gid)):
+            bad.append(f"{u} is in the group tty; it must not be")
+    except (KeyError, OSError):
+        pass
     if group_members(u):
         bad.append(f"the group {u} has members {group_members(u)}; it must have none")
     if group_members(g) != sorted({person, u}):
