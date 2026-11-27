@@ -553,7 +553,7 @@ toolupdate)
   ( inb 'sleep 400' >/dev/null 2>&1 & )
   wait_for 40 "systemctl list-units --no-legend 'kapbox-alice-chat-claude-*' | grep -q ' active '" || rec "TU-1" FAIL "a claude chat runs" "-" "no chat started"
   TL=470 t "TU-1 a newer claude is downloaded and starts in the box, but a chat of claude runs: it stays pending, the link does not move" "pending, link unchanged" \
-    're:^rc=0 rc=0 link=\.\./claude/0\.0\.1/claude pending=[0-9]+\.[0-9]+\.[0-9]+ rc=0' \
+    're:^rc=0 rc=0[[:space:]]+link=\.\./claude/0\.0\.1/claude pending=[0-9]+\.[0-9]+\.[0-9]+ rc=0' \
     "$UPD; echo rc=\$?; echo -n \"link=\$(readlink $KT/bin/claude) pending=\$(python3 -c 'import json;print(json.load(open(\"$REC\"))[\"claude\"][\"pending\"][\"version\"])') rc=0\" "
   PEND=$(python3 -c "import json;print(json.load(open('$REC'))['claude']['pending']['version'])" 2>/dev/null)
   TL=470 t "TU-2 the chat still runs: the next run does not download again (no vendor installer unit), still pending" "no new install unit" \
