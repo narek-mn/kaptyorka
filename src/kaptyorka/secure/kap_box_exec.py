@@ -33,6 +33,12 @@ BOXCONF = "/etc/kaptyorka/box"
 VIEW = "/srv/team"
 CHATS = "/run/kapbox/chats"          # the helper's chat records (kap_helper.STATE)
 CODEX_RUN = "/run/kapbox/codex"      # one private app-server socket per Codex chat
+# macOS (TEST VERSION), as a box user: the real places, the box's own runtime folder (kap_mac.box_run)
+MAC = sys.platform == "darwin" and pwd.getpwuid(os.getuid()).pw_name.startswith("kap-")
+if MAC:
+    VIEW = "/Users/Shared/kaptyorka"
+    _RUN = f"/private/var/run/kapbox/{pwd.getpwuid(os.getuid()).pw_name[4:]}"
+    CHATS, CODEX_RUN = _RUN + "/chats", _RUN + "/codex"
 # Codex subcommands that are not its terminal UI; anything else starts the TUI
 CODEX_SUBS = {"exec", "e", "review", "login", "logout", "mcp", "mcp-server", "app-server", "completion",
               "sandbox", "debug", "apply", "a", "resume", "fork", "cloud", "features", "help", "update",
@@ -159,7 +165,8 @@ def codex_server(prog: str, env: dict, sock: str, wait: float = 20) -> int:
     if child == 0:
         try:
             import ctypes
-            ctypes.CDLL(None).prctl(1, 15, 0, 0, 0)   # PR_SET_PDEATHSIG: SIGTERM when the chat ends
+            if sys.platform != "darwin":   # macOS has no PDEATHSIG: the chat's process group ends it
+                ctypes.CDLL(None).prctl(1, 15, 0, 0, 0)   # PR_SET_PDEATHSIG: SIGTERM when the chat ends
             os.setpgid(0, 0)   # not in the terminal's group: a ctrl-c is the chat's, not its
             null = os.open(os.devnull, os.O_RDONLY)
             os.dup2(null, 0)
@@ -188,6 +195,24 @@ def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def oc_port(env, mac: bool = False) -> int:
+    """The port of an OpenCode 1 window's own server. Linux: any free one (the box's loopback is
+    its own). macOS: the box's one OpenCode port (kap_mac.OPENCODE_PORT_BASE; the profile lets
+    the box listen nowhere else), so one OpenCode 1 window per box at a time."""
+    if not mac:
+        return free_port()
+    p = env.get("KAP_OPENCODE_PORT", "")
+    if not p.isdigit() or not 1024 < int(p) < 65536:
+        raise SystemExit("box-exec: this box has no OpenCode port; run the installer's repair")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", int(p)))
+        except OSError:
+            raise SystemExit("box-exec: another OpenCode window of this box is open (on macOS one OpenCode 1 window "
+                             "at a time per box): close it first, or use OpenCode 2")
+    return int(p)
 
 
 def oc_major(prog: str, env: dict) -> int:
@@ -299,7 +324,7 @@ def main(argv) -> None:
         major = oc_major(f"{TOOLS_BIN}/opencode", oenv)
         oc = {"major": major}
         if major == 1:
-            oc["port"] = free_port()
+            oc["port"] = oc_port(env, MAC)
         elif major == 2 and not any(a in ("-s", "--session", "-c", "--continue") or a.startswith("--session=")
                                     for a in argv[1:]):
             oc["session"] = oc_new_session(oenv, os.getcwd())

@@ -170,10 +170,25 @@ If a team chat does not start and says a wall is missing, restart the computer a
 - What a team chat prints passes a small filter before it reaches your terminal: it drops clipboard codes, window titles, file-transfer and other terminal "strings", report questions that answer with text, and links whose text is not their address; colours, cursor moves and the tools' screens stay. It is not a wall against every terminal bug.
 - Updates trust the release key, not the hub, but a hacked hub can still hold updates back (it serves nothing, the release you already have, or a newer signed release that is not the newest, such as one later replaced for a bug) and, at a first install, hand out an older signed installer. `hubchat list` shows when the last check was and what it found. A laptop checking for updates tells the hub it is on (address and time), at most every 6 hours, even with no team chat open; each check moves the laptop's **last seen** time on the hub's Machines page, so every admin sees it, not only whoever runs the hub's computer. Each download from the hub has a time limit, and the check's time is saved before the hub is asked, so a hub that stalls the answer cannot make the laptop ask more often.
 - There is one release key and no way to change it: if it were ever lost or stolen, every laptop would be installed again by hand, with a new key.
-- Linux only for now; macOS is not proven.
+- On a Mac it is a **TEST VERSION, not proven yet** (next section).
 - `hubchat token-rotate` gives the box a new token but does not end the old one: end it yourself as the command says.
 
 **Remove it all:** `sudo /usr/local/libexec/kaptyorka/installer remove`. Every team folder goes back to you first. Then open a new terminal, and end the box's sign-ins as the command lists.
+
+### On a Mac: TEST VERSION, not proven yet
+
+The same installer and the same commands work on macOS 14 or newer: `install`, `hubchat add/remove/list`, `claude`, `codex`, `opencode` or `cursor-agent` in a team folder, `repair`, `remove`, the signed self-updates and the daily tool update (launchd jobs instead of the systemd timers). The installer, `hubchat list` and every failed start say **TEST VERSION**. The walls are a hidden user `kap-<you>`, your home folder closed to it (macOS's own 750 with group staff stays, since the box is not in staff; anything wider becomes 700), a Seatbelt profile (`sandbox-exec`) around every team chat, a pf rule set, and LaunchDaemons for the relay, the forwarder and the canaries. They rest on Seatbelt and pf, which Apple does not support for this use, so a macOS update can change them. Before every team chat starts, kaptyorka checks each wall from outside and tries each one from inside the box against fake secrets (canaries in your home, `/tmp`, `/Users/Shared` and its own folder, a fake process and fake local services). If one wall fails, the chat does not start.
+
+What is different on a Mac:
+
+- It needs a Python 3.10 or newer that only root can change: install Python 3.12 from python.org and run the installer with it (`sudo /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -I kaptyorka-secure-setup.pyz install --personal "$LINK"`, and `shasum -a 256` instead of `sha256sum` in the check above). The installer makes that Python writable by root only.
+- Team folders live in `/Users/Shared/kaptyorka/<you>/`, with a shortcut where they were. macOS has nothing like Linux's view of a team folder, so your own programs see it exactly as team chats left it: a symlink or a script there runs as you if you open it. `hubchat list` and each chat's start name the files that changed; read them first.
+- No `--separate` boxes.
+- OpenCode's server gets one port of the box's own. Seatbelt keeps the box to that one port, but it cannot keep it to loopback: it also lets the box listen on every address. pf is that wall: it drops whatever comes to the port from outside the Mac, and every other user's connection to it on the Mac. Before each start, root tries the port as another user and checks pf holds the outside rule (a test from another computer is not part of the check). So only one OpenCode 1 window runs per box at a time (OpenCode 2 windows share the box's one service).
+- The installer does not run `claude setup-token` in the box: paste a token you made with `claude setup-token` yourself.
+- OpenCode's and Codex's managed settings (kaptyorka's OpenCode plugin and permission rules, Codex's `requirements.toml`) are not in the box: macOS keeps them in system-wide folders that would change your own tools too. The box's own locked settings files still apply.
+- A team folder in Desktop or Documents is refused when iCloud may sync them.
+- `/etc/kaptyorka/box-extra.sb` adds root's own rules to the box profile (empty by default; `hubchat list` warns when it is not). Its only use is testing.
 
 ## For agents
 

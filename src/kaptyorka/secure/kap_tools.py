@@ -52,7 +52,8 @@ else:
 Refuse = kc.Refuse
 NAMES = ("claude", "codex", "opencode", "cursor-agent")
 RECORD = kc.ETC + "/tools.json"
-LOCK = "/run/kaptyorka-tools.lock"
+MAC = sys.platform == "darwin"   # macOS (TEST VERSION): a role account in a Seatbelt profile, no unit
+LOCK = kc.RUN + "/tools.lock" if MAC else "/run/kaptyorka-tools.lock"
 STAGE_TOP = "/var/lib"       # systemd's StateDirectory= place; a DynamicUser's is in STAGE_TOP/private
 RUNDIR = "/run/kaptyorka"
 VER_RX = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]{1,30})?")
@@ -341,10 +342,21 @@ def people() -> list:
         return []
 
 
+def _km():
+    """kap_mac, imported only on a Mac (it is installed next to this file there)."""
+    if __package__:
+        from . import kap_mac
+    else:
+        import kap_mac
+    return kap_mac
+
+
 def running_chats(tool: str) -> int:
     """How many chats of this tool run now, in any box of this computer; for claude also the
     box helper's helper chats (`claude -p`, red team round 6, finding 5: a switch or a prune
     would pull the program from under one)."""
+    if MAC:   # enter's chat records (kap_mac.CHATS), each still alive
+        return sum(1 for r in _km().chats() if r.get("tool") == tool)
     n = 0
     for person in people():
         for box in kr.boxes_of(person):
@@ -361,6 +373,8 @@ def verify_in_box(prog: str, want: str) -> str:
     if not ps:
         return "no box to try it in"
     person = ps[0]
+    if MAC:
+        return verify_in_box_mac(person, prog, want)
     problems = kr.outside_check(person, [person])
     if problems:
         return "the box's self-check found a problem: " + "; ".join(problems)[:200]
@@ -372,7 +386,11 @@ def verify_in_box(prog: str, want: str) -> str:
                 "--", prog, "--version"], check=False, timeout=120)
     if r.returncode != 0:
         return "it did not start in the box: " + kc.term(" ".join((r.stderr or r.stdout).split()[-30:]))[-200:]
-    text = r.stdout + "\n" + "\n".join(l for l in r.stderr.splitlines() if not l.startswith("wallcheck"))
+    return version_problem(r.stdout, r.stderr, want)
+
+
+def version_problem(out: str, err: str, want: str) -> str:
+    text = out + "\n" + "\n".join(l for l in err.splitlines() if not l.startswith("wallcheck"))
     got = GOT_RX.search(text)
     if not got or got.group(1)[:40] != want:
         return f"it says its version is {kc.shown(got.group(1) if got else 'nothing', 40)}, not {want}"
@@ -439,6 +457,8 @@ def install_one(tool: str, ver: str, say=kr.say, auto: bool = False):
     """One tool from its vendor's installer into /opt/kap-tools; returns the version now in use.
     auto: only a strictly newer version is taken, checked in the box first and switched to only
     while no chat of the tool runs (see switch_if_safe); returns None when nothing changed."""
+    if MAC:
+        return install_one_mac(tool, ver, say, auto)
     key, ask = vendor_of(tool, ver)
     url, hosts, program, how = VENDOR[key]
     if unreachable({tool: ver}):
@@ -491,6 +511,108 @@ def install_one(tool: str, ver: str, say=kr.say, auto: bool = False):
         for p in (f"{STAGE_TOP}/{name}", hostsfile):
             if os.path.lexists(p):
                 os.unlink(p)
+
+
+MAC_STAGE = "/private/var/lib/kaptyorka-tool-stage-"
+MAC_USER = "_kaptools"
+
+
+def mac_profile(stage: str) -> str:
+    """The vendor installer's Seatbelt profile on macOS: it writes only its own folder and reads
+    nobody's files. Its network is pf's: only port 443 for its user (kap_mac.pf_rules); Seatbelt
+    cannot name hosts."""
+    if not re.fullmatch(r"/private/var/lib/kaptyorka-tool-stage-[a-z-]{1,20}", stage):
+        raise Refuse("bad stage folder")
+    deny = ("/Users", "/private/etc/kaptyorka", "/private/var/lib/kap-team", "/private/var/run/kaptyorka",
+            "/private/var/run/kapbox", "/opt/kap-tools", "/opt/kaptyorka", "/Library/Keychains")
+    return ('(version 1)(allow default)(deny file-write*)'
+            f'(allow file-write* (subpath "{stage}") (literal "/dev/null") (literal "/dev/tty") '
+            '(literal "/dev/dtracehelper"))'
+            '(deny file-read* ' + " ".join(f'(subpath "{d}")' for d in deny) + ')')
+
+
+def verify_in_box_mac(person: str, prog: str, want: str) -> str:
+    """verify_in_box on macOS: prog --version as the box user, in the box's profile, behind the
+    outside check and wallcheck (kap_mac.popen_box, as every chat starts)."""
+    import subprocess
+    km = _km()
+    box = person
+    try:
+        km.repair_before_start(person, box)
+        problems = km.outside_check(person, box)
+        if problems:
+            return "the box's self-check found a problem: " + "; ".join(problems)[:200]
+        p = km.popen_box(person, box, [prog, "--version"], km.team_root(person), stdin=subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            out, err = p.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            out, err = p.communicate()
+        finally:
+            km.end_session(p.pid)
+    except (Refuse, OSError, KeyError) as e:
+        return f"it could not be started in the box ({kc.term(e)[:160]})"
+    if p.returncode != 0:
+        return "it did not start in the box: " + kc.term(" ".join((err or out).split()[-30:]))[-200:]
+    return version_problem(out, err, want)
+
+
+def install_one_mac(tool: str, ver: str, say=kr.say, auto: bool = False):
+    """install_one on macOS: the same script as the user _kaptools (no home of anyone, its own
+    empty folder as HOME) inside mac_profile; root reads and copies the result as on Linux, and
+    an automatic update switches the same way (switch_if_safe: tried in the box first, never
+    under a running chat of the tool)."""
+    import pwd
+    import subprocess
+    key, ask = vendor_of(tool, ver)
+    url, hosts, program, how = VENDOR[key]
+    if unreachable({tool: ver}):
+        raise Refuse(f"cannot reach {hosts[0]}, where {tool} comes from: is this computer online?")
+    pw = pwd.getpwnam(MAC_USER)
+    stage = MAC_STAGE + tool
+    shutil.rmtree(stage, ignore_errors=True)
+    kr.mkdir(stage, 0o700, pw.pw_uid, pw.pw_gid)
+    kr.mkdir(stage + "/tmp", 0o700, pw.pw_uid, pw.pw_gid)
+    say(f"Installing {tool}{' ' + ver if ver else ''} into the box with its vendor's installer ({url}) ...")
+    env = {"HOME": stage, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8", "TMPDIR": stage + "/tmp",
+           "KAP_TOOL": key, "KAP_URL": url, "KAP_VERSION": ask, "KAP_PROGRAM": program}
+    try:
+        try:
+            r = subprocess.run(["/usr/bin/sandbox-exec", "-p", mac_profile(stage), "/bin/bash", "-c", SCRIPT],
+                               cwd=stage, env=env, user=pw.pw_uid, group=pw.pw_gid, extra_groups=[],
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=UNIT_LIMIT)
+        except subprocess.TimeoutExpired:
+            raise Refuse(f"{tool}: its installer took longer than {UNIT_LIMIT} seconds")
+        if r.returncode != 0:
+            tail = " ".join((r.stderr or r.stdout).strip().splitlines()[-3:])[-300:]
+            raise Refuse(f"{tool}: its installer failed ({kc.term(tail) or 'exit ' + str(r.returncode)})")
+        src, inner, got = collect(stage, key)
+        current = load_record().get(tool, {}).get("version", "")
+        if auto and not is_newer(got, current):
+            say(f"  {tool} {current}: already the newest ({got}).")
+            return None
+        dst = f"{kc.TOOLS_DIR}/{tool}/{got}"
+        kr.mkdir(kc.TOOLS_DIR, 0o755)
+        kr.mkdir(f"{kc.TOOLS_DIR}/bin", 0o755)
+        kr.mkdir(f"{kc.TOOLS_DIR}/{tool}", 0o755)
+        shutil.rmtree(dst, ignore_errors=True)
+        kr.mkdir(dst, 0o755)
+        try:
+            copy_tree(src, dst)
+        except (Refuse, OSError):
+            shutil.rmtree(dst, ignore_errors=True)
+            raise
+        prog = os.path.join(dst, inner)
+        with open(prog, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        if auto:
+            return switch_if_safe(tool, got, inner, digest, url, say)
+        activate(tool, got, inner, digest, url)
+        say(f"  {tool} {got} is in the box ({kc.TOOLS_DIR}/bin/{tool}).")
+        return got
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
 
 
 def install(specs, say=kr.say):

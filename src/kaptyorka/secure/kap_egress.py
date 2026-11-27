@@ -29,7 +29,7 @@ BAD = [ipaddress.ip_network(n) for n in (
 ).split()]
 MAX_HEAD = 8192
 MAX_CONNS = 64
-IDLE_EXIT = 600
+IDLE_EXIT = 10 ** 9 if sys.platform == "darwin" else 600
 
 
 def parse_allow(text: str):

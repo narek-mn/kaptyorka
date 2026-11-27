@@ -1,0 +1,35 @@
+# The macOS box (TEST VERSION) on throw-away GitHub Macs: install with a fake hub, fake sign-ins
+# and fake tools, attack it from inside, break one wall at a time (no chat may start), remove it.
+# tests/mac-box/run.sh; results in the mac-box-<os> artifact. Only on its own branch or by hand.
+name: mac-box
+
+on:
+  push:
+    branches: [mac-box-test]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  box:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Python 3.12 from python.org (a root-owned framework install)
+        run: |
+          curl -fsSL --proto '=https' -o "$RUNNER_TEMP/python.pkg" https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg
+          sudo installer -pkg "$RUNNER_TEMP/python.pkg" -target /
+      - name: Install the box, attack it, break it, remove it
+        timeout-minutes: 40   # every step in run.sh has its own limit; this leaves the results time to upload
+        run: sudo env CI=true KAP_PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 tests/mac-box/run.sh
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mac-box-${{ matrix.os }}
+          path: tests/mac-box/out/*.t*

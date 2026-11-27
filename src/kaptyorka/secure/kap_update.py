@@ -40,8 +40,9 @@ else:
 KEY_FILE = kc.ETC + "/release-key"          # the allowed-signers line of the pinned release key
 STATE_FILE = kc.ETC + "/update.json"        # what hubchat list shows; no secret
 WORK = kc.LIBEXEC + "/update"               # root-only: the verified waiting files, the kept installer
-LOCK = "/run/kaptyorka/update.lock"
-RUN_LOCK = "/run/kaptyorka/update-run.lock"   # one updater at a time (the timer's, or one started by hand)
+MAC = sys.platform == "darwin"   # macOS (TEST VERSION): launchd's hourly job instead of the timer
+LOCK = kc.RUN + "/update.lock"
+RUN_LOCK = kc.RUN + "/update-run.lock"   # one updater at a time
 CHECK_S = 6 * 3600       # the hub is asked at most this often (each ask tells it the laptop is on)
 REPAIR_S = 1800          # one repair (the new installer's or the kept one's) at most
 FETCH_S = 120            # one small file from the hub, all in (a hub that drips bytes is cut off)
@@ -289,8 +290,8 @@ def check(st: dict, key: str) -> None:
     st["result"] = f"{m['version']} downloaded and verified"
 
 
-CGROUP = "/sys/fs/cgroup"
-PROC = "/proc"
+CGROUP = "" if MAC else "/sys/fs/cgroup"   # Linux only: on macOS chats come from kap_mac.chats()
+PROC = "" if MAC else "/proc"
 
 
 def _units(*patterns) -> list:
@@ -342,6 +343,12 @@ def helper_chats(box: str = "*") -> int:
 
 def chats_running() -> int:
     """Team chats, clones and helper chats running now: an update never installs under one."""
+    if MAC:   # enter's chat records (kap_mac.CHATS), each still alive
+        if __package__:
+            from . import kap_mac
+        else:
+            import kap_mac
+        return len(kap_mac.chats())
     return len(_units("kapbox-*-chat-*", "kapbox-*-clone-*")) + helper_chats()
 
 
@@ -377,10 +384,19 @@ def lock_exclusive(path: str = ""):
 
 def repair_with(pyz: str) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(["/usr/bin/python3", "-I", pyz, "repair"], capture_output=True, text=True,
+        return subprocess.run([python(), "-I", pyz, "repair"], capture_output=True, text=True,
                               timeout=REPAIR_S, env=ENV, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired as e:
         return subprocess.CompletedProcess(e.cmd, 124, "", "the repair took too long")
+
+
+def python() -> str:
+    """The interpreter root's programs run with: on macOS the one the installer recorded."""
+    if MAC:
+        p = _read(kc.ETC + "/python", 4096).strip()
+        if p.startswith("/") and os.path.isfile(p):
+            return p
+    return "/usr/bin/python3"
 
 
 def install(st: dict, key: str) -> None:

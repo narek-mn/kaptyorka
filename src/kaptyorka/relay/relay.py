@@ -424,7 +424,7 @@ TOKEN_RX = re.compile(
 # The standing rule and the trick filter are the first line; ending the box's sign-ins at the
 # vendor after a suspected leak is the remedy.
 
-SECRETS_DIR = "/run/kaptyorka/box-secrets"
+SECRETS_DIR = "/private/var/run/kaptyorka/box-secrets" if sys.platform == "darwin" else "/run/kaptyorka/box-secrets"
 SECRETS_FILE_MAX = 4 * 1024 * 1024
 MAX_SECRET_VALUES = 256
 CHUNK = 16
@@ -553,9 +553,22 @@ def parse_secrets(raw: bytes) -> List[bytes]:
 # ---------------------------------------------------------------------------- the box side
 
 def peer_uid(conn: socket.socket) -> int:
-    """The caller's user id, as the kernel names it (SO_PEERCRED)."""
+    """The caller's user id, as the kernel names it (SO_PEERCRED; on macOS LOCAL_PEERCRED)."""
+    if sys.platform == "darwin":
+        return xucred_uid(conn.getsockopt(0, 1, struct.calcsize(XUCRED)))   # SOL_LOCAL, LOCAL_PEERCRED
     raw = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("iII"))
     return struct.unpack("iII", raw)[1]
+
+
+XUCRED = "IIh16I"   # macOS struct xucred: cr_version, cr_uid, cr_ngroups, cr_groups[16]
+
+
+def xucred_uid(raw: bytes) -> int:
+    """cr_uid of a struct xucred, after checking its version (XUCRED_VERSION 0)."""
+    version, uid = struct.unpack(XUCRED, raw[:struct.calcsize(XUCRED)])[:2]
+    if version != 0:
+        raise OSError("unknown xucred version")
+    return uid
 
 
 def read_line(conn: socket.socket, limit: int = MAX_REQUEST, timeout: float = READ_TIMEOUT) -> bytes:

@@ -54,6 +54,14 @@ else:  # in the box: fence.py beside this file (python -I leaves the script's fo
 VIEW = "/srv/team"
 STATE = "/run/kapbox/chats"            # the box's own runtime folder: chats' records (hooks -> helper)
 RELAY_DIR = "/run/kaptyorka/relay"      # the relay's door for this box, <box>.sock
+# macOS (TEST VERSION): a box process sees the real places, there is no namespace (kap_mac)
+MAC = sys.platform == "darwin" and pwd.getpwuid(os.getuid()).pw_name.startswith("kap-")
+CODEX_SOCK_RX = r"/run/kapbox/codex/\d+/app\.sock"
+if MAC:
+    CODEX_SOCK_RX = r"/private/var/run/kapbox/[a-z0-9_-]+/codex/\d+/app\.sock"
+    VIEW = "/Users/Shared/kaptyorka"
+    STATE = f"/private/var/run/kapbox/{pwd.getpwuid(os.getuid()).pw_name[4:]}/chats"
+    RELAY_DIR = "/private/var/run/kaptyorka/relay"
 TOOLS_BIN = "/opt/kap-tools/bin"
 BOXES = "/etc/kaptyorka/boxes"
 BOXCONF = "/etc/kaptyorka/box"
@@ -352,7 +360,7 @@ def hook(tool: str, event_name: str, stdin: str, env=os.environ, state: str = ST
     if tool == "opencode" and isinstance(url, str) and re.fullmatch(r"http://127\.0\.0\.1:\d{1,5}", url):
         rec["server"] = url
     cxs = env.get("KAP_CODEX_SOCKET", "")
-    if tool == "codex" and isinstance(cxs, str) and re.fullmatch(r"/run/kapbox/codex/\d+/app\.sock", cxs):
+    if tool == "codex" and isinstance(cxs, str) and re.fullmatch(CODEX_SOCK_RX, cxs):
         rec["codex"] = cxs
     if tool == "codex" and isinstance(data.get("turn_id"), str) and tw.THREAD_RX.fullmatch(data["turn_id"]):
         rec["turn"] = data["turn_id"]
@@ -539,7 +547,9 @@ class Helper:
             logdir = f"{self.home}/state/opencode/state"
             os.makedirs(logdir, mode=0o700, exist_ok=True)
             out = open(f"{logdir}/kaptyorka-service.log", "ab")
-            self.service = self.popen([exe, "serve", "--service", "--hostname", "127.0.0.1", "--port", "0"],
+            port = os.environ.get("KAP_OPENCODE_PORT", "") if MAC else ""   # macOS: the box's one port (kap_mac)
+            self.service = self.popen([exe, "serve", "--service", "--hostname", "127.0.0.1",
+                                       "--port", port if port.isdigit() else "0"],
                                       cwd=self.home, env=env, stdin=subprocess.DEVNULL, stdout=out,
                                       stderr=subprocess.STDOUT, start_new_session=True)
             out.close()
@@ -779,6 +789,17 @@ def take_token(env, keep: Optional[dict] = None) -> str:
                 pass
     for k in ("LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES"):
         env.pop(k, None)
+    fd = env.pop("CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "") if MAC else ""
+    if fd.isdigit() and int(fd) > 2:   # macOS: enter's socket pair (kap_mac.token_fd)
+        try:
+            token = token or os.read(int(fd), 4096).decode("ascii", "replace").strip()
+        except OSError:
+            pass
+        finally:
+            try:
+                os.close(int(fd))
+            except OSError:
+                pass
     return token
 
 
@@ -971,6 +992,8 @@ def main(argv: List[str]) -> int:
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
         sys.path.insert(0, HERE)
         try:
+            if MAC:   # the forwarder listens on loopback itself (kap_mac_daemon egress)
+                raise ImportError("not used on macOS")
             import proxybridge  # the box's only way to the internet: 127.0.0.1:3128 -> forwarder
             ls = socket.socket(fileno=fds["proxy"]) if "proxy" in fds else None   # systemd's, kept across restarts
             threading.Thread(target=proxybridge.serve, args=(float(86400 * 365),),
