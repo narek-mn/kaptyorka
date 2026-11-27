@@ -2,6 +2,7 @@
 import asyncio
 import contextlib
 import functools
+import hmac
 import html
 import importlib.resources
 import inspect
@@ -38,7 +39,7 @@ from kaptyorka.hub_feed import knocks as hub_knocks
 from kaptyorka.manager import ManagerStore
 from kaptyorka.memory import MemoryStore, check_state
 from kaptyorka.secrets_check import check_secrets, labelled_values
-from kaptyorka.store import (MAX_FILE, MAX_IDENT, ONLINE_S, RECENT_S, UNREACHABLE, Agent,
+from kaptyorka.store import (MAX_FILE, MAX_IDENT, ONLINE_S, PERSONAL, RECENT_S, UNREACHABLE, Agent,
                               KaptyorkaError, MessageHeld, Principal, Store, attach_line, clean, machine_name,
                               session_id)
 from kaptyorka.workers import HUB_KEY, LIVE, MAX_FACT, STARTUP_S, WorkerStore, _git as clean_git, clean_facts, safe_name
@@ -1759,14 +1760,25 @@ def build_app(store: Store, manager_url: str = "") -> Starlette:
         """A personal laptop's updater, with its device token (page_gate lets only those in)."""
         return await asyncio.to_thread(release_file, request.path_params["name"])
 
+    def release_invite(value: str) -> bool:
+        """Is this the download value (kap_release.download_value) of a valid, unused personal
+        invite? The README's lines never send the code itself (red team round 6, finding 1)."""
+        if not re.fullmatch(r"[0-9a-f]{64}", value):
+            return False
+        with store.lock:
+            codes = [r["code"] for r in store.db.execute(
+                "SELECT code FROM invites WHERE kind=? AND used_at IS NULL AND expires>?",
+                (PERSONAL, store.clock()))]
+        return any(hmac.compare_digest(kap_release.download_value(c), value) for c in codes)
+
     @server.custom_route("/i/{code}/release/{name}", methods=["GET"])
     async def invite_release(request: Request) -> Response:
-        """The first install's download: only with a valid, unused personal invite code."""
-        code = request.path_params["code"]
-        key = (request.client.host if request.client else "?", "release")   # per address: no code guessing
+        """The first install's download: only with the download value of a valid, unused personal
+        invite (not the code: a value that cannot redeem it)."""
+        key = (request.client.host if request.client else "?", "release")   # per address: no guessing
         if limiter.blocked(key):
             return PlainTextResponse("too many failed attempts", status_code=429)
-        if not store.invite_valid(code) or store.invite_kind(code) != "personal":
+        if not await asyncio.to_thread(release_invite, request.path_params["code"]):
             limiter.hit(key)
             return PlainTextResponse("this link is not a valid personal invite", status_code=404)
         return await asyncio.to_thread(release_file, request.path_params["name"])

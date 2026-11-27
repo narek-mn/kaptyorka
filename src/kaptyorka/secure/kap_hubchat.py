@@ -643,6 +643,10 @@ def main(argv) -> int:
             return 0
         if kc.unfinished_install():
             raise Refuse(kc.unfinished_install())
+        try:   # held shared until this command ends: no update installs under it (round 6, finding 5)
+            kap_update.lock_shared()
+        except BlockingIOError:
+            raise Refuse("kaptyorka is installing its own update right now: try again in a few minutes")
         cmd, rest = argv[0], argv[1:]
         opts = {"--name": "", "--separate": False, "--yes": False, "--force": False}
         pos = []

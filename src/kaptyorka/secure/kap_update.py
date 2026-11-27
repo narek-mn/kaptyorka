@@ -27,6 +27,7 @@ import os
 import ssl
 import subprocess
 import sys
+import threading
 import time
 
 if __package__:
@@ -43,6 +44,8 @@ LOCK = "/run/kaptyorka/update.lock"
 RUN_LOCK = "/run/kaptyorka/update-run.lock"   # one updater at a time (the timer's, or one started by hand)
 CHECK_S = 6 * 3600       # the hub is asked at most this often (each ask tells it the laptop is on)
 REPAIR_S = 1800          # one repair (the new installer's or the kept one's) at most
+FETCH_S = 120            # one small file from the hub, all in (a hub that drips bytes is cut off)
+INSTALLER_S = 600        # the installer, all in
 STAGED = {n: f"{WORK}/staged-{n}" for n in rel.FILES}
 PREVIOUS = f"{WORK}/previous.pyz"
 ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}
@@ -178,18 +181,38 @@ class Unreachable(rel.Bad):
     """The hub did not answer as it should: nothing was refused, the next check tries again."""
 
 
-def fetch(hub: dict, name: str, limit: int, timeout: float = 60):
-    """One release file from the hub's static folder: its bytes, or None when the hub has none."""
-    conn = Pinned(hub["ip"], hub["port"], hub["fp"], timeout)
+def fetch(hub: dict, name: str, limit: int, timeout: float = 60, deadline: float = FETCH_S):
+    """One release file from the hub's static folder: its bytes, or None when the hub has none.
+    timeout bounds each read, deadline the whole fetch (red team round 6, finding 3: a hub that
+    sends a byte now and then, or endless "100 Continue" lines, never trips a read's timeout)."""
+    conn = Pinned(hub["ip"], hub["port"], hub["fp"], min(timeout, deadline))
+    late = threading.Event()
+
+    def cut():
+        late.set()
+        sock = conn.sock
+        if sock is not None:
+            try:
+                sock.shutdown(2)   # wakes the read that waits
+            except OSError:
+                pass
+    timer = threading.Timer(deadline, cut)
+    timer.daemon = True
+    timer.start()
     try:
         conn.request("GET", f"/box/v1/release/{name}", headers={"Authorization": f"Bearer {hub['token']}",
                                                                  "X-Kaptyorka-Mode": "personal"})
         r = conn.getresponse()
         data = r.read(limit + 1)
-    except (OSError, ssl.SSLError, http.client.HTTPException) as e:
+    except (OSError, ssl.SSLError, http.client.HTTPException, ValueError) as e:
+        if late.is_set():
+            raise Unreachable(f"the hub took longer than {int(deadline)} seconds for {name}")
         raise Unreachable(f"cannot reach the hub ({kc.term(str(e))[:80] or type(e).__name__})")
     finally:
+        timer.cancel()
         conn.close()
+    if late.is_set():
+        raise Unreachable(f"the hub took longer than {int(deadline)} seconds for {name}")
     if r.status == 404:
         return None
     if r.status != 200:
@@ -238,8 +261,11 @@ def verified(files: dict, key: str) -> dict:
 
 
 def check(st: dict, key: str) -> None:
-    """Ask the hub; a verified newer release waits in WORK afterwards."""
+    """Ask the hub; a verified newer release waits in WORK afterwards. The time of the check is
+    saved before the hub is asked, so a run that is killed while the hub stalls it still counts
+    (red team round 6, finding 3: the next run would ask again within the hour)."""
     st["checked"] = int(time.time())
+    save_state(st)
     hub = hub_values()
     man = fetch(hub, rel.MANIFEST, rel.MAX_MANIFEST)
     if man is None:
@@ -254,7 +280,7 @@ def check(st: dict, key: str) -> None:
     if m["version"] in st.get("failed", []):
         st["result"] = f"{m['version']} failed its self-check here before; waiting for a newer release"
         return
-    data = fetch(hub, rel.INSTALLER, rel.MAX_INSTALLER, timeout=300) or b""
+    data = fetch(hub, rel.INSTALLER, rel.MAX_INSTALLER, timeout=300, deadline=INSTALLER_S) or b""
     verified({rel.MANIFEST: man, rel.SIGNATURE: sig, rel.INSTALLER: data}, key)
     _workdir()
     for n, b in ((rel.INSTALLER, data), (rel.SIGNATURE, sig), (rel.MANIFEST, man)):
@@ -263,11 +289,77 @@ def check(st: dict, key: str) -> None:
     st["result"] = f"{m['version']} downloaded and verified"
 
 
-def chats_running() -> int:
+CGROUP = "/sys/fs/cgroup"
+PROC = "/proc"
+
+
+def _units(*patterns) -> list:
     r = subprocess.run(["systemctl", "list-units", "--type=service", "--state=active,activating,deactivating",
-                        "--plain", "--no-legend", "--no-pager", "kapbox-*-chat-*", "kapbox-*-clone-*"],
+                        "--plain", "--no-legend", "--no-pager", *patterns],
                        capture_output=True, text=True, timeout=30, env=ENV)
-    return len([ln for ln in r.stdout.splitlines() if ln.strip()])
+    return [ln.split()[0] for ln in r.stdout.splitlines() if ln.strip()]
+
+
+def _is_helper_chat(pid: str, main: str) -> bool:
+    """A helper chat: a session leader of its own (kap_helper starts each with a new session)
+    that is the box's claude, by its program or by its command line."""
+    try:
+        with open(f"{PROC}/{pid}/stat") as f:
+            stat = f.read(4096)
+        sid = stat.rsplit(")", 1)[1].split()[3]
+        if sid != pid or pid == main:
+            return False
+        exe = os.readlink(f"{PROC}/{pid}/exe")
+        with open(f"{PROC}/{pid}/cmdline", "rb") as f:
+            args = f.read(1 << 16).split(b"\0")
+    except (OSError, IndexError):
+        return False
+    return exe.startswith(f"{kc.TOOLS_DIR}/claude/") or b"--strict-mcp-config" in args
+
+
+def helper_chats(box: str = "*") -> int:
+    """The helper chats (`claude -p`, started by kap_helper inside kapbox-<box>-helper.service when
+    the hub hands on a `work` request) that run now (red team round 6, finding 5): they are not
+    chat units, so chats_running would miss them."""
+    n = 0
+    for unit in _units(f"kapbox-{box}-helper.service"):
+        r = subprocess.run(["systemctl", "show", "-p", "ControlGroup", "-p", "MainPID", unit],
+                           capture_output=True, text=True, timeout=30, env=ENV)
+        props = dict(ln.split("=", 1) for ln in r.stdout.splitlines() if "=" in ln)
+        cg = props.get("ControlGroup", "")
+        if not cg.startswith("/") or ".." in cg:
+            continue
+        for top, _, files in os.walk(CGROUP + cg):
+            if "cgroup.procs" in files:
+                try:
+                    with open(os.path.join(top, "cgroup.procs")) as f:
+                        pids = f.read(1 << 20).split()
+                except OSError:
+                    continue
+                n += sum(1 for p in pids if p.isdigit() and _is_helper_chat(p, props.get("MainPID", "")))
+    return n
+
+
+def chats_running() -> int:
+    """Team chats, clones and helper chats running now: an update never installs under one."""
+    return len(_units("kapbox-*-chat-*", "kapbox-*-clone-*")) + helper_chats()
+
+
+def lock_shared():
+    """The update lock, shared, for something that must not run while an update installs (a
+    team chat's whole life, a hubchat command). Its descriptor; None when the lock file cannot
+    be made (the updater still sees a chat by its unit); BlockingIOError while an update installs."""
+    try:
+        os.makedirs(os.path.dirname(LOCK), 0o755, exist_ok=True)
+        fd = os.open(LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        raise BlockingIOError("an update is installing")
+    return fd
 
 
 def lock_exclusive(path: str = ""):

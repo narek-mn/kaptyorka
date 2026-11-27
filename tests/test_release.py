@@ -141,6 +141,23 @@ def test_the_readme_key_is_the_code_s_key():
     assert keys == [f"KEY='{rel.code_key() or 'ssh-ed25519 ' + rel.PLACEHOLDER}'"]
 
 
+def test_the_readme_download_sends_the_download_value_never_the_code(tmp_path):
+    """Round 6, finding 1: the README's `curl -k` line, run with curl stubbed, asks for the
+    download value of the link's code, and the code itself is in no URL it sends."""
+    readme = open(os.path.join(os.path.dirname(__file__), "..", "README.md")).read()
+    block = readme.split("```bash\nLINK='<link>'\n", 1)[1].split("```", 1)[0]
+    fetch = [ln for ln in block.splitlines() if "curl " in ln]
+    assert len(fetch) == 1
+    code = "EYPXc5yz3B-_FIhFZ3A_xy"
+    link = f"https://192.0.2.10:8444/i/{code}#sha256={SHA}"
+    script = f"curl() {{ printf '%s\\n' \"$@\"; }}\nLINK='{link}'\n{fetch[0]}\n"
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30, cwd=tmp_path).stdout
+    urls = [a for a in out.splitlines() if a.startswith("https://")]
+    dv = rel.download_value(code)
+    assert urls == [f"https://192.0.2.10:8444/i/{dv}/release/{n}" for n in rel.FILES]
+    assert code not in out
+
+
 def test_prepare_signs_only_an_installer_byte_for_byte_ci_s(keys, tmp_path):
     pkg = tree_copy(tmp_path, keys["good"] + ".pub", "7.0.1")
     tool = str(pkg / "secure" / "kap_release.py")
@@ -181,6 +198,25 @@ def test_prepare_refuses_while_the_key_is_the_placeholder(tmp_path):
     assert r.returncode == 2 and "placeholder" in r.stderr
 
 
+def test_as_root_ssh_keygen_parses_the_hub_s_bytes_as_nobody(keys, tmp_path, monkeypatch):
+    """Round 6, I-1: root's verify runs ssh-keygen as nobody, on files it can read but not change."""
+    man = rel.manifest_text("1.0.1", SHA).encode()
+    sig = sign(keys["good"], man, str(tmp_path))
+    seen = {}
+    real = subprocess.run
+
+    def fake(cmd, **kw):
+        d = os.path.dirname(cmd[cmd.index("-f") + 1])
+        seen.update(kw, modes=(os.stat(d).st_mode & 0o777, os.stat(cmd[cmd.index("-f") + 1]).st_mode & 0o777))
+        kw = {k: v for k, v in kw.items() if k not in ("user", "group", "extra_groups")}
+        return real(cmd, **kw)
+    monkeypatch.setattr(rel.subprocess, "run", fake)
+    monkeypatch.setattr(rel.os, "geteuid", lambda: 0)
+    assert rel.verify(man, sig, keys["pub"], shutil.which("ssh-keygen"))["version"] == "1.0.1"
+    assert (seen["user"], seen["group"], seen["extra_groups"]) == (rel.NOBODY, rel.NOBODY, [])
+    assert seen["modes"] == (0o711, 0o644)
+
+
 def test_the_release_tool_never_passes_a_passphrase():
     src = open(rel.__file__).read()
     assert '"-P"' not in src and "'-P'" not in src and "SSH_ASKPASS" not in src and "passphrase=" not in src
@@ -209,7 +245,7 @@ def lap(tmp_path, monkeypatch, keys):
     os.chmod(etc / "release-key", 0o644)
     hub = {}
     monkeypatch.setattr(ku, "hub_values", lambda: {"ip": "127.0.0.1", "port": 1, "fp": "0" * 64, "token": "t"})
-    monkeypatch.setattr(ku, "fetch", lambda h, name, limit, timeout=60: hub.get(name))
+    monkeypatch.setattr(ku, "fetch", lambda h, name, limit, **kw: hub.get(name))
     monkeypatch.setattr(ku, "chats_running", lambda: 0)
     repairs = []
 
@@ -290,6 +326,106 @@ def test_an_update_waits_while_a_team_chat_runs_then_installs(lap, monkeypatch):
     os.close(fd)
     ku.run()
     assert lap.version() == "1.0.1" and not lap.state().get("waiting")
+
+
+def test_the_check_time_is_saved_before_the_hub_is_asked(lap, monkeypatch):
+    """Round 6, finding 3: a run killed while the hub stalls it (systemd's SIGTERM skips every
+    finally) still counts as a check, so the next timer run does not ask again."""
+    seen = []
+
+    def stalled(h, name, limit, **kw):
+        seen.append(ku.load_state().get("checked"))
+        raise SystemExit("killed")
+    monkeypatch.setattr(ku, "fetch", stalled)
+    st = {}
+    with pytest.raises(SystemExit):
+        ku.check(st, "key")
+    assert isinstance(seen[0], int) and ku.load_state()["checked"] == seen[0]
+
+
+@pytest.mark.parametrize("trick", ["drip", "continue"])
+def test_a_fetch_has_a_total_deadline(tmp_path, trick):
+    """Round 6, finding 3: a hub that drips a byte now and then, or sends endless "100 Continue"
+    lines, never trips a read's timeout; the whole fetch still ends at its deadline."""
+    import socket
+    import threading
+    import time
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(tmp_path / "k.pem"),
+                    "-out", str(tmp_path / "c.pem"), "-days", "2", "-subj", "/CN=hub"], check=True,
+                   capture_output=True, timeout=60)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(str(tmp_path / "c.pem"), str(tmp_path / "k.pem"))
+    lsock = socket.socket()
+    lsock.bind(("127.0.0.1", 0))
+    lsock.listen(1)
+    stop = threading.Event()
+
+    def serve():
+        c, _ = lsock.accept()
+        with ctx.wrap_socket(c, server_side=True) as t:
+            t.recv(4096)
+            if trick == "drip":
+                t.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n")
+            while not stop.wait(0.2):
+                try:
+                    t.sendall(b"x" if trick == "drip" else b"HTTP/1.1 100 Continue\r\n\r\n")
+                except OSError:
+                    return
+    th = threading.Thread(target=serve, daemon=True)
+    th.start()
+    der = ssl.PEM_cert_to_DER_cert(open(tmp_path / "c.pem").read())
+    hub = {"ip": "127.0.0.1", "port": lsock.getsockname()[1], "fp": hashlib.sha256(der).hexdigest(), "token": "t"}
+    t0 = time.monotonic()
+    try:
+        with pytest.raises(ku.Unreachable, match="took longer than 2 seconds"):
+            ku.fetch(hub, rel.MANIFEST, rel.MAX_MANIFEST, timeout=30, deadline=2)
+        assert time.monotonic() - t0 < 10
+    finally:
+        stop.set()
+        lsock.close()
+        th.join(5)
+
+
+def test_helper_chats_count_as_running_chats(tmp_path, monkeypatch):
+    """Round 6, finding 5: a helper chat (`claude -p` in the box helper's unit, its own session)
+    holds an update back like a team chat; the helper itself and the OpenCode service do not."""
+    cg, proc = tmp_path / "cg", tmp_path / "proc"
+    unit = cg / "system.slice" / "kapbox-alice-helper.service"
+    unit.mkdir(parents=True)
+    (unit / "cgroup.procs").write_text("100\n200\n300\n301\n")
+
+    def p(pid, sid, exe, args):
+        d = proc / str(pid)
+        d.mkdir(parents=True)
+        (d / "stat").write_text(f"{pid} (a b) S 1 {sid} {sid} 0 -1\n")
+        os.symlink(exe, d / "exe")
+        (d / "cmdline").write_bytes(b"\0".join(a.encode() for a in args) + b"\0")
+    p(100, 100, "/usr/bin/python3.12", ["/usr/bin/python3", "-I", "/opt/box/helper.py", "run"])   # the helper
+    p(200, 200, "/opt/kap-tools/opencode/1.0/opencode", ["/opt/kap-tools/bin/opencode", "serve", "--service"])
+    p(300, 300, "/opt/kap-tools/claude/2.1.0/claude", ["claude"])            # a helper chat
+    p(301, 300, "/usr/bin/bash", ["bash", "-c", "make"])                      # its child: same session
+    monkeypatch.setattr(ku, "CGROUP", str(cg))
+    monkeypatch.setattr(ku, "PROC", str(proc))
+    monkeypatch.setattr(ku.kc, "TOOLS_DIR", "/opt/kap-tools")
+    calls = []
+
+    def fake(cmd, **kw):
+        calls.append(cmd)
+        if cmd[1] == "list-units":
+            out = "kapbox-alice-helper.service loaded active running x\n" if any("helper" in a for a in cmd) else \
+                "kapbox-alice-chat-claude-0000beef.service loaded active running x\n"
+        else:
+            out = "ControlGroup=/system.slice/kapbox-alice-helper.service\nMainPID=100\n"
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+    monkeypatch.setattr(ku.subprocess, "run", fake)
+    assert ku.helper_chats() == 1
+    assert ku.chats_running() == 2
+    (proc / "300" / "exe").unlink()
+    os.symlink("/usr/bin/node", proc / "300" / "exe")
+    (proc / "300" / "cmdline").write_bytes(b"node\0/x/cli.js\0--strict-mcp-config\0-p\0hi\0")
+    assert ku.helper_chats("alice") == 1                                        # by its command line
+    (unit / "cgroup.procs").write_text("100\n200\n")
+    assert ku.helper_chats() == 0
 
 
 def test_a_waiting_file_changed_on_disk_is_dropped_not_run(lap, monkeypatch):
@@ -418,16 +554,22 @@ def test_the_hub_serves_the_release_only_with_a_personal_invite_or_device(tmp_pa
     try:
         personal = s.invite_create(alice, kind="personal", by="root")
         team = s.invite_create(alice, by="root")
+        dv = rel.download_value(personal)
         for n in rel.FILES:
-            assert get(port, f"/i/{personal}/release/{n}") == (200, f"file {n}".encode())
-        assert get(port, f"/i/{personal}/release/other.txt")[0] == 404
-        assert get(port, f"/i/{personal}/release/..%2Fhub.db")[0] == 404
-        assert get(port, f"/i/{team}/release/{rel.INSTALLER}")[0] == 404        # not a personal invite
-        assert get(port, f"/i/{'x' * 22}/release/{rel.INSTALLER}")[0] == 404    # no such invite
+            assert get(port, f"/i/{dv}/release/{n}") == (200, f"file {n}".encode())
+        assert get(port, f"/i/{dv}/release/other.txt")[0] == 404
+        assert get(port, f"/i/{dv}/release/..%2Fhub.db")[0] == 404
+        # round 6, finding 1: the code itself downloads nothing (the README's lines never send it),
+        # and the download value redeems nothing
+        assert get(port, f"/i/{personal}/release/{rel.INSTALLER}")[0] == 404
+        st, _ = hb.post(port, f"/i/{dv}", {"device_name": "laptop-mitm", "mode": "personal"})
+        assert st != 200 and s.invite_valid(personal)
+        assert get(port, f"/i/{rel.download_value(team)}/release/{rel.INSTALLER}")[0] == 404   # not personal
+        assert get(port, f"/i/{rel.download_value('x' * 22)}/release/{rel.INSTALLER}")[0] == 404   # no invite
         assert s.invite_valid(personal)                                        # a download uses nothing
         st, text = hb.post(port, f"/i/{personal}", {"device_name": "alice-laptop", "mode": "personal"})
         dev = json.loads(text)["token"]
-        assert get(port, f"/i/{personal}/release/{rel.INSTALLER}")[0] == 404   # used: no more downloads
+        assert get(port, f"/i/{dv}/release/{rel.INSTALLER}")[0] == 404        # used: no more downloads
         # updates: a personal device's token only
         assert get(port, f"/box/v1/release/{rel.MANIFEST}", dev) == (200, f"file {rel.MANIFEST}".encode())
         assert get(port, f"/box/v1/release/{rel.MANIFEST}")[0] == 401

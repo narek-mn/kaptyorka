@@ -50,7 +50,16 @@ MAX_MANIFEST = 1024
 MAX_SIGNATURE = 4096
 MAX_INSTALLER = 32 << 20
 KEYGEN = "/usr/bin/ssh-keygen"
+NOBODY = 65534        # the user root's ssh-keygen runs as (nobody, nogroup on Debian and Ubuntu)
 CLEAN_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}
+
+
+def download_value(code: str) -> str:
+    """What the README's install lines send instead of the invite code to download the release
+    (red team round 6, finding 1): those lines fetch with `curl -k`, before anything checks the
+    hub, so whoever answers sees it. This names the invite to the hub but cannot redeem it. The
+    shell gives the same: printf 'kaptyorka-release:%s' CODE | sha256sum."""
+    return hashlib.sha256(f"kaptyorka-release:{code}".encode()).hexdigest()
 
 
 class Bad(Exception):
@@ -133,14 +142,19 @@ def verify(manifest: bytes, signature: bytes, key: str, keygen: str = KEYGEN) ->
     if len(manifest) > MAX_MANIFEST or len(signature) > MAX_SIGNATURE:
         raise Bad("the release's manifest or signature is too long")
     d = tempfile.mkdtemp(prefix="kaptyorka-verify-")
+    # as root (the updater), ssh-keygen parses the hub's bytes as nobody: a bug in its parser is
+    # then not root's (red team round 6, I-1). The two files are public: readable, root's to write.
+    drop = {"user": NOBODY, "group": NOBODY, "extra_groups": []} if os.geteuid() == 0 else {}
     try:
+        os.chmod(d, 0o711 if drop else 0o700)
         for name, data in (("signers", signers_line(key).encode()), ("manifest.sig", signature)):
             with open(os.open(os.path.join(d, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as f:
                 f.write(data)
+                os.fchmod(f.fileno(), 0o644 if drop else 0o600)
         try:
             r = subprocess.run([keygen, "-Y", "verify", "-f", os.path.join(d, "signers"), "-I", PRINCIPAL,
                                 "-n", NAMESPACE, "-s", os.path.join(d, "manifest.sig")], input=manifest,
-                               capture_output=True, timeout=30, env=CLEAN_ENV)
+                               capture_output=True, timeout=30, env=CLEAN_ENV, cwd="/", **drop)
         except (OSError, subprocess.TimeoutExpired) as e:
             raise Bad(f"cannot run ssh-keygen to check the signature ({type(e).__name__})")
     finally:

@@ -43,16 +43,9 @@ def update_lock():
     own update (kap_update) never installs under a running chat, and no chat starts while it
     installs."""
     try:
-        os.makedirs(os.path.dirname(kap_update.LOCK), 0o755, exist_ok=True)
-        fd = os.open(kap_update.LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-    except OSError:
-        return None   # the updater still sees the chat's unit
-    try:
-        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except OSError:
-        os.close(fd)
+        return kap_update.lock_shared()
+    except BlockingIOError:
         raise kc.Refuse("kaptyorka is installing its own update right now: try again in a few minutes")
-    return fd
 
 
 def notices(person: str, box: str, name: str, cover_cut: str = "") -> None:

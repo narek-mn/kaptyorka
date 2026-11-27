@@ -42,9 +42,10 @@ import sys
 import time
 
 if __package__:
-    from . import kapcommon as kc, kaproot as kr
+    from . import kap_update, kapcommon as kc, kaproot as kr
 else:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import kap_update
     import kapcommon as kc
     import kaproot as kr
 
@@ -341,11 +342,15 @@ def people() -> list:
 
 
 def running_chats(tool: str) -> int:
-    """How many chats of this tool run now, in any box of this computer."""
+    """How many chats of this tool run now, in any box of this computer; for claude also the
+    box helper's helper chats (`claude -p`, red team round 6, finding 5: a switch or a prune
+    would pull the program from under one)."""
     n = 0
     for person in people():
         for box in kr.boxes_of(person):
             n += sum(1 for _, t, _ in kr.chats(box) if t == tool)
+            if tool == "claude":
+                n += kap_update.helper_chats(box)
     return n
 
 

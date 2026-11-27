@@ -1214,6 +1214,28 @@ def test_show_found_and_say_print_no_terminal_control(name, capsys):
     assert _terminal_safe(out) and out.count("\n") == 3
 
 
+def test_hubchat_waits_for_an_installing_update_and_holds_one_off(monkeypatch, tmp_path, capsys):
+    """Round 6, finding 5: hubchat-root takes the update lock shared, as a chat does: refused while
+    an update installs (half the modules may be new), and an update cannot start under it."""
+    import fcntl
+    monkeypatch.setattr(hc.kr, "caller_person", lambda: "alice")
+    monkeypatch.setattr(hc.kc, "unfinished_install", lambda: "")
+    monkeypatch.setattr(hc.kap_update, "LOCK", str(tmp_path / "update.lock"))
+    ran = []
+    monkeypatch.setattr(hc, "list_all", lambda person: ran.append(hc.kap_update.lock_exclusive()))
+    held = hc.kap_update.lock_exclusive()
+    assert hc.main(["list"]) == 2 and ran == []
+    assert "installing its own update" in capsys.readouterr().err
+    os.close(held)
+    opened = set(os.listdir("/proc/self/fd"))
+    assert hc.main(["list"]) == 0 and ran == [None]      # the updater could not take it meanwhile
+    for fd in set(os.listdir("/proc/self/fd")) - opened:  # what main kept open (a real command exits)
+        try:
+            os.close(int(fd))
+        except OSError:
+            pass
+
+
 def test_hubchat_and_enter_errors_are_one_safe_line(monkeypatch, capsys):
     monkeypatch.setattr(hc.kr, "caller_person", lambda: "alice")
 
@@ -1334,3 +1356,19 @@ def test_enter_notice_lists_build_files_and_a_cut_scan(tmp_path, monkeypatch, ca
     err = capsys.readouterr().err
     assert "'Makefile'" in err and "'package.json'" in err and "'.git/config'" in err
     assert "could not cover every tool folder in it (3 folders deeper than 32)" in err
+
+
+def test_mkdir_sets_mode_through_the_folder_never_a_link(tmp_path):
+    """Round 6, I-5: kr.mkdir sets owner and mode on the folder it opened without following a
+    link; a link or a file in its place is refused and its target untouched."""
+    me, grp = os.getuid(), os.getgid()
+    kr.mkdir(str(tmp_path / "d"), 0o750, me, grp)
+    assert stat.S_IMODE(os.stat(tmp_path / "d").st_mode) == 0o750
+    target = tmp_path / "victim"
+    target.mkdir(mode=0o755)
+    os.symlink(target, tmp_path / "link")
+    (tmp_path / "file").write_text("x")
+    for name in ("link", "file"):
+        with pytest.raises(kc.Refuse, match="is not a folder"):
+            kr.mkdir(str(tmp_path / name), 0o700, me, grp)
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o755

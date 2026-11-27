@@ -71,16 +71,22 @@ def read_text(path: str, limit: int = 1 << 20) -> str:
 
 
 def mkdir(path: str, mode: int, uid: int = 0, gid: int = 0) -> None:
-    """A folder with exactly this owner and mode. An existing symlink or file there is refused."""
+    """A folder with exactly this owner and mode. An existing symlink or file there is refused.
+    Owner and mode are set through the folder's own descriptor, so a link swapped in after the
+    check is never followed (red team round 6, I-5: a chmod by path followed it)."""
     try:
         os.mkdir(path, 0o700)
     except FileExistsError:
         pass
-    st = os.lstat(path)
-    if not stat.S_ISDIR(st.st_mode):
+    try:
+        fd = os.open(path, O_DIR)
+    except OSError:
         raise Refuse(f"{path} exists and is not a folder")
-    os.chown(path, uid, gid, follow_symlinks=False)
-    os.chmod(path, mode)
+    try:
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, mode)
+    finally:
+        os.close(fd)
 
 
 def lock_dirs(parent: str, names) -> None:
