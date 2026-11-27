@@ -589,7 +589,7 @@ EOF
   tc "$P-SSH-AGENT"  $HX CANARY-AGENTKEY-77aa    run_abox 1 "SSH_AUTH_SOCK=$AHOME/.sockdir/agent.sock /usr/bin/ssh-add -l"
 
   # the person's processes
-  tc "$P-PROC-NAME-VISIBLE" $( [ $P = C ] && echo block || echo leak ) sh run_abox 0 "/bin/ps -p $APID -o comm="
+  tc "$P-PROC-NAME-VISIBLE" $( [ $P = C ] && echo block || echo leak ) sh run_abox 0 "/bin/ps -p $APID -o comm= 2>/dev/null"
   tc "$P-PROC-ARGS-ps"      block CANARY-ARG-SECRET-4d1e run_abox 0 "/bin/ps -ww -p $APID -o args="
   tc "$P-PROC-ENV-ps"       block CANARY-ENV-SECRET-5a77 run_abox 0 "/bin/ps -E -ww -p $APID 2>&1"
   tc "$P-PROC-ARGS-sysctl"  block CANARY-ARG-SECRET-4d1e run_abox 0 "/usr/sbin/sysctl -b kern.procargs2.$APID 2>&1 | tr -c '[:print:]' ' '"
@@ -754,8 +754,8 @@ fi
 
 say ""; say "== Phase D: pf rules for the box user (second network layer; Seatbelt is off here) =="
 cat >$KIT/tmp/kaptest.pf <<EOF
-pass out quick proto tcp user $BOX to 1.1.1.1 port 443
-block drop out quick proto { tcp udp } user $BOX
+pass out quick proto tcp to 1.1.1.1 port 443 user $BOX
+block drop out quick proto { tcp udp } all user $BOX
 EOF
 PFBEFORE=$(pf_status)
 case $PFBEFORE in Enabled|Disabled) ;; *) PFBEFORE="";; esac
