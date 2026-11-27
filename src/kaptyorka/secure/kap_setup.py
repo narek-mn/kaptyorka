@@ -48,9 +48,10 @@ import subprocess
 import sys
 
 if __package__:
-    from . import kap_installer, kap_tools, kapcommon as kc, kaproot as kr
+    from . import kap_claude_token, kap_installer, kap_tools, kapcommon as kc, kaproot as kr
 else:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import kap_claude_token
     import kap_installer
     import kap_tools
     import kapcommon as kc
@@ -61,8 +62,9 @@ USAGE = """Install or remove kaptyorka's team box on a personal laptop (run with
 
 Install, with the personal invite link your team admin sent you (keep the quotes):
   sudo python3 -I kaptyorka-secure-setup.pyz install --personal 'https://HUB:PORT/i/CODE#sha256=FINGERPRINT'
-  It asks for a name for this computer on the hub, for the token from `claude setup-token`
-  (run that as yourself first) and which AI tools go into the box. Or give them:
+  It asks for a name for this computer on the hub and which AI tools go into the box; once they
+  are in, it runs `claude setup-token` in the box for you (you sign in in your browser and paste
+  the code it shows). Or give them:
   --name THIS-COMPUTER --claude-token-file FILE --tools claude,codex (or --tools none).
   More: --person NAME (default: you), --runtime-max 7d (longest a team chat runs).
 
@@ -483,15 +485,23 @@ def ask_name(a) -> None:
                         "name): ").strip()
 
 
-def ask_claude_token(person: str, v: dict) -> None:
-    """Asked before the invite is used, so stopping here costs no link."""
-    if v["claude"] or not sys.stdin.isatty() or os.path.exists(f"{kc.SECRET}/{person}/claude-oauth-token"):
+def claude_token_step(person: str, v: dict) -> None:
+    """After the install (the box's own claude is in the box now): make the box's Claude token
+    with `claude setup-token` run in the box (kap_claude_token), the person only signing in and
+    pasting the code; a pasted token is the fallback. Only at a terminal and only when no token
+    was given or exists. Nothing is printed of the token."""
+    if v["claude"] or not sys.stdin.isatty() or os.path.exists(f"{kc.SECRET}/{person}/claude-oauth-token") \
+            or "claude" not in kap_tools.installed():
         return
     import getpass
-    tok = getpass.getpass("Paste the token from `claude setup-token` (run it as yourself), or Enter to skip: ").strip()
-    if tok and not TOKEN_RX.fullmatch(tok):
-        raise Refuse("that does not look like a token")
-    v["claude"] = tok
+    tok = kap_claude_token.from_box(
+        person, say,
+        lambda: getpass.getpass("  Paste the code here (Enter to skip): "),
+        lambda: getpass.getpass("  Paste a token from `claude setup-token`, or Enter to skip: "))
+    if tok:
+        kap_claude_token.save(person, tok)
+        v["claude"] = tok
+        say("The box has its Claude sign-in (the next Claude chat uses it).")
 
 
 def install_relay_conf(v: dict) -> None:
@@ -692,7 +702,6 @@ def install(a) -> int:
                      "Connect it and run this again, or install now without them (--tools none) and add them "
                      "later with  hubchat update-tools " + " ".join(t for t in kap_tools.NAMES if t in specs) + "."
                      + (" The link was not used." if inv else "") + UNCHANGED)
-    ask_claude_token(person, v)
     if inv:
         say(f"Joining the hub at {inv['host']}:{inv['port']} (fingerprint {inv['fp'][:16]}...) as {v['name']} ...")
         v.update(redeem(inv, v["name"]))
@@ -700,6 +709,7 @@ def install(a) -> int:
     rc = apply(person, v, rt, a, specs)
     if rc:
         return rc
+    claude_token_step(person, v)
     pub = kr.read_text(f"{kc.box_home(person)}/.ssh/id_ed25519.pub").strip()
     have = kap_tools.installed()
     say("", f"Done. This computer is {v['name']} on the hub; team chats reach it only through the box.",

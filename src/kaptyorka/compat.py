@@ -27,6 +27,7 @@ import mmap
 import re
 import shutil
 import stat
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -134,6 +135,14 @@ DEPS: Tuple[Dep, ...] = (
         " claude program",
         "the box hands its Claude token without any environment (box-exec, and the helper's"
         " helper chats)", "the box's claude cannot sign in", "no box chats", True),
+    Dep("claude.setup_token", "claude-code",
+        "`claude setup-token` on a pseudo-terminal draws a screen with a sign-in link"
+        " (https://claude.ai/oauth/authorize?...) and waits for a pasted code; with its output on a"
+        " pipe it prints nothing (read on 2.1.332); after the code it prints the token as one"
+        " `sk-ant-oat..` word (not tested: no probe signs in)",
+        "the installer makes the box's Claude token itself (secure/kap_claude_token.py)",
+        "`claude setup-token` shows no sign-in link on a terminal",
+        "the installer asks for a token pasted by hand", False),
     # OpenCode
     Dep("opencode.version", "opencode", "`opencode --version` prints X.Y.Z", "V1 or V2 handling",
         "`opencode --version` output changed", "treated as V1", True),
@@ -727,6 +736,53 @@ def p_claude_token_fd(ctx: Ctx):
     return (OK, "") if found else (BROKEN, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR not in the claude program")
 
 
+def p_claude_setup_token(ctx: Ctx):
+    """Start `claude setup-token` on a wide pseudo-terminal in a throw-away home, see the sign-in
+    link (the parser the installer uses), and kill it: no sign-in is ever completed."""
+    import select
+    import signal
+    import tempfile
+    from kaptyorka.secure import kap_claude_token as ct
+    exe = shutil.which("claude")
+    if exe is None:
+        return UNKNOWN, "claude not found"
+    home = tempfile.mkdtemp(prefix="kap-setup-token-probe-")
+    master, slave = ct.pty.openpty()
+    ct.fcntl.ioctl(slave, ct.termios.TIOCSWINSZ, ct.struct.pack("HHHH", 50, ct.COLS, 0, 0))
+    env = {"PATH": "/usr/bin:/bin", "HOME": home, "TERM": "xterm-256color", "LANG": "C.UTF-8"}
+    try:
+        proc = subprocess.Popen([exe, "setup-token"], stdin=slave, stdout=slave, stderr=slave, env=env,
+                                start_new_session=True, close_fds=True)
+    except OSError as e:
+        os.close(master)
+        shutil.rmtree(home, ignore_errors=True)
+        return UNKNOWN, str(e)[:100]
+    finally:
+        os.close(slave)
+    raw, end = b"", time.monotonic() + 30
+    try:
+        while time.monotonic() < end and not ct.find_url(raw):
+            if select.select([master], [], [], 0.5)[0]:
+                try:
+                    d = os.read(master, 65536)
+                except OSError:
+                    break
+                if not d:
+                    break
+                raw += d
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.wait()
+        os.close(master)
+        shutil.rmtree(home, ignore_errors=True)
+    if ct.find_url(raw):
+        return OK, ""
+    return BROKEN, "no sign-in link on a terminal: " + ct.why(raw)[-80:]
+
+
 PROBES: Dict[str, Callable[[Ctx], Tuple[str, str]]] = {
     "claude.version": p_claude_version, "claude.cli": p_claude_cli, "claude.auth": p_claude_auth,
     "claude.session_file": p_claude_session_file, "claude.status": p_claude_status,
@@ -734,7 +790,7 @@ PROBES: Dict[str, Callable[[Ctx], Tuple[str, str]]] = {
     "claude.transcript": p_claude_transcript, "claude.title": p_claude_title,
     "claude.tasks": p_claude_tasks, "claude.derived_from": p_claude_derived_from,
     "claude.child_notes": p_claude_child_notes, "claude.refusal": p_claude_refusal,
-    "claude.token_fd": p_claude_token_fd,
+    "claude.token_fd": p_claude_token_fd, "claude.setup_token": p_claude_setup_token,
     **{k: _live(k) for k in ("claude.bg_launch", "claude.bg_isolation", "claude.push",
                              "claude.stop", "claude.rm")},
     "opencode.version": p_opencode_version, "opencode.v1_server": p_opencode_v1,
