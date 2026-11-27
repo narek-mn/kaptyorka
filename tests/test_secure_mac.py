@@ -130,6 +130,14 @@ def test_box_profile_locks_the_tool_settings_after_allowing_their_folders():
         assert f'(literal "/private/var/lib/kap-team/kap-alice/home/{dst}")' in r[lock]
 
 
+def test_box_profile_allows_terminal_ioctls_only_on_ttys():
+    # OpenCode's raw mode (tcsetattr) got EPERM without it (CI run 7); never the master side or
+    # other devices
+    t = profile()
+    ioctl = [ln for ln in t.splitlines() if "file-ioctl" in ln]
+    assert ioctl == ['(allow file-ioctl (literal "/dev/tty") (regex #"^/dev/ttys[0-9]+$"))']
+
+
 def test_box_profile_has_no_clipboard_screen_or_apple_events_and_only_same_sandbox_processes():
     p = profile()
     deny = next(ln for ln in rules(p) if ln.startswith("(deny mach-lookup"))
@@ -626,18 +634,28 @@ def test_pf_keeps_everyone_but_the_box_off_its_opencode_port():
     lines = t.splitlines()
     for uid, oc in ((450, 47310), (455, 47311)):
         own = lines.index(f"pass out quick on lo0 proto tcp from any to 127.0.0.1 port {oc} user {uid}")
-        answer = lines.index(f"pass out quick on lo0 proto tcp from 127.0.0.1 port {oc} to 127.0.0.1 user {uid}")
+        # the box's listener answers through the state of the SYN it takes in on lo0 (pf does not
+        # see the listener's user on its answer out, CI run 7), so no pass out from the port at all
+        listen = lines.index(f"pass in quick on lo0 proto tcp from 127.0.0.1 to 127.0.0.1 port {oc} user {uid}")
         others = lines.index(f"block drop out quick proto {{ tcp udp }} from any to any port {oc}")
         squat = lines.index(f"block drop out quick proto {{ tcp udp }} from any port {oc} to any")
-        assert own < others and answer < squat < lines.index(f"block drop out quick proto {{ tcp udp }} all user {uid}")
+        assert own < others < squat < lines.index(f"block drop out quick proto {{ tcp udp }} all user {uid}")
+        assert not [ln for ln in lines if ln.startswith("pass out") and f"from 127.0.0.1 port {oc}" in ln]
         # no pass for anyone else names the port
         assert not [ln for ln in lines if ln.startswith("pass") and f"port {oc}" in ln and f"user {uid}" not in ln]
         # pf is the address wall: nothing from outside lo0 reaches the port, nor any box socket, for
-        # every user, before any pass (Seatbelt's "localhost" lets the box bind 0.0.0.0)
+        # every user (Seatbelt's "localhost" lets the box bind 0.0.0.0); the only passes before
+        # those drops are the listeners' own, on lo0 alone
         off = lines.index(f"block drop in quick on ! lo0 proto {{ tcp udp }} from any to any port {oc}")
         box_in = lines.index(f"block drop in quick on ! lo0 proto {{ tcp udp }} all user {uid}")
-        first_pass = min(i for i, ln in enumerate(lines) if ln.startswith("pass"))
-        assert off < first_pass and box_in < first_pass
+        assert listen < box_in
+        before = [ln for ln in lines[:max(off, box_in)] if ln.startswith("pass")]
+        assert before and all(ln.startswith("pass in quick on lo0 proto tcp from 127.0.0.1 to 127.0.0.1 port ")
+                              for ln in before)
+        first_out = min(i for i, ln in enumerate(lines) if ln.startswith("pass out"))
+        assert off < first_out and box_in < first_out
+    assert not [ln for ln in km.pf_rules({450: 47110}, 451, 452, 453, "192.0.2.10", 8444).splitlines()
+                if ln.startswith("pass in")]
     for oc in ({450: 47110}, {999: 47310}, {450: 80}):
         with pytest.raises(kc.Refuse):
             km.pf_rules({450: 47110}, 451, 452, 453, "192.0.2.10", 443, oc)

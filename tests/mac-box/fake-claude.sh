@@ -4,7 +4,8 @@
 # inside the Seatbelt profile, after wallcheck. Its last argument picks what it does:
 #   hello     who and where it is, and whether the Claude token arrived on its descriptor
 #   attacks   every attack of the wall kit, from inside the box; one RESULT line each
-#   tiocsti   tries to type "echo INJECTED" into its terminal (it must land in its own pty)
+#   tiocsti   puts its terminal in raw mode and back, then tries to type "echo INJECTED" into it
+#             (it must land in its own pty)
 #   escapes   prints terminal escapes the filter must drop (clipboard, title)
 #   write     writes a file in the team folder, appends to the person's file there
 #   oc-listen listens on the box's OpenCode port (KAP_OPENCODE_PORT) for 75 s, answering a marker
@@ -36,6 +37,10 @@ case $mode in
     echo "box line too" >> ./new-by-person.txt && echo NEW-APPEND-OK
     ;;
   tiocsti)
+    # raw mode first (what OpenCode's window does): a terminal ioctl on its own pty must work
+    /usr/bin/perl -MPOSIX -e 'my $t = POSIX::Termios->new; $t->getattr(0) or do { print "RAWMODE-FAIL: get: $!\n"; exit 1 };
+      my $l = $t->getlflag; $t->setlflag($l & ~(ICANON | ECHO)); $t->setattr(0, TCSANOW) or do { print "RAWMODE-FAIL: $!\n"; exit 1 };
+      $t->setlflag($l); $t->setattr(0, TCSANOW); print "RAWMODE-OK\n"'
     /usr/bin/perl -e 'for my $c (split //, "echo INJECTED\n") { ioctl(STDIN, 0x80017472, $c) or do { print "TIOCSTI-FAIL: $!\n"; exit 1 } } print "TIOCSTI-DONE\n";'
     ;;
   escapes)

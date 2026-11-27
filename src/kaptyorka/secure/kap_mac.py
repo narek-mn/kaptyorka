@@ -251,6 +251,10 @@ def box_profile(box: str, person: str, proxy_port: int, darwin_dir: str = "", ex
         '(allow file-write* (literal "/dev/null") (literal "/dev/dtracehelper") (literal "/dev/tty")'
         ' (regex #"^/dev/ttys[0-9]+$"))',
         "(allow pseudo-tty)",
+        # terminal ioctls (raw mode, window size): /dev/tty is the box's own pty (enter makes it the
+        # controlling terminal of a new session), and the only ttys its user can open are its own
+        # (enter chowns that one slave to it; the person's are theirs, mode 620 group tty)
+        '(allow file-ioctl (literal "/dev/tty") (regex #"^/dev/ttys[0-9]+$"))',
         *PROC_WALL,
         f'(allow network-outbound (remote ip "localhost:{proxy_port}"))',
         *([f'(allow network-bind network-inbound (local ip "localhost:{opencode_port}"))',
@@ -314,9 +318,9 @@ def pf_rules(boxes: Dict[int, int], relay_uid: int, proxy_uid: int, tools_uid: i
     """The anchor com.apple/kaptyorka (06 wall 3, option B; the kit's phase D): a second layer
     under Seatbelt. pf matches users only for TCP and UDP, and its block rules also catch loopback
     (measured), so each user's loopback way is passed first. boxes: {box uid: forwarder port};
-    opencode: {box uid: its OpenCode port}: the box's own client and server pass on lo0 to and
-    from 127.0.0.1, then every other packet to that port, and every other owner's answer from it,
-    is dropped (another user of this Mac must not reach the box's OpenCode, nor pose as it by
+    opencode: {box uid: its OpenCode port}: the box's own client passes out on lo0 to 127.0.0.1,
+    its own listener takes that SYN in on lo0 and answers through its state, then every other
+    packet to that port, and every answer from it without that state, is dropped (another user of this Mac must not reach the box's OpenCode, nor pose as it by
     taking the port first). pf is the address wall there: Seatbelt's local filter names only "*"
     or "localhost", and its "localhost" lets the box bind 0.0.0.0 too (measured on macOS 15.8
     and 26.7). So pf drops whatever comes in on any interface but lo0 to that port, for every
@@ -333,6 +337,13 @@ def pf_rules(boxes: Dict[int, int], relay_uid: int, proxy_uid: int, tools_uid: i
     if any(u not in boxes or not 1024 < int(p) < 65536 or int(p) in ports for u, p in opencode.items()):
         raise Refuse("bad OpenCode port for pf")
     out = ["# kaptyorka (secure design v2, 10.1): written by root; TEST VERSION"]
+    # the box's own listener answers through the state its incoming SYN makes: pf does not see the
+    # listener's user on its outgoing answer (the forwarder's answer passes its user's blocks, CI
+    # run 7), so a pass out by user there never matches and the drop of answers from the port
+    # caught them. Only the box's own client gets a SYN out to the port (the drop below), and only
+    # a box listener gets the state, so a user who took the port first still gets no answer out.
+    for uid, oc in sorted(opencode.items()):
+        out.append(f"pass in quick on lo0 proto tcp from 127.0.0.1 to 127.0.0.1 port {int(oc)} user {uid}")
     for uid in sorted(boxes):
         out.append(f"block drop in quick on ! lo0 proto {{ tcp udp }} all user {uid}")
     for oc in sorted(int(p) for p in opencode.values()):
@@ -342,7 +353,6 @@ def pf_rules(boxes: Dict[int, int], relay_uid: int, proxy_uid: int, tools_uid: i
         if uid in opencode:
             oc = int(opencode[uid])
             out += [f"pass out quick on lo0 proto tcp from any to 127.0.0.1 port {oc} user {uid}",
-                    f"pass out quick on lo0 proto tcp from 127.0.0.1 port {oc} to 127.0.0.1 user {uid}",
                     f"block drop out quick proto {{ tcp udp }} from any to any port {oc}",
                     f"block drop out quick proto {{ tcp udp }} from any port {oc} to any"]
         out.append(f"block drop out quick proto {{ tcp udp }} all user {uid}")

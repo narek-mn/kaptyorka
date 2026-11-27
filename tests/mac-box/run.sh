@@ -268,6 +268,8 @@ o=$( [ -n "$IP" ] && lim 15 sudo -n -u "$P" /usr/bin/perl -MIO::Socket::INET -e 
 oc_blocked OC-LAN-ADDR-BLOCKED "nothing reaches it on this Mac's own address (${IP:-no en0})" "$o"
 wait "$OCJOB" 2>/dev/null
 log "oc-listen" "$(cat "$OUT/oc-listen.txt" 2>/dev/null)"
+# each rule's counters after the box's own connection and the outside probes: which rule took what
+lim 30 pfctl -a com.apple/kaptyorka -v -s rules >>"$LOG" 2>&1
 step team-both-write 180
 o=$(as_person "cd ~/workspace/proj-a && echo new > new-by-person.txt && claude write && echo person >> ci-box-written.txt && echo PERSON-APPEND-OK && cat person-made.txt new-by-person.txt && ls -le new-by-person.txt")
 log "write both ways" "$o"
@@ -287,6 +289,8 @@ step pty 120
 o=$(tr -d '\r' <"$OUT/pty.raw")
 log "pty" "$(printf '%s' "$o" | od -c | head -40)"
 check PTY-TIOCSTI "typed text stays in the box's own terminal" "$(has "$o" 'GOT:[echo INJECTED' && echo 1 || echo 0)" "$o"
+check PTY-RAW-MODE "the box sets its own terminal to raw mode (what OpenCode's window needs)" \
+  "$(has "$o" RAWMODE-OK && echo 0 || echo 1)" "$(printf '%s' "$o" | grep -a RAWMODE | head -2)"
 check PTY-ESCAPES-FILTERED "clipboard and title escapes do not reach the person" \
   "$(has "$o" ESC-END && ! has "$o" ']52;' && ! has "$o" 'KAPCI-TITLE' && echo 0 || echo 1)" "$(printf '%s' "$o" | grep -a ESC | cat -v)"
 
