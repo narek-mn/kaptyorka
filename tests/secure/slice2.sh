@@ -553,7 +553,7 @@ toolupdate)
   ( inb 'sleep 400' >/dev/null 2>&1 & )
   wait_for 40 "systemctl list-units --no-legend 'kapbox-alice-chat-claude-*' | grep -q ' active '" || rec "TU-1" FAIL "a claude chat runs" "-" "no chat started"
   TL=470 t "TU-1 a newer claude is downloaded and starts in the box, but a chat of claude runs: it stays pending, the link does not move" "pending, link unchanged" \
-    're:^rc=0 link=\.\./claude/0\.0\.1/claude pending=[0-9]+\.[0-9]+\.[0-9]+ rc=0' \
+    're:^rc=0 rc=0 link=\.\./claude/0\.0\.1/claude pending=[0-9]+\.[0-9]+\.[0-9]+ rc=0' \
     "$UPD; echo rc=\$?; echo -n \"link=\$(readlink $KT/bin/claude) pending=\$(python3 -c 'import json;print(json.load(open(\"$REC\"))[\"claude\"][\"pending\"][\"version\"])') rc=0\" "
   PEND=$(python3 -c "import json;print(json.load(open('$REC'))['claude']['pending']['version'])" 2>/dev/null)
   TL=470 t "TU-2 the chat still runs: the next run does not download again (no vendor installer unit), still pending" "no new install unit" \
@@ -561,7 +561,7 @@ toolupdate)
     "T0=\$(date +%s); $UPD; echo -n \"installs=\$(journalctl --no-pager -q --since @\$T0 -o cat | grep -c 'kaptyorka-tool-install') link=\$(readlink $KT/bin/claude)\""
   systemctl kill --signal=KILL 'kapbox-alice-chat-*' 2>/dev/null; sleep 2
   TL=470 t "TU-3 the chat ended: the next run switches without downloading, keeps 0.0.1 as previous, drops pending" "switched" \
-    "re:^rc=0 installs=0 link=\.\./claude/$PEND/ rec=$PEND/0\.0\.1/none" \
+    "re:^rc=0 installs=0 link=\.\./claude/$PEND/[0-9.]+ rec=$PEND/0\.0\.1/none" \
     "T0=\$(date +%s); $UPD; echo -n \"installs=\$(journalctl --no-pager -q --since @\$T0 -o cat | grep -c 'kaptyorka-tool-install') link=\$(readlink $KT/bin/claude) rec=\$(python3 -c 'import json;r=json.load(open(\"$REC\"))[\"claude\"];print(r[\"version\"]+\"/\"+r[\"previous\"]+\"/\"+(\"pending\" if \"pending\" in r else \"none\"))')\""
   TL=60 t "TU-4 the new claude in the box says its version; the old copy is kept; claude is execute-only" "version, 0.0.1 kept, 711" "re:^rc=0 $PEND .*kept=yes mode=711" \
     "asali 'cd ~/team/proj-a && claude --version 2>&1 | head -1'; echo -n \" kept=\$([ -f $KT/claude/0.0.1/claude ] && echo yes || echo no) mode=\$(stat -c %a \$(readlink -f $KT/bin/claude))\""

@@ -867,6 +867,8 @@ def remove(a) -> int:
                      "kaptyorka-guard.service", check=False)
         kr.systemctl("stop", "kaptyorka-relay.service", check=False)
         kr.systemctl("disable", "--now", "kaptyorka-tools-update.timer", check=False)
+        if os.path.lexists("/var/lib/systemd/timers/stamp-kaptyorka-tools-update.timer"):
+            os.unlink("/var/lib/systemd/timers/stamp-kaptyorka-tools-update.timer")   # systemd's own mark of the timer
         for n in OUR_UNITS:
             if os.path.lexists(f"{SYSTEMD}/{n}"):
                 os.unlink(f"{SYSTEMD}/{n}")
