@@ -1,0 +1,12 @@
+# Every hour: a waiting update installs within the hour after the last team chat ended; the hub is
+# asked at most every 6 hours (kap_update.CHECK_S), since each ask tells it this computer is on.
+[Unit]
+Description=kaptyorka: look for kaptyorka's own signed updates
+
+[Timer]
+OnBootSec=15min
+OnUnitInactiveSec=1h
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

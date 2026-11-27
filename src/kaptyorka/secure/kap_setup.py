@@ -19,7 +19,10 @@ rejoin, repair, update-tools and remove, without downloading anything again); in
 forwarder and box code; installs the AI tools into the box with each vendor's own installer
 (kap_tools.py; default: the ones the person already has, by name only); makes the namespace,
 relay door, forwarder, canary; stores the Claude token root-only; makes the box's SSH key; adds
-the launcher to the system shell files; runs the self-check. The mode is fixed here
+the launcher to the system shell files; pins the release key built into kap_release.py in
+/etc/kaptyorka/release-key (once; never replaced) and switches on kaptyorka-update.timer
+(kap_update.py: signed, strictly newer releases from the hub, installed with their repair when no
+team chat runs, rolled back when the self-check fails); runs the self-check. The mode is fixed here
 (/etc/kaptyorka/mode = personal) and never changes afterwards.
 
 For tests only, instead of the link: --hub-ip IP --hub-port N --hub-sha256 HEX
@@ -48,11 +51,12 @@ import subprocess
 import sys
 
 if __package__:
-    from . import kap_installer, kap_tools, kapcommon as kc, kaproot as kr
+    from . import kap_installer, kap_tools, kap_update, kapcommon as kc, kaproot as kr
 else:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import kap_installer
     import kap_tools
+    import kap_update
     import kapcommon as kc
     import kaproot as kr
 
@@ -71,7 +75,9 @@ Afterwards, with the copy the installer keeps (nothing is downloaded again):
   sudo /usr/local/libexec/kaptyorka/installer repair              write every file and unit again
   hubchat update-tools [claude codex ...]                         newer AI tools in the box
   sudo /usr/local/libexec/kaptyorka/installer remove [--delete-box-home] [--yes]
-                                                                  remove it all (team folders back first)"""
+                                                                  remove it all (team folders back first)
+kaptyorka then updates itself from the hub: only to a newer release signed with the release key
+this installer pins, and only when no team chat runs (hubchat list shows the last check)."""
 HERE = os.path.dirname(os.path.abspath(__file__))
 INSTALLER_FILE = ""   # set by the installer file's __main__: its own path (kap_installer.MAIN)
 FILES = os.path.join(HERE, "files")
@@ -87,13 +93,15 @@ PROGRAMS = (  # (source in this folder, name in /usr/local/libexec/kaptyorka, mo
     ("kap_box_exec.py", "box-exec", 0o755), ("kap_canary.py", "canary", 0o755),
     ("kap_addrwatch.py", "addrwatch", 0o755), ("kap_guard.py", "guard", 0o755),
     ("kap_tools.py", "kap_tools.py", 0o644), ("kap_ttyfilter.py", "tty-filter", 0o755),
-    ("kapcommon.py", "kapcommon.py", 0o644),
+    ("kapcommon.py", "kapcommon.py", 0o644), ("kap_update.py", "kap_update.py", 0o755),
+    ("kap_release.py", "kap_release.py", 0o644),
     ("kaproot.py", "kaproot.py", 0o644), ("files/launch", "launch", 0o755),
     ("files/kapbox-base", "kapbox-base", 0o755),
 )
 OUR_UNITS = ("kapbox-base@.service", "kaptyorka-egress@.socket", "kaptyorka-egress@.service",
              "kaptyorka-canary.service", "kaptyorka-relay.service", "kaptyorka-relay-box@.socket",
-             "kaptyorka-addrwatch.service", "kaptyorka-guard.service")
+             "kaptyorka-addrwatch.service", "kaptyorka-guard.service", "kaptyorka-update.service",
+             "kaptyorka-update.timer")
 
 
 def version() -> str:
@@ -160,6 +168,9 @@ def preflight(person: str):
                             "you from kaptyorka, because no kaptyorka code runs as you.")
         except KeyError:
             pass
+    if not shutil.which("ssh-keygen", path=kr.CLEAN_ENV["PATH"]):
+        warn.append("ssh-keygen is missing (the package openssh-client), so kaptyorka cannot check the signature "
+                    "of its own updates and will not update itself until it is installed")
     for p in ("/etc/claude-code/managed-settings.json", "/etc/codex/requirements.toml", "/etc/opencode"):
         if os.path.exists(p):
             warn.append(f"{p} exists; it applies to the box too. Left alone.")
@@ -302,6 +313,7 @@ def install_units() -> None:
     kr.run(["systemd-tmpfiles", "--create", "/etc/tmpfiles.d/kaptyorka.conf"], check=False)
     kr.systemctl("enable", "--now", "kaptyorka-canary.service")
     kr.systemctl("enable", "kaptyorka-addrwatch.service", "kaptyorka-guard.service")
+    kr.systemctl("enable", "--now", "kaptyorka-update.timer")   # kaptyorka's own signed updates (kap_update)
     # a new release runs its new code
     kr.systemctl("restart", "kaptyorka-addrwatch.service", "kaptyorka-guard.service", check=False)
 
@@ -595,6 +607,9 @@ def apply(person: str, v: dict, rt: str, a, specs: dict) -> int:
     kr.write_file(kc.INSTALLING, f"person={person}\ntools={','.join(tools)}\n", 0o644)
     install_code(ver)
     install_etc(ver)
+    note = kap_update.pin_key(kr.write_file)   # the release key, pinned once and never replaced
+    if note:
+        say(note)
     install_relay_conf(v)
     install_person_files(person, v)
     install_installer()
@@ -852,7 +867,7 @@ def remove(a) -> int:
     left = [p for p in os.listdir(kc.PEOPLE)] if os.path.isdir(kc.PEOPLE) else []
     if not left:
         kr.systemctl("disable", "--now", "kaptyorka-canary.service", "kaptyorka-addrwatch.service",
-                     "kaptyorka-guard.service", check=False)
+                     "kaptyorka-guard.service", "kaptyorka-update.timer", check=False)
         kr.systemctl("stop", "kaptyorka-relay.service", check=False)
         for n in OUR_UNITS:
             if os.path.lexists(f"{SYSTEMD}/{n}"):

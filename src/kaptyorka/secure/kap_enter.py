@@ -30,11 +30,29 @@ import termios
 import time
 
 if __package__:
-    from . import kapcommon as kc, kaproot as kr
+    from . import kap_update, kapcommon as kc, kaproot as kr
 else:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import kap_update
     import kapcommon as kc
     import kaproot as kr
+
+
+def update_lock():
+    """The update lock, shared, kept open for the chat's whole life in this process: kaptyorka's
+    own update (kap_update) never installs under a running chat, and no chat starts while it
+    installs."""
+    try:
+        os.makedirs(os.path.dirname(kap_update.LOCK), 0o755, exist_ok=True)
+        fd = os.open(kap_update.LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError:
+        return None   # the updater still sees the chat's unit
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        raise kc.Refuse("kaptyorka is installing its own update right now: try again in a few minutes")
+    return fd
 
 
 def notices(person: str, box: str, name: str, cover_cut: str = "") -> None:
@@ -107,6 +125,7 @@ def main(argv) -> int:
         person = kr.caller_person()
         if kc.unfinished_install():
             raise kc.Refuse(kc.unfinished_install())
+        update_lock()
         if not argv:
             raise kc.Refuse("usage: enter <claude|opencode|codex|cursor-agent|git> args...")
         tool = argv[0]
@@ -142,6 +161,9 @@ def main(argv) -> int:
         for ln in kr.old_login_hint(person):
             print(kc.term(ln), file=sys.stderr)
         notices(person, box, name, cover_cut)
+        if kap_update.waiting():
+            print(kc.term(f"enter: kaptyorka {kap_update.waiting()} is downloaded and verified; it installs by itself "
+                          "once no team chat runs."), file=sys.stderr)
         kr.ensure_box_running(box)
         kr.start_helper(person, box)
         tty = os.isatty(0) and os.isatty(1)

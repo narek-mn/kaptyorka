@@ -1,0 +1,17 @@
+# kaptyorka-update (build plan 16): kaptyorka's own signed updates on a personal laptop. Root, as the
+# installer is: it asks the hub (pinned TLS, the device token) for the signed manifest of its release,
+# accepts only one signed by the release key pinned in /etc/kaptyorka/release-key with a strictly newer
+# version, downloads the installer only then and checks its SHA-256, and installs it with that
+# installer's repair once no team chat runs; when the self-check fails, the kept installer's repair
+# puts the old version back. No mount-namespace setting here: the repair writes the whole install.
+[Unit]
+Description=kaptyorka: install kaptyorka's own signed updates when no team chat runs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/kaptyorka/kap_update.py run
+TimeoutStartSec=75min
+KillMode=control-group
+TimeoutStopSec=30

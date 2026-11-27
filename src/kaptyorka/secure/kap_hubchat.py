@@ -13,8 +13,8 @@ to the hub; a folder becomes a team folder only by being moved here by the perso
   hubchat remove <folder or name>
       Make a team folder personal again, back where its shortcut was, made safe for git.
   hubchat list
-      Every team folder, its shortcut, size, box and running chats; sign-ins, allow list,
-      self-check, warnings.
+      Every team folder, its shortcut, size, box and running chats; kaptyorka's version, its last
+      update check and a waiting update; sign-ins, allow list, self-check, warnings.
   hubchat token-rotate
       Give the box a new Claude token (from `claude setup-token`, pasted or on standard input),
       end the running Claude chats, and say how to end the old token.
@@ -31,10 +31,11 @@ import sys
 import time
 
 if __package__:
-    from . import kap_tools, kapcommon as kc, kaproot as kr
+    from . import kap_tools, kap_update, kapcommon as kc, kaproot as kr
 else:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import kap_tools
+    import kap_update
     import kapcommon as kc
     import kaproot as kr
 
@@ -544,6 +545,7 @@ def list_all(person: str) -> None:
         except (Refuse, OSError):
             pass
     kr.say(f"  {kc.MEMORY} (the shared team memory)    view: {kc.view_path(person, kc.MEMORY)}")
+    kr.say(*kap_update.status_lines())
     have = kap_tools.installed()
     kr.say("AI tools in the box: " + (", ".join(f"{t} {v}" for t, v in sorted(have.items())) or "none")
            + "  (hubchat update-tools for newer ones)")
