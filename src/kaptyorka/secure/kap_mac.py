@@ -101,6 +101,8 @@ MIN_MACOS = (14, 0)
 ID_RANGE = (401, 499)                         # hidden accounts (below 500: not on the login window)
 PY_RX = re.compile(r"/[A-Za-z0-9/._+-]{1,200}")
 SB_SAFE = re.compile(r"[A-Za-z0-9/._+ -]{1,400}")
+DEV_APP_RX = re.compile(r"/Applications/[A-Za-z0-9._+ -]{1,100}\.app")   # developer_app
+XCODE_SELECT_LINK = "/private/var/db/xcode_select_link"
 # mach services a tool needs (the kit's proven list) and the ones that reach the desktop session
 MACH_ALLOW = ("com.apple.system.opendirectoryd.libinfo", "com.apple.logd", "com.apple.system.notification_center",
               "com.apple.trustd", "com.apple.SecurityServer", "com.apple.system.logger", "com.apple.cfprefsd.daemon",
@@ -201,14 +203,15 @@ PROC_WALL = (
 
 
 def box_profile(box: str, person: str, proxy_port: int, darwin_dir: str = "", extra: str = "",
-                py_top: str = "", opencode_port: int = 0) -> str:
+                py_top: str = "", opencode_port: int = 0, dev_app: str = "") -> str:
     """The box's Seatbelt profile (06 wall 6, 07 10.1; the kit's strict profile, measured on macOS
     15.8 and 26.7): deny by default; read the system's read-only places but not kaptyorka's own
     files, keychains and the account database; read and write only the team area, the box's
     state folders, its temp folders and runtime folder; the locked tool settings not even there;
     network only to the forwarder's port on loopback and the relay's door, and the box's own
     OpenCode port (bind on localhost, accept, connect: that one port only); no clipboard, screen
-    or Apple Events; processes and signals only inside the same sandbox."""
+    or Apple Events; processes and signals only inside the same sandbox. dev_app: the one Xcode
+    app in /Applications the developer tools come from (developer_app), read-only."""
     kc.check_box(box)
     kc.check_person(person)
     if not isinstance(proxy_port, int) or not 1024 < proxy_port < 65536:
@@ -216,6 +219,8 @@ def box_profile(box: str, person: str, proxy_port: int, darwin_dir: str = "", ex
     if opencode_port and (not isinstance(opencode_port, int) or not 1024 < opencode_port < 65536
                           or opencode_port == proxy_port):
         raise Refuse("bad OpenCode port")
+    if dev_app and not DEV_APP_RX.fullmatch(dev_app):
+        raise Refuse("bad developer tools app")
     home = real(kc.box_home(box))
     team = team_root(person)
     rw = [f"{home}/{d}" for d in kc.STATE_DIRS] + [real(box_tmp(box)), real(box_run(box)), team]
@@ -234,7 +239,7 @@ def box_profile(box: str, person: str, proxy_port: int, darwin_dir: str = "", ex
         "(allow sysctl-read)",
         "(allow file-read-metadata)",
         "(allow file-read* " + " ".join(f"(subpath {sb(p)})" for p in SYSTEM_READ + (OPT + "/box", TOOLS_DIR) +
-                                                ((py_top,) if py_top else ())) + ")",
+                                                ((py_top,) if py_top else ()) + ((dev_app,) if dev_app else ())) + ")",
         "(deny file-read* " + " ".join(f"(subpath {sb(p)})" for p in SYSTEM_DENY) + ")",
         f"(allow file-read* (subpath {sb(real(kc.BOXCONF))}) (subpath {sb(own)}))",
         f"(allow file-read* (subpath {sb(home)}) (subpath {sb(real(kc.box_root(box)))}))",
@@ -662,10 +667,27 @@ def darwin_dir(box: str) -> str:
     return p
 
 
+def developer_app(link: str = XCODE_SELECT_LINK) -> str:
+    """The Xcode app in /Applications that the developer tools come from, by its real path; ''
+    when they come from the Command Line Tools (under /Library, readable anyway) or from nowhere.
+    /usr/bin/git and the other tool stubs in /usr/bin run that app's programs (libxcselect: the
+    xcode-select link, else /Applications/Xcode.app), so git in the box needs to read it. It is
+    Apple's app, nothing of a person's; the rest of /Applications stays closed."""
+    try:
+        dev = os.readlink(link)
+    except OSError:
+        dev = "/Applications/Xcode.app/Contents/Developer"
+    dev = os.path.realpath(dev)
+    m = re.fullmatch(r"(/Applications/[A-Za-z0-9._+ -]{1,100}\.app)/Contents/Developer", dev)
+    if not m or not DEV_APP_RX.fullmatch(m.group(1)) or not os.path.isdir(dev):
+        return ""
+    return m.group(1)
+
+
 def write_profile(person: str, box: str) -> str:
     """The box profile, written anew from this code at every start (root-owned)."""
     text = box_profile(box, person, proxy_port(box), darwin_dir(box), kr.read_text(PROFILE_EXTRA),
-                       py_prefix(python()) if python() else "", opencode_port(box))
+                       py_prefix(python()) if python() else "", opencode_port(box), developer_app())
     path = profile_path(box)
     if kr.read_text(path) != text:
         kr.write_file(path, text, 0o644)
@@ -1089,9 +1111,13 @@ def popen_box(person: str, box: str, inner: List[str], cwd: str, *, claude: bool
     for d in (box_run(box), box_tmp(box)):
         os.makedirs(os.path.dirname(d), 0o755, exist_ok=True)
         kr.mkdir(d, 0o700, uid, gid)
+    # extra_groups names the primary group first: on macOS the kernel keeps the effective group in
+    # the list's first place, so the setregid after setgroups overwrites that place (XNU
+    # kauth_cred_change_egid); with [sgid] alone the share group was lost and the team area gave
+    # EACCES (CI run 3, wall M13)
     try:
         return subprocess.Popen(box_argv(person, box, inner, verbose), cwd=cwd, env=env, user=uid, group=gid,
-                                extra_groups=[sgid], umask=0o007, pass_fds=tuple(fds), close_fds=True, **kw)
+                                extra_groups=[gid, sgid], umask=0o007, pass_fds=tuple(fds), close_fds=True, **kw)
     finally:
         for fd in fds:
             os.close(fd)

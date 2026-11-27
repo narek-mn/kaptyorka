@@ -7,7 +7,7 @@
 #   tiocsti   tries to type "echo INJECTED" into its terminal (it must land in its own pty)
 #   escapes   prints terminal escapes the filter must drop (clipboard, title)
 #   write     writes a file in the team folder, appends to the person's file there
-#   oc-listen listens on the box's OpenCode port (KAP_OPENCODE_PORT) for 40 s, answering a marker
+#   oc-listen listens on the box's OpenCode port (KAP_OPENCODE_PORT) for 75 s, answering a marker
 # Bash 3.2 (the macOS bash).
 mode=${!#}
 P=$(/usr/bin/id -un); P=${P#kap-}   # the box of person P is the user kap-P
@@ -105,11 +105,11 @@ case $mode in
     echo "ATTACKS-DONE"
     ;;
   oc-listen)
-    # listens on the box's OpenCode port for 40 seconds, answering a marker (run.sh connects from outside)
+    # listens on the box's OpenCode port for 75 seconds, answering a marker (run.sh connects from outside)
     echo "OC-LISTEN port=${KAP_OPENCODE_PORT:-none}"
     /usr/bin/perl -MIO::Socket::INET -e '
       my $l = IO::Socket::INET->new(LocalAddr=>"127.0.0.1", LocalPort=>$ARGV[0], Listen=>5, ReuseAddr=>1) or die "listen: $!\n";
-      print "OC-LISTENING\n"; $| = 1; $SIG{ALRM} = sub { exit 0 }; alarm 40;
+      $| = 1; print "OC-LISTENING\n"; $SIG{ALRM} = sub { exit 0 }; alarm 75;
       while (my $c = $l->accept) { print $c "KAPCI-OC-BOX-7e21\n"; close $c }' "${KAP_OPENCODE_PORT:-0}" 2>&1
     ;;
   *)

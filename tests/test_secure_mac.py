@@ -348,6 +348,63 @@ def test_wallcheck_fail_names_the_wall_and_never_starts(capsys):
     assert "wall M2 is missing" in err and "\x1b" not in err and "not started" in err
 
 
+def test_wallcheck_m13_names_owner_group_and_mode(tmp_path):
+    import errno as E
+    d = tmp_path / "team"
+    d.mkdir(mode=0o750)
+    line = mw.team_problem(str(d), OSError(E.EACCES, "denied"))
+    assert line.startswith(f"{d} gave EACCES") and "mode 750" in line and f"group {os.getegid()})" in line
+    assert mw.team_problem(str(d), OSError(E.EPERM, "x")) == f"{d} gave EPERM"
+
+
+def test_wallcheck_m10_keeps_standard_error_and_refuses_off_a_mac(capfd):
+    # off a Mac there is no sandbox_init: no second profile, and descriptor 2 is left as it was
+    assert mw.nested_sandbox_applies() is False
+    print("still here", file=sys.stderr, flush=True)
+    assert "still here" in capfd.readouterr().err
+
+
+def test_box_processes_keep_the_share_group(monkeypatch):
+    # macOS keeps the effective group in the group list's first place and setregid overwrites it
+    # (CI run 3: M13 EACCES), so the primary group goes first and the share group after it
+    seen = {}
+    monkeypatch.setattr(km, "ids", lambda box: (404, 404, 405))
+    monkeypatch.setattr(km, "box_argv", lambda *a, **k: ["/usr/bin/true"])
+    monkeypatch.setattr(km, "box_env", lambda *a, **k: {})
+    monkeypatch.setattr(km.kr, "mkdir", lambda *a, **k: None)
+    monkeypatch.setattr(km.os, "makedirs", lambda *a, **k: None)
+    monkeypatch.setattr(km.subprocess, "Popen", lambda argv, **kw: seen.update(kw) or "p")
+    assert km.popen_box("alice", "alice", ["/usr/bin/true"], "/") == "p"
+    assert seen["group"] == 404 and seen["extra_groups"] == [404, 405]
+
+
+def test_box_profile_reads_the_developer_app_only_when_named():
+    assert "/Applications" not in profile()
+    text = profile(dev_app="/Applications/Xcode_16.4.app")
+    assert '(subpath "/Applications/Xcode_16.4.app")' in text and balanced(text)
+    read = next(ln for ln in rules(text) if ln.startswith("(allow file-read* (subpath"))
+    assert "/Applications/Xcode_16.4.app" in read and "file-write" not in read
+    for bad in ("/Applications", "/Applications/Xcode.app/../x.app", "/Users/alice/Xcode.app", "/Applications/x\"\n.app"):
+        with pytest.raises(kc.Refuse):
+            profile(dev_app=bad)
+
+
+def test_developer_app_is_only_an_app_in_applications(tmp_path, monkeypatch):
+    link = tmp_path / "xcode_select_link"
+    link.symlink_to("/Library/Developer/CommandLineTools")
+    assert km.developer_app(str(link)) == ""
+    link.unlink()
+    link.symlink_to("/Users/alice/Xcode.app/Contents/Developer")
+    assert km.developer_app(str(link)) == ""
+    link.unlink()
+    link.symlink_to("/Applications/Xcode_16.4.app/Contents/Developer")
+    monkeypatch.setattr(km.os.path, "realpath", lambda p: p)
+    monkeypatch.setattr(km.os.path, "isdir", lambda p: p == "/Applications/Xcode_16.4.app/Contents/Developer")
+    assert km.developer_app(str(link)) == "/Applications/Xcode_16.4.app"
+    # no link: the default Xcode, when it is there
+    assert km.developer_app(str(tmp_path / "none")) == ""
+
+
 def test_relay_reads_the_caller_from_a_macos_xucred():
     import struct
     raw = struct.pack(R.XUCRED, 0, 7701, 2, 7701, 12, *([0] * 14))

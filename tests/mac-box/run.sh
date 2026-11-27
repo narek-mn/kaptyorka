@@ -165,9 +165,9 @@ if [ -n "$SKIP" ]; then NP=$((NP-n_pass)); NF=$((NF-n_fail)); fi
 echo "== the box's OpenCode port, from outside: nobody but the box reaches it"
 Q=$(cat "/etc/kaptyorka/boxes/$P/opencode-port" 2>/dev/null)
 rec META-OC-PORT "recorded" "${Q:-none}" INFO
-( as_person "cd ~/workspace/proj-a && claude oc-listen" 90 >"$OUT/oc-listen.txt" 2>&1 ) &
+( as_person "cd ~/workspace/proj-a && claude oc-listen" 120 >"$OUT/oc-listen.txt" 2>&1 ) &
 OCJOB=$!
-for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q OC-LISTENING "$OUT/oc-listen.txt" 2>/dev/null && break; sleep 1; done
+for _ in $(seq 1 30); do grep -q OC-LISTENING "$OUT/oc-listen.txt" 2>/dev/null && break; sleep 1; done
 check OC-LISTENS "the box listens on its OpenCode port (positive control)" \
   "$(grep -q OC-LISTENING "$OUT/oc-listen.txt" 2>/dev/null && echo 0 || echo 1)" "$(head -c 300 "$OUT/oc-listen.txt" 2>/dev/null)"
 OCUP=$(grep -q OC-LISTENING "$OUT/oc-listen.txt" 2>/dev/null && echo 1 || echo 0)
@@ -231,9 +231,10 @@ o=$(as_person "cd ~/workspace/proj-a && claude hello"); log "broken: clipboard" 
 rec REFUSE-PROFILE-CLIPBOARD "clipboard service allowed: refused (when the session has one)" \
   "$(printf '%s' "$o" | head -3)" "$( ! has "$o" FAKE-CLAUDE-HELLO && has "$o" 'wall M8' && echo PASS || echo INFO)"
 : >/etc/kaptyorka/box-extra.sb; hello_works PROFILE
-dseditgroup -o edit -a "$B" -t user staff >>"$LOG" 2>&1
+# the directory's membership cache may lag a change for a while: flushed after each one
+dseditgroup -o edit -a "$B" -t user staff >>"$LOG" 2>&1; dscacheutil -flushcache; sleep 1
 hello_refused BOX-IN-STAFF "the box user put in staff" "group staff"
-dseditgroup -o edit -d "$B" -t user staff >>"$LOG" 2>&1; hello_works BOX-IN-STAFF
+dseditgroup -o edit -d "$B" -t user staff >>"$LOG" 2>&1; dscacheutil -flushcache; sleep 1; hello_works BOX-IN-STAFF
 printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$B" >>"/etc/sudoers.d/kaptyorka-$P"
 hello_refused SUDOERS "the sudo rule changed" "is not kaptyorka's rule"
 sed -i '' '$d' "/etc/sudoers.d/kaptyorka-$P"; hello_works SUDOERS
@@ -270,8 +271,12 @@ check HUBCHAT-REMOVE "back as the person's own folder, no ACL, hooks moved aside
   "$([ $rc = 0 ] && [ -d "$PH/workspace/proj-a" ] && [ ! -L "$PH/workspace/proj-a" ] && [ "$(stat -f %Su "$PH/workspace/proj-a/ci-box-written.txt")" = "$P" ] && ! ls -le "$PH/workspace/proj-a" | grep -q kapshare && echo 0 || echo 1)" \
   "rc=$rc $(ls -lde "$PH/workspace/proj-a" 2>&1 | head -2)"
 SKIP=""   # the cleanup is checked even after a failed install: nothing may be left behind
-o=$(tmo 600 "$PY" -I /usr/local/libexec/kaptyorka/installer remove --yes --delete-box-home 2>&1); rc=$?
-[ -f /usr/local/libexec/kaptyorka/installer ] || { o="$o $(tmo 600 "$PY" -I "$OUT/kaptyorka-secure-setup.pyz" remove --yes --delete-box-home 2>&1)"; rc=$?; }
+# the installed copy when there is one (it removes itself), else the built file
+if [ -f /usr/local/libexec/kaptyorka/installer ]; then
+  o=$(tmo 600 "$PY" -I /usr/local/libexec/kaptyorka/installer remove --yes --delete-box-home 2>&1); rc=$?
+else
+  o=$(tmo 600 "$PY" -I "$OUT/kaptyorka-secure-setup.pyz" remove --yes --delete-box-home 2>&1); rc=$?
+fi
 log remove "$o"
 left=""
 dscl . -read "/Users/$B" >/dev/null 2>&1 && left="$left user"

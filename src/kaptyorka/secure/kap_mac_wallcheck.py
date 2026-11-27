@@ -216,6 +216,45 @@ def sandboxed(libc) -> bool:
     return f(os.getpid(), None, 0) != 0
 
 
+def nested_sandbox_applies() -> bool:
+    """Whether sandbox_init takes a second profile. The refusal is the wall, but its text ("sandbox
+    initialization failed: Operation not permitted") reached the standard error in CI run 3 (this
+    is the process's only sandbox_init), so the call runs with descriptor 2 on /dev/null: else the
+    line would reach the person's terminal at every start."""
+    try:
+        f = ctypes.CDLL("/usr/lib/libSystem.B.dylib").sandbox_init
+    except (OSError, AttributeError):
+        return False
+    f.argtypes = (ctypes.c_char_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p))
+    f.restype = ctypes.c_int
+    err = ctypes.c_char_p()
+    sys.stderr.flush()
+    saved = os.dup(2)
+    null = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(null, 2)
+        return f(b"(version 1)(allow default)", 0, ctypes.byref(err)) == 0
+    finally:
+        os.dup2(saved, 2)
+        os.close(saved)
+        os.close(null)
+
+
+def team_problem(path: str, e: OSError) -> str:
+    """M13's line: the error, and for EACCES the folder's owner, group and mode, so one run tells
+    a missing group (the folder's group rights would let the box in) from a changed folder.
+    (os.getgroups() cannot tell: on macOS it answers from the directory, not the process.)"""
+    what = f"{path} gave {en(e)}"
+    if e.errno == errno.EACCES:
+        try:
+            st = os.stat(path)
+            what += (f" (owner {st.st_uid}, group {st.st_gid}, mode {stat.S_IMODE(st.st_mode):o}; this process: "
+                     f"user {os.geteuid()}, group {os.getegid()})")
+        except OSError:
+            pass
+    return what
+
+
 def main(argv) -> None:
     t0 = time.monotonic()
     o, cmd = parse(argv)
@@ -334,14 +373,8 @@ def main(argv) -> None:
         pass
     # M10 a sandbox cannot be nested: a second profile must be refused (the tools' own sandboxes
     # are off inside the box for this reason; measured by the kit)
-    try:
-        f = ctypes.CDLL("/usr/lib/libSystem.B.dylib").sandbox_init
-        f.argtypes = (ctypes.c_char_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p))
-        err = ctypes.c_char_p()
-        if f(b"(version 1)(allow default)", 0, ctypes.byref(err)) == 0:
-            fail("M10", "a second sandbox profile could be applied")
-    except (OSError, AttributeError):
-        pass
+    if nested_sandbox_applies():
+        fail("M10", "a second sandbox profile could be applied")
     # M11 environment: names only, values never printed
     extra = sorted(k for k in os.environ if k not in ENV_OK)
     if extra:
@@ -356,7 +389,7 @@ def main(argv) -> None:
     try:
         os.listdir(f"{TEAMAREA}/{person}")
     except OSError as e:
-        fail("M13", f"{TEAMAREA}/{person} gave {en(e)}")
+        fail("M13", team_problem(f"{TEAMAREA}/{person}", e))
     # M14 the controlling terminal (when there is one) is not the person's: a pseudo-terminal of the
     # box's own, made by enter
     try:
