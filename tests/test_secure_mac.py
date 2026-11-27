@@ -2,6 +2,7 @@
 pure decisions, checked here on any system. The real walls are checked on a Mac by
 tests/mac-box/run.sh in .github/workflows/mac-box.yml."""
 import ast
+import errno
 import importlib
 import json
 import os
@@ -626,11 +627,17 @@ def test_pf_keeps_everyone_but_the_box_off_its_opencode_port():
     for uid, oc in ((450, 47310), (455, 47311)):
         own = lines.index(f"pass out quick on lo0 proto tcp from any to 127.0.0.1 port {oc} user {uid}")
         answer = lines.index(f"pass out quick on lo0 proto tcp from 127.0.0.1 port {oc} to 127.0.0.1 user {uid}")
-        others = lines.index(f"block drop out quick proto {{ tcp udp }} from any to {{ 127.0.0.1 ::1 }} port {oc}")
-        squat = lines.index(f"block drop out quick proto {{ tcp udp }} from {{ 127.0.0.1 ::1 }} port {oc} to any")
+        others = lines.index(f"block drop out quick proto {{ tcp udp }} from any to any port {oc}")
+        squat = lines.index(f"block drop out quick proto {{ tcp udp }} from any port {oc} to any")
         assert own < others and answer < squat < lines.index(f"block drop out quick proto {{ tcp udp }} all user {uid}")
         # no pass for anyone else names the port
         assert not [ln for ln in lines if ln.startswith("pass") and f"port {oc}" in ln and f"user {uid}" not in ln]
+        # pf is the address wall: nothing from outside lo0 reaches the port, nor any box socket, for
+        # every user, before any pass (Seatbelt's "localhost" lets the box bind 0.0.0.0)
+        off = lines.index(f"block drop in quick on ! lo0 proto {{ tcp udp }} from any to any port {oc}")
+        box_in = lines.index(f"block drop in quick on ! lo0 proto {{ tcp udp }} all user {uid}")
+        first_pass = min(i for i, ln in enumerate(lines) if ln.startswith("pass"))
+        assert off < first_pass and box_in < first_pass
     for oc in ({450: 47110}, {999: 47310}, {450: 80}):
         with pytest.raises(kc.Refuse):
             km.pf_rules({450: 47110}, 451, 452, 453, "192.0.2.10", 443, oc)
@@ -657,7 +664,43 @@ def test_the_box_gets_its_opencode_port_and_wallcheck_tries_it(monkeypatch):
     finally:
         s.close()
     src = open(os.path.join(SECURE, "kap_mac_wallcheck.py")).read()
-    assert '("0.0.0.0", oc, False), ("127.0.0.1", oc + 1, False)' in src and 'fail("M15"' in src
+    assert '("127.0.0.1", oc, True), ("127.0.0.1", oc + 1, False), ("127.0.0.1", 0, False)' in src
+    assert 'fail("M15"' in src and '"0.0.0.0", oc' not in src   # the address is pf's wall, tried by root
+
+
+def test_pf_check_wants_the_opencode_port_drops_loaded():
+    loaded = ("block drop in quick on ! lo0 proto tcp from any to any port = 47310\n"
+              "block drop in quick on ! lo0 proto udp from any to any port = 47310\n"
+              "block drop out quick proto tcp from any to any port = 47310\n")
+    assert km.pf_opencode_problem(loaded, [47310]) == ""
+    assert km.pf_opencode_problem(loaded, []) == ""
+    assert "from outside lo0" in km.pf_opencode_problem(loaded.split("\n", 2)[2], [47310])
+    assert "from other users" in km.pf_opencode_problem(loaded.rsplit("block drop out", 1)[0], [47310])
+    assert "47311" in km.pf_opencode_problem(loaded.replace("47310", "473100"), [47311])
+    assert km.pf_opencode_problem(loaded.replace("47310", "473101"), [47310])   # no prefix match
+
+
+def test_root_tries_the_opencode_port_as_another_user(monkeypatch):
+    """Without pf (here) the port answers: a listener accepts, a closed port refuses; both are a
+    missing wall. A port that gives no answer at all passes."""
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(1)
+    port = s.getsockname()[1]
+    try:
+        monkeypatch.setattr(km, "opencode_port", lambda b: port)
+        assert "127.0.0.1:%d" % port in km.opencode_reach_problem("alice", [])
+    finally:
+        s.close()
+    monkeypatch.setattr(km, "opencode_port", lambda b: port)   # now closed: refused
+    assert "reach" in km.opencode_reach_problem("alice", [])
+    monkeypatch.setattr(km, "opencode_port", lambda b: 0)
+    assert km.opencode_reach_problem("alice", ["192.0.2.1"]) == ""
+    monkeypatch.setattr(km, "opencode_port", lambda b: 47310)
+    monkeypatch.setattr(km.socket.socket, "connect_ex", lambda self, a: errno.EINPROGRESS)
+    monkeypatch.setattr(km.select, "select", lambda r, w, x, t: ([], [], []))   # pf drops: no answer
+    assert km.opencode_reach_problem("alice", ["192.0.2.1"], timeout=0.05) == ""
 
 
 def test_box_exec_uses_the_box_s_one_port_on_a_mac():

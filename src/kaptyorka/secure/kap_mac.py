@@ -21,6 +21,7 @@ The pure parts (profile, pf rules, plists, sudoers text, paths) are tested on Li
 (tests/test_secure_mac.py); the rest only on a Mac (tests/mac-box/run.sh in CI).
 Python standard library only; installed as /usr/local/libexec/kaptyorka/kap_mac.py.
 """
+import errno
 import fcntl
 import ipaddress
 import json
@@ -30,6 +31,7 @@ import pwd
 import grp
 import re
 import secrets
+import select
 import signal
 import socket
 import stat
@@ -209,7 +211,8 @@ def box_profile(box: str, person: str, proxy_port: int, darwin_dir: str = "", ex
     files, keychains and the account database; read and write only the team area, the box's
     state folders, its temp folders and runtime folder; the locked tool settings not even there;
     network only to the forwarder's port on loopback and the relay's door, and the box's own
-    OpenCode port (bind on localhost, accept, connect: that one port only); no clipboard, screen
+    OpenCode port (bind, accept, connect: that one port only; its "localhost" also lets 0.0.0.0
+    through, so pf_rules is the address wall); no clipboard, screen
     or Apple Events; processes and signals only inside the same sandbox. dev_app: the one Xcode
     app in /Applications the developer tools come from (developer_app), read-only."""
     kc.check_box(box)
@@ -311,9 +314,14 @@ def pf_rules(boxes: Dict[int, int], relay_uid: int, proxy_uid: int, tools_uid: i
     """The anchor com.apple/kaptyorka (06 wall 3, option B; the kit's phase D): a second layer
     under Seatbelt. pf matches users only for TCP and UDP, and its block rules also catch loopback
     (measured), so each user's loopback way is passed first. boxes: {box uid: forwarder port};
-    opencode: {box uid: its OpenCode port}: the box's own client and server pass, then every
-    other packet to that port, and every other owner's answer from it, is dropped (another user
-    of this Mac must not reach the box's OpenCode, nor pose as it by taking the port first)."""
+    opencode: {box uid: its OpenCode port}: the box's own client and server pass on lo0 to and
+    from 127.0.0.1, then every other packet to that port, and every other owner's answer from it,
+    is dropped (another user of this Mac must not reach the box's OpenCode, nor pose as it by
+    taking the port first). pf is the address wall there: Seatbelt's local filter names only "*"
+    or "localhost", and its "localhost" lets the box bind 0.0.0.0 too (measured on macOS 15.8
+    and 26.7). So pf drops whatever comes in on any interface but lo0 to that port, for every
+    user, and to any socket of a box user (pf.conf(5): for an incoming connection, user is the
+    one listening)."""
     ip = ipaddress.ip_address(hub_ip)
     if not 0 < int(hub_port) < 65536:
         raise Refuse("bad hub port")
@@ -325,14 +333,18 @@ def pf_rules(boxes: Dict[int, int], relay_uid: int, proxy_uid: int, tools_uid: i
     if any(u not in boxes or not 1024 < int(p) < 65536 or int(p) in ports for u, p in opencode.items()):
         raise Refuse("bad OpenCode port for pf")
     out = ["# kaptyorka (secure design v2, 10.1): written by root; TEST VERSION"]
+    for uid in sorted(boxes):
+        out.append(f"block drop in quick on ! lo0 proto {{ tcp udp }} all user {uid}")
+    for oc in sorted(int(p) for p in opencode.values()):
+        out.append(f"block drop in quick on ! lo0 proto {{ tcp udp }} from any to any port {oc}")
     for uid, port in sorted(boxes.items()):
         out.append(f"pass out quick on lo0 proto tcp from any to 127.0.0.1 port {int(port)} user {uid}")
         if uid in opencode:
             oc = int(opencode[uid])
             out += [f"pass out quick on lo0 proto tcp from any to 127.0.0.1 port {oc} user {uid}",
                     f"pass out quick on lo0 proto tcp from 127.0.0.1 port {oc} to 127.0.0.1 user {uid}",
-                    f"block drop out quick proto {{ tcp udp }} from any to {{ 127.0.0.1 ::1 }} port {oc}",
-                    f"block drop out quick proto {{ tcp udp }} from {{ 127.0.0.1 ::1 }} port {oc} to any"]
+                    f"block drop out quick proto {{ tcp udp }} from any to any port {oc}",
+                    f"block drop out quick proto {{ tcp udp }} from any port {oc} to any"]
         out.append(f"block drop out quick proto {{ tcp udp }} all user {uid}")
     out += [f"pass out quick proto tcp from any to {ip} port {int(hub_port)} user {relay_uid}",
             f"block drop out quick proto {{ tcp udp }} all user {relay_uid}"]
@@ -737,6 +749,62 @@ def pf_problem() -> str:
     want = pf_expected_uids(kr.read_text(PF_FILE).replace("user ", "user = "))
     if not want or pf_expected_uids(loaded) != want:
         return f"pf's anchor {ANCHOR} does not hold kaptyorka's rules"
+    return pf_opencode_problem(loaded, [opencode_port(b) for b in boxes() if opencode_port(b)])
+
+
+def pf_opencode_problem(loaded: str, ports: List[int]) -> str:
+    """'' when pfctl's listing of the anchor holds, for each OpenCode port, the drop of what comes
+    in from outside lo0 and of every other user's packet to it (pfctl prints 'port = N', or the
+    port's name when /etc/services has one)."""
+    for oc in ports:
+        names = [str(int(oc))]
+        try:
+            names.append(re.escape(socket.getservbyport(int(oc), "tcp")))
+        except OSError:
+            pass
+        port = "port = (?:" + "|".join(names) + ")"
+        for what, rx in (("from outside lo0", rf"block drop in quick on ! lo0 proto tcp from any to any {port}"),
+                         ("from other users", rf"block drop out quick proto tcp from any to any {port}")):
+            if not re.search(rf"^{rx}(?![\w-])", loaded, re.M):
+                return f"pf's anchor {ANCHOR} does not drop what comes to the OpenCode port {oc} {what}"
+    return ""
+
+
+def opencode_reach_problem(box: str, addrs: List[str], timeout: float = 0.4) -> str:
+    """The pf wall around the box's OpenCode port, tried for real as root (a user other than the
+    box): a connection to it on 127.0.0.1, ::1 and this Mac's own addresses must get no answer
+    at all. A connection that is accepted, or refused by a closed port, means pf let the packet
+    through. Traffic to the Mac's own addresses stays on lo0, so the drop of what comes in from
+    other interfaces cannot be tried from here: pf_opencode_problem checks that rule is loaded."""
+    oc = opencode_port(box)
+    if not oc:
+        return ""
+    socks = {}
+    try:
+        for a in ["127.0.0.1", "::1", *addrs]:
+            fam = socket.AF_INET6 if ":" in a else socket.AF_INET
+            try:
+                s = socket.socket(fam, socket.SOCK_STREAM)
+            except OSError:
+                continue
+            s.setblocking(False)
+            e = s.connect_ex((a, oc))
+            if e in (0, errno.ECONNREFUSED):
+                return f"pf lets other users reach the box's OpenCode port at {a}:{oc}"
+            socks[s] = a
+        end = time.monotonic() + timeout
+        while socks and time.monotonic() < end:
+            _, done, _ = select.select([], list(socks), [], max(0.0, end - time.monotonic()))
+            for s in done:
+                e = s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                if e in (0, errno.ECONNREFUSED):
+                    return f"pf lets other users reach the box's OpenCode port at {socks[s]}:{oc}"
+                socks.pop(s).close()   # no route, unreachable: no answer from the port
+            if not done:
+                break
+    finally:
+        for s in socks:
+            s.close()
     return ""
 
 
@@ -978,7 +1046,7 @@ def outside_check(person: str, box: str) -> List[str]:
         folders = {}
         bad.append(f"folders.json: {e}")
     bad += team_problems(person, box, folders)
-    p = pf_problem()
+    p = pf_problem() or opencode_reach_problem(box, host_addrs())
     if p:
         bad.append(p)
     bad += daemon_problems(box)

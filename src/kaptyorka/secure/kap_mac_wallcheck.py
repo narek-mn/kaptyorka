@@ -401,15 +401,17 @@ def main(argv) -> None:
             os.close(fd)
     except OSError:
         pass
-    # M15 the box's one OpenCode port: it may listen there on loopback, nowhere else (another user is
-    # kept off that port by pf; tests/mac-box/run.sh tries it from outside)
+    # M15 the box's one OpenCode port, Seatbelt's half: it may listen on 127.0.0.1 there and on no
+    # other port. Which address it binds is not Seatbelt's to decide: its "localhost" also lets
+    # 0.0.0.0 through (measured), so pf is the wall there. Root's outside check tries that port as
+    # another user before every start and checks pf's drop of what comes in off lo0;
+    # tests/mac-box/run.sh tries it from outside too. Every miss is named in one line.
     oc = int(o["opencode-port"])
     if oc:
-        for host, port, ok in (("127.0.0.1", oc, True), ("0.0.0.0", oc, False), ("127.0.0.1", oc + 1, False),
-                               ("127.0.0.1", 0, False)):
-            why = bind_problem(host, port, ok)
-            if why:
-                fail("M15", why)
+        seen = [why for why in (bind_problem(h, p, ok) for h, p, ok in (
+            ("127.0.0.1", oc, True), ("127.0.0.1", oc + 1, False), ("127.0.0.1", 0, False))) if why]
+        if seen:
+            fail("M15", "; ".join(seen))
     if o["verbose"]:
         print(f"wallcheck ok: 15 walls in {(time.monotonic() - t0) * 1000:.0f} ms", file=sys.stderr, flush=True)
     os.execv(cmd[0], cmd)
