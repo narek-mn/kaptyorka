@@ -459,12 +459,21 @@ def ask_claude_token(person: str, v: dict) -> None:
 
 
 def home_700(person: str) -> None:
+    """Closes the person's home to kaptyorka's accounts. macOS's own 750 with group staff stays
+    (km.home_mode_problems: none of kaptyorka's accounts is in staff, wheel or admin, and the self-
+    check makes sure); rights for others or any other group make it 700; ACL entries that allow
+    something are taken off (macOS puts only a deny entry there)."""
     home = km.person_home(person).pw_dir
-    m = os.stat(home).st_mode & 0o777
-    if m not in (0o700, 0o750):
+    st = os.stat(home)
+    m = st.st_mode & 0o777
+    if m & 0o007 or (m & 0o070 and st.st_gid not in km.PRIVILEGED):
         os.chmod(home, 0o700)
-        say(f"Your home folder {home} was open to the other users of this Mac (mode {m:o}, the macOS default);",
+        say(f"Your home folder {home} was open to more than you and this Mac's own people (mode {m:o});",
             "it is now 700, so the box and other users cannot look inside. It stays so after a remove.")
+    allows = km.acl_allows(km.run(["/bin/ls", "-lde", home], check=False, timeout=10).stdout)
+    for i, entry in sorted(allows, reverse=True):
+        km.run(["/bin/chmod", "-a#", str(i), home])
+        say(f"An ACL entry on your home folder let others in ({entry}); it was taken off. It stays so after a remove.")
 
 
 def install(a) -> int:
@@ -668,7 +677,7 @@ def remove(a) -> int:
         "Open a new terminal: then claude, codex, opencode and cursor-agent are your own again everywhere.",
         *([] if delete_home else ["The box homes and the team memory were kept. To delete them:",
                                   f"  sudo rm -rf {kc.TEAM} {km.TEAMAREA}"]),
-        "Your home folder stays at mode 700 (the safer setting); chmod 755 ~ gives the old one back.",
+        "Your home folder keeps its mode (700 if the install closed it); macOS's own is 750: chmod 750 ~ gives it back.",
         "Last, end what the box used:",
         "  - the box's Codex and Cursor sign-ins: on each vendor's account page",
         "  - the box's SSH key: in your git account",

@@ -26,6 +26,7 @@ jobs:
           curl -fsSL --proto '=https' -o "$RUNNER_TEMP/python.pkg" https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg
           sudo installer -pkg "$RUNNER_TEMP/python.pkg" -target /
       - name: Install the box, attack it, break it, remove it
+        timeout-minutes: 40   # every step in run.sh has its own limit; this leaves the results time to upload
         run: sudo env CI=true KAP_PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 tests/mac-box/run.sh
       - if: always()
         uses: actions/upload-artifact@v7

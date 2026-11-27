@@ -4,7 +4,7 @@ CI results in mac-kit/ci-results). TEST VERSION: not proven yet.
 macOS has no systemd, no namespaces and no per-mount flags. The same picture is built from:
   - a hidden second user kap-<person> (dscl), its own group, not staff, no password, and a share
     group kapshare-<person> of exactly the person and the box;
-  - the person's home at mode 700 (macOS makes it 755), checked at every start;
+  - the person's home closed to kaptyorka's accounts (macOS's 750, group staff, or 700), checked at every start;
   - `enter` (root, through the person's sudo rule), which checks every wall from outside, then
     starts the tool as the box user, on a pseudo-terminal of its own, inside a Seatbelt profile
     (sandbox-exec): files, network, processes, the clipboard. The kit measured that the profile is
@@ -935,6 +935,55 @@ def privileged_groups(user: str, gid: int) -> List[str]:
     return [PRIVILEGED[g] for g in sorted(have & set(PRIVILEGED))]
 
 
+def acl_allows(ls_out: str) -> List[Tuple[int, str]]:
+    """The ACL entries of `ls -lde` that allow something: (index, entry)."""
+    out = []
+    for line in ls_out.splitlines():
+        m = re.match(r"\s*(\d+): (.+)$", line)
+        if m and " allow " in f" {m.group(2)} ":
+            out.append((int(m.group(1)), m.group(2).strip()))
+    return out
+
+
+def home_mode_problems(person: str, mode: int, gid: int, group: str, groups_of: Dict[str, set],
+                       ls_out: str) -> List[str]:
+    """Whether any of kaptyorka's accounts (groups_of: account -> the group ids it is in) can enter
+    the person's home. macOS makes a home 750, group staff, with the ACL entry "group:everyone deny
+    delete" (measured on the GitHub macOS 15 and 26 runners). Every person of this Mac is in staff,
+    none of kaptyorka's accounts is (account_problems), so 750 stays: the group bits let in only
+    the Mac's own people, which is macOS's choice, not a box wall. Rights for others, a group one
+    of kaptyorka's accounts is in, or an ACL entry that allows anything is a problem."""
+    bad, fix = [], f"chmod 700 /Users/{person}"
+    if mode & 0o007:
+        bad.append(f"{person}'s home has mode {mode:o}; it must be 700 ({fix})")
+    elif mode & 0o070:
+        inside = sorted(a for a, gs in groups_of.items() if gid in gs)
+        if inside:
+            bad.append(f"{person}'s home has mode {mode:o} and its group {group} holds {', '.join(inside)}; "
+                       f"it must be 700 ({fix})")
+    for i, entry in acl_allows(ls_out):
+        bad.append(f"{person}'s home has an ACL entry that lets others in ({entry}); remove it: "
+                   f"chmod -a# {i} /Users/{person}")
+    return bad
+
+
+def home_problems(person: str, box: str) -> List[str]:
+    home = person_home(person).pw_dir
+    st = os.stat(home)
+    groups_of = {}
+    for a in (kc.box_user(box), *SERVICE_USERS, "nobody"):
+        try:
+            groups_of[a] = set(os.getgrouplist(a, pwd.getpwnam(a).pw_gid))
+        except (KeyError, OSError):
+            continue
+    try:
+        group = grp.getgrgid(st.st_gid).gr_name
+    except KeyError:
+        group = str(st.st_gid)
+    ls_out = run(["/bin/ls", "-lde", home], check=False, timeout=10).stdout
+    return home_mode_problems(person, st.st_mode & 0o777, st.st_gid, group, groups_of, ls_out)
+
+
 def account_problems(person: str, box: str) -> List[str]:
     bad = []
     u, g = kc.box_user(box), kc.share_group(box)
@@ -1027,9 +1076,7 @@ def outside_check(person: str, box: str) -> List[str]:
     canaries(person, bad)
     bad += canary_alive_problems()
     try:
-        m = os.stat(person_home(person).pw_dir).st_mode & 0o777
-        if m not in (0o700, 0o750):
-            bad.append(f"{person}'s home has mode {m:o}; it must be 700 (chmod 700 /Users/{person})")
+        bad += home_problems(person, box)
     except (Refuse, KeyError, OSError) as e:
         bad.append(str(e))
     bad += account_problems(person, box)

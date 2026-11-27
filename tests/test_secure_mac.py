@@ -760,3 +760,70 @@ def test_mac_ci_script_skips_after_a_failed_install_and_tries_the_opencode_port(
         assert f"check {row} " in run, row
     for row in ("OC-PERSON-BLOCKED", "OC-OTHER-USER-BLOCKED", "OC-ROOT-BLOCKED", "OC-LAN-ADDR-BLOCKED"):
         assert f"oc_blocked {row} " in run, row   # counted only while the box's listener is up
+
+
+MAC_HOME_LS = ("drwxr-x---+ 15 alice  staff  480 Nov 27 10:53 /Users/alice\n"
+               " 0: group:everyone deny delete\n")
+
+
+def test_home_750_with_staff_is_closed_to_the_box_but_not_its_group_or_an_allow_acl():
+    # macOS's own home (CI run 5, macOS 15 and 26): 750, group staff, a deny-only ACL; none of
+    # kaptyorka's accounts is in staff, so nothing to do
+    ours = {"kap-alice": {404, 12, 61, 405}, "_kaptyorka": {401}, "nobody": {4294967294}}
+    assert km.home_mode_problems("alice", 0o750, 20, "staff", ours, MAC_HOME_LS) == []
+    assert km.home_mode_problems("alice", 0o700, 405, "kapshare-alice", ours, "") == []
+    bad = km.home_mode_problems("alice", 0o755, 20, "staff", ours, MAC_HOME_LS)
+    assert bad == ["alice's home has mode 755; it must be 700 (chmod 700 /Users/alice)"]
+    bad = km.home_mode_problems("alice", 0o750, 405, "kapshare-alice", ours, "")
+    assert bad and "its group kapshare-alice holds kap-alice" in bad[0] and "chmod 700 /Users/alice" in bad[0]
+    bad = km.home_mode_problems("alice", 0o700, 20, "staff", ours, MAC_HOME_LS + " 1: user:kap-alice allow list,search\n")
+    assert bad == ["alice's home has an ACL entry that lets others in (user:kap-alice allow list,search); "
+                   "remove it: chmod -a# 1 /Users/alice"]
+    assert km.acl_allows(MAC_HOME_LS) == []
+
+
+def test_installer_keeps_the_mac_s_750_home_and_closes_anything_wider(monkeypatch, tmp_path):
+    import types
+    home = tmp_path / "alice"
+    home.mkdir()
+    monkeypatch.setattr(km, "person_home", lambda p: types.SimpleNamespace(pw_dir=str(home)))
+    calls, said = [], []
+    acl = {"out": ""}
+    monkeypatch.setattr(km, "run", lambda cmd, **kw: calls.append(cmd) or types.SimpleNamespace(stdout=acl["out"]))
+    monkeypatch.setattr(ms, "say", lambda *a: said.append(" ".join(a)))
+    monkeypatch.setattr(km, "PRIVILEGED", {**km.PRIVILEGED, os.stat(home).st_gid: "staff"})
+    os.chmod(home, 0o750)
+    ms.home_700("alice")
+    assert os.stat(home).st_mode & 0o777 == 0o750 and not said
+    os.chmod(home, 0o755)
+    ms.home_700("alice")
+    assert os.stat(home).st_mode & 0o777 == 0o700 and "now 700" in said[-1]
+    monkeypatch.setattr(km, "PRIVILEGED", {})       # a group that is not staff, wheel or admin: closed
+    os.chmod(home, 0o750)
+    ms.home_700("alice")
+    assert os.stat(home).st_mode & 0o777 == 0o700
+    acl["out"] = MAC_HOME_LS + " 1: group:everyone allow list\n 2: user:bob allow read\n"
+    ms.home_700("alice")
+    assert [c for c in calls if c[0] == "/bin/chmod"] == [["/bin/chmod", "-a#", "2", str(home)],
+                                                          ["/bin/chmod", "-a#", "1", str(home)]]
+
+
+def test_mac_ci_script_limits_every_step_and_every_attack():
+    run = open(os.path.join(ROOT, "tests", "mac-box", "run.sh")).read()
+    fake = open(os.path.join(ROOT, "tests", "mac-box", "fake-claude.sh")).read()
+    # nothing a box process could hold open: no command substitution reads a person's command or
+    # sudo through a pipe (the box runs in a session of its own; CI run 5 hung 40 minutes so)
+    assert "tmo \"${2:-120}\" sudo" not in run and 'o=$(tmo' not in run and "| tmo" not in run.replace("| tmo 30", "")
+    assert 'as_person_to "$f"' in run and '>"$1" 2>&1; rc=$?' in run and "reap_box" in run
+    assert "watchdog.pl" in run and 'kill "$WD"' in run and "grep -c 'FAIL$' \"$TO\"" in run
+    # every as_person, root command with a pipe and the install and remove is inside a named step
+    body = run[run.index('echo "== facts"'):]
+    steps = re.findall(r"^\s*step (\S+) (\d+)$", body, re.M)
+    assert len(steps) >= 20 and all(int(s) <= 960 for _, s in steps)
+    assert body.index("step attacks") < body.index("claude attacks")
+    # every attack probe has its own limit, and a timed-out probe is a FAIL, never a PASS
+    for line in fake[fake.index("attacks)"):fake.index("oc-listen)")].splitlines():
+        if re.match(r"\s*(res [A-Z]|echo \"RESULT [A-Z])", line) and "$(" in line and "OC-PORT-NAMED" not in line:
+            assert "$(lim " in line, line
+    assert "*KAPCI-PROBE-TIMEOUT*)" in fake and "FAIL timed out" in fake
+    assert 'Timeout=>6' in fake and "accept or do" in fake    # OC-SELF never waits forever on accept
