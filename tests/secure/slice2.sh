@@ -20,7 +20,7 @@
 # No strace. No host folder is mounted. Nothing here runs as root on the host.
 set -u
 C=${C:-kaptest-s2}
-ALL_PHASES="setup half0 install launch half walls1 walls2 tools-claude tools-codex b17 tools-opencode tools-cursor-agent token egress git hubchat r4 wallcheck remove"
+ALL_PHASES="setup half0 install launch half walls1 walls2 tools-claude tools-codex b17 tools-opencode tools-cursor-agent toolupdate token egress git hubchat r4 wallcheck remove"
 # tools-* and token use the four real tools, downloaded into the container once (unit "toolsdl"); TOOLS=0 skips them.
 
 if [ "${1:-}" != "--inner" ]; then
@@ -70,7 +70,10 @@ if [ "${1:-}" != "--inner" ]; then
     echo "== packages (unit, max 300 s)"; long_unit apt 300 /bin/bash /root/slice2.sh --inner apt
     if [ "${TOOLS:-1}" != 0 ]; then echo "== the four real tools (unit, max 600 s)"; long_unit toolsdl 600 /bin/bash /root/slice2.sh --inner toolsdl; fi
   fi
-  for p in ${PHASES:-$ALL_PHASES}; do echo "== phase $p"; phase "$p"; done
+  for p in ${PHASES:-$ALL_PHASES}; do echo "== phase $p"
+    # toolupdate downloads the real claude (WP2): a long unit of its own, not an 80 s phase unit
+    if [ "$p" = toolupdate ]; then [ "${TOOLS:-1}" != 0 ] && long_unit toolupdate 700 /bin/bash /root/slice2.sh --inner toolupdate; else phase "$p"; fi
+  done
   timeout -k 5 90 docker cp "$C":/root/results.tsv "$HERE/slice2-results.tsv" >/dev/null
   X bash -c 'cut -f2 /root/results.tsv | sort | uniq -c'
   X bash -c 'grep -P "\tFAIL\t" /root/results.tsv | cut -f1,5 | cut -c1-300'
@@ -532,6 +535,39 @@ tools-*)
   last=$(tail -1 "$RES" | cut -f5); [[ $last =~ (Unexpected (server )?error|Failed to initialize|could not start|Error: failed|ENOENT.*/proc|EACCES.*/proc) ]] && rec "P-17 $tl first screen: an error" FAIL "no error on the screen" "-" "$last"
   systemctl kill --signal=KILL 'kapbox-alice-chat-*' 2>/dev/null; sleep 1
   rm -f /opt/kap-tools/bin/$tl; cp -a /root/stubs/$tl /opt/kap-tools/bin/$tl
+  ;;
+
+toolupdate)
+  # The daily tool update on the real path (WP2): the timer's own service runs kap_tools.py auto-update as root. The box's
+  # claude is recorded as 0.0.1 (the stub); the vendor's real claude is newer. While a chat of claude runs it must be
+  # checked in the box and left pending, not switched to; nothing is downloaded again; once the chat ends the next run
+  # switches (no download), keeps 0.0.1 as "previous", and `claude --version` in the box says the new version.
+  KT=/opt/kap-tools; REC=/etc/kaptyorka/tools.json; UPD="timeout -k 5 450 systemctl start kaptyorka-tools-update.service"
+  rm -rf /root/tu; mkdir -p /root/tu; cp -a $KT/bin/claude /root/tu/bin-claude
+  cp -a /etc/kaptyorka/box.conf /root/tu/box.conf; printf 'runtime_max=1h\n' > /etc/kaptyorka/box.conf   # the chat must outlive the download
+  mkdir -p $KT/claude/0.0.1; cp -L $KT/bin/claude $KT/claude/0.0.1/claude; chmod 711 $KT/claude/0.0.1/claude
+  SHA=$(sha256sum $KT/claude/0.0.1/claude | cut -d' ' -f1); ln -sfn ../claude/0.0.1/claude $KT/bin/claude
+  printf '{"claude": {"version": "0.0.1", "program": "claude/0.0.1/claude", "sha256": "%s", "from": "x", "installed": "x"}}\n' "$SHA" > $REC
+  t "TU-0 the timer is enabled and active; the service and timer pass systemd-analyze verify" "enabled active, no complaint" 're:^rc=0 enabled active OnCalendar=daily$' \
+    "echo -n \"\$(systemctl is-enabled kaptyorka-tools-update.timer) \$(systemctl is-active kaptyorka-tools-update.timer) \"; systemd-analyze verify /etc/systemd/system/kaptyorka-tools-update.service /etc/systemd/system/kaptyorka-tools-update.timer 2>&1 | head -3; grep -h OnCalendar /etc/systemd/system/kaptyorka-tools-update.timer"
+  ( inb 'sleep 400' >/dev/null 2>&1 & )
+  wait_for 40 "systemctl list-units --no-legend 'kapbox-alice-chat-claude-*' | grep -q ' active '" || rec "TU-1" FAIL "a claude chat runs" "-" "no chat started"
+  TL=470 t "TU-1 a newer claude is downloaded and starts in the box, but a chat of claude runs: it stays pending, the link does not move" "pending, link unchanged" \
+    're:^rc=0 link=\.\./claude/0\.0\.1/claude pending=[0-9]+\.[0-9]+\.[0-9]+ rc=0' \
+    "$UPD; echo rc=\$?; echo -n \"link=\$(readlink $KT/bin/claude) pending=\$(python3 -c 'import json;print(json.load(open(\"$REC\"))[\"claude\"][\"pending\"][\"version\"])') rc=0\" "
+  PEND=$(python3 -c "import json;print(json.load(open('$REC'))['claude']['pending']['version'])" 2>/dev/null)
+  TL=470 t "TU-2 the chat still runs: the next run does not download again (no vendor installer unit), still pending" "no new install unit" \
+    're:^rc=0 installs=0 link=\.\./claude/0\.0\.1/claude$' \
+    "T0=\$(date +%s); $UPD; echo -n \"installs=\$(journalctl --no-pager -q --since @\$T0 -o cat | grep -c 'kaptyorka-tool-install') link=\$(readlink $KT/bin/claude)\""
+  systemctl kill --signal=KILL 'kapbox-alice-chat-*' 2>/dev/null; sleep 2
+  TL=470 t "TU-3 the chat ended: the next run switches without downloading, keeps 0.0.1 as previous, drops pending" "switched" \
+    "re:^rc=0 installs=0 link=\.\./claude/$PEND/ rec=$PEND/0\.0\.1/none" \
+    "T0=\$(date +%s); $UPD; echo -n \"installs=\$(journalctl --no-pager -q --since @\$T0 -o cat | grep -c 'kaptyorka-tool-install') link=\$(readlink $KT/bin/claude) rec=\$(python3 -c 'import json;r=json.load(open(\"$REC\"))[\"claude\"];print(r[\"version\"]+\"/\"+r[\"previous\"]+\"/\"+(\"pending\" if \"pending\" in r else \"none\"))')\""
+  TL=60 t "TU-4 the new claude in the box says its version; the old copy is kept; claude is execute-only" "version, 0.0.1 kept, 711" "re:^rc=0 $PEND .*kept=yes mode=711" \
+    "asali 'cd ~/team/proj-a && claude --version 2>&1 | head -1'; echo -n \" kept=\$([ -f $KT/claude/0.0.1/claude ] && echo yes || echo no) mode=\$(stat -c %a \$(readlink -f $KT/bin/claude))\""
+  TL=470 t "TU-5 a run with nothing newer changes nothing" "same link" "re:^rc=0 link=\.\./claude/$PEND/" \
+    "$UPD; echo -n \"link=\$(readlink $KT/bin/claude)\""
+  rm -f $KT/bin/claude $REC; cp -a /root/tu/bin-claude $KT/bin/claude; cp -a /root/tu/box.conf /etc/kaptyorka/box.conf; rm -rf $KT/claude /root/tu
   ;;
 
 b17)
