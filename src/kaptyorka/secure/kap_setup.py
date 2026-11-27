@@ -93,7 +93,8 @@ PROGRAMS = (  # (source in this folder, name in /usr/local/libexec/kaptyorka, mo
 )
 OUR_UNITS = ("kapbox-base@.service", "kaptyorka-egress@.socket", "kaptyorka-egress@.service",
              "kaptyorka-canary.service", "kaptyorka-relay.service", "kaptyorka-relay-box@.socket",
-             "kaptyorka-addrwatch.service", "kaptyorka-guard.service")
+             "kaptyorka-addrwatch.service", "kaptyorka-guard.service", "kaptyorka-tools-update.service",
+             "kaptyorka-tools-update.timer")
 
 
 def version() -> str:
@@ -302,6 +303,7 @@ def install_units() -> None:
     kr.run(["systemd-tmpfiles", "--create", "/etc/tmpfiles.d/kaptyorka.conf"], check=False)
     kr.systemctl("enable", "--now", "kaptyorka-canary.service")
     kr.systemctl("enable", "kaptyorka-addrwatch.service", "kaptyorka-guard.service")
+    kr.systemctl("enable", "--now", "kaptyorka-tools-update.timer", check=False)   # the daily tool update
     # a new release runs its new code
     kr.systemctl("restart", "kaptyorka-addrwatch.service", "kaptyorka-guard.service", check=False)
 
@@ -791,7 +793,7 @@ def update_tools(a, pos) -> int:
     specs = kap_tools.parse_specs(",".join(pos)) if pos else {t: "" for t in kap_tools.installed()}
     if not specs:
         raise Refuse("no AI tool is in the box yet: name the ones you want, such as  update-tools claude codex")
-    done, failed = kap_tools.install(specs, say)
+    done, failed = kap_tools.update(specs, say)
     claude_execute_only()
     say(*[f"{t}: now {ver}" for t, ver in done.items()], *[f"{t}: not changed ({e})" for t, e in failed.items()])
     return 1 if failed else 0
@@ -854,6 +856,7 @@ def remove(a) -> int:
         kr.systemctl("disable", "--now", "kaptyorka-canary.service", "kaptyorka-addrwatch.service",
                      "kaptyorka-guard.service", check=False)
         kr.systemctl("stop", "kaptyorka-relay.service", check=False)
+        kr.systemctl("disable", "--now", "kaptyorka-tools-update.timer", check=False)
         for n in OUR_UNITS:
             if os.path.lexists(f"{SYSTEMD}/{n}"):
                 os.unlink(f"{SYSTEMD}/{n}")
