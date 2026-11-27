@@ -628,3 +628,17 @@ def test_mac_tool_updates_go_the_mac_way(monkeypatch):
     assert kt.version_problem("2.1.400 (Claude Code)\n", "wallcheck ok: 15 walls\n", "2.1.400") == ""
     assert "not 2.1.400" in kt.version_problem("2.1.399\n", "", "2.1.400")
     assert MAC["kap_mac"].plist_path("tools-update").endswith("com.kaptyorka.tools-update.plist")
+
+
+def test_mac_ci_script_skips_after_a_failed_install_and_tries_the_opencode_port():
+    for f in ("run.sh", "fake-claude.sh"):
+        assert subprocess.run(["bash", "-n", os.path.join(ROOT, "tests", "mac-box", f)]).returncode == 0
+    run = open(os.path.join(ROOT, "tests", "mac-box", "run.sh")).read()
+    # one failed install: its output in full, every later row SKIP, the cleanup still checked
+    assert 'printf \'%s\\n\' "$o" >"$OUT/install.txt"' in run and 'SKIP="the install failed' in run
+    assert 'if [ -n "$SKIP" ] && [ "$r" != INFO ]; then r=SKIP' in run
+    assert run.index('SKIP=""   # the cleanup') < run.index("check REMOVE")
+    for row in ("OC-LISTENS", "OC-REAL-INSTALL", "OC-REAL-WINDOW"):
+        assert f"check {row} " in run, row
+    for row in ("OC-PERSON-BLOCKED", "OC-OTHER-USER-BLOCKED", "OC-ROOT-BLOCKED", "OC-LAN-ADDR-BLOCKED"):
+        assert f"oc_blocked {row} " in run, row   # counted only while the box's listener is up

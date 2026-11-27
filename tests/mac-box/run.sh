@@ -26,16 +26,18 @@ B=kap-$P
 rm -rf "$OUT"; mkdir -p "$OUT"
 RES=$OUT/results.tsv; LOG=$OUT/log.txt
 : >"$RES"; : >"$LOG"; printf 'id\texpected\tactual\tresult\n' >>"$RES"
-NP=0; NF=0
+NP=0; NF=0; NS=0
+SKIP=""   # set when the install failed: every later row is SKIP (it could not mean anything), not FAIL
 FP=$(printf 'ab%.0s' $(seq 1 32))
 
 tmo() { perl -e 'my $s=shift; my $p=fork(); if(!$p){ setpgrp(0,0); exec @ARGV; exit 127 }
   $SIG{ALRM}=sub{ kill "KILL", -$p; kill "KILL", $p; exit 124 }; alarm $s; waitpid($p,0); exit($?>>8)' "$@"; }
 rec() { # id expected actual PASS|FAIL|INFO
-  local a; a=$(printf '%s' "$3" | tr '\t\r\n' '   ' | tr -s ' ' | cut -c1-300)
-  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$a" "$4" >>"$RES"
-  case $4 in PASS) NP=$((NP+1));; FAIL) NF=$((NF+1));; esac
-  printf '  %-5s %s\n' "$4" "$1"
+  local a r=$4; a=$(printf '%s' "$3" | tr '\t\r\n' '   ' | tr -s ' ' | cut -c1-300)
+  if [ -n "$SKIP" ] && [ "$r" != INFO ]; then r=SKIP; a="skipped: $SKIP"; fi
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$a" "$r" >>"$RES"
+  case $r in PASS) NP=$((NP+1));; FAIL) NF=$((NF+1));; SKIP) NS=$((NS+1));; esac
+  printf '  %-5s %s\n' "$r" "$1"
 }
 check() { # id expected cond(0/1) actual
   if [ "$3" = 0 ]; then rec "$1" "$2" "$4" PASS; else rec "$1" "$2" "$4" FAIL; fi
@@ -107,10 +109,18 @@ o=$(tmo 900 "$PY" -I "$OUT/kaptyorka-secure-setup.pyz" install --personal --pers
       --hub-ip 127.0.0.1 --hub-port 9 --hub-sha256 "$FP" --device-token-file "$OUT/secrets/device" \
       --claude-token-file "$OUT/secrets/claude" --tools none --tools-from "$OUT/tools" --python "$PY" 2>&1); rc=$?
 log install "$o"
-check INSTALL "exit 0" "$([ $rc = 0 ] && echo 0 || echo 1)" "rc=$rc $(printf '%s' "$o" | tail -5)"
+printf '%s\n' "$o" >"$OUT/install.txt"
+check INSTALL "exit 0" "$([ $rc = 0 ] && echo 0 || echo 1)" "rc=$rc $(printf '%s' "$o" | grep -i 'kaptyorka-secure-setup:\|problem\|error' | head -5) $(printf '%s' "$o" | tail -3)"
 check INSTALL-SAYS-TEST-VERSION "TEST VERSION printed" "$(has "$o" "TEST VERSION" && echo 0 || echo 1)" "-"
 check INSTALL-SELF-CHECK "first-start canary self-check passed" "$(has "$o" "Self-check: all walls in place" && echo 0 || echo 1)" \
   "$(printf '%s' "$o" | grep -i -A12 'self-check' | head -14)"
+if [ $rc != 0 ]; then
+  echo ""
+  echo "=================== THE INSTALL FAILED (exit $rc). Its whole output (also out/install.txt):"
+  printf '%s\n' "$o"
+  echo "=================== everything after the install is SKIP; only the cleanup (REMOVE) still runs"
+  SKIP="the install failed (exit $rc): see INSTALL and out/install.txt"
+fi
 check HOME-700 "home 700 after install" "$([ "$(stat -f %Lp "$PH")" = 700 ] && echo 0 || echo 1)" "$(stat -f %Lp "$PH")"
 # the fake claude is a script: the installer makes claude execute-only (a binary's guard on Linux); a script
 # must also be readable to run
@@ -118,7 +128,7 @@ chmod 755 "$("$PY" -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' 
 ls -laR /opt/kap-tools >>"$LOG" 2>&1
 dscl . -read "/Users/$B" >>"$LOG" 2>&1
 pfctl -a com.apple/kaptyorka -s rules >>"$LOG" 2>&1
-for l in pf canary relay update "egress.$P"; do launchctl print "system/com.kaptyorka.$l" 2>&1 | grep -E 'state|pid' | head -2 >>"$LOG"; done
+for l in pf canary relay update tools-update "egress.$P"; do launchctl print "system/com.kaptyorka.$l" 2>&1 | grep -E 'state|pid' | head -2 >>"$LOG"; done
 check BOX-USER-HIDDEN "IsHidden 1" "$(dscl . -read "/Users/$B" IsHidden 2>&1 | grep -q 1 && echo 0 || echo 1)" "-"
 check BOX-NOT-ADMIN "not in admin or staff" "$(id -Gn "$B" | tr ' ' '\n' | grep -Eqx 'admin|staff|wheel' && echo 1 || echo 0)" "$(id -Gn "$B")"
 check PF-ENABLED "pf on with the anchor" "$(pfctl -s info 2>/dev/null | grep -q 'Status: Enabled' && pfctl -a com.apple/kaptyorka -s rules 2>/dev/null | grep -q user && echo 0 || echo 1)" "-"
@@ -150,6 +160,33 @@ n_fail=$(printf '%s\n' "$o" | grep -c '^RESULT .* FAIL')
 n_pass=$(printf '%s\n' "$o" | grep -c '^RESULT .* PASS')
 NP=$((NP+n_pass)); NF=$((NF+n_fail))
 printf '  inside: %s passed, %s failed\n' "$n_pass" "$n_fail"
+if [ -n "$SKIP" ]; then NP=$((NP-n_pass)); NF=$((NF-n_fail)); fi
+
+echo "== the box's OpenCode port, from outside: nobody but the box reaches it"
+Q=$(cat "/etc/kaptyorka/boxes/$P/opencode-port" 2>/dev/null)
+rec META-OC-PORT "recorded" "${Q:-none}" INFO
+( as_person "cd ~/workspace/proj-a && claude oc-listen" 90 >"$OUT/oc-listen.txt" 2>&1 ) &
+OCJOB=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q OC-LISTENING "$OUT/oc-listen.txt" 2>/dev/null && break; sleep 1; done
+check OC-LISTENS "the box listens on its OpenCode port (positive control)" \
+  "$(grep -q OC-LISTENING "$OUT/oc-listen.txt" 2>/dev/null && echo 0 || echo 1)" "$(head -c 300 "$OUT/oc-listen.txt" 2>/dev/null)"
+OCUP=$(grep -q OC-LISTENING "$OUT/oc-listen.txt" 2>/dev/null && echo 1 || echo 0)
+oc_blocked() { # id expected output: a pass means something only while the box's listener is up
+  if [ "$OCUP" = 1 ]; then check "$1" "$2" "$(has "$3" KAPCI-OC-BOX && echo 1 || echo 0)" "$3"
+  else rec "$1" "$2" "not tried: the box's listener did not start. $3" INFO; fi
+}
+probe() { /usr/bin/perl -MIO::Socket::INET -e 'my $c = IO::Socket::INET->new(PeerAddr=>"127.0.0.1", PeerPort=>$ARGV[0], Timeout=>4) or die "refused: $!\n"; $c->timeout(4); my $l = <$c>; print defined $l ? $l : "no answer\n"' "${Q:-1}" 2>&1; }
+o=$(sudo -n -u "$P" /usr/bin/perl -MIO::Socket::INET -e 'my $c = IO::Socket::INET->new(PeerAddr=>"127.0.0.1", PeerPort=>$ARGV[0], Timeout=>4) or die "refused: $!\n"; my $l = <$c>; print defined $l ? $l : "no answer\n"' "${Q:-1}" 2>&1)
+oc_blocked OC-PERSON-BLOCKED "the person cannot reach the box's OpenCode port" "$o"
+o=$(sudo -n -u nobody /usr/bin/perl -MIO::Socket::INET -e 'my $c = IO::Socket::INET->new(PeerAddr=>"127.0.0.1", PeerPort=>$ARGV[0], Timeout=>4) or die "refused: $!\n"; my $l = <$c>; print defined $l ? $l : "no answer\n"' "${Q:-1}" 2>&1)
+oc_blocked OC-OTHER-USER-BLOCKED "another user (nobody) cannot reach it" "$o"
+o=$(probe)
+oc_blocked OC-ROOT-BLOCKED "not even root's own connection gets through pf" "$o"
+IP=$(ipconfig getifaddr en0 2>/dev/null)
+o=$( [ -n "$IP" ] && sudo -n -u "$P" /usr/bin/perl -MIO::Socket::INET -e 'my $c = IO::Socket::INET->new(PeerAddr=>$ARGV[1], PeerPort=>$ARGV[0], Timeout=>4) or die "refused: $!\n"; my $l = <$c>; print defined $l ? $l : "no answer\n"' "${Q:-1}" "$IP" 2>&1)
+oc_blocked OC-LAN-ADDR-BLOCKED "nothing reaches it on this Mac's own address (${IP:-no en0})" "$o"
+wait "$OCJOB" 2>/dev/null
+log "oc-listen" "$(cat "$OUT/oc-listen.txt" 2>/dev/null)"
 o=$(as_person "cd ~/workspace/proj-a && echo new > new-by-person.txt && claude write && echo person >> ci-box-written.txt && echo PERSON-APPEND-OK && cat person-made.txt new-by-person.txt && ls -le new-by-person.txt")
 log "write both ways" "$o"
 check TEAM-BOTH-WRITE "the box and the person edit each other's files, also ones made later (inherited ACL)" \
@@ -207,11 +244,24 @@ pfctl -a com.apple/kaptyorka -F rules >>"$LOG" 2>&1
 o=$(as_person "cd ~/workspace/proj-a && claude hello")
 check PF-SELF-REPAIR "pf's anchor flushed: root loads it again before the check" \
   "$(has "$o" FAKE-CLAUDE-HELLO && pfctl -a com.apple/kaptyorka -s rules 2>/dev/null | grep -q user && echo 0 || echo 1)" "$(printf '%s' "$o" | head -3)"
-S=/var/lib/kap-team/$B/home/state/claude/settings.json
+S=/private/var/lib/kap-team/$B/home/state/claude/settings.json
 rm -f "$S"; printf '{"hooks": {}}' >"$S"; chown "$B" "$S"
 o=$(as_person "cd ~/workspace/proj-a && claude hello")
 check LOCKED-REPAIRED "a changed locked settings file is put back by root before the start" \
   "$(has "$o" FAKE-CLAUDE-HELLO && [ "$(stat -f %Su "$S")" = root ] && cmp -s "$S" /etc/kaptyorka/box/claude/user-settings.json && echo 0 || echo 1)" "$(stat -f '%Su %z' "$S")"
+
+echo "== the real OpenCode, from its vendor, in the box"
+o=$(as_person "hubchat update-tools opencode" 600); rc=$?
+log "update-tools opencode" "$o"
+check OC-REAL-INSTALL "hubchat update-tools opencode installs it from opencode.ai" "$([ $rc = 0 ] && echo 0 || echo 1)" "rc=$rc $(printf '%s' "$o" | tail -3)"
+o=$(as_person "cd ~/workspace/proj-a && opencode --version" 120); rc=$?
+log "opencode --version" "$o"
+check OC-REAL-VERSION "opencode --version runs in the box" "$([ $rc = 0 ] && printf '%s' "$o" | grep -Eq '[0-9]+[.][0-9]+' && echo 0 || echo 1)" "rc=$rc $o"
+o=$( { sleep 25; } | tmo 30 sudo -n -u "$P" -H /usr/bin/script -q /dev/null /bin/zsh -l -c "cd ~/workspace/proj-a && opencode" 2>&1 | tr -d '\r' | cat -v); rc=$?
+log "opencode window" "$(printf '%s' "$o" | tail -c 4000)"
+check OC-REAL-WINDOW "an OpenCode window starts in the box and stays up (no wall refusal, no bind error)" \
+  "$( ! has "$o" "wallcheck: wall" && ! has "$o" "Operation not permitted" && ! has "$o" "EPERM" && ! has "$o" "box-exec:" && ! has "$o" "enter:" && echo 0 || echo 1)" \
+  "rc=$rc $(printf '%s' "$o" | grep -a -i 'error\|wall\|denied\|permit\|enter:\|box-exec' | head -5)"
 
 echo "== hubchat remove, then the installer's remove"
 o=$(as_person "cd ~ && hubchat remove proj-a"); rc=$?
@@ -219,13 +269,16 @@ log "hubchat remove" "$o"
 check HUBCHAT-REMOVE "back as the person's own folder, no ACL, hooks moved aside" \
   "$([ $rc = 0 ] && [ -d "$PH/workspace/proj-a" ] && [ ! -L "$PH/workspace/proj-a" ] && [ "$(stat -f %Su "$PH/workspace/proj-a/ci-box-written.txt")" = "$P" ] && ! ls -le "$PH/workspace/proj-a" | grep -q kapshare && echo 0 || echo 1)" \
   "rc=$rc $(ls -lde "$PH/workspace/proj-a" 2>&1 | head -2)"
+SKIP=""   # the cleanup is checked even after a failed install: nothing may be left behind
 o=$(tmo 600 "$PY" -I /usr/local/libexec/kaptyorka/installer remove --yes --delete-box-home 2>&1); rc=$?
+[ -f /usr/local/libexec/kaptyorka/installer ] || { o="$o $(tmo 600 "$PY" -I "$OUT/kaptyorka-secure-setup.pyz" remove --yes --delete-box-home 2>&1)"; rc=$?; }
 log remove "$o"
 left=""
 dscl . -read "/Users/$B" >/dev/null 2>&1 && left="$left user"
 for u in _kaptyorka _kapproxy _kaptools; do dscl . -read "/Users/$u" >/dev/null 2>&1 && left="$left $u"; done
 for p in /etc/kaptyorka /opt/kaptyorka /opt/kap-tools /usr/local/libexec/kaptyorka "/etc/sudoers.d/kaptyorka-$P" \
-         /Library/LaunchDaemons/com.kaptyorka.relay.plist /usr/local/bin/hubchat; do [ -e "$p" ] && left="$left $p"; done
+         /Library/LaunchDaemons/com.kaptyorka.relay.plist /Library/LaunchDaemons/com.kaptyorka.tools-update.plist \
+         /usr/local/bin/hubchat; do [ -e "$p" ] && left="$left $p"; done
 pfctl -a com.apple/kaptyorka -s rules 2>/dev/null | grep -q . && left="$left pf-anchor"
 grep -q kaptyorka /etc/zshenv 2>/dev/null && left="$left zshenv"
 launchctl print system/com.kaptyorka.relay >/dev/null 2>&1 && left="$left relay-daemon"
@@ -236,5 +289,5 @@ pkill -u "$P" -f KAPCI- >/dev/null 2>&1; pkill -u "$P" ssh-agent >/dev/null 2>&1
 rm -f "$OUT/secrets/"*
 chmod -R a+rX "$OUT"
 echo ""
-echo "Results: $NP passed, $NF failed. $RES"
+echo "Results: $NP passed, $NF failed, $NS skipped. $RES"
 [ "$NF" = 0 ]
