@@ -170,10 +170,22 @@ If a team chat does not start and says a wall is missing, restart the computer a
 - What a team chat prints passes a small filter before it reaches your terminal: it drops clipboard codes, window titles, file-transfer and other terminal "strings", report questions that answer with text, and links whose text is not their address; colours, cursor moves and the tools' screens stay. It is not a wall against every terminal bug.
 - Updates trust the release key, not the hub, but a hacked hub can still hold updates back (it serves nothing, or the release you already have) and, at a first install, hand out an older signed installer. `hubchat list` shows when the last check was and what it found. A laptop checking for updates tells the hub it is on (address and time), at most every 6 hours, even with no team chat open.
 - There is one release key and no way to change it: if it were ever lost or stolen, every laptop would be installed again by hand, with a new key.
-- Linux only for now; macOS is not proven.
+- On a Mac it is a **TEST VERSION, not proven yet** (next section).
 - `hubchat token-rotate` gives the box a new token but does not end the old one: end it yourself as the command says.
 
 **Remove it all:** `sudo /usr/local/libexec/kaptyorka/installer remove`. Every team folder goes back to you first. Then open a new terminal, and end the box's sign-ins as the command lists.
+
+### On a Mac: TEST VERSION, not proven yet
+
+The same installer and the same commands work on macOS 14 or newer: `install`, `hubchat add/remove/list`, `claude`, `codex` or `cursor-agent` in a team folder, `repair`, `remove`, and the signed self-updates (an hourly launchd job instead of the systemd timer). The installer, `hubchat list` and every failed start say **TEST VERSION**. The walls are a hidden user `kap-<you>`, your home folder set to 700 (macOS makes it 755), a Seatbelt profile (`sandbox-exec`) around every team chat, a pf rule set, and LaunchDaemons for the relay, the forwarder and the canaries. They rest on Seatbelt and pf, which Apple does not support for this use, so a macOS update can change them. Before every team chat starts, kaptyorka checks each wall from outside and tries each one from inside the box against fake secrets (canaries in your home, `/tmp`, `/Users/Shared` and its own folder, a fake process and fake local services). If one wall fails, the chat does not start.
+
+What is different on a Mac:
+
+- It needs a Python 3.10 or newer that only root can change: install Python 3.12 from python.org and run the installer with it (`sudo /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -I kaptyorka-secure-setup.pyz install --personal "$LINK"`, and `shasum -a 256` instead of `sha256sum` in the check above). The installer makes that Python writable by root only.
+- Team folders live in `/Users/Shared/kaptyorka/<you>/`, with a shortcut where they were. macOS has nothing like Linux's view of a team folder, so your own programs see it exactly as team chats left it: a symlink or a script there runs as you if you open it. `hubchat list` and each chat's start name the files that changed; read them first.
+- No `--separate` boxes, and no OpenCode in team folders yet.
+- A team folder in Desktop or Documents is refused when iCloud may sync them.
+- `/etc/kaptyorka/box-extra.sb` adds root's own rules to the box profile (empty by default; `hubchat list` warns when it is not). Its only use is testing.
 
 ## For agents
 
