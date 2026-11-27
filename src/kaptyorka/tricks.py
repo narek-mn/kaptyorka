@@ -4,7 +4,10 @@ short reason, shown to the sender and to the admin. The list is meant to be shor
 specific: ordinary team talk ("run the tests", "git status", "chmod +x run.sh", "download this
 and run it", "curl ... | sh") never matches: the person sees a command in the chat and the tool's own
 permission prompt asks first, so such sentences are not held. It lowers how often a chat is tricked; it is not a wall."""
+import base64
+import binascii
 import re
+import zlib
 from typing import List, Optional
 
 I = re.IGNORECASE
@@ -111,9 +114,66 @@ HIDDEN = re.compile("[​⁠﻿᠎⁡-⁤‪-‮⁦-⁩"
 HIDDEN_REASON = "hidden characters in the text (zero-width, direction override, tag or control characters)"
 
 
-def reasons(text: str) -> List[str]:
-    """Every reason the text is held, each once, in list order; [] for ordinary text."""
-    text = text or ""
+# Encoded text (red team round 6, finding 2): "download and run" passes, so `echo <base64> |
+# base64 -d | sh` would carry any held trick past the patterns. Base64 and hex runs are decoded
+# (gzip too) and the decoded text is checked against the same list; plain encoded shell code that
+# holds none of it still passes. Bounded: runs of at most RUN_MAX characters, at most RUNS_MAX of
+# them, DECODED_MAX characters in all, DEPTH levels deep (base64 inside base64). Wrapped base64 is
+# joined first.
+B64_RX = re.compile(r"(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{16,}={0,2}")
+B64_LINES_RX = re.compile(r"(?m)^(?:[A-Za-z0-9+/]{16,}\r?\n)+[A-Za-z0-9+/]{4,}={0,2}")   # base64 -w 76
+HEX_RX = re.compile(r"(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}){8,}(?![0-9A-Fa-f])|(?:\\x[0-9A-Fa-f]{2}){8,}")
+RUN_MAX, RUNS_MAX, DECODED_MAX, DEPTH = 1 << 16, 64, 1 << 18, 3
+ENCODED = " (inside base64 or hex text)"
+
+
+def _text(raw: bytes) -> Optional[str]:
+    """Decoded bytes as text when they read as text (gzip unpacked first), else None."""
+    if raw[:2] == b"\x1f\x8b":
+        try:
+            raw = zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(raw, DECODED_MAX)
+        except zlib.error:
+            return None
+    try:
+        t = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    shown = sum(1 for c in t if c.isprintable() or c in "\n\t\r")
+    return t if t and shown >= 0.9 * len(t) else None
+
+
+def decoded(text: str, depth: int = DEPTH, budget: Optional[List[int]] = None) -> List[str]:
+    """The texts hidden in the base64 and hex runs of text (and in theirs, depth levels down);
+    budget: the decoded characters still allowed, shared by every level."""
+    out: List[str] = []
+    budget = [DECODED_MAX] if budget is None else budget
+    runs = ([re.sub(r"\s", "", m.group()) for m in B64_LINES_RX.finditer(text)]
+            + [m.group() for m in HEX_RX.finditer(text)] + [m.group() for m in B64_RX.finditer(text)])
+    for run in runs[:RUNS_MAX]:
+        if budget[0] <= 0 or len(run) > RUN_MAX:
+            continue
+        raw = None
+        hexrun = run.replace("\\x", "")
+        if re.fullmatch(r"(?:[0-9A-Fa-f]{2})+", hexrun):
+            raw = bytes.fromhex(hexrun)
+        if raw is None or _text(raw) is None:
+            b = run.rstrip("=").replace("-", "+").replace("_", "/")
+            b = b[:len(b) - len(b) % 4] if len(b) % 4 == 1 else b
+            try:
+                raw = base64.b64decode(b + "=" * (-len(b) % 4), validate=True)
+            except (binascii.Error, ValueError):
+                continue
+        t = _text(raw[:budget[0]])
+        if t is None:
+            continue
+        budget[0] -= len(t)
+        out.append(t)
+        if depth > 1:
+            out += decoded(t, depth - 1, budget)
+    return out
+
+
+def _plain(text: str) -> List[str]:
     out = []
     if HIDDEN.search(text):
         out.append(HIDDEN_REASON)
@@ -121,6 +181,18 @@ def reasons(text: str) -> List[str]:
     for reason, pattern in PATTERNS:
         if reason not in out and pattern.search(flat):
             out.append(reason)
+    return out
+
+
+def reasons(text: str) -> List[str]:
+    """Every reason the text is held, each once, in list order; [] for ordinary text. A reason
+    found only inside base64 or hex text says so."""
+    text = text or ""
+    out = _plain(text)
+    for t in decoded(HIDDEN.sub("", text)):
+        for r in _plain(t):
+            if r not in out and r + ENCODED not in out:
+                out.append(r + ENCODED)
     return out
 
 
