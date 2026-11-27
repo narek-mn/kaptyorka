@@ -803,9 +803,13 @@ def test_installer_keeps_the_mac_s_750_home_and_closes_anything_wider(monkeypatc
     ms.home_700("alice")
     assert os.stat(home).st_mode & 0o777 == 0o700
     acl["out"] = MAC_HOME_LS + " 1: group:everyone allow list\n 2: user:bob allow read\n"
-    ms.home_700("alice")
-    assert [c for c in calls if c[0] == "/bin/chmod"] == [["/bin/chmod", "-a#", "2", str(home)],
-                                                          ["/bin/chmod", "-a#", "1", str(home)]]
+    ms.home_700("alice")                             # the person's own ACL entries are never taken off
+    assert not [c for c in calls if c[0] == "/bin/chmod"]
+    with pytest.raises(kc.Refuse) as e:              # the install stops before any change and names them
+        ms.home_acl_check("alice")
+    assert "chmod -a# 2" in str(e.value) and "chmod -a# 1" in str(e.value) and "Nothing was changed" in str(e.value)
+    acl["out"] = MAC_HOME_LS
+    ms.home_acl_check("alice")
 
 
 def test_mac_ci_script_limits_every_step_and_every_attack():

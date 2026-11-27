@@ -973,9 +973,12 @@ def home_problems(person: str, box: str) -> List[str]:
     groups_of = {}
     for a in (kc.box_user(box), *SERVICE_USERS, "nobody"):
         try:
-            groups_of[a] = set(os.getgrouplist(a, pwd.getpwnam(a).pw_gid))
-        except (KeyError, OSError):
+            pwd.getpwnam(a)
+        except KeyError:
             continue
+        # id -G, not os.getgrouplist: nobody's primary gid (4294967294) overflows a C int there
+        out = run(["/usr/bin/id", "-G", a], check=False, timeout=10).stdout.split()
+        groups_of[a] = {int(g) for g in out if g.isdigit()}
     try:
         group = grp.getgrgid(st.st_gid).gr_name
     except KeyError:

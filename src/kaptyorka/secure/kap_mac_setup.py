@@ -462,7 +462,7 @@ def home_700(person: str) -> None:
     """Closes the person's home to kaptyorka's accounts. macOS's own 750 with group staff stays
     (km.home_mode_problems: none of kaptyorka's accounts is in staff, wheel or admin, and the self-
     check makes sure); rights for others or any other group make it 700; ACL entries that allow
-    something are taken off (macOS puts only a deny entry there)."""
+    something stop the install earlier (home_acl_check; macOS puts only a deny entry there)."""
     home = km.person_home(person).pw_dir
     st = os.stat(home)
     m = st.st_mode & 0o777
@@ -470,10 +470,17 @@ def home_700(person: str) -> None:
         os.chmod(home, 0o700)
         say(f"Your home folder {home} was open to more than you and this Mac's own people (mode {m:o});",
             "it is now 700, so the box and other users cannot look inside. It stays so after a remove.")
+
+
+def home_acl_check(person: str) -> None:
+    """Stops the install, before anything changes, when an ACL entry on the person's home lets others
+    in: that is the person's own sharing choice, so it is named, never taken off for them."""
+    home = km.person_home(person).pw_dir
     allows = km.acl_allows(km.run(["/bin/ls", "-lde", home], check=False, timeout=10).stdout)
-    for i, entry in sorted(allows, reverse=True):
-        km.run(["/bin/chmod", "-a#", str(i), home])
-        say(f"An ACL entry on your home folder let others in ({entry}); it was taken off. It stays so after a remove.")
+    if allows:   # the person's own sharing choice: never changed for them, only named
+        lines = "; ".join(f"{entry} (take it off: chmod -a# {i} {home})" for i, entry in sorted(allows, reverse=True))
+        raise Refuse(f"your home folder {home} has an ACL entry that lets others in: {lines}. "
+                     "Take it off yourself if you do not need it, then run the install again." + ks.UNCHANGED)
 
 
 def install(a) -> int:
@@ -516,6 +523,7 @@ def install(a) -> int:
     if host:
         raise Refuse(f"this computer cannot reach {host}, where the AI tools come from: connect it and run this again, "
                      "or install now with --tools none." + ks.UNCHANGED)
+    home_acl_check(person)
     ask_claude_token(person, v)
     if inv:
         say(f"Joining the hub at {inv['host']}:{inv['port']} (fingerprint {inv['fp'][:16]}...) as {v['name']} ...")
