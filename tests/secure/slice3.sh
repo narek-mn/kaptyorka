@@ -3,9 +3,9 @@
 # A real kaptyorka hub (a wheel built from this checkout, installed in its own venv) runs inside the container on
 # loopback with TLS; alice's laptop is installed in personal mode from the ONE installer file built from this
 # checkout (kap_installer.py; no repository in the container) and its .sha256 file as the release workflow makes
-# them, by the README's own step-3 commands (the hash check, then the install from the real personal invite link;
-# the downloads are skipped, the files are already there; each kind of bad link is refused first, with nothing
-# changed). The hub's invite page must show the link and the release page only, never a command (finding 5a).
+# them (the hash check, then the install from the real personal invite link; the README's signed install lines are
+# slice6.sh's; each kind of bad link is refused first, with nothing changed). The hub's invite page must show the
+# link and the release page only, never a command (finding 5a).
 # A STUB claude in the
 # box fires Claude Code's hook JSON and owns a mailbox socket. A second fake machine (team machine box-1) sends
 # a message to the box chat through the hub; it must arrive in the stub's socket, and the stub's reply (through
@@ -59,10 +59,6 @@ if [ "${1:-}" != "--inner" ]; then
   # as .github/workflows/publish.yml does: the build prints "<sha256>  kaptyorka-secure-setup.pyz", the .sha256 file
   "$PY" -I "$REPO/src/kaptyorka/secure/kap_installer.py" build "$WB/kaptyorka-secure-setup.pyz" > "$WB/kaptyorka-secure-setup.pyz.sha256" \
     || { rm -rf "$WB"; exit 1; }
-  # the README's step-3 commands, exactly as written there (I-0 runs them)
-  "$PY" -I -c 'import re, sys; t = open(sys.argv[1]).read(); t = t[t.index("**3. Get the installer and install.**"):]
-m = re.search(r"```bash\n(.*?)```", t, re.S); sys.stdout.write(m.group(1) if m else "")' "$REPO/README.md" > "$WB/readme.cmds" \
-    && [ -s "$WB/readme.cmds" ] || { echo "no step-3 commands in the README"; rm -rf "$WB"; exit 1; }
   mkdir -p "$WB/repo" && cp "$REPO/pyproject.toml" "$REPO/README.md" "$REPO/LICENSE" "$WB/repo/" \
     && tar -C "$REPO" --exclude=__pycache__ --exclude='*.egg-info' -cf - src | tar -C "$WB/repo" -xf - \
     && timeout -k 5 300 "$PY" -m build --wheel --no-isolation --outdir "$WB/whl" "$WB/repo" >/dev/null 2>&1 \
@@ -70,7 +66,6 @@ m = re.search(r"```bash\n(.*?)```", t, re.S); sys.stdout.write(m.group(1) if m e
   X mkdir -p /root/hubwheel /etc/kaptest /home/alice/Downloads
   timeout -k 5 90 docker cp "$WB/kaptyorka-secure-setup.pyz" "$C":/home/alice/Downloads/kaptyorka-secure-setup.pyz >/dev/null \
     && timeout -k 5 90 docker cp "$WB/kaptyorka-secure-setup.pyz.sha256" "$C":/home/alice/Downloads/ >/dev/null \
-    && timeout -k 5 90 docker cp "$WB/readme.cmds" "$C":/etc/kaptest/readme.cmds >/dev/null \
     && timeout -k 5 90 docker cp "$(ls "$WB"/whl/*.whl)" "$C":/root/hubwheel/ >/dev/null || { rm -rf "$WB"; exit 1; }
   rm -rf "$WB"
   timeout -k 5 90 docker cp "$0" "$C":/root/slice3.sh >/dev/null || exit 1
@@ -387,19 +382,12 @@ bad = [w for w in (\"sudo\", \"curl\", \"python3\", \"sha256sum\", \"&&\", \"--p
 print(\"link=\" + (html.unescape(m.group(1)) if m else \"-\"), \"page=\" + (r.group(0) if r else \"-\"), \" \".join(bad) or \"none\")'"
   t "I-nogit no kaptyorka source on the laptop side: the installer file is all there is" "only the hub's venv has kap_setup.py" 're:^rc=0 $' \
     "find / -xdev \\( -path /proc -o -path /opt/hubvenv \\) -prune -o \\( -name kap_setup.py -o -name 'kaptyorka-*.whl' \\) -print 2>/dev/null | grep -v '^/root/hubwheel/'; ls -d /root/bundle /root/src 2>/dev/null; true"
-  # the README's step 3 with the link the page shows (checked in I-page); its downloads are skipped (no network: the
-  # release's two files are there)
-  python3 -I -c 'import sys; link = open("/root/page.link").read().strip()
-cmds = [c for c in open("/etc/kaptest/readme.cmds").read().splitlines() if c.strip() and not c.startswith("curl ")]
-open("/root/readme.run", "w").write("\n".join(c.replace("<link>", link) for c in cmds) + "\n")'
-  t "I-readme the README's step 3: two downloads from the release of a version, then the check and the install with the link" \
-    "curl x2 releases/download/v<version>; sha256sum -c the .sha256 && sudo python3 -I ... install --personal '<link>'" \
-    "re:^rc=0 curl -fLO https://github\\.com/narek-mn/kaptyorka/releases/download/v<version>/kaptyorka-secure-setup\\.pyz curl -fLO https://github\\.com/narek-mn/kaptyorka/releases/download/v<version>/kaptyorka-secure-setup\\.pyz\\.sha256 sha256sum -c kaptyorka-secure-setup\\.pyz\\.sha256 && sudo python3 -I kaptyorka-secure-setup\\.pyz install --personal '<link>' \$" \
-    "tr '\n' ' ' < /etc/kaptest/readme.cmds"
-  t "I-0 installer, personal mode: the README's step 3 as written (hash check, then the install), in alice's Downloads" \
+  # the README's install lines (the signature check, then the install) are slice6.sh's: here the installer runs with
+  # the link the page shows, after the hash check of the .sha256 file the release workflow makes
+  t "I-0 installer, personal mode: the hash check, then the install with the page's link, in alice's Downloads" \
     "OK; joined; self-check passes" \
     're:^rc=0 kaptyorka-secure-setup\.pyz: OK.*Joining the hub at 127\.0\.0\.1:8443.*Joined: this computer is alice-laptop on the hub \(address 127\.0\.0\.1\).*Self-check: all walls in place.*Done\. This computer is alice-laptop.*A copy of this installer stays in /usr/local/libexec/kaptyorka/installer' \
-    "cd /home/alice/Downloads && bash -c \"\$(cat /root/readme.run) $OPTS\""
+    "cd /home/alice/Downloads && sha256sum -c kaptyorka-secure-setup.pyz.sha256 && sudo python3 -I kaptyorka-secure-setup.pyz install --personal \"\$(cat /root/page.link)\" $OPTS"
   t "I-copy the installer keeps itself, root-owned: the same file" "755 root, same bytes; kaptyorka-secure-setup -> installer" \
     're:^rc=0 755 root /usr/local/libexec/kaptyorka/installer same installer$' \
     "stat -c '%a %U %n' $L/installer | tr '\n' ' '; cmp -s $L/installer $PYZ && echo -n 'same '; readlink $L/kaptyorka-secure-setup"

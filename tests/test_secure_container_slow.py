@@ -1,6 +1,7 @@
 """The secure box's container tests (tests/secure/sliceN.sh), each in its own throw-away docker
 container with systemd: the relay with its real units (slice 1), the box walls, launcher and
-installer (slice 2), a box chat on a real hub (slice 3), the four tools in the box (slice 5).
+installer (slice 2), a box chat on a real hub (slice 3), the four tools in the box (slice 5), signed installs
+and updates from the hub (slice 6).
 Run before a release with: pytest -m slow tests/test_secure_container_slow.py (about 20 minutes;
 one at a time, never beside the soak, the eval or the rest of the slow suite; `pytest -m slow
 tests` skips it). One script:
@@ -14,7 +15,8 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent / "secure"
-SCRIPTS = {"slice1": "kaptest-s1", "slice2": "kaptest-s2", "slice3": "kaptest-s3", "slice5": "kaptest-s5"}
+SCRIPTS = {"slice1": "kaptest-s1", "slice2": "kaptest-s2", "slice3": "kaptest-s3", "slice5": "kaptest-s5",
+           "slice6": "kaptest-s6"}
 LIMIT = 3600   # each script bounds its own steps; this only stops a stuck docker client
 
 
