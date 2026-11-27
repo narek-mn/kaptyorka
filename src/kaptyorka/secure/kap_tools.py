@@ -46,7 +46,8 @@ else:
 Refuse = kc.Refuse
 NAMES = ("claude", "codex", "opencode", "cursor-agent")
 RECORD = kc.ETC + "/tools.json"
-LOCK = "/run/kaptyorka-tools.lock"
+MAC = sys.platform == "darwin"   # macOS (TEST VERSION): a role account in a Seatbelt profile, no unit
+LOCK = "/var/run/kaptyorka/tools.lock" if MAC else "/run/kaptyorka-tools.lock"
 STAGE_TOP = "/var/lib"       # systemd's StateDirectory= place; a DynamicUser's is in STAGE_TOP/private
 RUNDIR = "/run/kaptyorka"
 VER_RX = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]{1,30})?")
@@ -298,6 +299,8 @@ def unreachable(specs) -> str:
 
 def install_one(tool: str, ver: str, say=kr.say) -> str:
     """One tool from its vendor's installer into /opt/kap-tools; returns the version installed."""
+    if MAC:
+        return install_one_mac(tool, ver, say)
     key, ask = vendor_of(tool, ver)
     url, hosts, program, how = VENDOR[key]
     if unreachable({tool: ver}):
@@ -351,6 +354,78 @@ def install_one(tool: str, ver: str, say=kr.say) -> str:
         for p in (f"{STAGE_TOP}/{name}", hostsfile):
             if os.path.lexists(p):
                 os.unlink(p)
+
+
+MAC_STAGE = "/private/var/lib/kaptyorka-tool-stage-"
+MAC_USER = "_kaptools"
+
+
+def mac_profile(stage: str) -> str:
+    """The vendor installer's Seatbelt profile on macOS: it writes only its own folder and reads
+    nobody's files. Its network is pf's: only port 443 for its user (kap_mac.pf_rules); Seatbelt
+    cannot name hosts."""
+    if not re.fullmatch(r"/private/var/lib/kaptyorka-tool-stage-[a-z-]{1,20}", stage):
+        raise Refuse("bad stage folder")
+    deny = ("/Users", "/private/etc/kaptyorka", "/private/var/lib/kap-team", "/private/var/run/kaptyorka",
+            "/private/var/run/kapbox", "/opt/kap-tools", "/opt/kaptyorka", "/Library/Keychains")
+    return ('(version 1)(allow default)(deny file-write*)'
+            f'(allow file-write* (subpath "{stage}") (literal "/dev/null") (literal "/dev/tty") '
+            '(literal "/dev/dtracehelper"))'
+            '(deny file-read* ' + " ".join(f'(subpath "{d}")' for d in deny) + ')')
+
+
+def install_one_mac(tool: str, ver: str, say=kr.say) -> str:
+    """install_one on macOS: the same script as the user _kaptools (no home of anyone, its own
+    empty folder as HOME) inside mac_profile; root reads and copies the result as on Linux."""
+    import pwd
+    import subprocess
+    key, ask = vendor_of(tool, ver)
+    url, hosts, program, how = VENDOR[key]
+    if unreachable({tool: ver}):
+        raise Refuse(f"cannot reach {hosts[0]}, where {tool} comes from: is this computer online?")
+    pw = pwd.getpwnam(MAC_USER)
+    stage = MAC_STAGE + tool
+    shutil.rmtree(stage, ignore_errors=True)
+    kr.mkdir(stage, 0o700, pw.pw_uid, pw.pw_gid)
+    kr.mkdir(stage + "/tmp", 0o700, pw.pw_uid, pw.pw_gid)
+    say(f"Installing {tool}{' ' + ver if ver else ''} into the box with its vendor's installer ({url}) ...")
+    env = {"HOME": stage, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8", "TMPDIR": stage + "/tmp",
+           "KAP_TOOL": key, "KAP_URL": url, "KAP_VERSION": ask, "KAP_PROGRAM": program}
+    try:
+        try:
+            r = subprocess.run(["/usr/bin/sandbox-exec", "-p", mac_profile(stage), "/bin/bash", "-c", SCRIPT],
+                               cwd=stage, env=env, user=pw.pw_uid, group=pw.pw_gid, extra_groups=[],
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=UNIT_LIMIT)
+        except subprocess.TimeoutExpired:
+            raise Refuse(f"{tool}: its installer took longer than {UNIT_LIMIT} seconds")
+        if r.returncode != 0:
+            tail = " ".join((r.stderr or r.stdout).strip().splitlines()[-3:])[-300:]
+            raise Refuse(f"{tool}: its installer failed ({kc.term(tail) or 'exit ' + str(r.returncode)})")
+        src, inner, got = collect(stage, key)
+        dst = f"{kc.TOOLS_DIR}/{tool}/{got}"
+        kr.mkdir(kc.TOOLS_DIR, 0o755)
+        kr.mkdir(f"{kc.TOOLS_DIR}/bin", 0o755)
+        kr.mkdir(f"{kc.TOOLS_DIR}/{tool}", 0o755)
+        shutil.rmtree(dst, ignore_errors=True)
+        kr.mkdir(dst, 0o755)
+        try:
+            copy_tree(src, dst)
+        except (Refuse, OSError):
+            shutil.rmtree(dst, ignore_errors=True)
+            raise
+        prog = os.path.join(dst, inner)
+        with open(prog, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        point(tool, f"../{tool}/{got}/{inner}")
+        rec = load_record()
+        rec[tool] = {"version": got, "program": f"{tool}/{got}/{inner}", "sha256": digest, "from": url,
+                     "installed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        save_record(rec)
+        prune(tool, {got})
+        say(f"  {tool} {got} is in the box ({kc.TOOLS_DIR}/bin/{tool}).")
+        return got
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
 
 
 def install(specs, say=kr.say):

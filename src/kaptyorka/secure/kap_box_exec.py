@@ -33,6 +33,11 @@ BOXCONF = "/etc/kaptyorka/box"
 VIEW = "/srv/team"
 CHATS = "/run/kapbox/chats"          # the helper's chat records (kap_helper.STATE)
 CODEX_RUN = "/run/kapbox/codex"      # one private app-server socket per Codex chat
+# macOS (TEST VERSION), as a box user: the real places, the box's own runtime folder (kap_mac.box_run)
+if sys.platform == "darwin" and pwd.getpwuid(os.getuid()).pw_name.startswith("kap-"):
+    VIEW = "/Users/Shared/kaptyorka"
+    _RUN = f"/private/var/run/kapbox/{pwd.getpwuid(os.getuid()).pw_name[4:]}"
+    CHATS, CODEX_RUN = _RUN + "/chats", _RUN + "/codex"
 # Codex subcommands that are not its terminal UI; anything else starts the TUI
 CODEX_SUBS = {"exec", "e", "review", "login", "logout", "mcp", "mcp-server", "app-server", "completion",
               "sandbox", "debug", "apply", "a", "resume", "fork", "cloud", "features", "help", "update",
@@ -159,7 +164,8 @@ def codex_server(prog: str, env: dict, sock: str, wait: float = 20) -> int:
     if child == 0:
         try:
             import ctypes
-            ctypes.CDLL(None).prctl(1, 15, 0, 0, 0)   # PR_SET_PDEATHSIG: SIGTERM when the chat ends
+            if sys.platform != "darwin":   # macOS has no PDEATHSIG: the chat's process group ends it
+                ctypes.CDLL(None).prctl(1, 15, 0, 0, 0)   # PR_SET_PDEATHSIG: SIGTERM when the chat ends
             os.setpgid(0, 0)   # not in the terminal's group: a ctrl-c is the chat's, not its
             null = os.open(os.devnull, os.O_RDONLY)
             os.dup2(null, 0)

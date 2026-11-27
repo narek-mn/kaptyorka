@@ -39,8 +39,9 @@ else:
 KEY_FILE = kc.ETC + "/release-key"          # the allowed-signers line of the pinned release key
 STATE_FILE = kc.ETC + "/update.json"        # what hubchat list shows; no secret
 WORK = kc.LIBEXEC + "/update"               # root-only: the verified waiting files, the kept installer
-LOCK = "/run/kaptyorka/update.lock"
-RUN_LOCK = "/run/kaptyorka/update-run.lock"   # one updater at a time (the timer's, or one started by hand)
+MAC = sys.platform == "darwin"   # macOS (TEST VERSION): launchd's hourly job instead of the timer
+LOCK = "/var/run/kaptyorka/update.lock" if MAC else "/run/kaptyorka/update.lock"
+RUN_LOCK = ("/var/run/kaptyorka" if MAC else "/run/kaptyorka") + "/update-run.lock"   # one updater at a time
 CHECK_S = 6 * 3600       # the hub is asked at most this often (each ask tells it the laptop is on)
 REPAIR_S = 1800          # one repair (the new installer's or the kept one's) at most
 STAGED = {n: f"{WORK}/staged-{n}" for n in rel.FILES}
@@ -264,6 +265,12 @@ def check(st: dict, key: str) -> None:
 
 
 def chats_running() -> int:
+    if MAC:   # enter's chat records (kap_mac.CHATS), each still alive
+        if __package__:
+            from . import kap_mac
+        else:
+            import kap_mac
+        return len(kap_mac.chats())
     r = subprocess.run(["systemctl", "list-units", "--type=service", "--state=active,activating,deactivating",
                         "--plain", "--no-legend", "--no-pager", "kapbox-*-chat-*", "kapbox-*-clone-*"],
                        capture_output=True, text=True, timeout=30, env=ENV)
@@ -285,10 +292,19 @@ def lock_exclusive(path: str = ""):
 
 def repair_with(pyz: str) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(["/usr/bin/python3", "-I", pyz, "repair"], capture_output=True, text=True,
+        return subprocess.run([python(), "-I", pyz, "repair"], capture_output=True, text=True,
                               timeout=REPAIR_S, env=ENV, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired as e:
         return subprocess.CompletedProcess(e.cmd, 124, "", "the repair took too long")
+
+
+def python() -> str:
+    """The interpreter root's programs run with: on macOS the one the installer recorded."""
+    if MAC:
+        p = _read(kc.ETC + "/python", 4096).strip()
+        if p.startswith("/") and os.path.isfile(p):
+            return p
+    return "/usr/bin/python3"
 
 
 def install(st: dict, key: str) -> None:

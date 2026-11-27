@@ -264,6 +264,8 @@ def default_acl(gid: int) -> bytes:
 
 
 def set_default_acl(fd: int, gid: int) -> None:
+    if not hasattr(os, "setxattr"):   # macOS: no POSIX ACLs (kap_mac_hubchat sets its own)
+        return
     try:
         os.setxattr(fd, "system.posix_acl_default", default_acl(gid))
     except OSError as e:
@@ -272,6 +274,8 @@ def set_default_acl(fd: int, gid: int) -> None:
 
 
 def drop_acls(fd: int) -> None:
+    if not hasattr(os, "removexattr"):   # macOS: kap_mac_hubchat drops its own
+        return
     for a in ("system.posix_acl_default", "system.posix_acl_access"):
         try:
             os.removexattr(fd, a)
@@ -765,18 +769,20 @@ def box_secret_values(person: str, box: str) -> List[str]:
     return list(dict.fromkeys(out))
 
 
-def write_box_secrets(person: str, box: str) -> int:
+def write_box_secrets(person: str, box: str, where: str = "", gid: Optional[int] = None) -> int:
     """/run/kaptyorka/box-secrets/<box> for the relay: the box's current secret values first,
     then the ones it had before (a copy a chat took before a refresh is still that account's),
     at most SECRETS_KEEP. root:kaprelay-secrets 0640 in a 0750 folder; only the relay is in that
-    group. Returns how many values it holds."""
-    try:
-        gid = gid_of(kc.RELAY_GROUP)
-    except KeyError:
-        gid = 0
-    os.makedirs(os.path.dirname(kc.BOX_SECRETS), 0o755, exist_ok=True)
-    mkdir(kc.BOX_SECRETS, 0o750, 0, gid)
-    path = f"{kc.BOX_SECRETS}/{kc.check_box(box)}"
+    group. Returns how many values it holds. macOS: where and gid are kap_mac's (the relay's own group)."""
+    where = where or kc.BOX_SECRETS
+    if gid is None:
+        try:
+            gid = gid_of(kc.RELAY_GROUP)
+        except KeyError:
+            gid = 0
+    os.makedirs(os.path.dirname(where), 0o755, exist_ok=True)
+    mkdir(where, 0o750, 0, gid)
+    path = f"{where}/{kc.check_box(box)}"
     try:
         old = json.loads(read_text(path) or "{}").get("values", [])
     except (ValueError, AttributeError):
