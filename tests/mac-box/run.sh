@@ -367,9 +367,12 @@ step oc-window 90
   >"$OUT/oc-window.raw" 2>&1; rc=${PIPESTATUS[1]}
 reap_box
 o=$(tr -d '\r' <"$OUT/oc-window.raw" | cat -v)
+# enter's notice that team chats changed tool or git settings (the attacks above did) is information,
+# not a refusal: leave it out of the refusal checks below
+o=$(printf '%s\n' "$o" | grep -a -v "^enter: team chats changed files that run code")
 log "opencode window" "$(printf '%s' "$o" | tail -c 4000)"
 check OC-REAL-WINDOW "an OpenCode window starts in the box and stays up (no wall refusal, no bind error)" \
-  "$( ! has "$o" "wallcheck: wall" && ! has "$o" "Operation not permitted" && ! has "$o" "EPERM" && ! has "$o" "box-exec:" && ! has "$o" "enter:" && echo 0 || echo 1)" \
+  "$( ! has "$o" "wallcheck: wall" && ! has "$o" "Operation not permitted" && ! has "$o" "EPERM" && ! has "$o" "box-exec:" && ! has "$o" "enter:" && [ "$(printf '%s' "$o" | wc -c)" -gt 2000 ] && echo 0 || echo 1)" \
   "rc=$rc $(printf '%s' "$o" | grep -a -i 'error\|wall\|denied\|permit\|enter:\|box-exec' | head -5)"
 
 echo "== hubchat remove, then the installer's remove"
