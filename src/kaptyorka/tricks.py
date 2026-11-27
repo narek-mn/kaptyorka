@@ -1,15 +1,14 @@
 """The hub's trick filter: plain patterns, no AI. A message whose text matches one is not
 delivered but held for an admin (Store.send), who releases or drops it. Every pattern has a
 short reason, shown to the sender and to the admin. The list is meant to be short and
-specific: ordinary team talk ("run the tests", "git status", "chmod +x run.sh") never
-matches. It lowers how often a chat is tricked; it is not a wall."""
+specific: ordinary team talk ("run the tests", "git status", "chmod +x run.sh", "download this
+and run it", "curl ... | sh") never matches: the person sees a command in the chat and the tool's own
+permission prompt asks first, so such sentences are not held. It lowers how often a chat is tricked; it is not a wall."""
 import re
 from typing import List, Optional
 
 I = re.IGNORECASE
 S = r"\s+"  # any run of spaces, tabs or line breaks
-SHELL = r"(?:sudo\s+(?:-\S+\s+)?)?(?:ba|z|da|k|c|fi)?sh\b|python3?\b|perl\b|node\b|iex\b|invoke-expression\b"
-FETCH = r"(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\b"
 HOME = r"(?:~|\$\{?HOME\}?|/home/[\w.-]+|/Users/[\w.-]+|%USERPROFILE%|\$env:USERPROFILE)"
 GIVE = (r"(?:cat|print|show|send|upload|post|paste|read|dump|echo|email|mail|attach|scp|tar|zip|curl|give|share|reveal"
         r"|tell|copy|cp|forward|leak|message|dm|text|reply)\b")
@@ -66,21 +65,6 @@ PATTERNS = [
                 + r"|>>?\s*[\"']?(?:[\w.~/-]*/)?" + CODE_SPOT.replace(r"(?:(?<=[\s/\"'`(=:])|^)", "")
                 + r"|\b" + WRITE + r"[^\n.;]{0,40}?\b" + GIT_HOOK + r"\s+hooks?\b"
                 + r"|\b" + WRITE + r"[^\n.;]{0,40}?\bgit\s+hooks?\b", I)),
-    ("a command that downloads and runs code",
-     re.compile(FETCH + r"[^\n]*?\|" + r"\s*(?:" + SHELL + r")"
-                r"|\b(?:ba|z|da|k)?sh" + S + r"<\(\s*" + FETCH +
-                r"|\b(?:source|\.)" + S + r"<\(\s*" + FETCH +
-                r"|\b(?:ba|z|da|k)?sh" + S + r"-c" + S + r"[\"']?\$\(\s*" + FETCH +
-                r"|\b(?:eval|iex|invoke-expression)\b[^\n]*" + FETCH, I)),
-    ("a downloaded file made executable",
-     re.compile(FETCH + r"[\s\S]{0,300}?\bchmod" + S + r"(?:-\w+" + S + r")?(?:[ugoa]*\+[rw]*x|[0-7]?[0-7][5-7][0-7])\b"
-                r"|\bchmod" + S + r"(?:-\w+" + S + r")?(?:[ugoa]*\+[rw]*x|[0-7]?[0-7][5-7][0-7])\b[\s\S]{0,300}?" + FETCH, I)),
-    ("hidden or encoded shell code",
-     re.compile(r"\bbase64" + S + r"(?:-d\b|-D\b|--decode\b)[^\n]*\|\s*(?:" + SHELL + r"|eval\b)"
-                r"|\b(?:eval|source|\.|(?:ba|z)?sh)\b[^\n]*(?:\$\(|<\(|`)\s*(?:echo|printf|cat)\b[^\n)`]*\|\s*base64"
-                r"|\bpowershell\b[^\n]*\s-e(?:nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{20,}"
-                r"|\bFromBase64String\b[^\n]*\b(?:iex|invoke-expression)\b"
-                r"|\bxxd" + S + r"-r\b[^\n]*\|\s*(?:" + SHELL + r")", I)),
     ("direnv or .envrc, which run commands when a folder is entered",
      re.compile(r"(?<![\w-])\.envrc\b|\bdirenv" + S + r"(?:allow|export|exec)\b", I)),
     ("an editor task that runs when a folder is opened",

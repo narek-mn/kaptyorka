@@ -49,6 +49,7 @@ PROGRAMS = (  # (source, name in /usr/local/libexec/kaptyorka, mode); programs g
     ("kaproot.py", "kaproot.py", 0o644), ("kap_tools.py", "kap_tools.py", 0o644),
     ("kap_release.py", "kap_release.py", 0o644), ("kap_installer.py", "kap_installer.py", 0o644),
     ("kap_setup.py", "kap_setup.py", 0o644), ("kap_mac_setup.py", "kap_mac_setup.py", 0o644),
+    ("kap_claude_token.py", "kap_claude_token.py", 0o644),
 )
 RC_FILES = (".zshrc", ".zshenv", ".zprofile", ".bashrc", ".bash_profile", ".profile", ".config/fish/config.fish")
 HOOK_FILES = ("/etc/zshenv", "/etc/bashrc", "/etc/profile")
@@ -438,6 +439,20 @@ def apply(person: str, v: dict, rt: str, a, specs: dict, py: str) -> int:
     return rc
 
 
+def ask_claude_token(person: str, v: dict) -> None:
+    """The box's Claude token, pasted (made with `claude setup-token` run as the person). Asked
+    before the invite is used, so stopping here costs no link. [Mac] The Linux installer runs
+    setup-token in the box itself (kap_claude_token); on a Mac that needs its own way through the
+    box profile and wallcheck, not built yet."""
+    if v["claude"] or not sys.stdin.isatty() or os.path.exists(f"{kc.SECRET}/{person}/claude-oauth-token"):
+        return
+    import getpass
+    tok = getpass.getpass("Paste the token from `claude setup-token` (run it as yourself), or Enter to skip: ").strip()
+    if tok and not kc.TOKEN_RX.fullmatch(tok):
+        raise Refuse("that does not look like a token")
+    v["claude"] = tok
+
+
 def home_700(person: str) -> None:
     home = km.person_home(person).pw_dir
     m = os.stat(home).st_mode & 0o777
@@ -488,7 +503,7 @@ def install(a) -> int:
     if host:
         raise Refuse(f"this computer cannot reach {host}, where the AI tools come from: connect it and run this again, "
                      "or install now with --tools none." + ks.UNCHANGED)
-    ks.ask_claude_token(person, v)
+    ask_claude_token(person, v)
     if inv:
         say(f"Joining the hub at {inv['host']}:{inv['port']} (fingerprint {inv['fp'][:16]}...) as {v['name']} ...")
         v.update(ks.redeem(inv, v["name"]))

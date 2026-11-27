@@ -10,7 +10,12 @@ version it printed inside the unit), checks it and copies it, root-owned and rea
 everyone else, to /opt/kap-tools/<tool>/<version>; /opt/kap-tools/bin/<tool> points there.
 The version of each tool is recorded in /etc/kaptyorka/tools.json (root-owned); the box runs
 exactly that one and never updates it itself (each tool's auto-update is off in its box config).
-`hubchat update-tools` (root through the person's sudo rule) installs a newer one on request.
+A root timer (kaptyorka-tools-update.timer, daily) runs `kap_tools.py auto-update`; `hubchat
+update-tools` (root through the person's sudo rule) is the same thing on request. An update runs
+the same locked vendor installer, keeps only a strictly newer version (by the version the tool
+itself prints; the hub has no say), copies it beside the old one, checks that it starts in the box
+(`--version` behind wallcheck), and switches /opt/kap-tools/bin/<tool> only when no chat of that
+tool runs (else it waits as "pending" for the next run). The version before stays, for a rollback.
 
 Vendor docs for each method:
   claude        https://code.claude.com/docs/en/setup  "curl -fsSL https://claude.ai/install.sh | bash",
@@ -272,6 +277,19 @@ def point(tool: str, target_rel: str) -> None:
     os.replace(tmp, link)
 
 
+def version_key(v: str) -> tuple:
+    """The dotted numbers at the start of a version ('2.1.5-beta' -> (2, 1, 5)); a suffix such as a
+    commit hash is never compared."""
+    m = re.match(r"[0-9]+(?:\.[0-9]+)*", v or "")
+    return tuple(int(x) for x in m.group(0).split(".")) if m else ()
+
+
+def is_newer(new: str, old: str) -> bool:
+    a, b = version_key(new), version_key(old)
+    n = max(len(a), len(b))
+    return a + (0,) * (n - len(a)) > b + (0,) * (n - len(b))
+
+
 def prune(tool: str, keep) -> None:
     """Old versions go, but the one before stays: a chat that runs it keeps its files."""
     top = f"{kc.TOOLS_DIR}/{tool}"
@@ -297,9 +315,129 @@ def unreachable(specs) -> str:
     return ""
 
 
-def install_one(tool: str, ver: str, say=kr.say) -> str:
-    """One tool from its vendor's installer into /opt/kap-tools; returns the version installed."""
+def activate(tool: str, got: str, inner: str, digest: str, url: str) -> None:
+    """Point the tool at the copy in /opt/kap-tools/<tool>/<got> and record it; the version in use
+    until now is kept as "previous" (for rollback)."""
+    prog = f"{kc.TOOLS_DIR}/{tool}/{got}/{inner}"
+    if tool == "claude":
+        os.chmod(prog, 0o711)   # execute-only: the token's guard (kap_setup.claude_execute_only)
+    point(tool, f"../{tool}/{got}/{inner}")
+    rec = load_record()
+    old = rec.get(tool, {}).get("version", "")
+    old_program = rec.get(tool, {}).get("program", "")
+    rec[tool] = {"version": got, "program": f"{tool}/{got}/{inner}", "sha256": digest, "from": url,
+                 "installed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if old and old != got:
+        rec[tool]["previous"] = old
+        rec[tool]["previous_program"] = old_program
+    save_record(rec)
+    prune(tool, {got, old})
+
+
+def people() -> list:
+    try:
+        return sorted(n for n in os.listdir(kc.PEOPLE) if kc.PERSON_RX.fullmatch(n))
+    except OSError:
+        return []
+
+
+def running_chats(tool: str) -> int:
+    """How many chats of this tool run now, in any box of this computer."""
+    n = 0
+    for person in people():
+        for box in kr.boxes_of(person):
+            n += sum(1 for _, t, _ in kr.chats(box) if t == tool)
+    return n
+
+
+def verify_in_box(prog: str, want: str) -> str:
+    """'' when the new program starts in the box with --version (behind the outside check and
+    wallcheck, as every chat does) and prints the version it was installed as; else the problem."""
+    ps = people()
+    if not ps:
+        return "no box to try it in"
+    person = ps[0]
+    problems = kr.outside_check(person, [person])
+    if problems:
+        return "the box's self-check found a problem: " + "; ".join(problems)[:200]
+    kr.ensure_box_running(person)
+    r = kr.run(["systemd-run", "--quiet", "--collect", "--pipe", "--wait", "--expand-environment=no",
+                f"--working-directory={kc.view_root(person)}", *kr.props_args(person, person), "--",
+                kc.WALLCHECK, "--box", person, "--person", person,
+                "--addrs", ",".join(kr.host_addrs()), "--canaries", ",".join(kr.shared_canaries()),
+                "--", prog, "--version"], check=False, timeout=120)
+    if r.returncode != 0:
+        return "it did not start in the box: " + kc.term(" ".join((r.stderr or r.stdout).split()[-30:]))[-200:]
+    text = r.stdout + "\n" + "\n".join(l for l in r.stderr.splitlines() if not l.startswith("wallcheck"))
+    got = GOT_RX.search(text)
+    if not got or got.group(1)[:40] != want:
+        return f"it says its version is {kc.shown(got.group(1) if got else 'nothing', 40)}, not {want}"
+    return ""
+
+
+def switch_if_safe(tool: str, got: str, inner: str, digest: str, url: str, say=kr.say):
+    """The copy in /opt/kap-tools/<tool>/<got> is ready and not in use. Check it starts in the box;
+    then switch to it only when no chat of the tool runs, else leave it "pending" for the next
+    run. Returns got when switched, None when it waits; Refuse (and the copy removed) when it fails."""
+    dst = f"{kc.TOOLS_DIR}/{tool}/{got}"
+    problem = verify_in_box(f"{dst}/{inner}", got)
+    if problem:
+        shutil.rmtree(dst, ignore_errors=True)
+        rec = load_record()
+        if tool in rec:
+            rec[tool].pop("pending", None)
+            save_record(rec)
+        raise Refuse(f"the new {tool} {got} was not switched to ({problem}); the old one stays")
+    n = running_chats(tool)
+    rec = load_record()
+    if n:
+        rec.setdefault(tool, {})["pending"] = {"version": got, "program": f"{tool}/{got}/{inner}",
+                                               "sha256": digest, "from": url}
+        save_record(rec)
+        prune(tool, {x for x in (rec[tool].get("version"), rec[tool].get("previous"), got) if x})
+        say(f"  {tool} {got} is ready; {n} {tool} chat(s) run, so it switches at the next update after they end.")
+        return None
+    rec.get(tool, {}).pop("pending", None)
+    save_record(rec)
+    activate(tool, got, inner, digest, url)
+    say(f"  {tool} is now {got} (it started in the box; the one before is kept).")
+    return got
+
+
+def finish_pending(tool: str, say=kr.say) -> bool:
+    """A copy that was waiting for the chats to end: switch to it now if it is still exactly what
+    was copied (same hash) and no chat runs. True when there was one (switched, dropped or still
+    waiting for a chat to end): nothing is downloaded again that run."""
+    p = load_record().get(tool, {}).get("pending")
+    if not isinstance(p, dict):
+        return False
+    prog = f"{kc.TOOLS_DIR}/{p.get('program', '')}"
+    ok = (VER_RX.fullmatch(str(p.get("version", ""))) and p.get("program", "").startswith(f"{tool}/{p['version']}/")
+          and ".." not in p["program"] and os.path.isfile(prog) and not os.path.islink(prog))
+    if ok:
+        with open(prog, "rb") as f:
+            ok = hashlib.sha256(f.read()).hexdigest() == p.get("sha256")
+    if not ok:
+        rec = load_record()
+        rec[tool].pop("pending", None)
+        save_record(rec)
+        return False
+    if not is_newer(p["version"], load_record()[tool].get("version", "")):
+        rec = load_record()
+        rec[tool].pop("pending", None)
+        save_record(rec)
+        return True
+    switch_if_safe(tool, p["version"], p["program"].split("/", 2)[2], p["sha256"], p.get("from", ""), say)
+    return True
+
+
+def install_one(tool: str, ver: str, say=kr.say, auto: bool = False):
+    """One tool from its vendor's installer into /opt/kap-tools; returns the version now in use.
+    auto: only a strictly newer version is taken, checked in the box first and switched to only
+    while no chat of the tool runs (see switch_if_safe); returns None when nothing changed."""
     if MAC:
+        if auto:
+            raise Refuse(f"{tool}: [Mac] tools are not updated on their own yet; name a version to install one")
         return install_one_mac(tool, ver, say)
     key, ask = vendor_of(tool, ver)
     url, hosts, program, how = VENDOR[key]
@@ -325,6 +463,10 @@ def install_one(tool: str, ver: str, say=kr.say) -> str:
             tail = " ".join((r.stderr or r.stdout).strip().splitlines()[-3:])[-300:]
             raise Refuse(f"{tool}: its installer failed ({kc.term(tail) or 'exit ' + str(r.returncode)})")
         src, inner, got = collect(stage, key)
+        current = load_record().get(tool, {}).get("version", "")
+        if auto and not is_newer(got, current):
+            say(f"  {tool} {current}: already the newest ({got}).")
+            return None
         dst = f"{kc.TOOLS_DIR}/{tool}/{got}"
         kr.mkdir(kc.TOOLS_DIR, 0o755)
         kr.mkdir(f"{kc.TOOLS_DIR}/bin", 0o755)
@@ -339,14 +481,9 @@ def install_one(tool: str, ver: str, say=kr.say) -> str:
         prog = os.path.join(dst, inner)
         with open(prog, "rb") as f:
             digest = hashlib.sha256(f.read()).hexdigest()
-        point(tool, f"../{tool}/{got}/{inner}")
-        if tool == "claude":
-            os.chmod(prog, 0o711)   # execute-only: the token's guard (kap_setup.claude_execute_only)
-        rec = load_record()
-        rec[tool] = {"version": got, "program": f"{tool}/{got}/{inner}", "sha256": digest, "from": url,
-                     "installed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-        save_record(rec)
-        prune(tool, {got})
+        if auto:
+            return switch_if_safe(tool, got, inner, digest, url, say)
+        activate(tool, got, inner, digest, url)
         say(f"  {tool} {got} is in the box ({kc.TOOLS_DIR}/bin/{tool}).")
         return got
     finally:
@@ -456,3 +593,75 @@ def installed():
         if os.path.exists(f"{kc.TOOLS_DIR}/bin/{t}"):
             out[t] = v.get("version", "?")
     return out
+
+
+def rollback(tool: str, say=kr.say) -> str:
+    """Point the tool back at the version kept before the last switch (its copy is still there);
+    returns that version. Run by hand as root; no chat of the tool may run."""
+    rec = load_record().get(tool, {})
+    prev, prog = rec.get("previous", ""), rec.get("previous_program", "")
+    path = f"{kc.TOOLS_DIR}/{prog}"
+    if not VER_RX.fullmatch(prev or "") or not prog.startswith(f"{tool}/{prev}/") or ".." in prog \
+            or not os.path.isfile(path):
+        raise Refuse(f"{tool}: there is no earlier version to go back to")
+    if running_chats(tool):
+        raise Refuse(f"{tool}: a chat of it is running; end it first")
+    with open(path, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    activate(tool, prev, prog.split("/", 2)[2], digest, rec.get("from", ""))
+    say(f"  {tool} is back at {prev}.")
+    return prev
+
+
+def update(specs, say=kr.say):
+    """What `hubchat update-tools` and the daily timer run, for {tool: version or ""}. A tool with
+    no version named only moves to a strictly newer one (update_one); one with a version named is
+    installed as asked, as before. (done, failed); done[tool] is the version now in use."""
+    import fcntl
+    fd = os.open(LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise Refuse("the box's tools are being installed already: wait for that to finish")
+        have = load_record()
+        done, failed = {}, {}
+        for tool in [t for t in NAMES if t in specs]:
+            try:
+                if specs[tool] or tool not in have:
+                    done[tool] = install_one(tool, specs[tool], say)
+                elif finish_pending(tool, say):
+                    done[tool] = load_record()[tool]["version"]
+                else:
+                    got = install_one(tool, "", say, auto=True)
+                    done[tool] = got or have[tool].get("version", "")
+            except (Refuse, OSError) as e:
+                failed[tool] = str(e)
+                say(f"  {tool}: not updated: {e}")
+        return done, failed
+    finally:
+        os.close(fd)
+
+
+def main(argv) -> int:
+    """`kap_tools.py auto-update`: the daily timer's job (root). Every tool in the box is updated
+    like `hubchat update-tools` does; nothing to do before there is a tool or after a stopped install."""
+    if argv != ["auto-update"] or os.geteuid() != 0:
+        print("usage (root): kap_tools.py auto-update", file=sys.stderr)
+        return 2
+    if kc.unfinished_install():
+        print("kaptyorka tools: an install is unfinished; not updating", file=sys.stderr)
+        return 0
+    specs = {t: "" for t in installed()}
+    if not specs:
+        return 0
+    try:
+        done, failed = update(specs)
+    except Refuse as e:
+        print(kc.term(f"kaptyorka tools: {e}"), file=sys.stderr)
+        return 1
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -358,3 +358,20 @@ def test_degrade_unknown_status_is_never_stuck():
 def test_degrade_no_name_source_shows_the_name(home):
     write_session_file(home, os.getpid(), name="proj-a-x1", name_source=None)
     assert ClaudeAdapter(home, log=lambda *_: None).sessions()[0].label == "proj-a-x1"
+
+
+def test_setup_token_probe_sees_the_sign_in_link_on_a_terminal_and_signs_in_to_nothing(tmp_path, monkeypatch):
+    import sys
+    from test_secure_claude_token import FAKE
+    fake = tmp_path / "stand-in"
+    fake.write_text(f"#!{sys.executable}\nimport sys\nsys.argv = ['x', 'ok' if sys.argv[1:] == ['setup-token'] else 'nolink']\n"
+                    + FAKE.replace("import os, sys, time, tty", "import os, time, tty"))
+    fake.chmod(0o755)
+    dep = compat.BY_ID["claude.setup_token"]
+    monkeypatch.setattr(compat.shutil, "which", lambda name: str(fake))
+    assert compat.probe(dep, compat.Ctx(tmp_path, SOUND)) == (compat.OK, "")   # killed at the code prompt
+    fake.write_text(f"#!{sys.executable}\nimport time\nprint('no link here')\ntime.sleep(1)\n")
+    state, why = compat.probe(dep, compat.Ctx(tmp_path, SOUND))
+    assert state == compat.BROKEN and "no sign-in link" in why
+    monkeypatch.setattr(compat.shutil, "which", lambda name: None)
+    assert compat.probe(dep, compat.Ctx(tmp_path, SOUND))[0] == compat.UNKNOWN
