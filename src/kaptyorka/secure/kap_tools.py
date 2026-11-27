@@ -341,8 +341,19 @@ def people() -> list:
         return []
 
 
+def _km():
+    """kap_mac, imported only on a Mac (it is installed next to this file there)."""
+    if __package__:
+        from . import kap_mac
+    else:
+        import kap_mac
+    return kap_mac
+
+
 def running_chats(tool: str) -> int:
     """How many chats of this tool run now, in any box of this computer."""
+    if MAC:   # enter's chat records (kap_mac.CHATS), each still alive
+        return sum(1 for r in _km().chats() if r.get("tool") == tool)
     n = 0
     for person in people():
         for box in kr.boxes_of(person):
@@ -357,6 +368,8 @@ def verify_in_box(prog: str, want: str) -> str:
     if not ps:
         return "no box to try it in"
     person = ps[0]
+    if MAC:
+        return verify_in_box_mac(person, prog, want)
     problems = kr.outside_check(person, [person])
     if problems:
         return "the box's self-check found a problem: " + "; ".join(problems)[:200]
@@ -368,7 +381,11 @@ def verify_in_box(prog: str, want: str) -> str:
                 "--", prog, "--version"], check=False, timeout=120)
     if r.returncode != 0:
         return "it did not start in the box: " + kc.term(" ".join((r.stderr or r.stdout).split()[-30:]))[-200:]
-    text = r.stdout + "\n" + "\n".join(l for l in r.stderr.splitlines() if not l.startswith("wallcheck"))
+    return version_problem(r.stdout, r.stderr, want)
+
+
+def version_problem(out: str, err: str, want: str) -> str:
+    text = out + "\n" + "\n".join(l for l in err.splitlines() if not l.startswith("wallcheck"))
     got = GOT_RX.search(text)
     if not got or got.group(1)[:40] != want:
         return f"it says its version is {kc.shown(got.group(1) if got else 'nothing', 40)}, not {want}"
@@ -436,9 +453,7 @@ def install_one(tool: str, ver: str, say=kr.say, auto: bool = False):
     auto: only a strictly newer version is taken, checked in the box first and switched to only
     while no chat of the tool runs (see switch_if_safe); returns None when nothing changed."""
     if MAC:
-        if auto:
-            raise Refuse(f"{tool}: [Mac] tools are not updated on their own yet; name a version to install one")
-        return install_one_mac(tool, ver, say)
+        return install_one_mac(tool, ver, say, auto)
     key, ask = vendor_of(tool, ver)
     url, hosts, program, how = VENDOR[key]
     if unreachable({tool: ver}):
@@ -511,9 +526,38 @@ def mac_profile(stage: str) -> str:
             '(deny file-read* ' + " ".join(f'(subpath "{d}")' for d in deny) + ')')
 
 
-def install_one_mac(tool: str, ver: str, say=kr.say) -> str:
+def verify_in_box_mac(person: str, prog: str, want: str) -> str:
+    """verify_in_box on macOS: prog --version as the box user, in the box's profile, behind the
+    outside check and wallcheck (kap_mac.popen_box, as every chat starts)."""
+    import subprocess
+    km = _km()
+    box = person
+    try:
+        km.repair_before_start(person, box)
+        problems = km.outside_check(person, box)
+        if problems:
+            return "the box's self-check found a problem: " + "; ".join(problems)[:200]
+        p = km.popen_box(person, box, [prog, "--version"], km.team_root(person), stdin=subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            out, err = p.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            out, err = p.communicate()
+        finally:
+            km.end_session(p.pid)
+    except (Refuse, OSError, KeyError) as e:
+        return f"it could not be started in the box ({kc.term(e)[:160]})"
+    if p.returncode != 0:
+        return "it did not start in the box: " + kc.term(" ".join((err or out).split()[-30:]))[-200:]
+    return version_problem(out, err, want)
+
+
+def install_one_mac(tool: str, ver: str, say=kr.say, auto: bool = False):
     """install_one on macOS: the same script as the user _kaptools (no home of anyone, its own
-    empty folder as HOME) inside mac_profile; root reads and copies the result as on Linux."""
+    empty folder as HOME) inside mac_profile; root reads and copies the result as on Linux, and
+    an automatic update switches the same way (switch_if_safe: tried in the box first, never
+    under a running chat of the tool)."""
     import pwd
     import subprocess
     key, ask = vendor_of(tool, ver)
@@ -539,6 +583,10 @@ def install_one_mac(tool: str, ver: str, say=kr.say) -> str:
             tail = " ".join((r.stderr or r.stdout).strip().splitlines()[-3:])[-300:]
             raise Refuse(f"{tool}: its installer failed ({kc.term(tail) or 'exit ' + str(r.returncode)})")
         src, inner, got = collect(stage, key)
+        current = load_record().get(tool, {}).get("version", "")
+        if auto and not is_newer(got, current):
+            say(f"  {tool} {current}: already the newest ({got}).")
+            return None
         dst = f"{kc.TOOLS_DIR}/{tool}/{got}"
         kr.mkdir(kc.TOOLS_DIR, 0o755)
         kr.mkdir(f"{kc.TOOLS_DIR}/bin", 0o755)
@@ -553,12 +601,9 @@ def install_one_mac(tool: str, ver: str, say=kr.say) -> str:
         prog = os.path.join(dst, inner)
         with open(prog, "rb") as f:
             digest = hashlib.sha256(f.read()).hexdigest()
-        point(tool, f"../{tool}/{got}/{inner}")
-        rec = load_record()
-        rec[tool] = {"version": got, "program": f"{tool}/{got}/{inner}", "sha256": digest, "from": url,
-                     "installed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-        save_record(rec)
-        prune(tool, {got})
+        if auto:
+            return switch_if_safe(tool, got, inner, digest, url, say)
+        activate(tool, got, inner, digest, url)
         say(f"  {tool} {got} is in the box ({kc.TOOLS_DIR}/bin/{tool}).")
         return got
     finally:

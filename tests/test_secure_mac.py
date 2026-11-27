@@ -208,15 +208,18 @@ def test_pf_uids_from_pfctl_listing():
 
 # ---------------------------------------------------------------------------- launchd, sudo, ACL
 
-def test_daemons_are_the_five_jobs_with_this_python():
+def test_daemons_are_the_six_jobs_with_this_python():
     d = km.daemons("/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12", ["alice"])
-    assert set(d) == {"pf", "canary", "relay", "update", "egress.alice"}
+    assert set(d) == {"pf", "canary", "relay", "update", "tools-update", "egress.alice"}
     for name, data in d.items():
         p = plistlib.loads(data)
         assert p["Label"] == f"com.kaptyorka.{name}"
         assert p["ProgramArguments"][:2] == ["/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12", "-I"]
         assert "UserName" not in p   # root starts it; the starter hands over to the service's user
     assert plistlib.loads(d["update"])["StartInterval"] == 3600 and "KeepAlive" not in plistlib.loads(d["update"])
+    tu = plistlib.loads(d["tools-update"])   # the daily tool update (the Linux timer's place)
+    assert tu["StartInterval"] == 86400 and "KeepAlive" not in tu
+    assert tu["ProgramArguments"][2:] == [f"{kc.LIBEXEC}/kap_tools.py", "auto-update"]
     for n in ("canary", "relay", "egress.alice"):
         assert plistlib.loads(d[n])["KeepAlive"] is True
     assert plistlib.loads(d["canary"])["ProgramArguments"][-1] == kc.CANARY_PROC
@@ -525,3 +528,18 @@ def test_mac_code_calls_nothing_linux_only_even_one_step_down():
             if isinstance(n, ast.Constant) and isinstance(n.value, str) and LINUX_WORDS.search(n.value):
                 bad.append(f"kap_tools.{fn.name}: {n.value[:60]}")
     assert not bad, sorted(set(bad))
+
+
+# ---------------------------------------------------------------------------- tools on a Mac
+
+def test_mac_tool_updates_go_the_mac_way(monkeypatch):
+    got = []
+    monkeypatch.setattr(kt, "install_one_mac", lambda tool, ver, say, auto=False: got.append((tool, ver, auto)) or "9.9.9")
+    assert kt.install_one("claude", "", auto=True) == "9.9.9" and got == [("claude", "", True)]
+    calls = []
+    monkeypatch.setattr(kt, "verify_in_box_mac", lambda person, prog, want: calls.append((person, prog, want)) or "")
+    monkeypatch.setattr(kt, "people", lambda: ["alice"])
+    assert kt.verify_in_box("/opt/kap-tools/claude/9.9.9/claude", "9.9.9") == "" and calls[0][0] == "alice"
+    assert kt.version_problem("2.1.400 (Claude Code)\n", "wallcheck ok: 15 walls\n", "2.1.400") == ""
+    assert "not 2.1.400" in kt.version_problem("2.1.399\n", "", "2.1.400")
+    assert MAC["kap_mac"].plist_path("tools-update").endswith("com.kaptyorka.tools-update.plist")

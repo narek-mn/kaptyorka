@@ -632,7 +632,7 @@ def remove(a) -> int:
         except (OSError, Refuse, KeyError):
             pass
     if not ks.installed_people():
-        for name in ("update", "relay", "canary", "pf"):
+        for name in ("tools-update", "update", "relay", "canary", "pf"):
             km.unload_daemon(name)
         for b in km.boxes():
             km.unload_daemon(f"egress.{b}")

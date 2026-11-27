@@ -330,13 +330,15 @@ def plist(name: str, args: List[str], keepalive: bool = False, interval: int = 0
 
 def daemons(py: str, boxes: List[str]) -> Dict[str, bytes]:
     """name -> plist of every LaunchDaemon: pf at boot, the canaries, the relay, one forwarder per
-    box, the hourly update check (the systemd timer's place)."""
+    box, the hourly update check and the daily tool update (the systemd timers' places)."""
     if not PY_RX.fullmatch(py):
         raise Refuse("bad python path")
     out = {"pf": plist("pf", [py, "-I", DAEMON, "pf"]),
            "canary": plist("canary", [py, "-I", DAEMON, "canary", kc.CANARY_PROC], keepalive=True),
            "relay": plist("relay", [py, "-I", DAEMON, "relay"], keepalive=True),
-           "update": plist("update", [py, "-I", LIBEXEC + "/kap_update.py", "run"], interval=3600)}
+           "update": plist("update", [py, "-I", LIBEXEC + "/kap_update.py", "run"], interval=3600),
+           "tools-update": plist("tools-update", [py, "-I", LIBEXEC + "/kap_tools.py", "auto-update"],
+                                 interval=86400)}
     for b in boxes:
         out[f"egress.{kc.check_box(b)}"] = plist(f"egress.{b}", [py, "-I", DAEMON, "egress", b], keepalive=True)
     return out
@@ -887,12 +889,12 @@ def outside_check(person: str, box: str) -> List[str]:
     except (Refuse, KeyError, OSError) as e:
         bad.append(str(e))
     bad += account_problems(person, box)
-    for top in (LIBEXEC, ETC, OPT, TOOLS_DIR, f"/etc/sudoers.d/kaptyorka-{person}",
-                *(plist_path(n) for n in ("pf", "canary", "relay", "update", f"egress.{box}"))):
+    for top in (LIBEXEC, ETC, OPT, TOOLS_DIR, f"{SUDOERS_DIR}/kaptyorka-{person}",
+                *(plist_path(n) for n in ("pf", "canary", "relay", "update", "tools-update", f"egress.{box}"))):
         p = tree_problem(top)
         if p:
             bad.append(p)
-    if kr.read_text(f"/etc/sudoers.d/kaptyorka-{person}") != sudoers_text(person):
+    if kr.read_text(f"{SUDOERS_DIR}/kaptyorka-{person}") != sudoers_text(person):
         bad.append(f"/etc/sudoers.d/kaptyorka-{person} is not kaptyorka's rule")
     try:
         folders = kr.load_folders(person)
