@@ -1,0 +1,41 @@
+name: mac-kit
+
+# Runs the macOS wall test kit (tests/mac-kit) on GitHub's macOS runners.
+# Only on the mac-kit-test branch or by hand; never on main or tags.
+on:
+  push:
+    branches: [mac-kit-test]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the kit
+        run: |
+          sw_vers
+          rm -rf "$HOME/mac-kit"
+          cp -R tests/mac-kit "$HOME/mac-kit"
+          chmod 700 "$HOME/mac-kit"
+          cd "$HOME/mac-kit"
+          rc=0
+          sudo KAPTEST_YES=1 KAPTEST_CLIPBOARD=no ./mac-tests.sh || rc=$?
+          echo "kit exit code: $rc"
+          echo "----- results -----"
+          cat mac-results.tsv || true
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-results-${{ matrix.os }}
+          path: /Users/runner/mac-kit/mac-*
+          if-no-files-found: warn
